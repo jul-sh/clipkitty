@@ -14,7 +14,7 @@ final class iOSBrowserIntegrationTests: XCTestCase {
 
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "Hello world")],
+            items: [makeMatch(id: "1", excerpt: "Hello world")],
             firstPreviewPayload: nil,
             totalCount: 1
         ))
@@ -28,8 +28,8 @@ final class iOSBrowserIntegrationTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [
-                makeMatch(id: "2", snippet: "New item"),
-                makeMatch(id: "1", snippet: "Hello world"),
+                makeMatch(id: "2", excerpt: "New item"),
+                makeMatch(id: "1", excerpt: "Hello world"),
             ],
             firstPreviewPayload: nil,
             totalCount: 2
@@ -51,7 +51,7 @@ final class iOSBrowserIntegrationTests: XCTestCase {
         let item = makeItem(id: "1", text: "Copy me")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "Copy me")],
+            items: [makeMatch(id: "1", excerpt: "Copy me")],
             firstPreviewPayload: PreviewPayload(item: item, decoration: nil),
             totalCount: 1
         ))
@@ -84,7 +84,7 @@ final class iOSBrowserIntegrationTests: XCTestCase {
         }
     }
 
-    // MARK: - Edit long text → snippet uses formatExcerpt
+    // MARK: - Edit long text → excerpt uses formatExcerpt
 
     func testEditLongTextUsesFormatExcerpt() async {
         let client = MockiOSBrowserStoreClient()
@@ -93,7 +93,7 @@ final class iOSBrowserIntegrationTests: XCTestCase {
 
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "Short original")],
+            items: [makeMatch(id: "1", excerpt: "Short original")],
             firstPreviewPayload: PreviewPayload(item: item, decoration: nil),
             totalCount: 1
         ))
@@ -115,11 +115,13 @@ final class iOSBrowserIntegrationTests: XCTestCase {
         XCTAssertEqual(client.updatedTexts.count, 1)
         XCTAssertEqual(client.updatedTexts.first?.text, longText)
 
-        // The optimistic snippet should have been formatted through formatExcerpt
+        // The optimistic baseline excerpt should have been formatted through formatExcerpt
         let displayRow = viewModel.displayRows.first { $0.id == "1" }
         XCTAssertNotNil(displayRow)
-        // formatExcerpt in mock returns prefix(300), so snippet should be truncated
-        XCTAssertEqual(displayRow?.metadata.snippet.count, 300)
+        guard case let .baseline(excerpt)? = displayRow?.presentation else {
+            return XCTFail("Expected baseline excerpt")
+        }
+        XCTAssertEqual(excerpt.text.count, 300)
     }
 
     // MARK: - Bookmark filter
@@ -130,8 +132,8 @@ final class iOSBrowserIntegrationTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [
-                makeMatch(id: "1", snippet: "Bookmarked", tags: [.bookmark]),
-                makeMatch(id: "2", snippet: "Not bookmarked"),
+                makeMatch(id: "1", excerpt: "Bookmarked", tags: [.bookmark]),
+                makeMatch(id: "2", excerpt: "Not bookmarked"),
             ],
             firstPreviewPayload: nil,
             totalCount: 2
@@ -146,7 +148,7 @@ final class iOSBrowserIntegrationTests: XCTestCase {
         // Apply bookmark filter — triggers new search
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .tagged(tag: .bookmark)),
-            items: [makeMatch(id: "1", snippet: "Bookmarked", tags: [.bookmark])],
+            items: [makeMatch(id: "1", excerpt: "Bookmarked", tags: [.bookmark])],
             firstPreviewPayload: nil,
             totalCount: 1
         ))
@@ -161,8 +163,8 @@ final class iOSBrowserIntegrationTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [
-                makeMatch(id: "1", snippet: "Bookmarked", tags: [.bookmark]),
-                makeMatch(id: "2", snippet: "Not bookmarked"),
+                makeMatch(id: "1", excerpt: "Bookmarked", tags: [.bookmark]),
+                makeMatch(id: "2", excerpt: "Not bookmarked"),
             ],
             firstPreviewPayload: nil,
             totalCount: 2
@@ -182,9 +184,9 @@ final class iOSBrowserIntegrationTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [
-                makeMatch(id: "1", snippet: "Text item", icon: .symbol(iconType: .text)),
-                makeMatch(id: "2", snippet: "file.pdf", icon: .symbol(iconType: .file)),
-                makeMatch(id: "3", snippet: "https://example.com", icon: .symbol(iconType: .link)),
+                makeMatch(id: "1", excerpt: "Text item", icon: .symbol(iconType: .text)),
+                makeMatch(id: "2", excerpt: "file.pdf", icon: .symbol(iconType: .file)),
+                makeMatch(id: "3", excerpt: "https://example.com", icon: .symbol(iconType: .link)),
             ],
             firstPreviewPayload: nil,
             totalCount: 3
@@ -221,7 +223,7 @@ final class iOSBrowserIntegrationTests: XCTestCase {
 
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "Delete me")],
+            items: [makeMatch(id: "1", excerpt: "Delete me")],
             firstPreviewPayload: PreviewPayload(item: item, decoration: nil),
             totalCount: 1
         ))
@@ -250,7 +252,7 @@ final class iOSBrowserIntegrationTests: XCTestCase {
 
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "Tag me")],
+            items: [makeMatch(id: "1", excerpt: "Tag me")],
             firstPreviewPayload: PreviewPayload(item: item, decoration: nil),
             totalCount: 1
         ))
@@ -298,7 +300,7 @@ final class iOSBrowserIntegrationTests: XCTestCase {
 
     private func makeMatch(
         id: String,
-        snippet: String,
+        excerpt: String,
         tags: [ItemTag] = [],
         icon: ItemIcon = .symbol(iconType: .text)
     ) -> ItemMatch {
@@ -306,13 +308,12 @@ final class iOSBrowserIntegrationTests: XCTestCase {
             itemMetadata: ItemMetadata(
                 itemId: id,
                 icon: icon,
-                snippet: snippet,
                 sourceApp: nil,
                 sourceAppBundleId: nil,
                 timestampUnix: 0,
                 tags: tags
             ),
-            listDecoration: nil
+            presentation: .baseline(excerpt: BaselineExcerpt(text: excerpt))
         )
     }
 
@@ -321,7 +322,6 @@ final class iOSBrowserIntegrationTests: XCTestCase {
             itemMetadata: ItemMetadata(
                 itemId: id,
                 icon: .symbol(iconType: .text),
-                snippet: text,
                 sourceApp: nil,
                 sourceAppBundleId: nil,
                 timestampUnix: 0,

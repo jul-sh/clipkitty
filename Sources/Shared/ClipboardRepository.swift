@@ -83,12 +83,12 @@ public final class ClipboardRepository {
         return nil
     }
 
-    public func computeListDecorations(itemIds: [String], query: String, presentation: ListPresentationProfile) async -> [ListDecorationResult] {
-        let result = await runRepositoryOperation("computeListDecorations", on: store) { store in
-            try store.computeListDecorations(itemIds: itemIds, query: query, presentation: presentation)
+    public func resolveMatchedExcerpts(requests: [MatchedExcerptRequest]) async -> [MatchedExcerptResolution] {
+        let result = await runRepositoryOperation("resolveMatchedExcerpts", on: store) { store in
+            try store.resolveMatchedExcerpts(requests: requests)
         }
-        if case let .success(decorations) = result {
-            return decorations
+        if case let .success(resolutions) = result {
+            return resolutions
         }
         return []
     }

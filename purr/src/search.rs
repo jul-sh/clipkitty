@@ -9,8 +9,7 @@
 use crate::indexer::Indexer;
 use crate::interface::ClipKittyError;
 use crate::interface::{
-    HighlightKind, ItemMatch, ItemMetadata, ListDecoration, ListPresentationProfile,
-    PreviewDecoration, Utf16HighlightRange,
+    HighlightKind, ListPresentationProfile, MatchedExcerpt, PreviewDecoration, Utf16HighlightRange,
 };
 use crate::ranking::{
     does_word_match, does_word_match_fast, does_word_match_fast_raw, prefix_match_for_query_word,
@@ -681,18 +680,18 @@ pub(crate) fn generate_snippet_with_policy(
     (final_snippet, adjusted_highlights, line_number)
 }
 
-/// Create list decoration from full-content scalar highlights, using a presentation profile.
-pub(crate) fn create_list_decoration(
+/// Create a matched excerpt from full-content scalar highlights, using a presentation profile.
+pub(crate) fn create_matched_excerpt(
     content: &str,
     highlights: &[HighlightRange],
     profile: ListPresentationProfile,
-) -> ListDecoration {
+) -> MatchedExcerpt {
     let policy = ExcerptPolicy::for_profile(profile);
     let (text, adjusted_highlights, line_number) =
         generate_snippet_with_policy(content, highlights, &policy);
     let highlights = scalar_highlights_to_utf16(&text, &adjusted_highlights);
 
-    ListDecoration {
+    MatchedExcerpt {
         text,
         highlights,
         line_number,
@@ -741,13 +740,6 @@ pub(crate) fn create_preview_decoration_with_char_offset(
     PreviewDecoration {
         highlights: scalar_highlights_to_utf16(content, &shifted_highlights),
         initial_scroll_highlight_index,
-    }
-}
-
-pub(crate) fn create_lazy_item_match_with_metadata(item_metadata: ItemMetadata) -> ItemMatch {
-    ItemMatch {
-        item_metadata,
-        list_decoration: None,
     }
 }
 
@@ -903,17 +895,17 @@ fn compute_word_match_highlights(content: &str, query: &str) -> Vec<HighlightRan
         .collect()
 }
 
-/// Compute list decoration for an item given a query and presentation profile.
-pub(crate) fn compute_list_decoration(
+/// Compute a matched excerpt for an item given a query and presentation profile.
+pub(crate) fn compute_matched_excerpt(
     content: &str,
     query: &str,
     profile: ListPresentationProfile,
-) -> ListDecoration {
+) -> MatchedExcerpt {
     let trimmed = query.trim();
     if trimmed.is_empty() {
         let policy = ExcerptPolicy::for_profile(profile);
         let (text, _, _) = generate_snippet_with_policy(content, &[], &policy);
-        return ListDecoration {
+        return MatchedExcerpt {
             text,
             highlights: Vec::new(),
             line_number: 0,
@@ -922,7 +914,7 @@ pub(crate) fn compute_list_decoration(
 
     let analysis =
         analyze_content_for_query(content, trimmed).expect("non-empty query should analyze");
-    create_list_decoration(content, &analysis.highlights, profile)
+    create_matched_excerpt(content, &analysis.highlights, profile)
 }
 
 /// Tokenize text into tokens with char offsets.
@@ -1658,7 +1650,7 @@ error: Build failed due to failed dependency";
         );
         assert_eq!(preview.initial_scroll_highlight_index, Some(0));
 
-        let row = compute_list_decoration(content, "func", ListPresentationProfile::CompactRow);
+        let row = compute_matched_excerpt(content, "func", ListPresentationProfile::CompactRow);
         assert!(row.text.contains("func top level"));
     }
 

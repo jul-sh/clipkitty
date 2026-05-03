@@ -397,9 +397,9 @@ final class ClipboardStore {
         return await previewLoader.fetchItem(id: id)
     }
 
-    func loadListDecorations(itemIds: [String], query: String, presentation: ListPresentationProfile) async -> [ListDecorationResult] {
+    func resolveMatchedExcerpts(requests: [MatchedExcerptRequest]) async -> [MatchedExcerptResolution] {
         guard let repository else { return [] }
-        return await repository.computeListDecorations(itemIds: itemIds, query: query, presentation: presentation)
+        return await repository.resolveMatchedExcerpts(requests: requests)
     }
 
     func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload? {

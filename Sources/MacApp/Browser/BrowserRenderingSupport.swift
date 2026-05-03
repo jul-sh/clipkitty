@@ -1219,7 +1219,7 @@ private enum RowIconCache {
 
 struct ItemRow: View {
     let metadata: ItemMetadata
-    let listDecoration: ListDecoration?
+    let presentation: RowPresentation
     let isSelected: Bool
     let isContextMenuTargeted: Bool
     let hasUserNavigated: Bool
@@ -1240,18 +1240,22 @@ struct ItemRow: View {
 
     // MARK: - Display Text (Simplified - SwiftUI handles truncation)
 
-    /// Text to display - uses matchData.text if in search mode, otherwise metadata.snippet
-    /// SwiftUI's Three-Part HStack handles truncation with proper ellipsis via layout priorities
-    private var displayText: String {
-        if let rowText = listDecoration?.text, !rowText.isEmpty {
-            return rowText
+    private var displayExcerpt: (text: String, highlights: [Utf16HighlightRange], lineNumber: UInt64?) {
+        switch presentation {
+        case let .baseline(excerpt):
+            return (excerpt.text, [], nil)
+        case let .matched(excerpt):
+            return (excerpt.text, excerpt.highlights, excerpt.lineNumber)
+        case let .deferred(_, placeholder):
+            switch placeholder {
+            case let .baseline(excerpt), let .provisional(excerpt):
+                return (excerpt.text, [], nil)
+            case let .compatibleCached(_, excerpt):
+                return (excerpt.text, excerpt.highlights, excerpt.lineNumber)
+            }
+        case let .unavailable(fallback, _):
+            return (fallback.text, [], nil)
         }
-        return metadata.snippet
-    }
-
-    /// Highlights for display - passed directly from Rust (already adjusted for normalization)
-    private var displayHighlights: [Utf16HighlightRange] {
-        listDecoration?.highlights ?? []
     }
 
     private var showsSourceAppBadge: Bool {
@@ -1334,7 +1338,7 @@ struct ItemRow: View {
                 .allowsHitTesting(false)
 
                 // Line number (shown in search mode when line > 1)
-                if let lineNumber = listDecoration?.lineNumber, lineNumber > 1 {
+                if let lineNumber = displayExcerpt.lineNumber, lineNumber > 1 {
                     Text("L\(lineNumber):")
                         .font(.custom(FontManager.mono, size: 13))
                         .foregroundColor(accentSelected ? .white.opacity(0.7) : .secondary)
@@ -1346,8 +1350,8 @@ struct ItemRow: View {
                 // Text content - SwiftUI Three-Part HStack with layout priorities
                 HStack(spacing: 6) {
                     HighlightedTextView(
-                        text: displayText,
-                        highlights: displayHighlights,
+                        text: displayExcerpt.text,
+                        highlights: displayExcerpt.highlights,
                         accentSelected: accentSelected,
                         textScale: AppSettings.shared.textScale
                     )
@@ -1395,7 +1399,7 @@ struct ItemRow: View {
             )
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(displayText)
+        .accessibilityLabel(displayExcerpt.text)
         .accessibilityHint(AppSettings.shared.pasteMode == .autoPaste ? String(localized: "Double tap to paste") : String(localized: "Double tap to copy"))
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])

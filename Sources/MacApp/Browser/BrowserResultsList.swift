@@ -17,7 +17,7 @@ struct BrowserResultsList: View {
                 ForEach(Array(viewModel.displayRows.enumerated()), id: \.element.metadata.itemId) { index, row in
                     ItemRow(
                         metadata: row.metadata,
-                        listDecoration: row.listDecoration,
+                        presentation: row.presentation,
                         isSelected: row.metadata.itemId == viewModel.selectedItemId,
                         isContextMenuTargeted: row.metadata.itemId == contextMenuItemId,
                         hasUserNavigated: viewModel.hasUserNavigated,
@@ -116,6 +116,6 @@ struct BrowserResultsList: View {
         let idsToLoad = (startIndex ... endIndex).compactMap { idx in
             viewModel.itemIds.indices.contains(idx) ? viewModel.itemIds[idx] : nil
         }
-        viewModel.loadListDecorationsForItems(idsToLoad)
+        viewModel.loadMatchedExcerptsForItems(idsToLoad)
     }
 }

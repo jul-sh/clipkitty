@@ -71,7 +71,7 @@ public final class BrowserViewModel {
     #if ENABLE_LINK_PREVIEWS
         private var metadataTask: Task<Void, Never>?
     #endif
-    private var listDecorationTasks: [String: Task<Void, Never>] = [:]
+    private var matchedExcerptTasks: [String: Task<Void, Never>] = [:]
     private var pendingDeleteTask: Task<Void, Never>?
     private var pendingTagSettleTask: Task<Void, Never>?
     private var queryGeneration = 0
@@ -88,7 +88,7 @@ public final class BrowserViewModel {
     public private(set) var overlayState: OverlayState = .none
     public private(set) var mutationState: MutationState = .idle
     public private(set) var editSession: PreviewEditSession = .inactive
-    public private(set) var listDecorationsByItemId: [String: ListDecoration] = [:]
+    public private(set) var resolvedMatchedExcerptsByItemId: [String: MatchedExcerpt] = [:]
     private var previewPayloadsByItemId: [String: PreviewPayload] = [:]
     public private(set) var hasUserNavigated = false
     public private(set) var prefetchCache: [String: ClipboardItem] = [:]
@@ -207,8 +207,8 @@ public final class BrowserViewModel {
             metadataTask?.cancel()
             metadataTask = nil
         #endif
-        listDecorationTasks.values.forEach { $0.cancel() }
-        listDecorationTasks.removeAll()
+        matchedExcerptTasks.values.forEach { $0.cancel() }
+        matchedExcerptTasks.removeAll()
         pendingDeleteTask?.cancel()
         pendingDeleteTask = nil
         pendingTagSettleTask?.cancel()
@@ -224,7 +224,7 @@ public final class BrowserViewModel {
         hasUserNavigated = false
         prefetchCache.removeAll()
         previewPayloadsByItemId.removeAll()
-        listDecorationsByItemId.removeAll()
+        resolvedMatchedExcerptsByItemId.removeAll()
         overlayState = .none
         mutationState = .idle
         editSession = .inactive
@@ -355,42 +355,48 @@ public final class BrowserViewModel {
         performItemAction(itemId: itemId, handler: onCopyOnly)
     }
 
-    public func loadListDecorationsForItems(_ ids: [String]) {
+    public func loadMatchedExcerptsForItems(_ ids: [String]) {
         guard displayedContent != nil else { return }
         let request = contentState.request
-        guard !request.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
         let uniqueIds = Array(Set(ids)).sorted()
         guard !uniqueIds.isEmpty else { return }
 
-        let itemIdsNeedingDecoration = uniqueIds.filter { listDecoration(for: $0) == nil }
-        guard !itemIdsNeedingDecoration.isEmpty else { return }
+        let excerptRequests = uniqueIds.compactMap { deferredMatchedExcerptRequest(for: $0) }
+        guard !excerptRequests.isEmpty else { return }
 
         let generation = queryGeneration
-        let key = "\(generation)|\(request.text)|\(itemIdsNeedingDecoration.joined(separator: ","))"
-        guard listDecorationTasks[key] == nil else { return }
+        let requestSignature = excerptRequests
+            .map { "\($0.itemId)|\($0.query)|\($0.contentHash)|\($0.presentationProfile)" }
+            .joined(separator: ",")
+        let key = "\(generation)|\(requestSignature)"
+        guard matchedExcerptTasks[key] == nil else { return }
 
-        listDecorationTasks[key] = Task { [weak self] in
+        matchedExcerptTasks[key] = Task { [weak self] in
             guard let self else { return }
-            let results = await self.client.loadListDecorations(itemIds: itemIdsNeedingDecoration, query: request.text, presentation: self.client.listPresentationProfile)
+            let results = await self.client.resolveMatchedExcerpts(requests: excerptRequests)
             await MainActor.run {
-                defer { self.listDecorationTasks[key] = nil }
+                defer { self.matchedExcerptTasks[key] = nil }
                 guard self.queryGeneration == generation,
                       self.contentState.request == request
                 else {
                     return
                 }
 
-                var updates: [String: ListDecoration] = [:]
+                var updates: [String: MatchedExcerpt] = [:]
                 for result in results {
-                    guard let decoration = result.decoration else { continue }
-                    guard self.indexOfItem(result.itemId) != nil else { continue }
-                    guard self.listDecoration(for: result.itemId) == nil else { continue }
-                    updates[result.itemId] = decoration
+                    switch result {
+                    case let .ready(itemId, excerpt):
+                        guard self.indexOfItem(itemId) != nil else { continue }
+                        guard self.deferredMatchedExcerptRequest(for: itemId) != nil else { continue }
+                        updates[itemId] = excerpt
+                    case .unavailable:
+                        continue
+                    }
                 }
 
                 guard !updates.isEmpty else { return }
-                self.listDecorationsByItemId.merge(updates) { existing, _ in existing }
+                self.resolvedMatchedExcerptsByItemId.merge(updates) { existing, _ in existing }
                 self.rebuildDisplayedRows()
             }
         }
@@ -468,7 +474,7 @@ public final class BrowserViewModel {
                 totalCount: 0
             )
         ))
-        listDecorationsByItemId.removeAll()
+        resolvedMatchedExcerptsByItemId.removeAll()
         rebuildDisplayedRows()
         previewPayloadsByItemId.removeAll()
         prefetchCache.removeAll()
@@ -558,11 +564,10 @@ public final class BrowserViewModel {
 
         let currentItem = selectedItemState.item
         let updatedContent = ClipboardContent.text(value: editedText)
-        let updatedSnippet = client.formatExcerpt(content: editedText)
+        let updatedExcerpt = BaselineExcerpt(text: client.formatExcerpt(content: editedText))
         let updatedMetadata = ItemMetadata(
             itemId: currentItem.itemMetadata.itemId,
             icon: currentItem.itemMetadata.icon,
-            snippet: updatedSnippet,
             sourceApp: currentItem.itemMetadata.sourceApp,
             sourceAppBundleId: currentItem.itemMetadata.sourceAppBundleId,
             timestampUnix: currentItem.itemMetadata.timestampUnix,
@@ -580,11 +585,12 @@ public final class BrowserViewModel {
         updateDisplayedResponseForItem(
             itemId: id,
             updatedMetadata: updatedMetadata,
-            updatedFirstItem: updatedItem
+            updatedFirstItem: updatedItem,
+            updatedPresentation: .baseline(excerpt: updatedExcerpt)
         )
 
         // Invalidate stale decoration caches for this item
-        listDecorationsByItemId.removeValue(forKey: id)
+        resolvedMatchedExcerptsByItemId.removeValue(forKey: id)
         previewPayloadsByItemId[id] = PreviewPayload(item: updatedItem, decoration: nil)
 
         showSnackbarNotification(.passive(message: String(localized: "Saved"), iconSystemName: "checkmark.circle.fill"), nil)
@@ -667,10 +673,10 @@ public final class BrowserViewModel {
         hasUserNavigated = false
         prefetchCache.removeAll()
         previewPayloadsByItemId.removeAll()
-        listDecorationsByItemId.removeAll()
+        resolvedMatchedExcerptsByItemId.removeAll()
         searchExecution.cancel()
-        listDecorationTasks.values.forEach { $0.cancel() }
-        listDecorationTasks.removeAll()
+        matchedExcerptTasks.values.forEach { $0.cancel() }
+        matchedExcerptTasks.removeAll()
 
         if displayedContent?.response.request != request {
             setDisplayedSelection(selectionDuringSearchTransition(to: request))
@@ -1117,7 +1123,6 @@ public final class BrowserViewModel {
                     let mergedPreviewMetadata = ItemMetadata(
                         itemId: updatedItem.itemMetadata.itemId,
                         icon: updatedItem.itemMetadata.icon,
-                        snippet: updatedItem.itemMetadata.snippet,
                         sourceApp: updatedItem.itemMetadata.sourceApp,
                         sourceAppBundleId: updatedItem.itemMetadata.sourceAppBundleId,
                         timestampUnix: updatedItem.itemMetadata.timestampUnix,
@@ -1138,7 +1143,10 @@ public final class BrowserViewModel {
                     self.updateDisplayedResponseForItem(
                         itemId: updatedItem.itemMetadata.itemId,
                         updatedMetadata: mergedPreviewMetadata,
-                        updatedFirstItem: mergedPreviewItem
+                        updatedFirstItem: mergedPreviewItem,
+                        updatedPresentation: self.currentResponse?.items.first {
+                            $0.itemMetadata.itemId == updatedItem.itemMetadata.itemId
+                        }?.presentation ?? .baseline(excerpt: BaselineExcerpt(text: ""))
                     )
                 }
             }
@@ -1201,7 +1209,7 @@ public final class BrowserViewModel {
     private func applyOptimisticDelete(itemId: String) {
         guard let response = currentResponse else { return }
         let filteredItems = response.items.filter { $0.itemMetadata.itemId != itemId }
-        listDecorationsByItemId.removeValue(forKey: itemId)
+        resolvedMatchedExcerptsByItemId.removeValue(forKey: itemId)
         previewPayloadsByItemId.removeValue(forKey: itemId)
         prefetchCache.removeValue(forKey: itemId)
         let deletedSelectedItem = selectedItemId == itemId
@@ -1469,13 +1477,13 @@ public final class BrowserViewModel {
                activeTag == tag,
                !updatedMetadata.tags.contains(tag)
             {
-                listDecorationsByItemId.removeValue(forKey: itemMatch.itemMetadata.itemId)
+                resolvedMatchedExcerptsByItemId.removeValue(forKey: itemMatch.itemMetadata.itemId)
                 previewPayloadsByItemId.removeValue(forKey: itemMatch.itemMetadata.itemId)
                 prefetchCache.removeValue(forKey: itemMatch.itemMetadata.itemId)
                 return nil
             }
 
-            return ItemMatch(itemMetadata: updatedMetadata, listDecoration: itemMatch.listDecoration)
+            return ItemMatch(itemMetadata: updatedMetadata, presentation: itemMatch.presentation)
         }
 
         let updatedFirstPreviewPayload = response.firstPreviewPayload.flatMap { payload -> PreviewPayload? in
@@ -1520,7 +1528,6 @@ public final class BrowserViewModel {
         return ItemMetadata(
             itemId: metadata.itemId,
             icon: metadata.icon,
-            snippet: metadata.snippet,
             sourceApp: metadata.sourceApp,
             sourceAppBundleId: metadata.sourceAppBundleId,
             timestampUnix: metadata.timestampUnix,
@@ -1528,11 +1535,17 @@ public final class BrowserViewModel {
         )
     }
 
-    public func listDecoration(for itemId: String) -> ListDecoration? {
+    private func deferredMatchedExcerptRequest(for itemId: String) -> MatchedExcerptRequest? {
         guard let index = itemIndexById[itemId], displayRows.indices.contains(index) else {
             return nil
         }
-        return displayRows[index].listDecoration
+        guard resolvedMatchedExcerptsByItemId[itemId] == nil else { return nil }
+        switch displayRows[index].presentation {
+        case let .deferred(request, _):
+            return request
+        case .baseline, .matched, .unavailable:
+            return nil
+        }
     }
 
     private func makeSelectedItemState(
@@ -1728,7 +1741,8 @@ public final class BrowserViewModel {
     private func updateDisplayedResponseForItem(
         itemId: String,
         updatedMetadata: ItemMetadata,
-        updatedFirstItem: ClipboardItem
+        updatedFirstItem: ClipboardItem,
+        updatedPresentation: RowPresentation
     ) {
         guard let response = currentResponse else { return }
         let updatedItems = response.items.map { itemMatch in
@@ -1736,7 +1750,7 @@ public final class BrowserViewModel {
             // Clear stale list decoration — Rust will recompute on next search
             return ItemMatch(
                 itemMetadata: updatedMetadata,
-                listDecoration: nil
+                presentation: updatedPresentation
             )
         }
         let firstPreviewPayload: PreviewPayload? = {
@@ -1792,13 +1806,23 @@ public final class BrowserViewModel {
             nextIndexById[itemId] = index
             nextDisplayRows.append(DisplayRow(
                 metadata: itemMatch.itemMetadata,
-                listDecoration: listDecorationsByItemId[itemId] ?? itemMatch.listDecoration
+                presentation: presentationApplyingResolvedExcerpt(itemMatch.presentation, itemId: itemId)
             ))
         }
 
         itemIds = nextItemIds
         itemIndexById = nextIndexById
         displayRows = nextDisplayRows
+    }
+
+    private func presentationApplyingResolvedExcerpt(_ presentation: RowPresentation, itemId: String) -> RowPresentation {
+        guard let excerpt = resolvedMatchedExcerptsByItemId[itemId] else { return presentation }
+        switch presentation {
+        case .deferred:
+            return .matched(excerpt: excerpt)
+        case .baseline, .matched, .unavailable:
+            return presentation
+        }
     }
 
     private func clearInactiveEdits() {

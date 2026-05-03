@@ -53,8 +53,8 @@ final class ClipboardStoreBrowserClient: BrowserStoreClient {
         await store.fetchItem(id: id)
     }
 
-    func loadListDecorations(itemIds: [String], query: String, presentation: ListPresentationProfile) async -> [ListDecorationResult] {
-        await store.loadListDecorations(itemIds: itemIds, query: query, presentation: presentation)
+    func resolveMatchedExcerpts(requests: [MatchedExcerptRequest]) async -> [MatchedExcerptResolution] {
+        await store.resolveMatchedExcerpts(requests: requests)
     }
 
     func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload? {

@@ -1,8 +1,9 @@
-//! Tests for preview text generation and list-decoration snippet output.
+//! Tests for preview text generation and matched excerpt output.
 
 use purr::search::generate_preview;
 use purr::{
-    ClipboardStore, ClipboardStoreApi, HighlightKind, ListDecoration, ListPresentationProfile,
+    ClipboardStore, ClipboardStoreApi, HighlightKind, ListPresentationProfile, MatchedExcerpt,
+    RowPresentation,
 };
 use tempfile::TempDir;
 
@@ -11,22 +12,25 @@ fn utf16_slice(text: &str, start: u64, end: u64) -> String {
     String::from_utf16(&code_units[start as usize..end as usize]).unwrap()
 }
 
-async fn list_decoration_for(content: &str, query: &str) -> ListDecoration {
-    list_decoration_for_profile(content, query, ListPresentationProfile::CompactRow).await
+async fn matched_excerpt_for(content: &str, query: &str) -> MatchedExcerpt {
+    matched_excerpt_for_profile(content, query, ListPresentationProfile::CompactRow).await
 }
 
-async fn list_decoration_for_profile(
+async fn matched_excerpt_for_profile(
     content: &str,
     query: &str,
     profile: ListPresentationProfile,
-) -> ListDecoration {
+) -> MatchedExcerpt {
     let dir = TempDir::new().unwrap();
     let db_path = dir.path().join("test.db");
     let store = ClipboardStore::new(db_path.to_str().unwrap().to_string()).unwrap();
     store.save_text(content.to_string(), None, None).unwrap();
 
     let result = store.search(query.to_string(), profile).await.unwrap();
-    result.matches[0].list_decoration.clone().unwrap()
+    match &result.matches[0].presentation {
+        RowPresentation::Matched { excerpt } => excerpt.clone(),
+        other => panic!("expected ready matched excerpt, got {other:?}"),
+    }
 }
 
 #[test]
@@ -58,8 +62,8 @@ fn preview_normalizes_whitespace() {
 }
 
 #[tokio::test]
-async fn list_decoration_short_text_returns_full_content() {
-    let row = list_decoration_for("Hello World", "Hello").await;
+async fn matched_excerpt_short_text_returns_full_content() {
+    let row = matched_excerpt_for("Hello World", "Hello").await;
     assert_eq!(row.text, "Hello World");
     assert_eq!(row.line_number, 1);
     assert_eq!(
@@ -94,26 +98,29 @@ async fn trigram_search_eagerly_decorates_initial_short_results() {
         result
             .matches
             .iter()
-            .all(|item| item.list_decoration.is_some()),
-        "expected every short initial trigram match to be eagerly decorated"
+            .all(|item| matches!(
+                item.presentation,
+                RowPresentation::Matched { .. }
+            )),
+        "expected every short initial trigram match to have a ready matched excerpt"
     );
 }
 
 #[tokio::test]
-async fn list_decoration_normalizes_whitespace() {
-    let row = list_decoration_for("Hello\n\n\nWorld", "Hello").await;
+async fn matched_excerpt_normalizes_whitespace() {
+    let row = matched_excerpt_for("Hello\n\n\nWorld", "Hello").await;
     assert_eq!(row.text, "Hello World");
 }
 
 #[tokio::test]
-async fn list_decoration_calculates_line_number() {
-    let row = list_decoration_for("Line 1\nLine 2\nLine 3 with MATCH", "MATCH").await;
+async fn matched_excerpt_calculates_line_number() {
+    let row = matched_excerpt_for("Line 1\nLine 2\nLine 3 with MATCH", "MATCH").await;
     assert_eq!(row.line_number, 3);
 }
 
 #[tokio::test]
-async fn list_decoration_extracts_utf16_highlight_correctly() {
-    let row = list_decoration_for("The quick brown fox jumps over the lazy dog", "fox").await;
+async fn matched_excerpt_extracts_utf16_highlight_correctly() {
+    let row = matched_excerpt_for("The quick brown fox jumps over the lazy dog", "fox").await;
     assert!(row.text.contains("fox"));
     assert_eq!(
         utf16_slice(
@@ -126,20 +133,20 @@ async fn list_decoration_extracts_utf16_highlight_correctly() {
 }
 
 #[tokio::test]
-async fn list_decoration_marks_truncation_with_ellipsis() {
+async fn matched_excerpt_marks_truncation_with_ellipsis() {
     let content = format!("{} MATCH {}", "x".repeat(500), "y".repeat(500));
-    let row = list_decoration_for(&content, "MATCH").await;
+    let row = matched_excerpt_for(&content, "MATCH").await;
     assert!(row.text.contains("MATCH"));
     assert!(row.text.starts_with('…'));
     assert!(row.text.ends_with('…'));
 }
 
 #[tokio::test]
-async fn list_decoration_preserves_prefix_vs_exact_highlight_kind() {
-    let prefix = list_decoration_for("Alpha beta", "al").await;
+async fn matched_excerpt_preserves_prefix_vs_exact_highlight_kind() {
+    let prefix = matched_excerpt_for("Alpha beta", "al").await;
     assert_eq!(prefix.highlights[0].kind, HighlightKind::Prefix);
 
-    let exact = list_decoration_for("zz Alpha beta", "ph").await;
+    let exact = matched_excerpt_for("zz Alpha beta", "ph").await;
     assert_eq!(exact.highlights[0].kind, HighlightKind::Exact);
 }
 
@@ -148,9 +155,9 @@ async fn list_decoration_preserves_prefix_vs_exact_highlight_kind() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn card_decoration_preserves_meaningful_newlines() {
+async fn card_matched_excerpt_preserves_meaningful_newlines() {
     let content = "Line one\nLine two\nLine three with MATCH\nLine four";
-    let row = list_decoration_for_profile(content, "MATCH", ListPresentationProfile::Card).await;
+    let row = matched_excerpt_for_profile(content, "MATCH", ListPresentationProfile::Card).await;
     // Card mode should keep newlines in the output
     assert!(
         row.text.contains('\n'),
@@ -162,9 +169,9 @@ async fn card_decoration_preserves_meaningful_newlines() {
 }
 
 #[tokio::test]
-async fn card_decoration_collapses_pathological_whitespace() {
+async fn card_matched_excerpt_collapses_pathological_whitespace() {
     let content = "Line one\n\n\n\n\n\n\n\nLine two with MATCH";
-    let row = list_decoration_for_profile(content, "MATCH", ListPresentationProfile::Card).await;
+    let row = matched_excerpt_for_profile(content, "MATCH", ListPresentationProfile::Card).await;
     // Should collapse 8 newlines down to at most 2
     let newline_count = row.text.chars().filter(|&c| c == '\n').count();
     assert!(
@@ -176,11 +183,11 @@ async fn card_decoration_collapses_pathological_whitespace() {
 }
 
 #[tokio::test]
-async fn card_decoration_has_larger_budget_than_compact() {
+async fn card_matched_excerpt_has_larger_budget_than_compact() {
     let content = format!("MATCH {}", "word ".repeat(200));
     let compact =
-        list_decoration_for_profile(&content, "MATCH", ListPresentationProfile::CompactRow).await;
-    let card = list_decoration_for_profile(&content, "MATCH", ListPresentationProfile::Card).await;
+        matched_excerpt_for_profile(&content, "MATCH", ListPresentationProfile::CompactRow).await;
+    let card = matched_excerpt_for_profile(&content, "MATCH", ListPresentationProfile::Card).await;
     // Card should produce a longer excerpt
     assert!(
         card.text.len() > compact.text.len(),
@@ -191,9 +198,9 @@ async fn card_decoration_has_larger_budget_than_compact() {
 }
 
 #[tokio::test]
-async fn card_decoration_highlight_is_correct() {
+async fn card_matched_excerpt_highlight_is_correct() {
     let content = "First line\nSecond line\nThird line with MATCH here";
-    let row = list_decoration_for_profile(content, "MATCH", ListPresentationProfile::Card).await;
+    let row = matched_excerpt_for_profile(content, "MATCH", ListPresentationProfile::Card).await;
     assert!(!row.highlights.is_empty());
     let highlighted = utf16_slice(
         &row.text,
@@ -207,7 +214,7 @@ async fn card_decoration_highlight_is_correct() {
 async fn compact_row_collapses_newlines() {
     let content = "Line one\nLine two\nLine three with MATCH";
     let row =
-        list_decoration_for_profile(content, "MATCH", ListPresentationProfile::CompactRow).await;
+        matched_excerpt_for_profile(content, "MATCH", ListPresentationProfile::CompactRow).await;
     // CompactRow should NOT contain newlines
     assert!(
         !row.text.contains('\n'),

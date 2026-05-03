@@ -19,14 +19,22 @@ struct CardView: View {
         row.metadata
     }
 
-    /// Display text from Rust list decoration when available, falling back to metadata snippet.
-    private var displayText: String {
-        row.listDecoration?.text ?? metadata.snippet
-    }
-
-    /// Highlights from Rust list decoration, empty when no decoration is available.
-    private var displayHighlights: [Utf16HighlightRange] {
-        row.listDecoration?.highlights ?? []
+    private var displayExcerpt: (text: String, highlights: [Utf16HighlightRange]) {
+        switch row.presentation {
+        case let .baseline(excerpt):
+            return (excerpt.text, [])
+        case let .matched(excerpt):
+            return (excerpt.text, excerpt.highlights)
+        case let .deferred(_, placeholder):
+            switch placeholder {
+            case let .baseline(excerpt), let .provisional(excerpt):
+                return (excerpt.text, [])
+            case let .compatibleCached(_, excerpt):
+                return (excerpt.text, excerpt.highlights)
+            }
+        case let .unavailable(fallback, _):
+            return (fallback.text, [])
+        }
     }
 
     private var isBookmarked: Bool {
@@ -118,7 +126,7 @@ struct CardView: View {
     private func symbolContentPreview(iconType: IconType) -> some View {
         switch iconType {
         case .text:
-            highlightedText(displayText, highlights: displayHighlights, font: .custom(FontManager.mono, size: 15))
+            highlightedText(displayExcerpt.text, highlights: displayExcerpt.highlights, font: .custom(FontManager.mono, size: 15))
                 .lineLimit(8)
 
         case .link:
@@ -126,7 +134,7 @@ struct CardView: View {
                 Image(systemName: "globe")
                     .font(.title3)
                     .foregroundStyle(.secondary)
-                highlightedText(displayText, highlights: displayHighlights, font: .custom(FontManager.sansSerif, size: 15))
+                highlightedText(displayExcerpt.text, highlights: displayExcerpt.highlights, font: .custom(FontManager.sansSerif, size: 15))
                     .lineLimit(2)
             }
 
@@ -135,7 +143,7 @@ struct CardView: View {
                 Image(systemName: "photo")
                     .font(.title3)
                     .foregroundStyle(.secondary)
-                highlightedText(displayText, highlights: displayHighlights, font: .custom(FontManager.sansSerif, size: 15))
+                highlightedText(displayExcerpt.text, highlights: displayExcerpt.highlights, font: .custom(FontManager.sansSerif, size: 15))
                     .lineLimit(2)
             }
 
@@ -145,7 +153,7 @@ struct CardView: View {
 
         case .color:
             // Fallback for symbol-based color (shouldn't normally hit this path)
-            highlightedText(displayText, highlights: displayHighlights, font: .custom(FontManager.mono, size: 15))
+            highlightedText(displayExcerpt.text, highlights: displayExcerpt.highlights, font: .custom(FontManager.mono, size: 15))
         }
     }
 
@@ -160,8 +168,8 @@ struct CardView: View {
                 )
 
             highlightedText(
-                displayHighlights.isEmpty ? hexStringFromRGBA(rgba) : displayText,
-                highlights: displayHighlights,
+                displayExcerpt.highlights.isEmpty ? hexStringFromRGBA(rgba) : displayExcerpt.text,
+                highlights: displayExcerpt.highlights,
                 font: .custom(FontManager.mono, size: 15)
             )
         }
@@ -188,8 +196,8 @@ struct CardView: View {
                         )
                 }
             }
-            if !displayText.isEmpty {
-                highlightedText(displayText, highlights: displayHighlights, font: .custom(FontManager.sansSerif, size: 15))
+            if !displayExcerpt.text.isEmpty {
+                highlightedText(displayExcerpt.text, highlights: displayExcerpt.highlights, font: .custom(FontManager.sansSerif, size: 15))
                     .lineLimit(2)
             }
         }
@@ -274,7 +282,7 @@ struct CardView: View {
     private var accessibilityCardLabel: String {
         var parts = [typeLabel]
         if isBookmarked { parts.append("bookmarked") }
-        let preview = metadata.snippet.prefix(100)
+        let preview = displayExcerpt.text.prefix(100)
         if !preview.isEmpty { parts.append(String(preview)) }
         parts.append(relativeTime)
         return parts.joined(separator: ", ")

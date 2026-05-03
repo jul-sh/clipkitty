@@ -1,8 +1,9 @@
 use crate::candidate::{ScoringPhase, SearchMatchContext};
-use crate::database::{Database, SearchItemMetadata};
+use crate::database::{Database, SearchRowMetadata};
 use crate::interface::{
-    ClipKittyError, ClipboardItem, ItemMetadata, ListDecoration, ListDecorationResult,
-    ListPresentationProfile, PreviewPayload,
+    BaselineExcerpt, ClipKittyError, ClipboardItem, ExcerptPlaceholder,
+    ExcerptUnavailableReason, ListPresentationProfile, MatchedExcerpt, MatchedExcerptRequest,
+    MatchedExcerptResolution, PreviewPayload,
 };
 use crate::models::StoredItem;
 use crate::search::{self, HighlightAnalysis};
@@ -336,6 +337,30 @@ impl HighlightAnalysisCache {
         cached
     }
 
+    pub(crate) fn get_compatible_ready_match_context(
+        &self,
+        query: &str,
+        item_id: &str,
+        parent_content_hash: &str,
+    ) -> Option<(String, CachedMatchContext, Arc<HighlightAnalysis>)> {
+        let query_key = Self::normalized_query(query)?;
+        let state = self.state.lock();
+        state.query_order.iter().rev().find_map(|source_query| {
+            if source_query == &query_key || !Self::queries_are_compatible(source_query, &query_key) {
+                return None;
+            }
+            let context = state
+                .match_contexts_by_query
+                .get(source_query)
+                .and_then(|entries| entries.get(item_id))?;
+            if !context.matches_parent_hash(parent_content_hash) {
+                return None;
+            }
+            let analysis = context.analysis()?;
+            Some((source_query.clone(), context.clone(), analysis))
+        })
+    }
+
     pub(crate) fn insert_match_context(
         &self,
         query: &str,
@@ -361,6 +386,10 @@ impl HighlightAnalysisCache {
                 scoring_phase,
             ),
         );
+    }
+
+    fn queries_are_compatible(source_query: &str, target_query: &str) -> bool {
+        source_query.starts_with(target_query) || target_query.starts_with(source_query)
     }
 
     pub(crate) fn set_match_context_analysis(
@@ -398,68 +427,103 @@ impl<'a> MatchPresentation<'a> {
         Self { db, cache }
     }
 
-    pub(crate) fn compute_list_decorations(
+    pub(crate) fn resolve_matched_excerpts(
         &self,
-        item_ids: Vec<String>,
-        query: String,
-        profile: ListPresentationProfile,
-    ) -> Result<Vec<ListDecorationResult>, ClipKittyError> {
-        if item_ids.is_empty() {
+        requests: Vec<MatchedExcerptRequest>,
+    ) -> Result<Vec<MatchedExcerptResolution>, ClipKittyError> {
+        if requests.is_empty() {
             return Ok(Vec::new());
         }
 
+        let item_ids: Vec<String> = requests
+            .iter()
+            .map(|request| request.item_id.clone())
+            .collect();
         let id_refs: Vec<&str> = item_ids.iter().map(|s| s.as_str()).collect();
         let metadata_rows = self
             .db
-            .fetch_search_item_metadata_by_string_ids(&id_refs, profile)?;
-        let metadata_map: HashMap<String, SearchItemMetadata> = metadata_rows
+            .fetch_search_row_metadata_by_string_ids(&id_refs, ListPresentationProfile::CompactRow)?;
+        let metadata_map: HashMap<String, SearchRowMetadata> = metadata_rows
             .into_iter()
-            .map(|metadata| (metadata.item_metadata.item_id.clone(), metadata))
+            .map(|metadata| (metadata.row_metadata.item_metadata.item_id.clone(), metadata))
             .collect();
         // Find items not in match-context cache (need full content for highlighting).
-        let missing_row_ids: Vec<i64> = item_ids
+        let missing_item_ids: Vec<String> = requests
             .iter()
-            .filter(|id| {
-                let Some(metadata) = metadata_map.get(id.as_str()) else {
+            .filter(|request| {
+                let Some(metadata) = metadata_map.get(request.item_id.as_str()) else {
                     return true;
                 };
-                match self.cache.get_match_context(&query, id.as_str()) {
-                    Some(context) => !context.matches_parent_hash(&metadata.content_hash),
+                if metadata.content_hash != request.content_hash {
+                    return false;
+                }
+                match self
+                    .cache
+                    .get_match_context(&request.query, request.item_id.as_str())
+                {
+                    Some(context) => !context.matches_parent_hash(&request.content_hash),
                     None => true,
                 }
             })
-            .filter_map(|id| metadata_map.get(id.as_str()).map(|m| m.row_id))
+            .map(|request| request.item_id.clone())
             .collect();
-        let items = self.db.fetch_items_by_ids(&missing_row_ids)?;
+        let items = self.db.fetch_items_by_item_ids(&missing_item_ids)?;
         let item_map: HashMap<String, StoredItem> = items
             .into_iter()
             .map(|item| (item.item_id.clone(), item))
             .collect();
 
         use rayon::prelude::*;
-        Ok(item_ids
+        Ok(requests
             .par_iter()
-            .map(|id| {
-                let cached_context = metadata_map.get(id.as_str()).and_then(|metadata| {
-                    self.cache
-                        .get_match_context(&query, id.as_str())
-                        .filter(|context| context.matches_parent_hash(&metadata.content_hash))
-                });
-                let decoration = if cached_context.is_some() {
-                    Some(self.list_decoration_for_cached_match(id, &query, profile))
-                } else {
-                    item_map.get(id).map(|item| {
-                        self.list_decoration_for_item(
-                            id,
-                            item.content.text_content(),
-                            &query,
-                            profile,
-                        )
-                    })
+            .map(|request| {
+                if request.query.trim().is_empty() {
+                    return MatchedExcerptResolution::Unavailable {
+                        item_id: request.item_id.clone(),
+                        reason: ExcerptUnavailableReason::EmptyQuery,
+                    };
+                }
+
+                let Some(metadata) = metadata_map.get(request.item_id.as_str()) else {
+                    return MatchedExcerptResolution::Unavailable {
+                        item_id: request.item_id.clone(),
+                        reason: ExcerptUnavailableReason::ItemMissing,
+                    };
                 };
-                ListDecorationResult {
-                    item_id: id.clone(),
-                    decoration,
+                if metadata.content_hash != request.content_hash {
+                    return MatchedExcerptResolution::Unavailable {
+                        item_id: request.item_id.clone(),
+                        reason: ExcerptUnavailableReason::ContentChanged,
+                    };
+                }
+
+                let cached_context = self
+                    .cache
+                    .get_match_context(&request.query, request.item_id.as_str())
+                    .filter(|context| context.matches_parent_hash(&request.content_hash));
+                let excerpt = if cached_context.is_some() {
+                    self.matched_excerpt_for_cached_match(
+                        &request.item_id,
+                        &request.query,
+                        request.presentation_profile,
+                    )
+                } else if let Some(item) = item_map.get(request.item_id.as_str()) {
+                    self.matched_excerpt_for_item(
+                        &request.item_id,
+                        item.content.text_content(),
+                        &request.query,
+                        request.presentation_profile,
+                    )
+                } else {
+                    return MatchedExcerptResolution::Unavailable {
+                        item_id: request.item_id.clone(),
+                        reason: ExcerptUnavailableReason::ItemMissing,
+                    };
+                };
+
+                MatchedExcerptResolution::Ready {
+                    item_id: request.item_id.clone(),
+                    excerpt,
                 }
             })
             .collect())
@@ -536,37 +600,48 @@ impl<'a> MatchPresentation<'a> {
         );
     }
 
-    pub(crate) fn apply_match_context_snippet(
+    pub(crate) fn placeholder_for_deferred_match(
         &self,
         item_id: &str,
         query: &str,
-        item_metadata: &mut ItemMetadata,
+        parent_content_hash: &str,
+        baseline_excerpt: &BaselineExcerpt,
         match_context: &SearchMatchContext,
         profile: ListPresentationProfile,
-    ) {
+    ) -> ExcerptPlaceholder {
+        if let Some((source_query, context, analysis)) = self
+            .cache
+            .get_compatible_ready_match_context(query, item_id, parent_content_hash)
+        {
+            return ExcerptPlaceholder::CompatibleCached {
+                source_query,
+                excerpt: search::create_matched_excerpt(context.content(), &analysis.highlights, profile),
+            };
+        }
+
         if matches!(match_context, SearchMatchContext::Chunk(_)) {
-            item_metadata.snippet = self
-                .analysis_for_cached_match_context(item_id, query)
-                .map(|(context, analysis)| {
-                    search::create_list_decoration(context.content(), &analysis.highlights, profile)
-                        .text
-                })
-                .unwrap_or_else(|| {
-                    search::generate_preview_for_profile(match_context.content(), profile)
-                });
+            return ExcerptPlaceholder::Provisional {
+                excerpt: BaselineExcerpt {
+                    text: search::generate_preview_for_profile(match_context.content(), profile),
+                },
+            };
+        }
+
+        ExcerptPlaceholder::Baseline {
+            excerpt: baseline_excerpt.clone(),
         }
     }
 
-    pub(crate) fn list_decoration_for_cached_match(
+    pub(crate) fn matched_excerpt_for_cached_match(
         &self,
         item_id: &str,
         query: &str,
         profile: ListPresentationProfile,
-    ) -> ListDecoration {
+    ) -> MatchedExcerpt {
         if let Some((context, analysis)) = self.analysis_for_cached_match_context(item_id, query) {
-            search::create_list_decoration(context.content(), &analysis.highlights, profile)
+            search::create_matched_excerpt(context.content(), &analysis.highlights, profile)
         } else {
-            ListDecoration {
+            MatchedExcerpt {
                 text: String::new(),
                 highlights: Vec::new(),
                 line_number: 0,
@@ -574,17 +649,17 @@ impl<'a> MatchPresentation<'a> {
         }
     }
 
-    pub(crate) fn list_decoration_for_item(
+    pub(crate) fn matched_excerpt_for_item(
         &self,
         item_id: &str,
         content: &str,
         query: &str,
         profile: ListPresentationProfile,
-    ) -> ListDecoration {
+    ) -> MatchedExcerpt {
         if let Some(analysis) = self.analysis_for_item(item_id, content, query) {
-            search::create_list_decoration(content, &analysis.highlights, profile)
+            search::create_matched_excerpt(content, &analysis.highlights, profile)
         } else {
-            search::compute_list_decoration(content, query, profile)
+            search::compute_matched_excerpt(content, query, profile)
         }
     }
 

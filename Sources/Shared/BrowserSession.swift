@@ -102,15 +102,15 @@ public struct LoadedBrowserContent {
 
 public struct DisplayRow: Equatable, Identifiable {
     public let metadata: ItemMetadata
-    public let listDecoration: ListDecoration?
+    public let presentation: RowPresentation
 
     public var id: String {
         metadata.itemId
     }
 
-    public init(metadata: ItemMetadata, listDecoration: ListDecoration?) {
+    public init(metadata: ItemMetadata, presentation: RowPresentation) {
         self.metadata = metadata
-        self.listDecoration = listDecoration
+        self.presentation = presentation
     }
 }
 

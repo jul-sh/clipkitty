@@ -76,7 +76,7 @@ public enum HighlightAttributedStringBuilder {
         return attributed
     }
 
-    /// Build an `AttributedString` for a card snippet with highlight styling.
+    /// Build an `AttributedString` for a card excerpt with highlight styling.
     public static func attributedSnippet(
         _ text: String,
         highlights: [Utf16HighlightRange]

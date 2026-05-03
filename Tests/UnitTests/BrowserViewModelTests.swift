@@ -19,13 +19,13 @@ final class BrowserViewModelTests: XCTestCase {
 
         let staleResponse = BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "stale")],
+            items: [makeMatch(id: "1", excerpt: "stale")],
             firstPreviewPayload: nil,
             totalCount: 1
         )
         let freshResponse = BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "2", snippet: "fresh")],
+            items: [makeMatch(id: "2", excerpt: "fresh")],
             firstPreviewPayload: nil,
             totalCount: 1
         )
@@ -48,7 +48,7 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
             firstPreviewPayload: nil,
             totalCount: 2
         ))
@@ -84,7 +84,7 @@ final class BrowserViewModelTests: XCTestCase {
         let secondItem = makeItem(id: "2", text: "second")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "first")],
+            items: [makeMatch(id: "1", excerpt: "first")],
             firstItem: firstItem,
             totalCount: 1
         ))
@@ -117,7 +117,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "first"), makeMatch(id: "2", snippet: "second")],
+            items: [makeMatch(id: "1", excerpt: "first"), makeMatch(id: "2", excerpt: "second")],
             firstItem: firstItem,
             totalCount: 2
         ))
@@ -133,7 +133,7 @@ final class BrowserViewModelTests: XCTestCase {
         let secondItem = makeItem(id: "2", text: "second")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "first")],
+            items: [makeMatch(id: "1", excerpt: "first")],
             firstItem: firstItem,
             totalCount: 1
         ))
@@ -167,7 +167,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "2", snippet: "second"), makeMatch(id: "1", snippet: "first")],
+            items: [makeMatch(id: "2", excerpt: "second"), makeMatch(id: "1", excerpt: "first")],
             firstItem: secondItem,
             totalCount: 2
         ))
@@ -183,7 +183,7 @@ final class BrowserViewModelTests: XCTestCase {
         let secondItem = makeItem(id: "2", text: "second")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "first")],
+            items: [makeMatch(id: "1", excerpt: "first")],
             firstItem: firstItem,
             totalCount: 1
         ))
@@ -217,7 +217,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "2", snippet: "second")],
+            items: [makeMatch(id: "2", excerpt: "second")],
             firstItem: secondItem,
             totalCount: 1
         ))
@@ -232,7 +232,7 @@ final class BrowserViewModelTests: XCTestCase {
         let firstItem = makeItem(id: "1", text: "first")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "first")],
+            items: [makeMatch(id: "1", excerpt: "first")],
             firstItem: firstItem,
             totalCount: 1
         ))
@@ -279,7 +279,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "a", filter: .all),
-            items: [makeMatch(id: "1", snippet: "alpha beta")],
+            items: [makeDeferredMatch(id: "1", text: "alpha beta", query: "a")],
             firstItem: item,
             totalCount: 1
         ))
@@ -295,7 +295,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "al", filter: .all),
-            items: [makeMatch(id: "1", snippet: "alpha beta")],
+            items: [makeDeferredMatch(id: "1", text: "alpha beta", query: "al")],
             firstItem: item,
             totalCount: 1
         ))
@@ -343,7 +343,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "a", filter: .all),
-            items: [makeMatch(id: "1", snippet: "alpha beta")],
+            items: [makeDeferredMatch(id: "1", text: "alpha beta", query: "a")],
             firstItem: item,
             totalCount: 1
         ))
@@ -389,7 +389,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "al", filter: .all),
-            items: [makeMatch(id: "1", snippet: "alpha beta")],
+            items: [makeMatch(id: "1", excerpt: "alpha beta")],
             firstPreviewPayload: makePreviewPayload(item: item, decoration: decoration),
             totalCount: 1
         ))
@@ -407,7 +407,7 @@ final class BrowserViewModelTests: XCTestCase {
         let decoration = makePreviewDecoration(highlightStart: 0, highlightEnd: 2)
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "alpha beta")],
+            items: [makeMatch(id: "1", excerpt: "alpha beta")],
             firstItem: item,
             totalCount: 1
         ))
@@ -443,7 +443,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "al", filter: .all),
-            items: [makeMatch(id: "1", snippet: "alpha beta")],
+            items: [makeMatch(id: "1", excerpt: "alpha beta")],
             firstItem: item,
             totalCount: 1
         ))
@@ -490,7 +490,7 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "a", filter: .all),
-            items: [makeMatch(id: "1", snippet: "alpha beta")],
+            items: [makeMatch(id: "1", excerpt: "alpha beta")],
             firstItem: item,
             totalCount: 1
         ))
@@ -501,7 +501,7 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "be", filter: .all),
-            items: [makeMatch(id: "1", snippet: "alpha beta")],
+            items: [makeMatch(id: "1", excerpt: "alpha beta")],
             firstItem: item,
             totalCount: 1
         ))
@@ -543,7 +543,7 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "hello", filter: .all),
-            items: [makeMatch(id: "1", snippet: "hello_arrr")],
+            items: [makeMatch(id: "1", excerpt: "hello_arrr")],
             firstItem: item,
             totalCount: 1
         ))
@@ -571,7 +571,7 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "hello_arr", filter: .all),
-            items: [makeMatch(id: "1", snippet: "hello_arrr")],
+            items: [makeMatch(id: "1", excerpt: "hello_arrr")],
             firstItem: item,
             totalCount: 1
         ))
@@ -617,13 +617,13 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "a", filter: .all),
-            items: [makeMatch(id: "1", snippet: "alpha beta")],
+            items: [makeDeferredMatch(id: "1", text: "alpha beta", query: "a")],
             firstItem: item,
             totalCount: 1
         ))
         await flushMainActor()
 
-        viewModel.loadListDecorationsForItems(["1"])
+        viewModel.loadMatchedExcerptsForItems(["1"])
         await flushMainActor()
 
         viewModel.updateSearchText("al")
@@ -631,26 +631,26 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "al", filter: .all),
-            items: [makeMatch(id: "1", snippet: "alpha beta")],
+            items: [makeDeferredMatch(id: "1", text: "alpha beta", query: "al")],
             firstItem: item,
             totalCount: 1
         ))
         await flushMainActor()
         await flushMainActor()
 
-        let staleListDecoration = ListDecoration(
+        let staleMatchedExcerpt = MatchedExcerpt(
             text: "alpha beta",
             highlights: [Utf16HighlightRange(utf16Start: 0, utf16End: 1, kind: .exact)],
             lineNumber: 1
         )
-        client.resumeListDecorations(
+        client.resumeMatchedExcerpts(
             itemIds: ["1"],
             query: "a",
-            with: [ListDecorationResult(itemId: "1", decoration: staleListDecoration)]
+            with: [.ready(itemId: "1", excerpt: staleMatchedExcerpt)]
         )
         await flushMainActor()
 
-        XCTAssertNil(viewModel.listDecorationsByItemId["1"])
+        XCTAssertNil(viewModel.resolvedMatchedExcerptsByItemId["1"])
         XCTAssertEqual(viewModel.previewDecoration?.highlights.first?.utf16End, 2)
     }
 
@@ -658,7 +658,7 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
             firstPreviewPayload: nil,
             totalCount: 2
         ))
@@ -697,7 +697,7 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
             firstPreviewPayload: nil,
             totalCount: 2
         ))
@@ -772,7 +772,7 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "one")],
+            items: [makeMatch(id: "1", excerpt: "one")],
             firstPreviewPayload: nil,
             totalCount: 1
         ))
@@ -803,7 +803,7 @@ final class BrowserViewModelTests: XCTestCase {
         ))
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "one")],
+            items: [makeMatch(id: "1", excerpt: "one")],
             firstPreviewPayload: nil,
             totalCount: 1
         ))
@@ -836,8 +836,8 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .tagged(tag: .bookmark)),
             items: [
-                makeMatch(id: "1", snippet: "one", tags: [.bookmark]),
-                makeMatch(id: "2", snippet: "two", tags: [.bookmark]),
+                makeMatch(id: "1", excerpt: "one", tags: [.bookmark]),
+                makeMatch(id: "2", excerpt: "two", tags: [.bookmark]),
             ],
             firstPreviewPayload: nil,
             totalCount: 2
@@ -868,9 +868,9 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [
-                makeMatch(id: "1", snippet: "one"),
-                makeMatch(id: "2", snippet: "two"),
-                makeMatch(id: "3", snippet: "three"),
+                makeMatch(id: "1", excerpt: "one"),
+                makeMatch(id: "2", excerpt: "two"),
+                makeMatch(id: "3", excerpt: "three"),
             ],
             firstPreviewPayload: nil,
             totalCount: 3
@@ -903,7 +903,7 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
             firstPreviewPayload: nil,
             totalCount: 2
         ))
@@ -939,7 +939,7 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "one")],
+            items: [makeMatch(id: "1", excerpt: "one")],
             firstPreviewPayload: nil,
             totalCount: 1
         ))
@@ -971,7 +971,7 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "original text")],
+            items: [makeMatch(id: "1", excerpt: "original text")],
             firstPreviewPayload: nil,
             totalCount: 1
         ))
@@ -996,7 +996,10 @@ final class BrowserViewModelTests: XCTestCase {
             return XCTFail("Expected selected item text content")
         }
         XCTAssertEqual(value, "edited text")
-        XCTAssertTrue(viewModel.contentState.items.first?.itemMetadata.snippet.contains("edited") == true)
+        guard case let .baseline(excerpt)? = viewModel.contentState.items.first?.presentation else {
+            return XCTFail("Expected optimistic baseline excerpt")
+        }
+        XCTAssertTrue(excerpt.text.contains("edited"))
         XCTAssertEqual(client.updatedTexts.count, 1)
         XCTAssertEqual(client.updatedTexts.first?.itemId, "1")
         XCTAssertEqual(client.updatedTexts.first?.text, "edited text")
@@ -1007,7 +1010,7 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "original text")],
+            items: [makeMatch(id: "1", excerpt: "original text")],
             firstPreviewPayload: nil,
             totalCount: 1
         ))
@@ -1056,7 +1059,7 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "hello")],
+            items: [makeMatch(id: "1", excerpt: "hello")],
             firstPreviewPayload: nil,
             totalCount: 1
         ))
@@ -1080,7 +1083,7 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "hello")],
+            items: [makeMatch(id: "1", excerpt: "hello")],
             firstPreviewPayload: nil,
             totalCount: 1
         ))
@@ -1106,7 +1109,7 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "hello")],
+            items: [makeMatch(id: "1", excerpt: "hello")],
             firstPreviewPayload: nil,
             totalCount: 1
         ))
@@ -1133,7 +1136,7 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "hello")],
+            items: [makeMatch(id: "1", excerpt: "hello")],
             firstPreviewPayload: nil,
             totalCount: 1
         ))
@@ -1164,9 +1167,9 @@ final class BrowserViewModelTests: XCTestCase {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [
-                makeMatch(id: "1", snippet: "one"),
-                makeMatch(id: "2", snippet: "two"),
-                makeMatch(id: "3", snippet: "three"),
+                makeMatch(id: "1", excerpt: "one"),
+                makeMatch(id: "2", excerpt: "two"),
+                makeMatch(id: "3", excerpt: "three"),
             ],
             firstPreviewPayload: nil,
             totalCount: 3
@@ -1199,7 +1202,7 @@ final class BrowserViewModelTests: XCTestCase {
         client.clearResult = .success(())
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
             firstPreviewPayload: nil,
             totalCount: 2
         ))
@@ -1236,7 +1239,7 @@ final class BrowserViewModelTests: XCTestCase {
         let item = makeItem(id: "1", text: "selected text")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "selected text")],
+            items: [makeMatch(id: "1", excerpt: "selected text")],
             firstItem: item,
             totalCount: 1
         ))
@@ -1259,7 +1262,7 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
             firstPreviewPayload: nil,
             totalCount: 2
         ))
@@ -1289,7 +1292,7 @@ final class BrowserViewModelTests: XCTestCase {
         let item = makeItem(id: "1", text: "selected text")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "selected text")],
+            items: [makeMatch(id: "1", excerpt: "selected text")],
             firstItem: item,
             totalCount: 1
         ))
@@ -1323,7 +1326,7 @@ final class BrowserViewModelTests: XCTestCase {
         let item = makeItem(id: "1", text: "selected text")
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "selected text")],
+            items: [makeMatch(id: "1", excerpt: "selected text")],
             firstItem: item,
             totalCount: 1
         ))
@@ -1356,7 +1359,7 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
             firstPreviewPayload: nil,
             totalCount: 2
         ))
@@ -1393,7 +1396,7 @@ final class BrowserViewModelTests: XCTestCase {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
-            items: [makeMatch(id: "1", snippet: "one"), makeMatch(id: "2", snippet: "two")],
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
             firstPreviewPayload: nil,
             totalCount: 2
         ))
@@ -1434,18 +1437,39 @@ final class BrowserViewModelTests: XCTestCase {
         }
     }
 
-    private func makeMatch(id: String, snippet: String, tags: [ItemTag] = []) -> ItemMatch {
+    private func makeMatch(id: String, excerpt: String, tags: [ItemTag] = []) -> ItemMatch {
         ItemMatch(
             itemMetadata: ItemMetadata(
                 itemId: id,
                 icon: .symbol(iconType: .text),
-                snippet: snippet,
                 sourceApp: nil,
                 sourceAppBundleId: nil,
                 timestampUnix: 0,
                 tags: tags
             ),
-            listDecoration: nil
+            presentation: .baseline(excerpt: BaselineExcerpt(text: excerpt))
+        )
+    }
+
+    private func makeDeferredMatch(id: String, text: String, query: String, tags: [ItemTag] = []) -> ItemMatch {
+        ItemMatch(
+            itemMetadata: ItemMetadata(
+                itemId: id,
+                icon: .symbol(iconType: .text),
+                sourceApp: nil,
+                sourceAppBundleId: nil,
+                timestampUnix: 0,
+                tags: tags
+            ),
+            presentation: .deferred(
+                request: MatchedExcerptRequest(
+                    itemId: id,
+                    query: query,
+                    presentationProfile: .compactRow,
+                    contentHash: "hash-\(id)-\(query)"
+                ),
+                placeholder: .baseline(excerpt: BaselineExcerpt(text: text))
+            )
         )
     }
 
@@ -1454,7 +1478,6 @@ final class BrowserViewModelTests: XCTestCase {
             itemMetadata: ItemMetadata(
                 itemId: id,
                 icon: .symbol(iconType: .text),
-                snippet: text,
                 sourceApp: nil,
                 sourceAppBundleId: nil,
                 timestampUnix: 0,
@@ -1505,7 +1528,7 @@ private extension BrowserSearchResponse {
 
 @MainActor
 private final class MockBrowserStoreClient: BrowserStoreClient {
-    struct ListDecorationRequest: Hashable {
+    struct MatchedExcerptRequestKey: Hashable {
         let itemIds: [String]
         let query: String
     }
@@ -1526,12 +1549,12 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
     var updateTextResult: Result<Void, ClipboardError> = .success(())
     var updatedTexts: [(itemId: String, text: String)] = []
     var startedSearchRequests: [SearchRequest] = []
-    var loadListDecorationRequests: [ListDecorationRequest] = []
+    var resolveMatchedExcerptRequests: [MatchedExcerptRequestKey] = []
     var loadPreviewDecorationRequests: [PreviewDecorationRequest] = []
-    var listDecorationsByQuery: [String: [String: ListDecoration]] = [:]
+    var matchedExcerptsByQuery: [String: [String: MatchedExcerpt]] = [:]
     var previewPayloadsByQuery: [String: [String: PreviewPayload]] = [:]
     private var fetchContinuations: [String: [CheckedContinuation<ClipboardItem?, Never>]] = [:]
-    private var listDecorationContinuations: [ListDecorationRequest: [CheckedContinuation<[ListDecorationResult], Never>]] = [:]
+    private var matchedExcerptContinuations: [MatchedExcerptRequestKey: [CheckedContinuation<[MatchedExcerptResolution], Never>]] = [:]
     private var previewPayloadContinuations: [PreviewDecorationRequest: [CheckedContinuation<PreviewPayload?, Never>]] = [:]
 
     func startSearch(request: SearchRequest) -> BrowserSearchOperation {
@@ -1564,18 +1587,23 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
         }
     }
 
-    func loadListDecorations(itemIds: [String], query: String, presentation _: ListPresentationProfile) async -> [ListDecorationResult] {
-        let request = ListDecorationRequest(itemIds: itemIds, query: query)
-        loadListDecorationRequests.append(request)
+    func resolveMatchedExcerpts(requests: [MatchedExcerptRequest]) async -> [MatchedExcerptResolution] {
+        let itemIds = requests.map { $0.itemId }
+        let query = requests.first?.query ?? ""
+        let request = MatchedExcerptRequestKey(itemIds: itemIds, query: query)
+        resolveMatchedExcerptRequests.append(request)
 
-        if let decorationsByItemId = listDecorationsByQuery[query] {
+        if let excerptsByItemId = matchedExcerptsByQuery[query] {
             return itemIds.map { itemId in
-                ListDecorationResult(itemId: itemId, decoration: decorationsByItemId[itemId])
+                if let excerpt = excerptsByItemId[itemId] {
+                    return .ready(itemId: itemId, excerpt: excerpt)
+                }
+                return .unavailable(itemId: itemId, reason: .itemMissing)
             }
         }
 
         return await withCheckedContinuation { continuation in
-            listDecorationContinuations[request, default: []].append(continuation)
+            matchedExcerptContinuations[request, default: []].append(continuation)
         }
     }
 
@@ -1631,9 +1659,9 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
         fetchContinuations.removeValue(forKey: id)?.forEach { $0.resume(returning: item) }
     }
 
-    func resumeListDecorations(itemIds: [String], query: String, with results: [ListDecorationResult]) {
-        let request = ListDecorationRequest(itemIds: itemIds, query: query)
-        listDecorationContinuations.removeValue(forKey: request)?.forEach { $0.resume(returning: results) }
+    func resumeMatchedExcerpts(itemIds: [String], query: String, with results: [MatchedExcerptResolution]) {
+        let request = MatchedExcerptRequestKey(itemIds: itemIds, query: query)
+        matchedExcerptContinuations.removeValue(forKey: request)?.forEach { $0.resume(returning: results) }
     }
 
     func resumePreviewPayload(itemId: String, query: String, with payload: PreviewPayload?) {

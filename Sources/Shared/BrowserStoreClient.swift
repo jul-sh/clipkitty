@@ -18,7 +18,7 @@ public protocol BrowserStoreClient: AnyObject {
     var listPresentationProfile: ListPresentationProfile { get }
     func startSearch(request: SearchRequest) -> BrowserSearchOperation
     func fetchItem(id: String) async -> ClipboardItem?
-    func loadListDecorations(itemIds: [String], query: String, presentation: ListPresentationProfile) async -> [ListDecorationResult]
+    func resolveMatchedExcerpts(requests: [MatchedExcerptRequest]) async -> [MatchedExcerptResolution]
     func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload?
     #if ENABLE_LINK_PREVIEWS
     func fetchLinkMetadata(url: String, itemId: String) async -> ClipboardItem?

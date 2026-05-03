@@ -56,8 +56,8 @@ final class iOSBrowserStoreClient: BrowserStoreClient {
         await previewLoader.fetchItem(id: id)
     }
 
-    func loadListDecorations(itemIds: [String], query: String, presentation: ListPresentationProfile) async -> [ListDecorationResult] {
-        await repository.computeListDecorations(itemIds: itemIds, query: query, presentation: presentation)
+    func resolveMatchedExcerpts(requests: [MatchedExcerptRequest]) async -> [MatchedExcerptResolution] {
+        await repository.resolveMatchedExcerpts(requests: requests)
     }
 
     func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload? {
