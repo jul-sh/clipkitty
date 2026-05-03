@@ -16,7 +16,7 @@ public struct SaveTextToClipKittyIntent: AppIntent {
     public init() {}
 
     public func perform() async throws -> some IntentResult & ReturnsValue<String> {
-        let saved = try await ClipKittyShortcutService().saveText(text)
+        let saved = try await ClipKittyShortcutRuntime.makeService().saveText(text)
         return .result(value: text, dialog: ShortcutIntentResult.dialog(for: saved))
     }
 }
@@ -29,7 +29,7 @@ public struct SaveClipboardToClipKittyIntent: AppIntent {
     public init() {}
 
     public func perform() async throws -> some IntentResult & ReturnsValue<String> {
-        let saved = try await ClipKittyShortcutService().saveCurrentClipboard()
+        let saved = try await ClipKittyShortcutRuntime.makeService().saveCurrentClipboard()
         return .result(
             value: ShortcutIntentResult.value(for: saved),
             dialog: ShortcutIntentResult.dialog(for: saved)
@@ -51,7 +51,7 @@ public struct SearchClipKittyTextIntent: AppIntent {
     public init() {}
 
     public func perform() async throws -> some IntentResult & ReturnsValue<[String]> {
-        let values = try await ClipKittyShortcutService().searchText(query: query, limit: limit)
+        let values = try await ClipKittyShortcutRuntime.makeService().searchText(query: query, limit: limit)
         return .result(value: values)
     }
 }
@@ -67,7 +67,7 @@ public struct GetRecentClipKittyTextIntent: AppIntent {
     public init() {}
 
     public func perform() async throws -> some IntentResult & ReturnsValue<[String]> {
-        let values = try await ClipKittyShortcutService().fetchRecentText(limit: limit)
+        let values = try await ClipKittyShortcutRuntime.makeService().fetchRecentText(limit: limit)
         return .result(value: values)
     }
 }
@@ -80,7 +80,7 @@ public struct CopyLatestClipKittyTextIntent: AppIntent {
     public init() {}
 
     public func perform() async throws -> some IntentResult & ReturnsValue<String> {
-        let value = try await ClipKittyShortcutService().copyLatestText()
+        let value = try await ClipKittyShortcutRuntime.makeService().copyLatestText()
         return .result(value: value, dialog: "Copied to clipboard.")
     }
 }
