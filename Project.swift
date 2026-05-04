@@ -497,7 +497,6 @@ private let macAppCoreDependencies: [TargetDependency] = [
     .target(name: "ClipKittyShared"),
     .target(name: "ClipKittyAppleServices"),
     .target(name: "ClipKittyMacPlatform"),
-    .target(name: "ClipKittyShortcuts"),
     .sdk(name: "SystemConfiguration", type: .framework),
     .external(name: "STTextKitPlus"),
 ]
@@ -687,26 +686,6 @@ let project = Project(
             )
         ),
 
-        // MARK: ClipKittyShortcuts — App Intents exposed to Apple Shortcuts
-
-        .target(
-            name: "ClipKittyShortcuts",
-            destinations: [.mac, .iPhone],
-            product: .staticLibrary,
-            bundleId: "com.eviljuliette.clipkitty.shortcuts",
-            deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
-            sources: ["Sources/Shortcuts/**"],
-            dependencies: [
-                .target(name: "ClipKittyRust"),
-                .target(name: "ClipKittyShared"),
-            ],
-            settings: .settings(
-                base: [
-                    "SKIP_INSTALL": "YES",
-                ]
-            )
-        ),
-
     ] + makeMacAppTargets() + [
         // MARK: ClipKittyTests — Unit tests
 
@@ -725,7 +704,6 @@ let project = Project(
                 .target(name: "ClipKittyShared"),
                 .target(name: "ClipKittyAppleServices"),
                 .target(name: "ClipKittyMacPlatform"),
-                .target(name: "ClipKittyShortcuts"),
             ],
             settings: .settings(
                 base: [
@@ -789,7 +767,6 @@ let project = Project(
                 .target(name: "ClipKittyRust"),
                 .target(name: "ClipKittyShared"),
                 .target(name: "ClipKittyAppleServices"),
-                .target(name: "ClipKittyShortcuts"),
                 .target(name: "ClipKittyShare"),
             ],
             settings: .settings(
@@ -871,7 +848,6 @@ let project = Project(
                 .target(name: "ClipKittyRust"),
                 .target(name: "ClipKittyShared"),
                 .target(name: "ClipKittyAppleServices"),
-                .target(name: "ClipKittyShortcuts"),
             ],
             settings: .settings(
                 base: [
@@ -904,7 +880,6 @@ let project = Project(
                 .target(name: "ClipKittyRust"),
                 .target(name: "ClipKittyShared"),
                 .target(name: "ClipKittyAppleServices"),
-                .target(name: "ClipKittyShortcuts"),
             ],
             settings: .settings(
                 base: [

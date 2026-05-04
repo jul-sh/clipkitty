@@ -11,7 +11,6 @@
 import ClipKittyAppleServices
 import ClipKittyRust
 import ClipKittyShared
-import ClipKittyShortcuts
 import SwiftUI
 
 @main
