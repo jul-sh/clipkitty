@@ -29,6 +29,7 @@ final class ClipKittyShortcutIntentTests: XCTestCase {
             try await intent.perform()
         }
 
+        requireStringValueWithDialog(result)
         XCTAssertEqual(result.value, "saved through intent")
         let recent = try await service.fetchRecentText(limit: 1)
         XCTAssertEqual(recent, ["saved through intent"])
@@ -54,6 +55,7 @@ final class ClipKittyShortcutIntentTests: XCTestCase {
             try await intent.perform()
         }
 
+        requireStringValueWithDialog(result)
         XCTAssertFalse(result.value?.isEmpty ?? true)
         let recent = try await service.fetchRecentText(limit: 1)
         XCTAssertEqual(recent, ["clipboard through intent"])
@@ -117,6 +119,7 @@ final class ClipKittyShortcutIntentTests: XCTestCase {
             try await intent.perform()
         }
 
+        requireStringValueWithDialog(result)
         let writtenValues = await recorder.values()
         XCTAssertEqual(result.value, "newer copy intent clip")
         XCTAssertEqual(writtenValues, ["newer copy intent clip"])
@@ -175,6 +178,10 @@ final class ClipKittyShortcutIntentTests: XCTestCase {
         tempDir.appendingPathComponent("clipboard.sqlite").path
     }
 }
+
+private func requireStringValueWithDialog(
+    _ result: some IntentResult & ReturnsValue<String> & ProvidesDialog
+) {}
 
 private actor RecordedPasteboard {
     private var writtenValues: [String] = []
