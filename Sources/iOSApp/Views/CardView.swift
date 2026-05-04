@@ -13,7 +13,12 @@ struct CardView: View {
     @Environment(HapticsClient.self) private var haptics
 
     @State private var isShareLoading = false
-    @State private var fullImage: UIImage?
+
+    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
 
     private var metadata: ItemMetadata {
         row.metadata
@@ -178,40 +183,28 @@ struct CardView: View {
     @ViewBuilder
     private func thumbnailPreview(bytes: Data) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Group {
-                if let uiImage = fullImage ?? UIImage(data: bytes) {
-                    Image(uiImage: uiImage)
-                        .resizable()
-                        .aspectRatio(uiImage.size, contentMode: .fit)
-                        .frame(maxWidth: .infinity)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                } else {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(.secondary.opacity(0.1))
-                        .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                        .overlay(
-                            Image(systemName: "photo")
-                                .font(.title)
-                                .foregroundStyle(.secondary)
-                        )
-                }
+            DecodedImageView(
+                namespace: "card-thumbnail",
+                itemId: metadata.itemId,
+                data: bytes
+            ) {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(.secondary.opacity(0.1))
+                    .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                    .overlay(
+                        Image(systemName: "photo")
+                            .font(.title)
+                            .foregroundStyle(.secondary)
+                    )
             }
+            .frame(maxWidth: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
             if !displayExcerpt.text.isEmpty {
                 highlightedText(displayExcerpt.text, highlights: displayExcerpt.highlights, font: .custom(FontManager.sansSerif, size: 15))
                     .lineLimit(2)
             }
         }
-        .task(id: metadata.itemId) {
-            await loadFullImage(itemId: metadata.itemId)
-        }
-    }
-
-    private func loadFullImage(itemId: String) async {
-        fullImage = nil
-        guard let item = await container.storeClient.fetchItem(id: itemId) else { return }
-        guard case let .image(data, _, _) = item.content else { return }
-        guard !Task.isCancelled else { return }
-        fullImage = UIImage(data: data)
     }
 
     // MARK: - Context menu
@@ -318,9 +311,7 @@ struct CardView: View {
 
     private var relativeTime: String {
         let date = Date(timeIntervalSince1970: TimeInterval(metadata.timestampUnix))
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        return Self.relativeDateFormatter.localizedString(for: date, relativeTo: Date())
     }
 
     private func colorFromRGBA(_ rgba: UInt32) -> Color {

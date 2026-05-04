@@ -14,7 +14,8 @@ struct BrowserResultsList: View {
     var body: some View {
         ScrollViewReader { proxy in
             List {
-                ForEach(Array(viewModel.displayRows.enumerated()), id: \.element.metadata.itemId) { index, row in
+                ForEach(viewModel.displayRows) { row in
+                    let index = viewModel.indexOfItem(row.metadata.itemId) ?? 0
                     ItemRow(
                         metadata: row.metadata,
                         presentation: row.presentation,

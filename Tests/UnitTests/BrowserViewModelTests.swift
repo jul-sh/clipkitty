@@ -654,6 +654,40 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.previewDecoration?.highlights.first?.utf16End, 2)
     }
 
+    func testMatchedExcerptLoadingDeduplicatesItemsAlreadyInFlight() async {
+        let client = MockBrowserStoreClient()
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.updateSearchText("a")
+        try? await Task.sleep(for: .milliseconds(75))
+        await flushMainActor()
+
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "a", filter: .all),
+            items: [
+                makeDeferredMatch(id: "1", text: "alpha", query: "a"),
+                makeDeferredMatch(id: "2", text: "beta", query: "a"),
+                makeDeferredMatch(id: "3", text: "gamma", query: "a"),
+            ],
+            firstPreviewPayload: nil,
+            totalCount: 3
+        ))
+        await flushMainActor()
+
+        viewModel.loadMatchedExcerptsForItems(["1", "2"])
+        viewModel.loadMatchedExcerptsForItems(["2", "3"])
+        await flushMainActor()
+
+        XCTAssertEqual(client.resolveMatchedExcerptRequests.count, 2)
+        XCTAssertTrue(client.resolveMatchedExcerptRequests.contains(.init(itemIds: ["1", "2"], query: "a")))
+        XCTAssertTrue(client.resolveMatchedExcerptRequests.contains(.init(itemIds: ["3"], query: "a")))
+    }
+
     func testDeleteFailureRollsBackSearchAndSelection() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
