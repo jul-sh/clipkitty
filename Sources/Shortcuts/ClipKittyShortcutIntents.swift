@@ -15,7 +15,7 @@ public struct SaveTextToClipKittyIntent: AppIntent {
 
     public init() {}
 
-    public func perform() async throws -> some IntentResult & ReturnsValue<String> {
+    public func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
         let saved = try await ClipKittyShortcutRuntime.makeService().saveText(text)
         return .result(value: text, dialog: ShortcutIntentResult.dialog(for: saved))
     }
@@ -28,7 +28,7 @@ public struct SaveClipboardToClipKittyIntent: AppIntent {
 
     public init() {}
 
-    public func perform() async throws -> some IntentResult & ReturnsValue<String> {
+    public func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
         let saved = try await ClipKittyShortcutRuntime.makeService().saveCurrentClipboard()
         return .result(
             value: ShortcutIntentResult.value(for: saved),
@@ -79,7 +79,7 @@ public struct CopyLatestClipKittyTextIntent: AppIntent {
 
     public init() {}
 
-    public func perform() async throws -> some IntentResult & ReturnsValue<String> {
+    public func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
         let value = try await ClipKittyShortcutRuntime.makeService().copyLatestText()
         return .result(value: value, dialog: "Copied to clipboard.")
     }
