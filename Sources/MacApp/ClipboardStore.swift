@@ -3,6 +3,7 @@ import ClipKittyAppleServices
 import ClipKittyMacPlatform
 import ClipKittyRust
 import ClipKittyShared
+import ClipKittyShortcuts
 import Foundation
 import ImageIO
 import Observation
@@ -313,6 +314,20 @@ final class ClipboardStore {
     func awaitReady() async {
         guard let task = bootstrapTask else { return }
         _ = try? await task.value
+    }
+
+    func shortcutRepositoryAvailability() -> ClipKittyShortcutRepositoryAvailability {
+        switch lifecycle {
+        case .ready:
+            if let repository {
+                return .ready(repository)
+            }
+            return .unavailable("ClipKitty's database is not ready yet.")
+        case .initializing, .rebuildingIndex:
+            return .unavailable("ClipKitty is still preparing its database.")
+        case let .failed(reason):
+            return .unavailable(reason)
+        }
     }
 
     // MARK: - Public API

@@ -2,6 +2,7 @@ import AppKit
 import ClipKittyMacPlatform
 import ClipKittyRust
 import ClipKittyShared
+import ClipKittyShortcuts
 import Combine
 import SwiftUI
 #if ENABLE_SPARKLE_UPDATES
@@ -72,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .simulatedDatabase:
             store = ClipboardStore(screenshotMode: true)
         }
+        configureShortcutRuntime()
         #if ENABLE_ICLOUD_SYNC
             configureSyncPreferenceController()
         #endif
@@ -160,6 +162,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 panelController.show()
                 NSApp.activate(ignoringOtherApps: true)
             }
+        }
+    }
+
+    private func configureShortcutRuntime() {
+        ClipKittyShortcutRuntime.useRepositoryProvider { [weak store] in
+            guard let store else {
+                return .unavailable("ClipKitty has not finished launching.")
+            }
+            await store.awaitReady()
+            return store.shortcutRepositoryAvailability()
         }
     }
 

@@ -1,3 +1,5 @@
+import ClipKittyRust
+import ClipKittyShared
 @testable import ClipKittyShortcuts
 import XCTest
 
@@ -70,6 +72,23 @@ final class ClipKittyShortcutServiceTests: XCTestCase {
 
         let values = try await service.searchText(query: "shortcut", limit: 2)
         XCTAssertEqual(values.count, 2)
+    }
+
+    func testUsesProvidedRepositoryInsteadOfOpeningSecondStore() async throws {
+        let rustStore = try ClipKittyRust.ClipboardStore(dbPath: dbPath())
+        let repository = ClipboardRepository(store: rustStore)
+        let service = ClipKittyShortcutService(repositoryProvider: {
+            .ready(repository)
+        })
+
+        _ = await repository.saveText(
+            text: "existing app repository",
+            sourceApp: "Test",
+            sourceAppBundleId: nil
+        )
+
+        let values = try await service.searchText(query: "existing", limit: 1)
+        XCTAssertEqual(values, ["existing app repository"])
     }
 
     private func dbPath() -> String {

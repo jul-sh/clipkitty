@@ -10,13 +10,47 @@ protocol ClipKittyShortcutServicing: Sendable {
     func copyLatestText() async throws -> String
 }
 
-enum ClipKittyShortcutRuntime {
+public enum ClipKittyShortcutRepositoryAvailability: Sendable {
+    case ready(ClipboardRepository)
+    case unavailable(String)
+}
+
+public enum ClipKittyShortcutRuntime {
+    private static let registry = ShortcutServiceRegistry()
+
     @TaskLocal static var serviceFactory: @Sendable () -> any ClipKittyShortcutServicing = {
-        ClipKittyShortcutService()
+        registry.makeService()
     }
 
     static func makeService() -> any ClipKittyShortcutServicing {
         serviceFactory()
+    }
+
+    public static func useRepositoryProvider(
+        _ provider: @escaping @MainActor @Sendable () async -> ClipKittyShortcutRepositoryAvailability
+    ) {
+        registry.install {
+            ClipKittyShortcutService(repositoryProvider: provider)
+        }
+    }
+}
+
+private final class ShortcutServiceRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var serviceFactory: @Sendable () -> any ClipKittyShortcutServicing = {
+        ClipKittyShortcutService()
+    }
+
+    func install(_ factory: @escaping @Sendable () -> any ClipKittyShortcutServicing) {
+        lock.lock()
+        defer { lock.unlock() }
+        serviceFactory = factory
+    }
+
+    func makeService() -> any ClipKittyShortcutServicing {
+        lock.lock()
+        defer { lock.unlock() }
+        return serviceFactory()
     }
 }
 
@@ -87,8 +121,13 @@ private enum ShortcutTextExtraction: Sendable {
     }
 }
 
+private enum ShortcutRepositorySource: Sendable {
+    case appRepository(@MainActor @Sendable () async -> ClipKittyShortcutRepositoryAvailability)
+    case databasePath(@Sendable () throws -> String)
+}
+
 final class ClipKittyShortcutService: ClipKittyShortcutServicing {
-    private let databasePathProvider: @Sendable () throws -> String
+    private let repositorySource: ShortcutRepositorySource
     private let pasteboardClient: ShortcutPasteboardClient
 
     init(
@@ -97,7 +136,15 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
         },
         pasteboardClient: ShortcutPasteboardClient = .live
     ) {
-        self.databasePathProvider = databasePathProvider
+        repositorySource = .databasePath(databasePathProvider)
+        self.pasteboardClient = pasteboardClient
+    }
+
+    init(
+        repositoryProvider: @escaping @MainActor @Sendable () async -> ClipKittyShortcutRepositoryAvailability,
+        pasteboardClient: ShortcutPasteboardClient = .live
+    ) {
+        repositorySource = .appRepository(repositoryProvider)
         self.pasteboardClient = pasteboardClient
     }
 
@@ -110,7 +157,7 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
             throw ClipKittyShortcutError.emptyText
         }
 
-        let repository = try makeRepository()
+        let repository = try await makeRepository()
         let result = await repository.saveText(
             text: text,
             sourceApp: "Shortcuts",
@@ -155,7 +202,7 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
         case let .text(text):
             return try await saveText(text)
         case let .image(data, thumbnail, isAnimated):
-            let repository = try makeRepository()
+            let repository = try await makeRepository()
             let result = await repository.saveImage(
                 imageData: data,
                 thumbnail: thumbnail,
@@ -168,7 +215,7 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
     }
 
     private func fetchText(query: String, limit: Int) async throws -> [String] {
-        let repository = try makeRepository()
+        let repository = try await makeRepository()
         let result = await repository.search(
             query: query,
             filter: .contentType(contentType: .text),
@@ -201,7 +248,23 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
         return values
     }
 
-    private func makeRepository() throws -> ClipboardRepository {
+    private func makeRepository() async throws -> ClipboardRepository {
+        switch repositorySource {
+        case let .appRepository(provider):
+            switch await provider() {
+            case let .ready(repository):
+                return repository
+            case let .unavailable(reason):
+                throw ClipKittyShortcutError.databaseOpenFailed(reason)
+            }
+        case let .databasePath(databasePathProvider):
+            return try makeStandaloneRepository(databasePathProvider: databasePathProvider)
+        }
+    }
+
+    private func makeStandaloneRepository(
+        databasePathProvider: @Sendable () throws -> String
+    ) throws -> ClipboardRepository {
         let dbPath: String
         do {
             dbPath = try databasePathProvider()
