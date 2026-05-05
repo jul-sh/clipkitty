@@ -166,7 +166,8 @@ enum MacBuildVariant: CaseIterable {
 
     /// Additional target-level base build settings (e.g. Sparkle feed config).
     var additionalTargetBaseSettings: SettingsDictionary {
-        if requiresSparkle {
+        switch self {
+        case .sparkle:
             return [
                 "PRODUCT_NAME": "ClipKitty",
                 "SPARKLE_FEED_URL": "https://jul-sh.github.io/clipkitty/appcast.xml",
@@ -175,8 +176,13 @@ enum MacBuildVariant: CaseIterable {
                 "SPARKLE_AUTO_UPDATE": "YES",
                 "SPARKLE_INSTALLER_SERVICE": "YES",
             ]
+        case .hardened:
+            return [
+                "PRODUCT_NAME": "ClipKitty",
+            ]
+        case .debug, .release, .appStore:
+            return [:]
         }
-        return [:]
     }
 
     /// Additional Info.plist entries for this variant's target.
