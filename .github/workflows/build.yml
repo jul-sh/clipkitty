@@ -159,11 +159,13 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (AppStore)
+        timeout-minutes: 45
         run: make app-app-store
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Stage Hardened App
+        timeout-minutes: 30
         run: make app-hardened
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
@@ -288,12 +290,14 @@ jobs:
           echo "Hardened feature surface verified."
 
       - name: Build iOS Smoke Test
+        timeout-minutes: 15
         run: nix build '.#checks.aarch64-darwin.clipkitty-ios-smoke-build' -L
 
       - name: Generate Xcode Workspace
         run: make workspace
 
       - name: Build iOS App (AppStore)
+        timeout-minutes: 20
         run: |
           VERSION=$(make release-version FIELD=version)
           COMMIT_COUNT=$(make release-version FIELD=build-number)
@@ -371,6 +375,7 @@ jobs:
           sleep 5
 
       - name: Generate Marketing Screenshots
+        timeout-minutes: 20
         run: |
           SKIP_SIGNING=1 LOCKED=1 make screenshots-macos
           ls -lh marketing/*/screenshot_*.png
@@ -385,6 +390,7 @@ jobs:
         run: make site-icon
 
       - name: Build and Sign DMG
+        timeout-minutes: 30
         run: |
           make release-dmg
           codesign --force --sign "Developer ID Application" ClipKitty.dmg
