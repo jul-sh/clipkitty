@@ -487,6 +487,7 @@ private let macAppResources: ResourceFileElements = [
     .folderReference(path: "Sources/MacApp/Resources/Fonts"),
     "Sources/MacApp/Resources/menu-bar.svg",
     "Sources/MacApp/Resources/Localizable.xcstrings",
+    "Sources/MacApp/Resources/AppShortcuts.xcstrings",
     "Sources/MacApp/Assets.xcassets",
     "Sources/MacApp/PrivacyInfo.xcprivacy",
 ]
@@ -783,6 +784,7 @@ let project = Project(
                 "AppIcon.icon",
                 "Sources/iOSApp/Resources/Fonts/**",
                 "Sources/iOSApp/Resources/Localizable.xcstrings",
+                "Sources/iOSApp/Resources/AppShortcuts.xcstrings",
                 "Sources/iOSApp/PrivacyInfo.xcprivacy",
             ],
             dependencies: [
