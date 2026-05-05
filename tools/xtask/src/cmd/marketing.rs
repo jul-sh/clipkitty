@@ -368,6 +368,14 @@ fn run_screenshot_xcodebuild(
         .arg(plan.scheme)
         .arg("-destination")
         .arg(plan.destination)
+        .args([
+            "-destination-timeout",
+            "120",
+            "-test-timeouts-enabled",
+            "YES",
+            "-maximum-test-execution-time-allowance",
+            "300",
+        ])
         .arg("-derivedDataPath")
         .arg(repo.join(plan.derived_data).as_std_path())
         .arg("-only-testing")
