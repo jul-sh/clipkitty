@@ -311,11 +311,15 @@ jobs:
             CODE_SIGNING_ALLOWED=NO
 
       - name: Generate iOS Marketing Screenshots
+        env:
+          CLIPKITTY_SCREENSHOT_LOCALES: ${{ github.event_name == 'pull_request' && 'en' || '' }}
         run: |
           unset TOOLCHAINS
           make screenshots-ios
 
       - name: Generate iPad Marketing Screenshots
+        env:
+          CLIPKITTY_SCREENSHOT_LOCALES: ${{ github.event_name == 'pull_request' && 'en' || '' }}
         run: |
           unset TOOLCHAINS
           make screenshots-ipad

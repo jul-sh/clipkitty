@@ -33,6 +33,7 @@ const SCREENSHOT_DB_FILE: &str = "/tmp/clipkitty_screenshot_db.txt";
 const IOS_SCREENSHOT_LOCALE_FILE: &str = "/tmp/clipkitty_ios_screenshot_locale.txt";
 const IOS_SCREENSHOT_DB_FILE: &str = "/tmp/clipkitty_ios_screenshot_db.txt";
 const IOS_SCREENSHOT_DEVICE_FILE: &str = "/tmp/clipkitty_ios_screenshot_device.txt";
+const SCREENSHOT_LOCALES_ENV: &str = "CLIPKITTY_SCREENSHOT_LOCALES";
 const VIDEO_RESULT_BUNDLE: &str = "/tmp/clipkitty_video_result.xcresult";
 const VIDEO_ATTACHMENTS_DIR: &str = "/tmp/xcresult-attachments";
 const VIDEO_BOUNDS_FILE: &str = "/tmp/clipkitty_window_bounds.txt";
@@ -96,6 +97,44 @@ impl MarketingLocale {
             Self::PtBr => "pt-BR",
             Self::Ru => "ru",
         }
+    }
+
+    fn parse(code: &str) -> Option<Self> {
+        match code {
+            "en" => Some(Self::En),
+            "es" => Some(Self::Es),
+            "zh-Hans" => Some(Self::ZhHans),
+            "zh-Hant" => Some(Self::ZhHant),
+            "ja" => Some(Self::Ja),
+            "ko" => Some(Self::Ko),
+            "fr" => Some(Self::Fr),
+            "de" => Some(Self::De),
+            "pt-BR" => Some(Self::PtBr),
+            "ru" => Some(Self::Ru),
+            _ => None,
+        }
+    }
+
+    fn selected_from_env() -> Result<Vec<Self>> {
+        let Ok(raw) = env::var(SCREENSHOT_LOCALES_ENV) else {
+            return Ok(Self::ALL.to_vec());
+        };
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return Ok(Self::ALL.to_vec());
+        }
+
+        let mut locales = Vec::new();
+        for token in trimmed.split(',') {
+            let code = token.trim();
+            let Some(locale) = Self::parse(code) else {
+                return Err(anyhow!(
+                    "{SCREENSHOT_LOCALES_ENV} contains unsupported locale `{code}`"
+                ));
+            };
+            locales.push(locale);
+        }
+        Ok(locales)
     }
 }
 
@@ -263,7 +302,7 @@ fn run_screenshot_plan(
     }
     let temp_files = TempSelectionFiles::new(&temp_paths);
 
-    for locale in MarketingLocale::ALL {
+    for locale in MarketingLocale::selected_from_env()? {
         let locale_code = locale.as_code();
         reporter.info(&format!(
             "Capturing {:?} screenshots for {locale_code}...",
@@ -1200,9 +1239,54 @@ fn tool_exists(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::copy_base_database_without_images;
+    use super::{copy_base_database_without_images, MarketingLocale, SCREENSHOT_LOCALES_ENV};
     use camino::Utf8PathBuf;
     use rusqlite::{params, Connection};
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn selected_screenshot_locales_default_to_full_set() {
+        let _guard = env_lock().lock().expect("env lock");
+        std::env::remove_var(SCREENSHOT_LOCALES_ENV);
+
+        assert_eq!(
+            MarketingLocale::selected_from_env().expect("selected locales"),
+            MarketingLocale::ALL.to_vec()
+        );
+    }
+
+    #[test]
+    fn selected_screenshot_locales_parse_comma_list() {
+        let _guard = env_lock().lock().expect("env lock");
+        std::env::set_var(SCREENSHOT_LOCALES_ENV, "en, fr,pt-BR");
+
+        assert_eq!(
+            MarketingLocale::selected_from_env().expect("selected locales"),
+            vec![
+                MarketingLocale::En,
+                MarketingLocale::Fr,
+                MarketingLocale::PtBr
+            ]
+        );
+        std::env::remove_var(SCREENSHOT_LOCALES_ENV);
+    }
+
+    #[test]
+    fn selected_screenshot_locales_reject_unknown_locale() {
+        let _guard = env_lock().lock().expect("env lock");
+        std::env::set_var(SCREENSHOT_LOCALES_ENV, "en,it");
+
+        let error = MarketingLocale::selected_from_env().expect_err("unknown locale");
+        assert!(error
+            .to_string()
+            .contains("CLIPKITTY_SCREENSHOT_LOCALES contains unsupported locale `it`"));
+        std::env::remove_var(SCREENSHOT_LOCALES_ENV);
+    }
 
     #[test]
     fn copied_localized_database_drops_inherited_images() {
