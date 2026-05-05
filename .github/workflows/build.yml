@@ -94,7 +94,14 @@ jobs:
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' || (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'release'))
         run: |
           TARGET_BRANCH="${GITHUB_BASE_REF:-${GITHUB_REF#refs/heads/}}"
-          VERSION=$(make release-version FIELD=version)
+          BASE_VERSION=$(awk -F '"' '/"MARKETING_VERSION"[[:space:]]*:/ { print $4; exit }' Project.swift)
+          if [ -z "$BASE_VERSION" ]; then
+            echo "::error::Could not resolve MARKETING_VERSION from Project.swift"
+            exit 1
+          fi
+          MAJOR_MINOR="${BASE_VERSION%.*}"
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          VERSION="${MAJOR_MINOR}.${COMMIT_COUNT}"
           echo "Resolved release version: $VERSION"
 
           if [ "$TARGET_BRANCH" = "main" ]; then
@@ -111,7 +118,9 @@ jobs:
           fi
 
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=$COMMIT_COUNT" >> "$GITHUB_ENV"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_number=$COMMIT_COUNT" >> "$GITHUB_OUTPUT"
           echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "release_title=$RELEASE_TITLE" >> "$GITHUB_OUTPUT"
@@ -299,8 +308,6 @@ jobs:
       - name: Build iOS App (AppStore)
         timeout-minutes: 20
         run: |
-          VERSION=$(make release-version FIELD=version)
-          COMMIT_COUNT=$(make release-version FIELD=build-number)
           xcodebuild build \
             -workspace ClipKitty.xcworkspace \
             -scheme ClipKittyiOS-AppStore \
@@ -311,7 +318,7 @@ jobs:
             -authenticationKeyID ${{ steps.xcode-auth.outputs.key_id }} \
             -authenticationKeyIssuerID ${{ steps.xcode-auth.outputs.issuer_id }} \
             MARKETING_VERSION="$VERSION" \
-            CURRENT_PROJECT_VERSION="$COMMIT_COUNT" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             CODE_SIGNING_ALLOWED=NO
 
       - name: Generate iOS Marketing Screenshots
