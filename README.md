@@ -4,7 +4,7 @@
 
 **Never lose what you copied.**
 
-Unlimited history • Instant fuzzy search • Live preview • iCloud Sync • Secure & Attested
+Unlimited history • Fast, forgiving search • Live preview • iCloud Sync • Secure & Attested
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty clipboard history" width="820">
 
@@ -12,17 +12,17 @@ Unlimited history • Instant fuzzy search • Live preview • iCloud Sync • 
 
 Most clipboard managers feel fine at first.
 
-Then you need something from last week, last month, or longer ago; and it is gone, hard to find, or cut off.
+Then you need something from last week, last month, or longer ago; and it is gone or hard to find.
 
 ClipKitty keeps your all clipboard history available and makes it easy to search, preview, and paste.
 
 ## Features
 
-- **Unlimited history**; no small item cap and no short expiration window
+- **Unlimited history**
 - **Fast, forgiving search**; find what you're looking for, even if you only remember parts, or mispell words
-- **Full previews**; see complete text, code, images, and colors before you paste
-- **Works with more than text**; including images, files, links, and color values
-- **Optional iCloud Sync**; keep your history across devices when you want it
+- **Full previews**; see complete text before you paste
+- **Works with more than text**; including images, files, colors, links
+- **Optional iCloud Sync**; 
 - **Private by default**; on-device, no telemetry, no accounts
 - **Open source and attested**; you can verify the app was built from the public source
 
@@ -46,15 +46,13 @@ ClipKitty keeps your all clipboard history available and makes it easy to search
 
 ## Privacy
 
-Your clipboard history contains sensitive information. ClipKitty keeps that history on-device by default.
-
 There are no accounts, no telemetry, and no third-party servers.
 
 If you enable iCloud Sync, your data stays in your private iCloud container.
 
 ### Verify the build
 
-ClipKitty publishes attested builds. See [VERIFY.md](VERIFY.md).
+ClipKitty publishes attested builds; see [VERIFY.md](VERIFY.md).
 
 ## Alternatives
 
@@ -82,9 +80,9 @@ The smarter move is indexing. Instead of doing all the work when the user types,
 
 The simplest index is a prefix tree over the words at the start of each item. This is what Raycast uses for clipboard history. It is fast, and it supports much longer histories than scanning. But the tradeoff shows up in the UX: it only finds exact matches at the exact start of an item. If you copied `docker compose exec api rails console`, searching `rails console` should find it. A start-only index misses it. It also breaks typo tolerance: Raycast finds nothing for `improt` when the item says `import`.
 
-ClipKitty uses a trigram-based index for candidate recall. A trigram is a three-character slice of text: `import` contains `imp`, `mpo`, `por`, and `ort`. At query time, it uses those precomputed slices to follow posting lists to likely matches instead of scanning the full history, while also returning useful match-quality signals such as overlap and word-position evidence. This is fast, but it is still an approximation: shared trigrams are not the same as a good human match.
+ClipKitty uses a trigram-based index for candidate recall. A trigram is a three-character slice of text: `import` contains `imp`, `mpo`, `por`, and `ort`. At query time, it uses those precomputed slices to follow posting lists to likely matches. This is fast, but it is still an approximation: shared trigrams are not the same as a good human match.
 
-To mitigate those weaknesses, ClipKitty takes the best matches from recall and reranks them separately. Because this is already a much smaller set, ClipKitty can afford to spend more compute approximating what a human would call "the good match", not just what shares characters with the query.
+To mitigate those weaknesses, ClipKitty takes the best trigram matches and then reranks them separately. Because this is already a much smaller set, ClipKitty can afford to spend more compute approximating what a human would call "the good match", not just what shares characters with the query.
 
 The reranker first tokenizes the query and the candidate clip into words, then tries to align each query word to one real word in the clip.
 
@@ -92,7 +90,7 @@ Each possible word match is graded by how trustworthy it is. Exact matches are b
 
 Then it asks whether the whole alignment looks like something a person would have picked. Did most of the important query words match? Are they in the same order? Are they close together, or scattered across a giant log? A compact phrase match usually feels intentional. A distant match across thousands of characters usually feels suspicious, even if every word technically appears.
 
-Those signals get turned into a small ordered score: coarse match quality first, then human-scale recency buckets like last hour, day, week, month, and quarter, then the finer match quality differences. The order is intentional. Clipboard history is temporal, so recency should matter a lot, but not so much that a weak recent match beats the obvious phrase from yesterday. The result is that `rails console` inside `docker compose exec api rails console` beats a random clip with `rails` near the top and `console` far away, while `improt` can still find `import` without letting every vaguely similar word jump the line.
+Those signals get turned into a small ordered score: coarse match quality first, then human-scale recency buckets like last hour, day, week, month, and quarter, then the finer match quality differences. Clipboard history is temporal, so recency should matter a lot, but not so much that a weak recent match beats the obvious phrase from yesterday. The result is that `rails console` inside `docker compose exec api rails console` beats a random clip with `rails` near the top and `console` far away, while `improt` can still find `import` without letting every vaguely similar word jump the line.
 
 The important idea is that search quality does not come from doing expensive work on everything. It comes from doing cheap work to find plausible candidates, then doing expensive work only where it can change what the user sees.
 
