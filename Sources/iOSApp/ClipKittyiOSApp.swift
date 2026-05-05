@@ -1,6 +1,7 @@
 import ClipKittyAppleServices
 import ClipKittyRust
 import ClipKittyShared
+import ClipKittyShortcuts
 import SwiftUI
 
 // MARK: - App Launch State
@@ -253,6 +254,7 @@ struct ClipKittyiOSApp: App {
 
     init() {
         FontManager.registerFonts()
+        ClipKittyAppShortcuts.updateAppShortcutParameters()
     }
 
     var body: some Scene {
@@ -310,6 +312,9 @@ struct ClipKittyiOSApp: App {
         let customPath = ProcessInfo.processInfo.environment["CLIPKITTY_SCREENSHOT_DB"]
         switch AppContainer.bootstrap(databasePath: customPath) {
         case let .success(container):
+            ClipKittyShortcutRuntime.useRepositoryProvider {
+                container.shortcutRepositoryAvailability()
+            }
             let appState = AppState(container: container)
             #if ENABLE_ICLOUD_SYNC
                 let coordinator = iOSSyncCoordinator(

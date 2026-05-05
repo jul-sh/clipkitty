@@ -53,7 +53,7 @@ public func runRepositoryOperation<T: Sendable>(
     }
 }
 
-public final class ClipboardRepository {
+public final class ClipboardRepository: @unchecked Sendable {
     public let store: ClipKittyRust.ClipboardStore
 
     public init(store: ClipKittyRust.ClipboardStore) {
