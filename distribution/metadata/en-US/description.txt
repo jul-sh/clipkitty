@@ -1,12 +1,12 @@
-ClipKitty remembers everything you copy, so you can find it again in seconds.
+ClipKitty keeps everything you copy within instant reach.
 
-Text, code, links, colors, images, files; all in one fast, searchable history.
+Simple enough for daily pastebacks, fast enough for long histories.
 
 UNLIMITED HISTORY
 No small cap. No short expiration. ClipKitty keeps your copied items for as long as you want them.
 
 SEARCH THAT FORGIVES TYPOS
-Type what you remember. ClipKitty finds the right item even when your query is incomplete or misspelled.
+Type what you remember. ClipKitty finds the right item as you type, even when your query is incomplete or misspelled.
 
 SEE BEFORE YOU PASTE
 Preview full text, code, images, and colors in place. No guessing from cut-off snippets.
