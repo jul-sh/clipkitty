@@ -107,46 +107,13 @@ final class ClipKittyShortcutIntentTests: XCTestCase {
         XCTAssertEqual(result.value, ["newer intent clip"])
     }
 
-    func testCopyLatestTextIntentReturnsAndWritesNewestText() async throws {
-        let recorder = RecordedPasteboard()
-        let service = makeService(pasteboardRecorder: recorder)
-        _ = try await service.saveText("older copy intent clip")
-        try await Task.sleep(nanoseconds: 10_000_000)
-        _ = try await service.saveText("newer copy intent clip")
-
-        let intent = CopyLatestClipKittyTextIntent()
-        let result = try await withShortcutService(service) {
-            try await intent.perform()
-        }
-
-        requireStringValueWithDialog(result)
-        let writtenValues = await recorder.values()
-        XCTAssertEqual(result.value, "newer copy intent clip")
-        XCTAssertEqual(writtenValues, ["newer copy intent clip"])
-    }
-
-    func testCopyLatestTextIntentReportsEmptyDatabase() async {
-        let service = makeService()
-        let intent = CopyLatestClipKittyTextIntent()
-
-        await assertThrowsShortcutError(.noTextClips) {
-            _ = try await withShortcutService(service) {
-                try await intent.perform()
-            }
-        }
-    }
-
     private func makeService(
-        pasteboardRead: ShortcutPasteboardRead = .empty,
-        pasteboardRecorder: RecordedPasteboard = RecordedPasteboard()
+        pasteboardRead: ShortcutPasteboardRead = .empty
     ) -> ClipKittyShortcutService {
         ClipKittyShortcutService(
             databasePath: dbPath(),
             pasteboardClient: ShortcutPasteboardClient(
-                read: { pasteboardRead },
-                writeText: { text in
-                    await pasteboardRecorder.record(text)
-                }
+                read: { pasteboardRead }
             )
         )
     }
@@ -182,15 +149,3 @@ final class ClipKittyShortcutIntentTests: XCTestCase {
 private func requireStringValueWithDialog(
     _ result: some IntentResult & ReturnsValue<String> & ProvidesDialog
 ) {}
-
-private actor RecordedPasteboard {
-    private var writtenValues: [String] = []
-
-    func record(_ value: String) {
-        writtenValues.append(value)
-    }
-
-    func values() -> [String] {
-        writtenValues
-    }
-}

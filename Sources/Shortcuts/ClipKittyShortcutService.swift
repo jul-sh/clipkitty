@@ -7,7 +7,6 @@ protocol ClipKittyShortcutServicing: Sendable {
     func saveCurrentClipboard() async throws -> ShortcutSavedClip
     func searchText(query: String, limit: Int) async throws -> [String]
     func fetchRecentText(limit: Int) async throws -> [String]
-    func copyLatestText() async throws -> String
 }
 
 public enum ClipKittyShortcutRepositoryAvailability: Sendable {
@@ -56,14 +55,10 @@ private final class ShortcutServiceRegistry: @unchecked Sendable {
 
 struct ShortcutPasteboardClient: Sendable {
     let read: @Sendable () async -> ShortcutPasteboardRead
-    let writeText: @Sendable (String) async -> Void
 
     static let live = ShortcutPasteboardClient(
         read: {
             await ShortcutPasteboard.read()
-        },
-        writeText: { text in
-            await ShortcutPasteboard.writeText(text)
         }
     )
 }
@@ -75,7 +70,6 @@ enum ClipKittyShortcutError: Equatable, LocalizedError, Sendable {
     case databasePathUnavailable(String)
     case databaseOpenFailed(String)
     case operationFailed(String)
-    case noTextClips
 
     var errorDescription: String? {
         switch self {
@@ -91,8 +85,6 @@ enum ClipKittyShortcutError: Equatable, LocalizedError, Sendable {
             return "Could not open ClipKitty's database: \(reason)"
         case let .operationFailed(reason):
             return reason
-        case .noTextClips:
-            return "ClipKitty does not have any text clips yet."
         }
     }
 }
@@ -100,11 +92,6 @@ enum ClipKittyShortcutError: Equatable, LocalizedError, Sendable {
 enum ShortcutSavedClip: Equatable, Sendable {
     case inserted(id: String)
     case duplicate
-}
-
-private enum ShortcutTextLookup: Sendable {
-    case found(String)
-    case notFound
 }
 
 private enum ShortcutTextExtraction: Sendable {
@@ -184,17 +171,6 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
 
     func fetchRecentText(limit: Int) async throws -> [String] {
         try await fetchText(query: "", limit: limit)
-    }
-
-    func copyLatestText() async throws -> String {
-        let values = try await fetchRecentText(limit: 1)
-        switch firstText(in: values) {
-        case let .found(value):
-            await pasteboardClient.writeText(value)
-            return value
-        case .notFound:
-            throw ClipKittyShortcutError.noTextClips
-        }
     }
 
     private func save(_ content: ShortcutSavableContent) async throws -> ShortcutSavedClip {
@@ -307,11 +283,6 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
         case let .failure(error):
             throw ClipKittyShortcutError.operationFailed(error.localizedDescription)
         }
-    }
-
-    private func firstText(in values: [String]) -> ShortcutTextLookup {
-        guard let first = values.first else { return .notFound }
-        return .found(first)
     }
 
     private static func clampLimit(_ limit: Int) -> Int {

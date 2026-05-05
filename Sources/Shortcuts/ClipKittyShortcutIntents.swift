@@ -72,19 +72,6 @@ public struct GetRecentClipKittyTextIntent: AppIntent {
     }
 }
 
-public struct CopyLatestClipKittyTextIntent: AppIntent {
-    public static var title: LocalizedStringResource = "Copy Latest ClipKitty Text"
-    public static var description: IntentDescription? = "Copy ClipKitty's most recent text clip to the system clipboard."
-    public static var openAppWhenRun = false
-
-    public init() {}
-
-    public func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
-        let value = try await ClipKittyShortcutRuntime.makeService().copyLatestText()
-        return .result(value: value, dialog: "Copied to clipboard.")
-    }
-}
-
 public struct ClipKittyAppShortcuts: AppShortcutsProvider {
     public static var shortcutTileColor: ShortcutTileColor { .pink }
 
@@ -127,16 +114,6 @@ public struct ClipKittyAppShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Recent Text",
             systemImageName: "clock"
-        )
-
-        AppShortcut(
-            intent: CopyLatestClipKittyTextIntent(),
-            phrases: [
-                "Copy latest text from \(.applicationName)",
-                "Copy latest clip from \(.applicationName)",
-            ],
-            shortTitle: "Copy Latest",
-            systemImageName: "doc.on.clipboard"
         )
     }
 }

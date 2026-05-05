@@ -32,16 +32,6 @@ enum ShortcutPasteboard {
         #endif
     }
 
-    static func writeText(_ text: String) {
-        #if os(macOS)
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(text, forType: .string)
-        #elseif os(iOS)
-            UIPasteboard.general.string = text
-        #endif
-    }
-
     #if os(macOS)
         private static func readMacPasteboard() -> ShortcutPasteboardRead {
             let pasteboard = NSPasteboard.general
