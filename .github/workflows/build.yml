@@ -323,6 +323,7 @@ jobs:
           make screenshots-ipad
 
       - name: Run UI Tests
+        timeout-minutes: 45
         env:
           LOCKED: "1"
         run: |
@@ -331,6 +332,9 @@ jobs:
             -workspace ClipKitty.xcworkspace \
             -scheme ClipKittyUITests \
             -destination "platform=macOS" \
+            -destination-timeout 120 \
+            -test-timeouts-enabled YES \
+            -maximum-test-execution-time-allowance 600 \
             -derivedDataPath DerivedData \
             CODE_SIGNING_ALLOWED=NO \
             -skip-testing:ClipKittyUITests/ClipKittyUITests/testRecordIntroVideo \
