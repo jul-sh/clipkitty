@@ -1,5 +1,8 @@
 import AppKit
 import SwiftUI
+#if ENABLE_APP_SHORTCUTS
+    import ClipKittyShortcuts
+#endif
 
 extension Notification.Name {
     static let clipKittyOpenSettings = Notification.Name("ClipKittyOpenSettings")
@@ -8,6 +11,12 @@ extension Notification.Name {
 @main
 struct ClipKittyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
+    init() {
+        #if ENABLE_APP_SHORTCUTS
+            ClipKittyAppShortcuts.updateAppShortcutParameters()
+        #endif
+    }
 
     var body: some Scene {
         Settings {

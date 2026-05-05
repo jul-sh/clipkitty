@@ -1,6 +1,7 @@
 import ClipKittyAppleServices
 import ClipKittyRust
 import ClipKittyShared
+import ClipKittyShortcuts
 import Foundation
 
 /// Owns all app-scoped services. Created once at launch.
@@ -110,6 +111,10 @@ final class AppContainer {
                 return "Could not open database: \(reason)"
             }
         }
+    }
+
+    func shortcutRepositoryAvailability() -> ClipKittyShortcutRepositoryAvailability {
+        .ready(repository)
     }
 
 }

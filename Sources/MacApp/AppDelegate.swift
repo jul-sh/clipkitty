@@ -4,6 +4,9 @@ import ClipKittyRust
 import ClipKittyShared
 import Combine
 import SwiftUI
+#if ENABLE_APP_SHORTCUTS
+    import ClipKittyShortcuts
+#endif
 #if ENABLE_SPARKLE_UPDATES
     import SparkleUpdater
 #endif
@@ -72,6 +75,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .simulatedDatabase:
             store = ClipboardStore(screenshotMode: true)
         }
+        #if ENABLE_APP_SHORTCUTS
+            configureShortcutRuntime()
+        #endif
         #if ENABLE_ICLOUD_SYNC
             configureSyncPreferenceController()
         #endif
@@ -162,6 +168,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
     }
+
+    #if ENABLE_APP_SHORTCUTS
+        private func configureShortcutRuntime() {
+            ClipKittyShortcutRuntime.useRepositoryProvider { [weak store] in
+                guard let store else {
+                    return .unavailable("ClipKitty has not finished launching.")
+                }
+                await store.awaitReady()
+                return store.shortcutRepositoryAvailability()
+            }
+        }
+    #endif
 
     /// Ensure the simulated database directory exists (UI Test runner handles file placement)
     private func populateTestDatabase() {

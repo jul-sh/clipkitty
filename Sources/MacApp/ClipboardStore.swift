@@ -9,6 +9,9 @@ import Observation
 import os
 import QuartzCore
 import UniformTypeIdentifiers
+#if ENABLE_APP_SHORTCUTS
+    import ClipKittyShortcuts
+#endif
 
 // MARK: - Logging
 
@@ -314,6 +317,22 @@ final class ClipboardStore {
         guard let task = bootstrapTask else { return }
         _ = try? await task.value
     }
+
+    #if ENABLE_APP_SHORTCUTS
+        func shortcutRepositoryAvailability() -> ClipKittyShortcutRepositoryAvailability {
+            switch lifecycle {
+            case .ready:
+                if let repository {
+                    return .ready(repository)
+                }
+                return .unavailable("ClipKitty's database is not ready yet.")
+            case .initializing, .rebuildingIndex:
+                return .unavailable("ClipKitty is still preparing its database.")
+            case let .failed(reason):
+                return .unavailable(reason)
+            }
+        }
+    #endif
 
     // MARK: - Public API
 
