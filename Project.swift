@@ -11,6 +11,7 @@ enum Capability: String, CaseIterable {
     case iCloudSync // ENABLE_ICLOUD_SYNC
     case sparkleUpdates // ENABLE_SPARKLE_UPDATES
     case buildAttestationLink // ENABLE_BUILD_ATTESTATION_LINK
+    case appleShortcuts // ENABLE_APP_SHORTCUTS
     case hardened // CLIPKITTY_HARDENED
 
     var compileCondition: String {
@@ -21,6 +22,7 @@ enum Capability: String, CaseIterable {
         case .iCloudSync: return "ENABLE_ICLOUD_SYNC"
         case .sparkleUpdates: return "ENABLE_SPARKLE_UPDATES"
         case .buildAttestationLink: return "ENABLE_BUILD_ATTESTATION_LINK"
+        case .appleShortcuts: return "ENABLE_APP_SHORTCUTS"
         case .hardened: return "CLIPKITTY_HARDENED"
         }
     }
@@ -96,10 +98,10 @@ enum MacBuildVariant: CaseIterable {
 
     var capabilities: Set<Capability> {
         switch self {
-        case .debug: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink]
-        case .release: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink]
-        case .sparkle: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .sparkleUpdates]
-        case .appStore: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink]
+        case .debug: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .appleShortcuts]
+        case .release: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .appleShortcuts]
+        case .sparkle: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .sparkleUpdates, .appleShortcuts]
+        case .appStore: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .appleShortcuts]
         case .hardened: return [.syntheticPaste, .hardened]
         }
     }
@@ -134,14 +136,19 @@ enum MacBuildVariant: CaseIterable {
 
     // MARK: Target Name — which macOS app target this variant builds
 
-    /// The Sparkle variant builds its own target (ClipKittySpark) that depends on
-    /// SparkleUpdater. All other variants build the plain ClipKitty target which
-    /// has no Sparkle in its dependency graph at all.
+    /// Variants with different dependency/resource surfaces get distinct targets.
+    /// This keeps Sparkle and Apple Shortcuts out of builds that do not support them.
     var macAppTargetName: String {
         switch self {
         case .sparkle: return "ClipKittySpark"
-        case .debug, .release, .appStore, .hardened: return "ClipKitty"
+        case .hardened: return "ClipKittyHardened"
+        case .debug, .release, .appStore: return "ClipKitty"
         }
+    }
+
+    var shortcutCompilationConditions: String {
+        capabilities.intersection([.appleShortcuts])
+            .map(\.compileCondition).sorted().joined(separator: " ")
     }
 
     /// Whether this variant requires SparkleUpdater in the target dependency graph.
@@ -330,11 +337,11 @@ enum IOSBuildVariant: CaseIterable {
     var compilationConditions: String {
         switch self {
         case .debug, .release:
-            return "ENABLE_ICLOUD_SYNC ENABLE_LINK_PREVIEWS"
+            return "ENABLE_APP_SHORTCUTS ENABLE_ICLOUD_SYNC ENABLE_LINK_PREVIEWS"
         case .sparkle, .hardened:
             return "" // no-op configs
         case .appStore:
-            return "ENABLE_ICLOUD_SYNC ENABLE_LINK_PREVIEWS"
+            return "ENABLE_APP_SHORTCUTS ENABLE_ICLOUD_SYNC ENABLE_LINK_PREVIEWS"
         }
     }
 
@@ -503,6 +510,33 @@ private let macAppCoreDependencies: [TargetDependency] = [
     .external(name: "STTextKitPlus"),
 ]
 
+func macAppResources(for variant: MacBuildVariant) -> ResourceFileElements {
+    if case .hardened = variant {
+        return [
+            .folderReference(path: "Sources/MacApp/Resources/Fonts"),
+            "Sources/MacApp/Resources/menu-bar.svg",
+            "Sources/MacApp/Resources/Localizable.xcstrings",
+            "Sources/MacApp/Assets.xcassets",
+            "Sources/MacApp/PrivacyInfo.xcprivacy",
+        ]
+    }
+    return macAppResources
+}
+
+func macAppDependencies(for variant: MacBuildVariant) -> [TargetDependency] {
+    if case .hardened = variant {
+        return [
+            .target(name: "ClipKittyRust"),
+            .target(name: "ClipKittyShared"),
+            .target(name: "ClipKittyAppleServices"),
+            .target(name: "ClipKittyMacPlatform"),
+            .sdk(name: "SystemConfiguration", type: .framework),
+            .external(name: "STTextKitPlus"),
+        ]
+    }
+    return macAppCoreDependencies + variant.additionalTargetDependencies
+}
+
 /// Creates macOS app targets, one per distinct `macAppTargetName`.
 ///
 /// Variants are grouped by target name. Each group produces one Tuist target
@@ -556,8 +590,8 @@ func makeMacAppTargets() -> [Target] {
             deploymentTargets: .macOS("14.0"),
             infoPlist: .extendingDefault(with: infoPlist),
             sources: macAppSources,
-            resources: macAppResources,
-            dependencies: macAppCoreDependencies + representative.additionalTargetDependencies,
+            resources: macAppResources(for: representative),
+            dependencies: macAppDependencies(for: representative),
             settings: .settings(
                 base: baseSettings,
                 configurations: configurations
@@ -704,7 +738,15 @@ let project = Project(
             settings: .settings(
                 base: [
                     "SKIP_INSTALL": "YES",
-                ]
+                ],
+                configurations: MacBuildVariant.allCases.map { variant in
+                    let settings: SettingsDictionary = [
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(variant.shortcutCompilationConditions),
+                    ]
+                    return variant.isRelease
+                        ? .release(name: variant.configurationName, settings: settings)
+                        : .debug(name: variant.configurationName, settings: settings)
+                }
             )
         ),
 

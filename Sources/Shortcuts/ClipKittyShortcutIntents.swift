@@ -1,3 +1,4 @@
+#if ENABLE_APP_SHORTCUTS
 import AppIntents
 import Foundation
 
@@ -137,3 +138,4 @@ private enum ShortcutIntentResult {
         }
     }
 }
+#endif
