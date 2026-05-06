@@ -10,9 +10,10 @@ else
 IN_NIX :=
 endif
 
-# `clipkitty` only owns the orchestration that genuinely needs Rust:
-# signing/staging, ASC publishing, marketing screenshots, perf traces,
-# appcast XML, and the pre-commit hook entrypoint. Everything else is shell.
+# `clipkitty` owns the orchestration that benefits from a real language:
+# repo invariants, workspace materialization, signing/staging, ASC publishing,
+# marketing screenshots, perf traces, appcast XML, secret resolution, and the
+# pre-commit hook entrypoint. The Makefile keeps the simple wrappers.
 XTASK := $(IN_NIX) cargo run --quiet -p xtask --
 PERF_FAIL_ON_HANGS ?= 1
 PERF_HANG_THRESHOLD ?= 250
@@ -37,9 +38,6 @@ SPARKLE_INSTALL_DIR := /tmp/sparkle
 
 ICTOOL := /Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool
 
-PINNED_LOCKFILES := Cargo.lock flake.lock
-STRAY_SWIFTPM := Package.resolved Tuist/Package.resolved distribution/SparkleUpdater/Package.resolved
-
 .PHONY: help shell check workspace install-hooks install-sparkle-cli \
         app-hardened app-app-store \
         release-dmg release-macos-appstore release-ios-appstore release-version \
@@ -57,70 +55,10 @@ shell: ## Drop into the pinned Nix dev shell.
 	@$(NIX_DEVELOP) bash
 
 check: ## Verify repository invariants (pinned lockfiles + pinned GitHub Actions).
-	@set -euo pipefail; \
-	errors=0; \
-	for f in $(PINNED_LOCKFILES); do \
-	    if ! git ls-files --error-unmatch "$$f" >/dev/null 2>&1; then \
-	        echo "NOT TRACKED: $$f (must be committed)"; errors=$$((errors+1)); continue; \
-	    fi; \
-	    if ! git diff --quiet -- "$$f"; then \
-	        echo "MODIFIED: $$f"; errors=$$((errors+1)); \
-	    fi; \
-	    if ! git diff --cached --quiet -- "$$f"; then \
-	        echo "STAGED CHANGES: $$f"; errors=$$((errors+1)); \
-	    fi; \
-	done; \
-	for f in $(STRAY_SWIFTPM); do \
-	    if [ -e "$$f" ]; then \
-	        echo "STRAY SWIFTPM STATE: $$f (Swift pins belong in nix/lib.nix)"; errors=$$((errors+1)); \
-	    fi; \
-	done; \
-	unpinned=""; \
-	while IFS= read -r -d '' wf; do \
-	    while IFS= read -r line; do \
-	        lineno=$${line%%:*}; \
-	        content=$${line#*:}; \
-	        ref=$$(printf '%s' "$$content" | sed -E 's/^[[:space:]]*uses:[[:space:]]*//; s/[[:space:]]*#.*$$//; s/^["'\'']//; s/["'\'']$$//; s/[[:space:]]*$$//'); \
-	        case "$$ref" in docker://*|./*|"") continue ;; esac; \
-	        case "$$ref" in *@*) sha=$${ref##*@} ;; *) printf '%s\n' "UNPINNED: $$wf:$$lineno: $$ref"; unpinned=1; continue ;; esac; \
-	        if [ "$${#sha}" -ne 40 ] || ! printf '%s' "$$sha" | grep -Eq '^[0-9a-f]{40}$$'; then \
-	            printf '%s\n' "UNPINNED: $$wf:$$lineno: $$ref"; unpinned=1; \
-	        fi; \
-	    done < <(grep -nE '^[[:space:]]*[^#]*uses:[[:space:]]*' "$$wf" || true); \
-	done < <(find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 2>/dev/null); \
-	if [ -n "$$unpinned" ]; then \
-	    echo ""; echo "Found unpinned GitHub Action reference(s). Pin all actions to full commit SHAs (40 lowercase hex)."; \
-	    exit 1; \
-	fi; \
-	if [ "$$errors" -gt 0 ]; then echo ""; echo "Pinned-input drift detected."; exit 1; fi; \
-	echo "Pinned inputs are committed and clean; all GitHub Actions are pinned to full SHAs."
+	@$(XTASK) check
 
 workspace: ## Materialize the generated Xcode workspace/project.
-	@set -euo pipefail; \
-	echo "Materialising generated Xcode project via nix..."; \
-	$(IN_NIX) nix build .#clipkitty-generated --out-link result-generated; \
-	rm -rf ClipKitty.xcworkspace ClipKitty.xcodeproj Tuist/.build Derived $(STRAY_SWIFTPM); \
-	cp -R result-generated/ClipKitty.xcworkspace ClipKitty.xcworkspace; \
-	cp -R result-generated/ClipKitty.xcodeproj ClipKitty.xcodeproj; \
-	if [ -d result-generated/Tuist/.build ]; then mkdir -p Tuist; cp -R result-generated/Tuist/.build Tuist/.build; fi; \
-	if [ -d result-generated/Derived ]; then cp -R result-generated/Derived Derived; fi; \
-	for rel in \
-	    Sources/ClipKittyRust/purrFFI.h \
-	    Sources/ClipKittyRust/module.modulemap \
-	    Sources/ClipKittyRust/libpurr.a \
-	    Sources/ClipKittyRust/ios-device/libpurr.a \
-	    Sources/ClipKittyRust/ios-simulator/libpurr.a \
-	    Sources/ClipKittyRustWrapper/purr.swift; do \
-	    if [ -f "result-generated/$$rel" ]; then \
-	        mkdir -p "$$(dirname "$$rel")"; \
-	        cp "result-generated/$$rel" "$$rel"; \
-	        chmod u+w "$$rel"; \
-	    fi; \
-	done; \
-	for p in ClipKitty.xcworkspace ClipKitty.xcodeproj Tuist/.build Derived; do \
-	    [ -e "$$p" ] && chmod -R u+w "$$p" 2>/dev/null || true; \
-	done; \
-	echo "Generated Xcode project materialised into the worktree."
+	@$(XTASK) workspace
 
 install-hooks: ## Install the repo-managed git pre-commit hook.
 	@set -euo pipefail; \
@@ -192,8 +130,8 @@ perf: ## Run the supported performance trace flow. Optional PERF_HANG_THRESHOLD=
 
 site-icon: ## Render the public icon PNG via Xcode's ictool.
 	@set -euo pipefail; \
-	if [ ! -f "$(ICTOOL)" ]; then echo "ictool not found at $(ICTOOL); install Xcode with Icon Composer" >&2; exit 1; fi; \
-	if [ ! -d AppIcon.icon ]; then echo "icon bundle not found: AppIcon.icon" >&2; exit 1; fi; \
+	[ -f "$(ICTOOL)" ] || { echo "ictool not found at $(ICTOOL); install Xcode with Icon Composer" >&2; exit 1; }; \
+	[ -d AppIcon.icon ] || { echo "icon bundle not found: AppIcon.icon" >&2; exit 1; }; \
 	"$(ICTOOL)" AppIcon.icon --export-image --output-file icon.png \
 	    --platform macOS --rendition Default --width 512 --height 512 --scale 1; \
 	echo "Exported icon → icon.png"
@@ -207,37 +145,4 @@ site-landing-page: ## Render the landing page HTML to stdout.
 	cat distribution/landing-page.foot.html
 
 secrets-asc-auth: guard-FIELD ## Resolve one ASC auth field. Use FIELD=key-id|issuer-id|private-key-b64
-	@set -euo pipefail; \
-	case "$(FIELD)" in \
-	    key-id)          primary=APPSTORE_KEY_ID;     fallback=NOTARY_KEY_ID ;; \
-	    issuer-id)       primary=APPSTORE_ISSUER_ID;  fallback=NOTARY_ISSUER_ID ;; \
-	    private-key-b64) primary=APPSTORE_KEY_BASE64; fallback=NOTARY_KEY_BASE64 ;; \
-	    *) echo "FIELD must be key-id|issuer-id|private-key-b64, got: $(FIELD)" >&2; exit 1 ;; \
-	esac; \
-	secret=""; \
-	for name in "$$primary" "$$fallback"; do \
-	    if [ -f "secrets/$$name.age" ]; then secret="secrets/$$name.age"; break; fi; \
-	done; \
-	if [ -z "$$secret" ]; then echo "neither $$primary.age nor $$fallback.age was found in secrets/" >&2; exit 1; fi; \
-	repo_name=$$(basename "$$(git rev-parse --show-toplevel)"); \
-	keychain_account="AGE_SECRET_KEY_$$repo_name"; \
-	if [ -n "$${AGE_SECRET_KEY:-}" ]; then \
-	    identity="$$AGE_SECRET_KEY"; \
-	elif identity=$$(security find-generic-password -s keytap -a "$$keychain_account" -w 2>/dev/null) && [ -n "$$identity" ]; then \
-	    :; \
-	elif command -v keytap >/dev/null 2>&1; then \
-	    identity=$$(keytap reveal clipkitty --format age | tr -d '\n'); \
-	    security add-generic-password -U -s keytap -a "$$keychain_account" -w "$$identity" >/dev/null 2>&1 || true; \
-	else \
-	    echo "Neither AGE_SECRET_KEY, keychain, nor keytap available to decrypt $$secret" >&2; exit 1; \
-	fi; \
-	if ! plaintext=$$(printf '%s' "$$identity" | age -d -i - "$$secret" 2>/dev/null); then \
-	    if command -v keytap >/dev/null 2>&1; then \
-	        identity=$$(keytap reveal clipkitty --format age | tr -d '\n'); \
-	        security add-generic-password -U -s keytap -a "$$keychain_account" -w "$$identity" >/dev/null 2>&1 || true; \
-	        plaintext=$$(printf '%s' "$$identity" | age -d -i - "$$secret"); \
-	    else \
-	        echo "age -d failed for $$secret" >&2; exit 1; \
-	    fi; \
-	fi; \
-	printf '%s\n' "$$plaintext" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$$//'
+	@$(XTASK) secrets asc-auth "$(FIELD)"

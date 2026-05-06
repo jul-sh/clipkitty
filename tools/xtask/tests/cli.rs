@@ -2,9 +2,22 @@
 
 use clap::Parser;
 use xtask::cli::{
-    AppArgs, AppTarget, AppcastCmd, Cli, MarketingCmd, ReleaseCmd, ScreenshotPlatform, TopLevel,
+    AppArgs, AppTarget, AppcastCmd, Cli, MarketingCmd, ReleaseCmd, ScreenshotPlatform, SecretsCmd,
+    TopLevel,
 };
-use xtask::model::ReleaseChannel;
+use xtask::model::{AscAuthField, ReleaseChannel};
+
+#[test]
+fn parses_check() {
+    let cli = Cli::parse_from(["clipkitty", "check"]);
+    assert!(matches!(cli.command, TopLevel::Check));
+}
+
+#[test]
+fn parses_workspace() {
+    let cli = Cli::parse_from(["clipkitty", "workspace"]);
+    assert!(matches!(cli.command, TopLevel::Workspace));
+}
 
 #[test]
 fn parses_app_targets() {
@@ -103,8 +116,23 @@ fn parses_perf() {
 }
 
 #[test]
+fn parses_secrets_asc_auth() {
+    for (input, expected) in [
+        ("key-id", AscAuthField::KeyId),
+        ("issuer-id", AscAuthField::IssuerId),
+        ("private-key-b64", AscAuthField::PrivateKeyB64),
+    ] {
+        let cli = Cli::parse_from(["clipkitty", "secrets", "asc-auth", input]);
+        let TopLevel::Secrets(SecretsCmd::AscAuth(args)) = cli.command else {
+            panic!("expected secrets asc-auth");
+        };
+        assert_eq!(args.field, expected);
+    }
+}
+
+#[test]
 fn verbose_and_dry_run_flags_propagate() {
-    let cli = Cli::parse_from(["clipkitty", "--verbose", "--dry-run", "app", "hardened"]);
+    let cli = Cli::parse_from(["clipkitty", "--verbose", "--dry-run", "check"]);
     assert!(cli.verbose);
     assert!(cli.dry_run);
 }
@@ -112,11 +140,8 @@ fn verbose_and_dry_run_flags_propagate() {
 #[test]
 fn rejects_commands_now_owned_by_make() {
     for argv in [
-        ["clipkitty", "check"].as_slice(),
-        ["clipkitty", "workspace"].as_slice(),
         ["clipkitty", "env", "install", "hooks"].as_slice(),
         ["clipkitty", "env", "install", "sparkle-cli"].as_slice(),
-        ["clipkitty", "secrets", "asc-auth", "key-id"].as_slice(),
         ["clipkitty", "site", "render", "icon"].as_slice(),
         ["clipkitty", "site", "render", "landing-page"].as_slice(),
         ["clipkitty", "release", "version", "version"].as_slice(),

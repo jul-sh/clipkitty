@@ -1,14 +1,14 @@
 use camino::Utf8PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use crate::model::ReleaseChannel;
+use crate::model::{AscAuthField, ReleaseChannel};
 
 #[derive(Parser, Debug)]
 #[command(
     name = "clipkitty",
     version,
     about = "ClipKitty automation CLI — orchestration that needs a real language",
-    long_about = "Hosts the automation flows that don't fit in a Makefile shell line: signing, ASC publishing, marketing screenshots, perf trace orchestration, appcast XML. Trivial wrappers (check, workspace, version, site assets, secret resolution, hook install) live directly in the Makefile."
+    long_about = "Hosts the automation flows that don't fit in a Makefile shell line: repo invariants, workspace materialization, signing, ASC publishing, marketing screenshots, perf trace orchestration, appcast XML, secret resolution. Trivial wrappers (release-version, site assets, hook install, sparkle CLI install) live directly in the Makefile."
 )]
 pub struct Cli {
     /// Print the exact host commands being executed.
@@ -26,6 +26,12 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum TopLevel {
+    /// Verify repository automation invariants (pinned lockfiles + Action SHAs).
+    Check,
+
+    /// Materialize the generated Xcode workspace/project.
+    Workspace,
+
     /// Stage one supported macOS app artifact (signs + stamps version).
     App(AppArgs),
 
@@ -40,9 +46,25 @@ pub enum TopLevel {
     /// Run the supported performance trace flow.
     Perf(PerfArgs),
 
+    /// Resolve App Store Connect auth fields from repo secrets.
+    #[command(subcommand)]
+    Secrets(SecretsCmd),
+
     /// Hidden internal entrypoints used by repo-generated helpers.
     #[command(name = "__internal", hide = true, subcommand)]
     Internal(InternalCmd),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SecretsCmd {
+    /// Print the resolved ASC auth field (key-id | issuer-id | private-key-b64).
+    AscAuth(AscAuthArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct AscAuthArgs {
+    #[arg(value_enum)]
+    pub field: AscAuthField,
 }
 
 #[derive(Subcommand, Debug)]

@@ -25,9 +25,8 @@ use crate::cli::{
 };
 use crate::cmd::build;
 use crate::cmd::secrets;
-use crate::cmd::secrets::AscField;
 use crate::cmd::sign;
-use crate::model::{MacVariant, SetupAction, SideEffectLevel};
+use crate::model::{AscAuthField, MacVariant, SetupAction, SideEffectLevel};
 use crate::output::Reporter;
 use crate::process::Runner;
 use crate::repo::RepoRoot;
@@ -232,10 +231,10 @@ fn publish(
     }
 
     reporter.info("Decrypting App Store Connect secrets...");
-    let asc_key_id = secrets::resolve_asc_field(repo, AscField::KeyId, reporter)?;
-    let asc_issuer_id = secrets::resolve_asc_field(repo, AscField::IssuerId, reporter)?;
+    let asc_key_id = secrets::resolve_asc_field(repo, AscAuthField::KeyId, reporter)?;
+    let asc_issuer_id = secrets::resolve_asc_field(repo, AscAuthField::IssuerId, reporter)?;
     let asc_private_key_b64 =
-        secrets::resolve_asc_field(repo, AscField::PrivateKeyB64, reporter)?;
+        secrets::resolve_asc_field(repo, AscAuthField::PrivateKeyB64, reporter)?;
 
     let key_bytes = base64::engine::general_purpose::STANDARD
         .decode(asc_private_key_b64.trim())
