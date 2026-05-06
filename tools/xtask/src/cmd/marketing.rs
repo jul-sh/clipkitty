@@ -682,11 +682,17 @@ fn inject_images_impl(
 
     let tx = conn.transaction()?;
     let mut inserted = 0usize;
+    let mut skipped_for_locale = 0usize;
     for item in manifest {
         if !filter.keep(&item) {
             continue;
         }
-        let asset = item.asset_for(locale);
+        let Some(asset) = item.asset_for(locale) else {
+            // Manifest item has no localized variant for this locale; skip
+            // rather than fall back to the English asset.
+            skipped_for_locale += 1;
+            continue;
+        };
         let image_path = images_dir.join(&asset.file);
         let thumb_path = images_dir.join(&asset.thumbnail);
         if !image_path.as_std_path().is_file() {
@@ -740,6 +746,12 @@ fn inject_images_impl(
     }
     tx.commit()?;
 
+    if skipped_for_locale > 0 {
+        reporter.info(&format!(
+            "Skipped {skipped_for_locale} manifest images without a `{}` variant",
+            locale.as_code()
+        ));
+    }
     reporter.info(&format!(
         "Injected {inserted} images for locale `{}` into {db_path}",
         locale.as_code()
@@ -766,14 +778,22 @@ struct LocaleAsset {
 }
 
 impl ManifestItem {
-    fn asset_for(&self, locale: MarketingLocale) -> LocaleAsset {
-        self.locale_files
-            .get(locale.as_code())
-            .cloned()
-            .unwrap_or_else(|| LocaleAsset {
+    /// Resolve the file/thumbnail pair to inject for `locale`.
+    ///
+    /// English uses the default `file`/`thumbnail`. Other locales must
+    /// have an explicit `locale_files` entry; otherwise we return `None`
+    /// so the caller skips the item entirely. Falling back to the English
+    /// asset would leak untranslated screenshots into non-English App
+    /// Store listings, which is what the user sees as "duplicated"
+    /// images across locales.
+    fn asset_for(&self, locale: MarketingLocale) -> Option<LocaleAsset> {
+        if locale == MarketingLocale::En {
+            return Some(LocaleAsset {
                 file: self.file.clone(),
                 thumbnail: self.thumbnail.clone(),
-            })
+            });
+        }
+        self.locale_files.get(locale.as_code()).cloned()
     }
 }
 
@@ -1239,9 +1259,13 @@ fn tool_exists(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_base_database_without_images, MarketingLocale, SCREENSHOT_LOCALES_ENV};
+    use super::{
+        copy_base_database_without_images, LocaleAsset, ManifestItem, MarketingLocale,
+        SCREENSHOT_LOCALES_ENV,
+    };
     use camino::Utf8PathBuf;
     use rusqlite::{params, Connection};
+    use std::collections::BTreeMap;
     use std::sync::{Mutex, OnceLock};
 
     fn env_lock() -> &'static Mutex<()> {
@@ -1371,5 +1395,67 @@ mod tests {
         assert_eq!(image_items, 0);
         assert_eq!(image_parent_items, 0);
         assert_eq!(text_items, 1);
+    }
+
+    fn unlocalized_manifest_item() -> ManifestItem {
+        ManifestItem {
+            file: "landscape.heic".to_string(),
+            thumbnail: "landscape_thumb.webp".to_string(),
+            description_en: "landscape".to_string(),
+            source_app: "Photos".to_string(),
+            bundle_id: "com.apple.Photos".to_string(),
+            offset_seconds: None,
+            locale_files: BTreeMap::new(),
+        }
+    }
+
+    fn localized_manifest_item() -> ManifestItem {
+        let mut locale_files = BTreeMap::new();
+        locale_files.insert(
+            "es".to_string(),
+            LocaleAsset {
+                file: "fast_es.heic".to_string(),
+                thumbnail: "fast_es_thumb.webp".to_string(),
+            },
+        );
+        ManifestItem {
+            file: "fast.heic".to_string(),
+            thumbnail: "fast_thumb.webp".to_string(),
+            description_en: "Fast cat".to_string(),
+            source_app: "Photos".to_string(),
+            bundle_id: "com.apple.Photos".to_string(),
+            offset_seconds: None,
+            locale_files,
+        }
+    }
+
+    #[test]
+    fn english_asset_uses_default_files_even_without_locale_entry() {
+        let item = unlocalized_manifest_item();
+        let asset = item
+            .asset_for(MarketingLocale::En)
+            .expect("english always resolves");
+        assert_eq!(asset.file, "landscape.heic");
+        assert_eq!(asset.thumbnail, "landscape_thumb.webp");
+    }
+
+    #[test]
+    fn non_english_asset_returns_none_when_no_locale_variant_exists() {
+        let item = unlocalized_manifest_item();
+        assert!(item.asset_for(MarketingLocale::Es).is_none());
+        assert!(item.asset_for(MarketingLocale::Ja).is_none());
+    }
+
+    #[test]
+    fn non_english_asset_uses_locale_variant_when_present() {
+        let item = localized_manifest_item();
+        let asset = item
+            .asset_for(MarketingLocale::Es)
+            .expect("spanish variant present");
+        assert_eq!(asset.file, "fast_es.heic");
+        assert_eq!(asset.thumbnail, "fast_es_thumb.webp");
+
+        // Locale without an entry still falls through to None.
+        assert!(item.asset_for(MarketingLocale::Ja).is_none());
     }
 }

@@ -183,22 +183,9 @@ struct CardView: View {
     @ViewBuilder
     private func thumbnailPreview(bytes: Data) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            DecodedImageView(
-                namespace: "card-thumbnail",
-                itemId: metadata.itemId,
-                data: bytes
-            ) {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(.secondary.opacity(0.1))
-                    .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                    .overlay(
-                        Image(systemName: "photo")
-                            .font(.title)
-                            .foregroundStyle(.secondary)
-                    )
-            }
-            .frame(maxWidth: .infinity)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            CardImagePreview(itemId: metadata.itemId, thumbnailBytes: bytes)
+                .frame(maxWidth: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             if !displayExcerpt.text.isEmpty {
                 highlightedText(displayExcerpt.text, highlights: displayExcerpt.highlights, font: .custom(FontManager.sansSerif, size: 15))
@@ -327,5 +314,48 @@ struct CardView: View {
         let g = (rgba >> 16) & 0xFF
         let b = (rgba >> 8) & 0xFF
         return String(format: "#%02X%02X%02X", r, g, b)
+    }
+}
+
+/// Renders the full-resolution image for a card preview.
+///
+/// The feed's `ItemMetadata.icon.thumbnail` payload is a ~64px JPEG built for
+/// list-row icons; on iPad cards stretch wide enough that scaling that
+/// thumbnail produces visibly pixelated marketing screenshots. We instead
+/// fetch the original image bytes (via `BrowserStoreClient.fetchItem`) and
+/// render those, falling back to the small thumbnail until the load
+/// resolves so the card never flashes empty.
+private struct CardImagePreview: View {
+    let itemId: String
+    let thumbnailBytes: Data
+
+    @Environment(AppContainer.self) private var container
+
+    @State private var fullImageBytes: Data?
+
+    var body: some View {
+        DecodedImageView(
+            namespace: fullImageBytes == nil ? "card-thumbnail" : "card-full",
+            itemId: itemId,
+            data: fullImageBytes ?? thumbnailBytes
+        ) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(.secondary.opacity(0.1))
+                .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                .overlay(
+                    Image(systemName: "photo")
+                        .font(.title)
+                        .foregroundStyle(.secondary)
+                )
+        }
+        .task(id: itemId) {
+            guard fullImageBytes == nil else { return }
+            let storeClient = container.storeClient
+            guard let item = await storeClient.fetchItem(id: itemId) else { return }
+            guard !Task.isCancelled else { return }
+            if case let .image(data, _, _) = item.content {
+                fullImageBytes = data
+            }
+        }
     }
 }
