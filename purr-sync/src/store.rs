@@ -69,7 +69,8 @@ impl<'a> SyncStore<'a> {
         Ok(())
     }
 
-    /// Fetch uncompacted events for a given item, ordered by recorded_at.
+    /// Fetch uncompacted events for a given item in the same deterministic order
+    /// replay uses when interpreting checkpoint watermarks.
     pub fn fetch_uncompacted_events(&self, item_id: &str) -> SyncResult<Vec<ItemEvent>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
@@ -77,7 +78,7 @@ impl<'a> SyncStore<'a> {
                       recorded_at, payload_type, payload_data
                FROM sync_events
                WHERE item_id = ?1 AND compacted = 0
-               ORDER BY recorded_at ASC"#,
+               ORDER BY recorded_at ASC, event_id ASC"#,
         )?;
         let events = stmt
             .query_map(params![item_id], |row| {

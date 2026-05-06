@@ -3,6 +3,7 @@ import ClipKittyMacPlatform
 import ClipKittyRust
 import ClipKittyShared
 import Combine
+import os
 import SwiftUI
 #if ENABLE_APP_SHORTCUTS
     import ClipKittyShortcuts
@@ -391,6 +392,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             Task { @MainActor in
                 store.syncEngine?.handleRemoteNotification()
             }
+        }
+
+        nonisolated func application(
+            _: NSApplication,
+            didRegisterForRemoteNotificationsWithDeviceToken _: Data
+        ) {
+            Logger(subsystem: "com.clipkitty", category: "SyncPush")
+                .info("Registered for remote sync notifications")
+        }
+
+        nonisolated func application(
+            _: NSApplication,
+            didFailToRegisterForRemoteNotificationsWithError error: Error
+        ) {
+            Logger(subsystem: "com.clipkitty", category: "SyncPush")
+                .error("Failed to register for remote sync notifications: \(error.localizedDescription)")
         }
     #endif
 

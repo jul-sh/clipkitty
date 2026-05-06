@@ -92,8 +92,11 @@
     public final class SyncEngine {
         // MARK: - Configuration
 
+        public static let cloudKitContainerIdentifier = "iCloud.com.eviljuliette.clipkitty"
         private static let zoneName = "ClipKittySync"
         private static let subscriptionID = "clipkitty-sync-changes"
+        fileprivate static let itemEventRecordType = "ItemEvent"
+        fileprivate static let itemSnapshotRecordType = "ItemSnapshot"
         private static let compactionInterval: TimeInterval = 300 // 5 minutes
         private static let baseInterval: TimeInterval = 30
         private static let subscriptionActiveInterval: TimeInterval = 60
@@ -197,7 +200,7 @@
         public convenience init(store: ClipKittyRust.ClipboardStore) {
             self.init(
                 store: store,
-                cloud: CloudKitSyncTransport(containerIdentifier: "iCloud.com.eviljuliette.clipkitty")
+                cloud: CloudKitSyncTransport(containerIdentifier: Self.cloudKitContainerIdentifier)
             )
         }
 
@@ -657,7 +660,7 @@
                 case let .permanentFailure(reason):
                     logger.error("Upload permanent failure: \(reason)")
                     updateActiveState { state in
-                        state.activity = .error("Upload failed permanently")
+                        state.activity = .error(reason)
                     }
                 }
 
@@ -778,7 +781,7 @@
 
                 for event in pendingEvents {
                     let recordID = CKRecord.ID(recordName: event.eventId, zoneID: zoneID)
-                    let record = CKRecord(recordType: "ItemEvent", recordID: recordID)
+                    let record = CKRecord(recordType: Self.itemEventRecordType, recordID: recordID)
                     record["itemId"] = event.itemId as CKRecordValue
                     record["originDeviceId"] = event.originDeviceId as CKRecordValue
                     record["schemaVersion"] = Int64(event.schemaVersion) as CKRecordValue
@@ -822,17 +825,17 @@
 
                 if let primaryError {
                     if Self.isPermanentError(primaryError) {
-                        return .permanentFailure(reason: primaryError.localizedDescription)
+                        return .permanentFailure(reason: Self.userVisibleSyncError(primaryError))
                     }
-                    return .retryableFailure(reason: primaryError.localizedDescription)
+                    return .retryableFailure(reason: Self.userVisibleSyncError(primaryError))
                 }
                 return .retryableFailure(reason: "CloudKit event upload failed")
 
             } catch {
                 if Self.isPermanentError(error) {
-                    return .permanentFailure(reason: error.localizedDescription)
+                    return .permanentFailure(reason: Self.userVisibleSyncError(error))
                 }
-                return .retryableFailure(reason: error.localizedDescription)
+                return .retryableFailure(reason: Self.userVisibleSyncError(error))
             }
         }
 
@@ -845,6 +848,45 @@
                 return true
             default:
                 return false
+            }
+        }
+
+        private static func userVisibleSyncError(_ error: Error) -> String {
+            if isMissingRecordTypeError(error, recordType: itemSnapshotRecordType) {
+                return SyncEngineSchemaError.missingCloudKitRecordType(
+                    recordType: itemSnapshotRecordType,
+                    containerIdentifier: cloudKitContainerIdentifier
+                ).localizedDescription
+            }
+            if isMissingRecordTypeError(error, recordType: itemEventRecordType) {
+                return SyncEngineSchemaError.missingCloudKitRecordType(
+                    recordType: itemEventRecordType,
+                    containerIdentifier: cloudKitContainerIdentifier
+                ).localizedDescription
+            }
+            return error.localizedDescription
+        }
+
+        private static func isMissingRecordTypeError(
+            _ error: Error,
+            recordType: String
+        ) -> Bool {
+            let nsError = error as NSError
+            var messages = [nsError.localizedDescription]
+            messages.append(contentsOf: nsError.userInfo.values.compactMap { value in
+                switch value {
+                case let nestedError as NSError:
+                    return nestedError.localizedDescription
+                case let message as String:
+                    return message
+                default:
+                    return nil
+                }
+            })
+
+            return messages.contains { message in
+                message.localizedCaseInsensitiveContains("did not find record type")
+                    && message.localizedCaseInsensitiveContains(recordType)
             }
         }
 
@@ -1208,7 +1250,7 @@
                 defer { Self.cleanupTemporaryFiles(tempFiles) }
                 let records: [CKRecord] = try snapshots.map { snapshot in
                     let recordID = CKRecord.ID(recordName: snapshot.itemId, zoneID: zoneID)
-                    let record = CKRecord(recordType: "ItemSnapshot", recordID: recordID)
+                    let record = CKRecord(recordType: Self.itemSnapshotRecordType, recordID: recordID)
                     record["snapshotRevision"] = Int64(snapshot.snapshotRevision) as CKRecordValue
                     record["schemaVersion"] = Int64(snapshot.schemaVersion) as CKRecordValue
                     record["coversThroughEvent"] = snapshot.coversThroughEvent as CKRecordValue?
@@ -1238,9 +1280,9 @@
                     if let error = errors.first ?? (missingRecordCount > 0 ? saveResult.operationError : nil) {
                         logger.error("Snapshot upload error: \(error.localizedDescription)")
                         if Self.isPermanentError(error) {
-                            return .permanentFailure(reason: error.localizedDescription)
+                            return .permanentFailure(reason: Self.userVisibleSyncError(error))
                         }
-                        return .retryableFailure(reason: error.localizedDescription)
+                        return .retryableFailure(reason: Self.userVisibleSyncError(error))
                     }
                 }
 
@@ -1249,9 +1291,9 @@
             } catch {
                 logger.error("Snapshot upload error: \(error.localizedDescription)")
                 if Self.isPermanentError(error) {
-                    return .permanentFailure(reason: error.localizedDescription)
+                    return .permanentFailure(reason: Self.userVisibleSyncError(error))
                 }
-                return .retryableFailure(reason: error.localizedDescription)
+                return .retryableFailure(reason: Self.userVisibleSyncError(error))
             }
         }
 
@@ -1324,19 +1366,53 @@
 
         // MARK: - Full Resync
 
+        private enum SyncEngineSchemaError: LocalizedError {
+            case missingCloudKitRecordType(
+                recordType: String,
+                containerIdentifier: String
+            )
+            case unresolvedFullResyncTailEvents(count: UInt64)
+
+            var errorDescription: String? {
+                switch self {
+                case let .missingCloudKitRecordType(recordType, containerIdentifier):
+                    return """
+                    CloudKit schema is missing \(recordType) in \(containerIdentifier). \
+                    Deploy the iCloud Production schema for ClipKitty, then try sync again.
+                    """
+                case let .unresolvedFullResyncTailEvents(count):
+                    return """
+                    Full iCloud resync left \(count) event(s) waiting for missing history. \
+                    Sync will retry instead of claiming success.
+                    """
+                }
+            }
+        }
+
+        private func fetchAllCloudRecords(ofType recordType: String) async throws -> [CKRecord] {
+            do {
+                return try await cloud.fetchAllRecords(
+                    ofType: recordType,
+                    in: recordZone.zoneID
+                )
+            } catch {
+                if Self.isMissingRecordTypeError(error, recordType: recordType) {
+                    throw SyncEngineSchemaError.missingCloudKitRecordType(
+                        recordType: recordType,
+                        containerIdentifier: Self.cloudKitContainerIdentifier
+                    )
+                }
+                throw error
+            }
+        }
+
         private func performFullResync() async throws {
             logger.info("Starting full resync")
             // 1. Fetch all snapshots (checkpoints) from CloudKit.
-            let allSnapshots = try await cloud.fetchAllRecords(
-                ofType: "ItemSnapshot",
-                in: recordZone.zoneID
-            )
+            let allSnapshots = try await fetchAllCloudRecords(ofType: Self.itemSnapshotRecordType)
 
             // 2. Fetch all events (tail) from CloudKit.
-            let allEvents = try await cloud.fetchAllRecords(
-                ofType: "ItemEvent",
-                in: recordZone.zoneID
-            )
+            let allEvents = try await fetchAllCloudRecords(ofType: Self.itemEventRecordType)
 
             // 3. Convert to FFI records.
             let snapshotRecords = try allSnapshots.map { record in
@@ -1366,7 +1442,20 @@
                 snapshotRecords: snapshotRecords,
                 tailEventRecords: eventRecords
             )
-            logger.info("Full resync: \(result.checkpointsApplied) checkpoints, \(result.tailEventsApplied) tail events applied")
+            logger.info(
+                """
+                Full resync: \(result.checkpointsApplied) checkpoints, \
+                \(result.tailEventsApplied) tail events applied, \
+                \(result.tailEventsIgnored) ignored, \
+                \(result.tailEventsForked) forked, \
+                \(result.tailEventsDeferred) deferred
+                """
+            )
+            if result.tailEventsDeferred > 0 {
+                throw SyncEngineSchemaError.unresolvedFullResyncTailEvents(
+                    count: result.tailEventsDeferred
+                )
+            }
 
             // 5. Rebuild Tantivy index.
             try store.rebuildIndex()
@@ -1422,9 +1511,9 @@
                 operation.recordWasChangedBlock = { _, fetchResult in
                     switch fetchResult {
                     case let .success(record):
-                        if record.recordType == "ItemEvent" {
+                        if record.recordType == SyncEngine.itemEventRecordType {
                             result.events.append(record)
-                        } else if record.recordType == "ItemSnapshot" {
+                        } else if record.recordType == SyncEngine.itemSnapshotRecordType {
                             result.snapshots.append(record)
                         }
                     case let .failure(error):

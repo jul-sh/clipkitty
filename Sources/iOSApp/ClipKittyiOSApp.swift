@@ -249,6 +249,7 @@ struct ClipKittyiOSApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     #if ENABLE_ICLOUD_SYNC
+        @UIApplicationDelegateAdaptor(iOSAppDelegate.self) private var appDelegate
         @State private var syncCoordinator: iOSSyncCoordinator?
     #endif
 
@@ -325,6 +326,7 @@ struct ClipKittyiOSApp: App {
                     }
                 )
                 syncCoordinator = coordinator
+                iOSRemoteNotificationBridge.shared.bind(coordinator: coordinator)
                 if container.settings.syncEnabled {
                     coordinator.handleScenePhaseChange(.active)
                 }

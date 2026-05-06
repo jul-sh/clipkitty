@@ -318,6 +318,7 @@
 
             coordinator.handleRemoteNotification()
 
+            XCTAssertEqual(latestEngine?.startCallCount, 1)
             XCTAssertEqual(latestEngine?.handleRemoteNotificationCallCount, 1)
         }
 

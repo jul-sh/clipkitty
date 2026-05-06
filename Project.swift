@@ -358,7 +358,7 @@ enum IOSBuildVariant: CaseIterable {
             settings = [
                 "CODE_SIGN_STYLE": "Automatic",
                 "CODE_SIGN_IDENTITY": "Apple Development",
-                "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.entitlements",
+                "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.debug.entitlements",
                 "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(compilationConditions),
             ]
         case .release:
@@ -825,6 +825,7 @@ let project = Project(
                 "ITSAppUsesNonExemptEncryption": false,
                 "LSApplicationCategoryType": "public.app-category.utilities",
                 "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved.",
+                "UIBackgroundModes": ["remote-notification"],
                 "UILaunchScreen": ["UIColorName": ""],
             ]),
             sources: ["Sources/iOSApp/**"],
@@ -1086,5 +1087,6 @@ let project = Project(
         "Sources/MacApp/ClipKitty.debug.entitlements",
         "Sources/MacApp/ClipKitty.sparkle.entitlements",
         "Sources/MacApp/ClipKitty.hardened.entitlements",
+        "Sources/iOSApp/ClipKittyiOS.debug.entitlements",
     ]
 )
