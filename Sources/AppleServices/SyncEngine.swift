@@ -95,8 +95,8 @@
         public static let cloudKitContainerIdentifier = "iCloud.com.eviljuliette.clipkitty"
         private static let zoneName = "ClipKittySync"
         private static let subscriptionID = "clipkitty-sync-changes"
-        private static let itemEventRecordType = "ItemEvent"
-        private static let itemSnapshotRecordType = "ItemSnapshot"
+        fileprivate static let itemEventRecordType = "ItemEvent"
+        fileprivate static let itemSnapshotRecordType = "ItemSnapshot"
         private static let compactionInterval: TimeInterval = 300 // 5 minutes
         private static let baseInterval: TimeInterval = 30
         private static let subscriptionActiveInterval: TimeInterval = 60
