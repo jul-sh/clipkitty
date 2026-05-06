@@ -22,12 +22,12 @@ use tempfile::{tempdir, NamedTempFile};
 
 use crate::cli::{
     AppcastCmd, AppcastGenerateArgs, AppcastUpdateStateArgs, DmgArgs, ReleaseCmd, ReleaseMacArgs,
-    VersionArgs, VersionField,
 };
 use crate::cmd::build;
 use crate::cmd::secrets;
+use crate::cmd::secrets::AscField;
 use crate::cmd::sign;
-use crate::model::{AscAuthField, MacVariant, SetupAction, SideEffectLevel};
+use crate::model::{MacVariant, SetupAction, SideEffectLevel};
 use crate::output::Reporter;
 use crate::process::Runner;
 use crate::repo::RepoRoot;
@@ -41,18 +41,7 @@ pub fn run(cmd: &ReleaseCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
         ReleaseCmd::IosAppstore(args) => ios_appstore(&repo, args, dry_run, reporter),
         ReleaseCmd::Dmg(args) => dmg(&repo, args, dry_run, reporter),
         ReleaseCmd::Appcast(sub) => appcast(&repo, sub, dry_run, reporter),
-        ReleaseCmd::Version(args) => print_version(&repo, args, reporter),
     }
-}
-
-fn print_version(repo: &RepoRoot, args: &VersionArgs, reporter: &Reporter) -> Result<()> {
-    let resolved = version::resolve(repo, reporter)?;
-    let value = match args.field {
-        VersionField::Version => resolved.version,
-        VersionField::BuildNumber => resolved.build_number,
-    };
-    println!("{value}");
-    Ok(())
 }
 
 fn macos_appstore(
@@ -243,10 +232,10 @@ fn publish(
     }
 
     reporter.info("Decrypting App Store Connect secrets...");
-    let asc_key_id = secrets::resolve_asc_field(repo, AscAuthField::KeyId, reporter)?;
-    let asc_issuer_id = secrets::resolve_asc_field(repo, AscAuthField::IssuerId, reporter)?;
+    let asc_key_id = secrets::resolve_asc_field(repo, AscField::KeyId, reporter)?;
+    let asc_issuer_id = secrets::resolve_asc_field(repo, AscField::IssuerId, reporter)?;
     let asc_private_key_b64 =
-        secrets::resolve_asc_field(repo, AscAuthField::PrivateKeyB64, reporter)?;
+        secrets::resolve_asc_field(repo, AscField::PrivateKeyB64, reporter)?;
 
     let key_bytes = base64::engine::general_purpose::STANDARD
         .decode(asc_private_key_b64.trim())

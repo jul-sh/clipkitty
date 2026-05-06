@@ -1,6 +1,10 @@
-//! `clipkitty secrets` — resolve App Store Connect auth fields for CI and
-//! release orchestration. Internal release/sign code also calls
-//! [`read_secret`] directly to decrypt other age-encrypted secrets.
+//! Age-encrypted secret resolution shared by the signing/release/dmg flows.
+//!
+//! This is no longer reachable from the CLI — the Makefile resolves
+//! ASC auth fields directly via `age` + `security`. The Rust signing and
+//! ASC-publishing code still calls [`read_secret`] when it needs binary
+//! provisioning profiles or P12 certificates whose decoding logic genuinely
+//! belongs in a typed setting.
 
 use std::env;
 use std::io::Write;
@@ -9,28 +13,17 @@ use std::process::{Command, Stdio};
 use anyhow::{anyhow, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 
-use crate::cli::{AscAuthArgs, SecretsCmd};
-use crate::model::{AscAuthField, SideEffectLevel};
 use crate::output::Reporter;
 use crate::process::Runner;
 use crate::repo::RepoRoot;
 
-pub fn run(cmd: &SecretsCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
-    let _ = SideEffectLevel::Credentialed;
-    let repo = RepoRoot::discover(reporter)?;
-    match cmd {
-        SecretsCmd::AscAuth(args) => asc_auth(&repo, args, dry_run, reporter),
-    }
-}
-
-fn secret_path(repo: &RepoRoot, name: &str) -> Utf8PathBuf {
+pub(crate) fn secret_path(repo: &RepoRoot, name: &str) -> Utf8PathBuf {
     let stem = name.strip_suffix(".age").unwrap_or(name);
     repo.join(format!("secrets/{stem}.age"))
 }
 
-/// Resolve an age-encrypted secret to plaintext, mirroring the keytap +
-/// keychain + `$AGE_SECRET_KEY` fallback used by the existing signing/release
-/// flows.
+/// Resolve an age-encrypted secret to plaintext. Mirrors the keytap +
+/// keychain + `$AGE_SECRET_KEY` fallback used by the Makefile-side helper.
 pub(crate) fn read_secret(
     repo: &RepoRoot,
     secret_path: &Utf8Path,
@@ -153,29 +146,18 @@ fn age_decrypt(identity: &str, secret_path: &Utf8Path) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-fn asc_auth(repo: &RepoRoot, args: &AscAuthArgs, dry_run: bool, reporter: &Reporter) -> Result<()> {
-    if dry_run {
-        reporter.info(&format!(
-            "[dry-run] would resolve ASC field {:?}",
-            args.field
-        ));
-        return Ok(());
-    }
-
-    let value = resolve_asc_field(repo, args.field, reporter)?;
-    println!("{value}");
-    Ok(())
-}
-
+/// Resolve one ASC auth field (key id, issuer id, or base64 private key)
+/// from the `secrets/` tree. Used internally by `release` to build temporary
+/// ASC auth bundles.
 pub(crate) fn resolve_asc_field(
     repo: &RepoRoot,
-    field: AscAuthField,
+    field: AscField,
     reporter: &Reporter,
 ) -> Result<String> {
     let (primary, fallback) = match field {
-        AscAuthField::KeyId => ("APPSTORE_KEY_ID", "NOTARY_KEY_ID"),
-        AscAuthField::IssuerId => ("APPSTORE_ISSUER_ID", "NOTARY_ISSUER_ID"),
-        AscAuthField::PrivateKeyB64 => ("APPSTORE_KEY_BASE64", "NOTARY_KEY_BASE64"),
+        AscField::KeyId => ("APPSTORE_KEY_ID", "NOTARY_KEY_ID"),
+        AscField::IssuerId => ("APPSTORE_ISSUER_ID", "NOTARY_ISSUER_ID"),
+        AscField::PrivateKeyB64 => ("APPSTORE_KEY_BASE64", "NOTARY_KEY_BASE64"),
     };
     for name in [primary, fallback] {
         let path = secret_path(repo, name);
@@ -190,6 +172,13 @@ pub(crate) fn resolve_asc_field(
     Err(anyhow!(
         "neither {primary}.age nor {fallback}.age was found in secrets/"
     ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AscField {
+    KeyId,
+    IssuerId,
+    PrivateKeyB64,
 }
 
 fn tool_exists(name: &str) -> bool {

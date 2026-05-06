@@ -2,22 +2,9 @@
 
 use clap::Parser;
 use xtask::cli::{
-    AppArgs, AppTarget, AppcastCmd, Cli, EnvCmd, InstallTarget, MarketingCmd, ReleaseCmd,
-    ScreenshotPlatform, SecretsCmd, SiteCmd, SiteRenderTarget, TopLevel,
+    AppArgs, AppTarget, AppcastCmd, Cli, MarketingCmd, ReleaseCmd, ScreenshotPlatform, TopLevel,
 };
-use xtask::model::{AscAuthField, ReleaseChannel};
-
-#[test]
-fn parses_check() {
-    let cli = Cli::parse_from(["clipkitty", "check"]);
-    assert!(matches!(cli.command, TopLevel::Check));
-}
-
-#[test]
-fn parses_workspace() {
-    let cli = Cli::parse_from(["clipkitty", "workspace"]);
-    assert!(matches!(cli.command, TopLevel::Workspace));
-}
+use xtask::model::ReleaseChannel;
 
 #[test]
 fn parses_app_targets() {
@@ -30,20 +17,6 @@ fn parses_app_targets() {
             panic!("expected app target");
         };
         assert_eq!(target, expected, "input={input}");
-    }
-}
-
-#[test]
-fn parses_env_install_targets() {
-    for (input, expected) in [
-        ("hooks", InstallTarget::Hooks),
-        ("sparkle-cli", InstallTarget::SparkleCli),
-    ] {
-        let cli = Cli::parse_from(["clipkitty", "env", "install", input]);
-        let TopLevel::Env(EnvCmd::Install(args)) = cli.command else {
-            panic!("expected env install");
-        };
-        assert_eq!(args.target, expected, "input={input}");
     }
 }
 
@@ -130,67 +103,23 @@ fn parses_perf() {
 }
 
 #[test]
-fn parses_secrets_asc_auth() {
-    for (input, expected) in [
-        ("key-id", AscAuthField::KeyId),
-        ("issuer-id", AscAuthField::IssuerId),
-        ("private-key-b64", AscAuthField::PrivateKeyB64),
-    ] {
-        let cli = Cli::parse_from(["clipkitty", "secrets", "asc-auth", input]);
-        let TopLevel::Secrets(SecretsCmd::AscAuth(args)) = cli.command else {
-            panic!("expected secrets asc-auth");
-        };
-        assert_eq!(args.field, expected);
-    }
-}
-
-#[test]
-fn parses_site_render() {
-    let icon = Cli::parse_from(["clipkitty", "site", "render", "icon"]);
-    let TopLevel::Site(SiteCmd::Render(args)) = icon.command else {
-        panic!("expected site render");
-    };
-    assert_eq!(args.target, SiteRenderTarget::Icon);
-
-    let landing = Cli::parse_from(["clipkitty", "site", "render", "landing-page"]);
-    let TopLevel::Site(SiteCmd::Render(args)) = landing.command else {
-        panic!("expected site render");
-    };
-    assert_eq!(args.target, SiteRenderTarget::LandingPage);
-}
-
-#[test]
 fn verbose_and_dry_run_flags_propagate() {
-    let cli = Cli::parse_from(["clipkitty", "--verbose", "--dry-run", "check"]);
+    let cli = Cli::parse_from(["clipkitty", "--verbose", "--dry-run", "app", "hardened"]);
     assert!(cli.verbose);
     assert!(cli.dry_run);
 }
 
 #[test]
-fn rejects_internalized_legacy_commands() {
+fn rejects_commands_now_owned_by_make() {
     for argv in [
-        ["clipkitty", "check", "pins"].as_slice(),
-        ["clipkitty", "build", "generate"].as_slice(),
-        ["clipkitty", "build", "app", "Release"].as_slice(),
-        ["clipkitty", "sign", "app", "Hardened"].as_slice(),
-        ["clipkitty", "app", "release"].as_slice(),
-        ["clipkitty", "env", "install-hooks"].as_slice(),
-        ["clipkitty", "env", "install-sparkle-cli"].as_slice(),
-        ["clipkitty", "marketing", "screenshots-macos"].as_slice(),
-        ["clipkitty", "marketing", "patch-demo-items"].as_slice(),
-        ["clipkitty", "perf", "run", "typing"].as_slice(),
-        ["clipkitty", "perf", "--output", "perf_traces"].as_slice(),
-        ["clipkitty", "site", "icon"].as_slice(),
-        [
-            "clipkitty",
-            "release",
-            "macos-appstore",
-            "1.2.3",
-            "42",
-            "--metadata-only",
-        ]
-        .as_slice(),
-        ["clipkitty", "release", "dmg", "--output", "ClipKitty.dmg"].as_slice(),
+        ["clipkitty", "check"].as_slice(),
+        ["clipkitty", "workspace"].as_slice(),
+        ["clipkitty", "env", "install", "hooks"].as_slice(),
+        ["clipkitty", "env", "install", "sparkle-cli"].as_slice(),
+        ["clipkitty", "secrets", "asc-auth", "key-id"].as_slice(),
+        ["clipkitty", "site", "render", "icon"].as_slice(),
+        ["clipkitty", "site", "render", "landing-page"].as_slice(),
+        ["clipkitty", "release", "version", "version"].as_slice(),
     ] {
         assert!(Cli::try_parse_from(argv).is_err(), "argv={argv:?}");
     }

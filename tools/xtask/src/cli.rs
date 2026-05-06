@@ -1,14 +1,14 @@
 use camino::Utf8PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use crate::model::{AscAuthField, ReleaseChannel};
+use crate::model::ReleaseChannel;
 
 #[derive(Parser, Debug)]
 #[command(
     name = "clipkitty",
     version,
-    about = "ClipKitty automation CLI — one entrypoint for repo-owned automation",
-    long_about = "All supported repo-owned automation runs through this binary. Host tools (xcodebuild, codesign, nix, age, asc, ...) stay at the edge; orchestration, validation, and policy live here."
+    about = "ClipKitty automation CLI — orchestration that needs a real language",
+    long_about = "Hosts the automation flows that don't fit in a Makefile shell line: signing, ASC publishing, marketing screenshots, perf trace orchestration, appcast XML. Trivial wrappers (check, workspace, version, site assets, secret resolution, hook install) live directly in the Makefile."
 )]
 pub struct Cli {
     /// Print the exact host commands being executed.
@@ -26,17 +26,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum TopLevel {
-    /// Verify repository automation invariants.
-    Check,
-
-    /// Install local helpers.
-    #[command(subcommand)]
-    Env(EnvCmd),
-
-    /// Materialize the generated Xcode workspace/project.
-    Workspace,
-
-    /// Stage one supported macOS app artifact.
+    /// Stage one supported macOS app artifact (signs + stamps version).
     App(AppArgs),
 
     /// Release packaging and publishing orchestration.
@@ -50,37 +40,9 @@ pub enum TopLevel {
     /// Run the supported performance trace flow.
     Perf(PerfArgs),
 
-    /// Resolve App Store Connect auth fields from repo secrets.
-    #[command(subcommand)]
-    Secrets(SecretsCmd),
-
-    /// Public site assets.
-    #[command(subcommand)]
-    Site(SiteCmd),
-
     /// Hidden internal entrypoints used by repo-generated helpers.
     #[command(name = "__internal", hide = true, subcommand)]
     Internal(InternalCmd),
-}
-
-#[derive(Subcommand, Debug)]
-pub enum EnvCmd {
-    /// Install one local helper owned by the repo.
-    Install(InstallArgs),
-}
-
-#[derive(Args, Debug)]
-pub struct InstallArgs {
-    #[arg(value_enum)]
-    pub target: InstallTarget,
-}
-
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InstallTarget {
-    #[value(name = "hooks")]
-    Hooks,
-    #[value(name = "sparkle-cli")]
-    SparkleCli,
 }
 
 #[derive(Subcommand, Debug)]
@@ -117,25 +79,6 @@ pub enum ReleaseCmd {
     /// Appcast generation and state update (Sparkle).
     #[command(subcommand)]
     Appcast(AppcastCmd),
-    /// Print the resolved release version for the current repo state.
-    Version(VersionArgs),
-}
-
-#[derive(Args, Debug)]
-pub struct VersionArgs {
-    /// Which field to print (default: marketing version).
-    #[arg(value_enum, default_value_t = VersionField::Version)]
-    pub field: VersionField,
-}
-
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VersionField {
-    /// `CFBundleShortVersionString`; e.g. `1.12.1225`.
-    #[value(name = "version")]
-    Version,
-    /// `CFBundleVersion`; the bare commit count.
-    #[value(name = "build-number")]
-    BuildNumber,
 }
 
 #[derive(Args, Debug)]
@@ -211,36 +154,4 @@ pub struct PerfArgs {
     pub hang_threshold: u64,
     #[arg(long)]
     pub fail_on_hangs: bool,
-}
-
-#[derive(Subcommand, Debug)]
-pub enum SecretsCmd {
-    /// Print the resolved ASC auth field (key-id | issuer-id | private-key-b64).
-    AscAuth(AscAuthArgs),
-}
-
-#[derive(Args, Debug)]
-pub struct AscAuthArgs {
-    #[arg(value_enum)]
-    pub field: AscAuthField,
-}
-
-#[derive(Subcommand, Debug)]
-pub enum SiteCmd {
-    /// Render one public site asset.
-    Render(SiteRenderArgs),
-}
-
-#[derive(Args, Debug)]
-pub struct SiteRenderArgs {
-    #[arg(value_enum)]
-    pub target: SiteRenderTarget,
-}
-
-#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SiteRenderTarget {
-    #[value(name = "icon")]
-    Icon,
-    #[value(name = "landing-page")]
-    LandingPage,
 }

@@ -7,13 +7,6 @@
 
 use clap::ValueEnum;
 
-/// Apple platform a build or release targets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum Platform {
-    MacOs,
-    Ios,
-}
-
 /// macOS build/distribution variant — maps 1:1 to nix package names.
 ///
 /// Value names match the canonical build/signing names used throughout the
@@ -108,12 +101,4 @@ impl ReleaseChannel {
             Self::Beta => "beta",
         }
     }
-}
-
-/// Which App Store Connect credential field a command needs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum AscAuthField {
-    KeyId,
-    IssuerId,
-    PrivateKeyB64,
 }
