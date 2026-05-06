@@ -2892,7 +2892,7 @@ mod replay_audit_tests {
             "shared-item".to_string(),
             live_aggregate(text_snapshot("before edit"), default_versions()),
         );
-        let first_edit = ItemEvent::new_local(
+        let mut first_edit = ItemEvent::new_local(
             "shared-item".to_string(),
             "device-A",
             ItemEventPayload::TextEdited {
@@ -2900,7 +2900,9 @@ mod replay_audit_tests {
                 base_content_version: 1,
             },
         );
-        let conflicting_edit = ItemEvent::new_local(
+        first_edit.event_id = "evt-1-edit-a".to_string();
+        first_edit.recorded_at = 1;
+        let mut conflicting_edit = ItemEvent::new_local(
             "shared-item".to_string(),
             "device-B",
             ItemEventPayload::TextEdited {
@@ -2908,6 +2910,8 @@ mod replay_audit_tests {
                 base_content_version: 1,
             },
         );
+        conflicting_edit.event_id = "evt-2-edit-b".to_string();
+        conflicting_edit.recorded_at = 2;
 
         let result = store
             .full_resync_with_tail(
@@ -2961,6 +2965,98 @@ mod replay_audit_tests {
         assert_eq!(pending_events.len(), 1);
         assert_eq!(pending_events[0].item_id, forked_item.item_id);
         assert_eq!(pending_events[0].payload_type, "item_created");
+    }
+
+    #[test]
+    fn full_resync_skips_events_covered_by_checkpoint() {
+        let db = test_db();
+        let item_id = "checkpointed-item".to_string();
+
+        let mut created = ItemEvent::new_local(
+            item_id.clone(),
+            "device-A",
+            ItemEventPayload::ItemCreated {
+                snapshot: text_snapshot("before edit"),
+            },
+        );
+        created.event_id = "evt-1-created".to_string();
+        created.recorded_at = 1;
+
+        let mut covered_edit = ItemEvent::new_local(
+            item_id.clone(),
+            "device-A",
+            ItemEventPayload::TextEdited {
+                new_text: "covered edit".to_string(),
+                base_content_version: 1,
+            },
+        );
+        covered_edit.event_id = "evt-2-covered-edit".to_string();
+        covered_edit.recorded_at = 2;
+
+        let mut later_bookmark = ItemEvent::new_local(
+            item_id.clone(),
+            "device-B",
+            ItemEventPayload::BookmarkSet {
+                base_bookmark_version: 0,
+            },
+        );
+        later_bookmark.event_id = "evt-3-bookmark".to_string();
+        later_bookmark.recorded_at = 3;
+
+        let mut checkpoint_versions = default_versions();
+        checkpoint_versions.content = 2;
+        let checkpoint = ItemSnapshot::compacted(
+            item_id.clone(),
+            0,
+            covered_edit.event_id.clone(),
+            live_aggregate(text_snapshot("covered edit"), checkpoint_versions),
+        );
+
+        let result = replay::full_resync(
+            db.pool(),
+            &[checkpoint],
+            &[later_bookmark, covered_edit, created],
+        )
+        .unwrap();
+
+        assert_eq!(result.checkpoints_applied, 1);
+        assert_eq!(result.tail_events_ignored, 2);
+        assert_eq!(result.tail_events_applied, 1);
+        assert_eq!(result.tail_events_forked, 0);
+        assert_eq!(result.tail_events_deferred, 0);
+
+        let sync = SyncStore::new(db.pool());
+        let snapshot = sync.fetch_snapshot(&item_id).unwrap().unwrap();
+        match snapshot.aggregate {
+            ItemAggregate::Live(live) => {
+                assert_eq!(live.snapshot.content_text, "covered edit");
+                assert!(live.snapshot.is_bookmarked);
+                assert_eq!(live.versions.content, 2);
+                assert_eq!(live.versions.bookmark, 1);
+            }
+            other => panic!("expected live aggregate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn full_resync_keeps_resync_flag_when_tail_events_defer() {
+        let db = test_db();
+        let mut edit_without_create = ItemEvent::new_local(
+            "missing-item".to_string(),
+            "device-A",
+            ItemEventPayload::TextEdited {
+                new_text: "future edit".to_string(),
+                base_content_version: 1,
+            },
+        );
+        edit_without_create.event_id = "evt-missing-create".to_string();
+        edit_without_create.recorded_at = 1;
+
+        let result = replay::full_resync(db.pool(), &[], &[edit_without_create]).unwrap();
+
+        assert_eq!(result.tail_events_deferred, 1);
+        let sync = SyncStore::new(db.pool());
+        assert!(sync.get_dirty_flag(FLAG_NEEDS_FULL_RESYNC).unwrap());
     }
 
     #[test]

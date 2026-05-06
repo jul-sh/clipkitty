@@ -18,6 +18,7 @@ use crate::types::{
 };
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use std::collections::{BTreeMap, HashMap};
 
 /// Maximum deferred event retries before marking full resync needed.
 const MAX_DEFERRED_RETRY_ROUNDS: usize = 3;
@@ -286,11 +287,61 @@ fn retry_deferred_events(
     Ok(())
 }
 
+fn events_after_checkpoints<'a>(
+    checkpoints: &[ItemSnapshot],
+    tail_events: &'a [ItemEvent],
+) -> (Vec<&'a ItemEvent>, usize) {
+    let checkpoint_watermarks: HashMap<&str, &str> = checkpoints
+        .iter()
+        .filter_map(|snapshot| {
+            snapshot
+                .covers_through_event
+                .as_deref()
+                .map(|event_id| (snapshot.item_id.as_str(), event_id))
+        })
+        .collect();
+
+    let mut events_by_item: BTreeMap<&str, Vec<&ItemEvent>> = BTreeMap::new();
+    for event in tail_events {
+        events_by_item
+            .entry(event.item_id.as_str())
+            .or_default()
+            .push(event);
+    }
+
+    let mut filtered = Vec::new();
+    let mut covered_count = 0;
+
+    for (item_id, mut events) in events_by_item {
+        events.sort_by(|left, right| {
+            left.recorded_at
+                .cmp(&right.recorded_at)
+                .then_with(|| left.event_id.cmp(&right.event_id))
+        });
+
+        if let Some(watermark_event_id) = checkpoint_watermarks.get(item_id) {
+            if let Some(watermark_index) = events
+                .iter()
+                .position(|event| event.event_id == *watermark_event_id)
+            {
+                covered_count += watermark_index + 1;
+                filtered.extend(events.into_iter().skip(watermark_index + 1));
+                continue;
+            }
+        }
+
+        filtered.extend(events);
+    }
+
+    (filtered, covered_count)
+}
+
 /// Full resync: clear local sync state, apply checkpoints, then replay tail events.
 ///
-/// Tail events are filtered per-item: only events recorded after the checkpoint's
-/// watermark (the `recorded_at` of the covering event) are replayed. Events for
-/// items with no checkpoint are always replayed.
+/// Tail events are filtered per-item: when a checkpoint references a
+/// `covers_through_event` that is still present in the CloudKit tail query,
+/// all events through that watermark are skipped. Events for items with no
+/// checkpoint are replayed in deterministic recorded_at/event_id order.
 pub fn full_resync(
     pool: &Pool<SqliteConnectionManager>,
     checkpoints: &[ItemSnapshot],
@@ -320,41 +371,21 @@ pub fn full_resync(
         result.checkpoints_applied += 1;
     }
 
-    // Build a watermark map: for each item that has a checkpoint, record the
-    // checkpoint's recorded_at time so we only replay events newer than it.
-    // We use the checkpoint's snapshot_revision as a proxy — events whose
-    // recorded_at is <= the checkpoint's latest event time are already covered.
-    // Since we don't store the exact timestamp of covers_through_event in the
-    // snapshot, we use a simple approach: skip events whose event_id matches
-    // a covers_through_event (exact dedup), and rely on the dedup table for
-    // events that were already applied during checkpoint building.
-    let covered_event_ids: std::collections::HashSet<&str> = checkpoints
-        .iter()
-        .filter_map(|s| s.covers_through_event.as_deref())
-        .collect();
+    let (tail_events_to_apply, covered_tail_events) =
+        events_after_checkpoints(checkpoints, tail_events);
+    result.tail_events_ignored += covered_tail_events;
 
     // Apply tail events that aren't already covered by checkpoints.
-    for event in tail_events {
-        // Skip events that are the exact watermark of a checkpoint.
-        if covered_event_ids.contains(event.event_id.as_str()) {
-            result.tail_events_ignored += 1;
-            continue;
-        }
+    let tail_events_to_apply: Vec<ItemEvent> = tail_events_to_apply.into_iter().cloned().collect();
+    let batch_result = apply_remote_event_batch(pool, &tail_events_to_apply)?;
+    result.tail_events_applied += batch_result.events_applied + batch_result.events_forked;
+    result.tail_events_ignored += batch_result.events_ignored;
+    result.tail_events_deferred += batch_result.events_deferred;
+    result.tail_events_forked += batch_result.events_forked;
+    result.fork_plans.extend(batch_result.fork_plans);
 
-        match apply_remote_event(pool, event)? {
-            ApplyResult::Applied(_) => result.tail_events_applied += 1,
-            ApplyResult::Ignored(_) => result.tail_events_ignored += 1,
-            ApplyResult::Deferred(_) => result.tail_events_deferred += 1,
-            ApplyResult::Forked(plan) => {
-                result.tail_events_applied += 1;
-                result.tail_events_forked += 1;
-                result.fork_plans.push((event.item_id.clone(), plan));
-            }
-        }
-    }
-
-    // Clear the full resync flag.
-    sync.set_dirty_flag(FLAG_NEEDS_FULL_RESYNC, false)?;
+    // Keep the full resync flag set when replay still has unresolved gaps.
+    sync.set_dirty_flag(FLAG_NEEDS_FULL_RESYNC, result.tail_events_deferred > 0)?;
 
     Ok(result)
 }

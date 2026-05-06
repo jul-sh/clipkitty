@@ -1,4 +1,5 @@
 import AppKit
+import ClipKittyAppleServices
 import ClipKittyMacPlatform
 import ClipKittyShared
 #if ENABLE_ICLOUD_SYNC
@@ -431,7 +432,8 @@ struct GeneralSettingsView: View {
             }
 
             do {
-                let status = try await CKContainer.default().accountStatus()
+                let container = CKContainer(identifier: SyncEngine.cloudKitContainerIdentifier)
+                let status = try await container.accountStatus()
                 switch status {
                 case .available:
                     isICloudAvailable = true
