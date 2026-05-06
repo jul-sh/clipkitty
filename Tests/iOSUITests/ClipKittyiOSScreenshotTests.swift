@@ -59,8 +59,13 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         app.launchArguments += ["-AppleLocale", locale]
         app.launch()
 
-        // Allow the feed to settle and full-width image previews to load
-        sleep(8)
+        // Allow the feed to settle and full-width image previews to load.
+        // Card images now resolve their full-resolution data via
+        // `BrowserStoreClient.fetchItem(id:)` (so iPad doesn't ship pixelated
+        // 64px thumbnails); that round-trip plus async decode pushes the
+        // capture-ready point well past three seconds, especially on iPad
+        // where more cards are visible at once.
+        sleep(10)
     }
 
     func testTakeMarketingScreenshots() {
@@ -114,7 +119,11 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         XCTAssertTrue(imagesFilter.waitForExistence(timeout: 3),
                       "bottomBar.filterOption.images not found for locale \(locale!)")
         imagesFilter.tap()
-        sleep(5)
+        // Filtering down to images surfaces several full-width image cards
+        // simultaneously; each one async-loads its full-resolution data,
+        // so wait long enough that none capture mid-decode (which would
+        // ship a pixelated thumbnail to the App Store).
+        sleep(8)
 
         let filterScreenshot = app.screenshot()
         saveScreenshot(filterScreenshot, index: 3, name: "filter")
