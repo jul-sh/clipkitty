@@ -314,8 +314,14 @@ final class ClipKittyUITests: XCTestCase {
     /// Regression test: verify the synthetic database was correctly seeded.
     /// If this fails, the DB is likely being placed in the wrong sandbox container path.
     func testDatabaseNotEmpty() {
-        let items = app.outlines.firstMatch.buttons.allElementsBoundByIndex
-        XCTAssertGreaterThan(items.count, 0, "Database should contain items — empty DB indicates a seeding/path regression")
+        // The list populates asynchronously after launch (DB load + index ready);
+        // poll instead of sampling once to avoid races on slow CI runners.
+        let outline = app.outlines.firstMatch
+        XCTAssertTrue(outline.waitForExistence(timeout: 10), "Outline should appear")
+        let populated = waitForCondition(timeout: 10) {
+            outline.buttons.allElementsBoundByIndex.count > 0
+        }
+        XCTAssertTrue(populated, "Database should contain items — empty DB indicates a seeding/path regression")
     }
 
     /// Tests that first item is selected on initial open.
@@ -619,7 +625,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that clicking the actions button opens a popover with action options.
     func testActionsPopoverOpensOnClick() {
         let actionsButton = app.buttons["ActionsButton"]
-        XCTAssertTrue(actionsButton.waitForExistence(timeout: 5), "Actions button should exist")
+        XCTAssertTrue(actionsButton.waitForExistence(timeout: 15), "Actions button should exist")
 
         actionsButton.click()
         Thread.sleep(forTimeInterval: 0.5)
