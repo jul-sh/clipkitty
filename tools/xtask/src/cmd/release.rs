@@ -710,23 +710,28 @@ fn upload_screenshots(
                 })() {
                     last_error = Some(err);
                 } else {
-                    let actual = count_screenshots_in_set(
+                    // Allow up to ~30s for ASC to flip newly-uploaded
+                    // screenshots from AWAITING_UPLOAD to COMPLETE before
+                    // declaring this attempt failed and clearing+reuploading.
+                    match wait_for_screenshot_set_ready(
                         repo,
                         localization_id,
                         device_type,
+                        expected,
                         asc_env,
                         reporter,
-                    )?;
-                    if actual == expected {
-                        succeeded = true;
-                        break;
+                    )? {
+                        Ok(()) => {
+                            succeeded = true;
+                            break;
+                        }
+                        Err(reason) => {
+                            last_error = Some(anyhow!("{device_type} {asc_locale}: {reason}"));
+                            reporter.info(&format!(
+                                "Screenshot upload not yet ready for {device_type} {asc_locale} ({reason}); retrying..."
+                            ));
+                        }
                     }
-                    last_error = Some(anyhow!(
-                        "{device_type} {asc_locale}: expected {expected} screenshots after upload, found {actual}"
-                    ));
-                    reporter.info(&format!(
-                        "Screenshot count mismatch for {device_type} {asc_locale} ({actual}/{expected}); retrying..."
-                    ));
                 }
             }
             if !succeeded {
@@ -741,14 +746,59 @@ fn upload_screenshots(
     Ok(())
 }
 
-fn count_screenshots_in_set(
+/// Poll the screenshot set for up to ~30s, returning `Ok(())` once it has
+/// `expected` screenshots and all of them are `COMPLETE`. Returns
+/// `Err(reason)` if the deadline passes without that state being reached.
+///
+/// This catches stuck `AWAITING_UPLOAD` screenshots that never finished
+/// (typical when ASC 401s the post-upload status subrequest). Without this,
+/// the release would succeed locally but the user would later see an
+/// "Add for Review" gate complaining about uploads still in progress.
+fn wait_for_screenshot_set_ready(
+    repo: &RepoRoot,
+    localization_id: &str,
+    device_type: &str,
+    expected: usize,
+    asc_env: &[(&str, &str)],
+    reporter: &Reporter,
+) -> Result<std::result::Result<(), String>> {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let screenshots =
+            list_screenshot_set(repo, localization_id, device_type, asc_env, reporter)?;
+        let actual = screenshots.len();
+        let pending = screenshots
+            .iter()
+            .filter(|ss| screenshot_state(ss) != Some("COMPLETE"))
+            .count();
+        if actual == expected && pending == 0 {
+            return Ok(Ok(()));
+        }
+        let reason = if actual != expected {
+            format!("expected {expected} screenshots, found {actual}")
+        } else {
+            format!("{pending} of {actual} screenshot(s) still uploading")
+        };
+        if Instant::now() >= deadline {
+            return Ok(Err(reason));
+        }
+        thread::sleep(Duration::from_secs(5));
+    }
+}
+
+/// `asc screenshots list` returns
+///   { "sets": [ { "set": {...}, "screenshots": [...] }, ... ] }
+/// rather than the standard ASC `data` envelope, so parse the inner shape
+/// directly. Returns the screenshots for `device_type`, or an empty vec
+/// if no set exists for that device type yet.
+fn list_screenshot_set(
     repo: &RepoRoot,
     localization_id: &str,
     device_type: &str,
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
-) -> Result<usize> {
-    let screenshots = asc_json(
+) -> Result<Vec<Value>> {
+    let output = asc_command(
         repo,
         &[
             "screenshots",
@@ -759,13 +809,38 @@ fn count_screenshots_in_set(
         asc_env,
         reporter,
     )?;
-    Ok(media_ids_with_attribute(
-        &screenshots,
-        "appScreenshots",
-        &["screenshotDisplayType"],
-        device_type,
-    )
-    .len())
+    let parsed: Value =
+        serde_json::from_slice(&output.stdout).context("parsing asc screenshots list JSON")?;
+    let Some(sets) = parsed.get("sets").and_then(Value::as_array) else {
+        return Ok(Vec::new());
+    };
+    for entry in sets {
+        let entry_device_type = entry
+            .get("set")
+            .and_then(|s| s.get("attributes"))
+            .and_then(|a| a.get("screenshotDisplayType"))
+            .and_then(Value::as_str);
+        if entry_device_type == Some(device_type) {
+            return Ok(entry
+                .get("screenshots")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default());
+        }
+    }
+    Ok(Vec::new())
+}
+
+fn screenshot_state(screenshot: &Value) -> Option<&str> {
+    screenshot
+        .get("attributes")?
+        .get("assetDeliveryState")?
+        .get("state")?
+        .as_str()
+}
+
+fn screenshot_id(screenshot: &Value) -> Option<&str> {
+    screenshot.get("id")?.as_str()
 }
 
 fn clear_existing_screenshots_for_device(
@@ -776,35 +851,22 @@ fn clear_existing_screenshots_for_device(
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
 ) -> Result<()> {
-    let screenshots = asc_json(
-        repo,
-        &[
-            "screenshots",
-            "list",
-            "--version-localization",
-            localization_id,
-        ],
-        asc_env,
-        reporter,
-    )?;
-    let ids = media_ids_with_attribute(
-        &screenshots,
-        "appScreenshots",
-        &["screenshotDisplayType"],
-        device_type,
-    );
-    if ids.is_empty() {
+    let screenshots = list_screenshot_set(repo, localization_id, device_type, asc_env, reporter)?;
+    if screenshots.is_empty() {
         return Ok(());
     }
 
     reporter.info(&format!(
         "Clearing {} existing {device_type} screenshots for {asc_locale}...",
-        ids.len()
+        screenshots.len()
     ));
-    for id in ids {
+    for screenshot in &screenshots {
+        let Some(id) = screenshot_id(screenshot) else {
+            continue;
+        };
         asc_command(
             repo,
-            &["screenshots", "delete", "--id", &id, "--confirm"],
+            &["screenshots", "delete", "--id", id, "--confirm"],
             asc_env,
             reporter,
         )?;
