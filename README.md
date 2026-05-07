@@ -4,7 +4,7 @@
 
 **Copy freely. Find it later.**
 
-A fast, private clipboard manager for macOS with deep history, forgiving search, live previews, bookmarks, and optional iCloud sync.
+A fast, private clipboard manager for macOS with deep history, forgiving search, live previews, and optional iCloud sync.
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty clipboard history" width="820">
 
@@ -16,7 +16,7 @@ Most clipboard managers work fine when your history is small. Then the thing you
 
 ClipKitty is built around a simple idea: your clipboard can remember more without asking more from you.
 
-Keep a deep history of text, links, images, files, code, and colors. Search what you remember. Preview before you paste. Bookmark the things you come back to. Stay in the same fast keyboard flow the whole time.
+Keep a deep history of text, links, images, files, code, and colors. Search what you remember. Preview before you paste. Stay in the same fast keyboard flow the whole time.
 
 ## Features
 
@@ -28,9 +28,6 @@ Keep a deep history of text, links, images, files, code, and colors. Search what
 
 - **Live previews**  
   See full text, code, images, colors, links, and files before you paste.
-
-- **Bookmarks**  
-  Keep important clips close without digging through history.
 
 - **Natural keyboard flow**  
   Press **⌥Space**, type to search, move with **↑ / ↓**, and press **Return** to paste.
