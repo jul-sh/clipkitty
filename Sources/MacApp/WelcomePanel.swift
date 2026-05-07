@@ -139,6 +139,20 @@ private struct QuickStartPageView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
 
+                #if ENABLE_SYNTHETIC_PASTE
+                    Divider()
+                        .padding(.horizontal, 16)
+
+                    // Paste Items row
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Paste Items")
+                            .font(.system(size: 13, weight: .medium))
+                        PasteItemsSettingView()
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                #endif
+
                 #if ENABLE_ICLOUD_SYNC
                     Divider()
                         .padding(.horizontal, 16)
