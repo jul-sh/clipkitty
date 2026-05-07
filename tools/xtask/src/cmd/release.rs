@@ -588,17 +588,6 @@ fn import_metadata(
             Ok(())
         }
         Err(err) => {
-            // ASC sometimes 401s a single per-locale subrequest mid-import even
-            // though the same token has just been used successfully. Retry once
-            // with a freshly invoked `asc` (which mints a new JWT per call).
-            if is_transient_asc_auth_error(&err) {
-                reporter.info(
-                    "ASC returned a transient auth failure, retrying metadata import...",
-                );
-                asc_command(repo, &args, asc_env, reporter)?;
-                reporter.info("Metadata uploaded.");
-                return Ok(());
-            }
             let release_notes_removed = remove_release_notes(&import_metadata)?;
             if release_notes_removed
                 && err.to_string().contains("whatsNew")
@@ -675,46 +664,108 @@ fn upload_screenshots(
         let pngs = expected_screenshot_paths(&locale_dir, *asc_locale, platform.label)?;
 
         for device_type in platform.screenshot_device_types {
-            clear_existing_screenshots_for_device(
-                repo,
-                localization_id,
-                *asc_locale,
-                device_type,
-                asc_env,
-                reporter,
-            )?;
-            reporter.info(&format!(
-                "Replacing with {} {device_type} screenshots for {asc_locale}...",
-                pngs.len()
-            ));
-            for (index, png) in pngs.iter().enumerate() {
-                let upload_mode = if index == 0 {
-                    ScreenshotUploadMode::ReplaceTargetSet
+            // Up to 3 attempts: ASC's flaky 401s can leave the set with the
+            // wrong number of screenshots (partial uploads, duplicates from
+            // retried 401-then-success calls). Retry the whole replace+upload
+            // sequence until the set count matches the expected file count.
+            let expected = pngs.len();
+            let mut last_error: Option<anyhow::Error> = None;
+            let mut succeeded = false;
+            for attempt in 1..=3 {
+                if let Err(err) = (|| -> Result<()> {
+                    clear_existing_screenshots_for_device(
+                        repo,
+                        localization_id,
+                        *asc_locale,
+                        device_type,
+                        asc_env,
+                        reporter,
+                    )?;
+                    reporter.info(&format!(
+                        "Replacing with {expected} {device_type} screenshots for {asc_locale} (attempt {attempt})...",
+                    ));
+                    for (index, png) in pngs.iter().enumerate() {
+                        let upload_mode = if index == 0 {
+                            ScreenshotUploadMode::ReplaceTargetSet
+                        } else {
+                            ScreenshotUploadMode::AppendAfterReplace
+                        };
+                        let mut args = vec![
+                            "screenshots",
+                            "upload",
+                            "--version-localization",
+                            localization_id,
+                            "--device-type",
+                            device_type,
+                            "--path",
+                            png.as_str(),
+                        ];
+                        match upload_mode {
+                            ScreenshotUploadMode::ReplaceTargetSet => args.push("--replace"),
+                            ScreenshotUploadMode::AppendAfterReplace => {}
+                        }
+                        asc_command(repo, &args, asc_env, reporter)?;
+                    }
+                    Ok(())
+                })() {
+                    last_error = Some(err);
                 } else {
-                    ScreenshotUploadMode::AppendAfterReplace
-                };
-                let mut args = vec![
-                    "screenshots",
-                    "upload",
-                    "--version-localization",
-                    localization_id,
-                    "--device-type",
-                    device_type,
-                    "--path",
-                    png.as_str(),
-                ];
-                match upload_mode {
-                    ScreenshotUploadMode::ReplaceTargetSet => args.push("--replace"),
-                    ScreenshotUploadMode::AppendAfterReplace => {}
+                    let actual = count_screenshots_in_set(
+                        repo,
+                        localization_id,
+                        device_type,
+                        asc_env,
+                        reporter,
+                    )?;
+                    if actual == expected {
+                        succeeded = true;
+                        break;
+                    }
+                    last_error = Some(anyhow!(
+                        "{device_type} {asc_locale}: expected {expected} screenshots after upload, found {actual}"
+                    ));
+                    reporter.info(&format!(
+                        "Screenshot count mismatch for {device_type} {asc_locale} ({actual}/{expected}); retrying..."
+                    ));
                 }
-                asc_command(repo, &args, asc_env, reporter)?;
             }
-            uploaded_count += pngs.len();
+            if !succeeded {
+                return Err(last_error
+                    .unwrap_or_else(|| anyhow!("screenshot upload failed without error")));
+            }
+            uploaded_count += expected;
         }
     }
 
     reporter.info(&format!("Total screenshots uploaded: {uploaded_count}"));
     Ok(())
+}
+
+fn count_screenshots_in_set(
+    repo: &RepoRoot,
+    localization_id: &str,
+    device_type: &str,
+    asc_env: &[(&str, &str)],
+    reporter: &Reporter,
+) -> Result<usize> {
+    let screenshots = asc_json(
+        repo,
+        &[
+            "screenshots",
+            "list",
+            "--version-localization",
+            localization_id,
+        ],
+        asc_env,
+        reporter,
+    )?;
+    Ok(media_ids_with_attribute(
+        &screenshots,
+        "appScreenshots",
+        &["screenshotDisplayType"],
+        device_type,
+    )
+    .len())
 }
 
 fn clear_existing_screenshots_for_device(
@@ -1358,15 +1409,34 @@ fn asc_command(
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
 ) -> Result<crate::process::CommandOutput> {
-    let output = asc_command_output(repo, args, asc_env, reporter)?;
-    if !output.status.success() {
-        return Err(anyhow!(
-            "`asc {}` failed: {}",
-            args.join(" "),
-            command_output_text(&output)
-        ));
+    // ASC's API frequently 401s a single subrequest mid-call ("Authentication
+    // credentials are missing or invalid") even though the JWT we just minted
+    // is fine — the very next call with a fresh token works. Retry up to a
+    // few times with growing backoff to absorb the spurious failures.
+    const MAX_AUTH_RETRIES: usize = 3;
+    let mut last_err: Option<anyhow::Error> = None;
+    for attempt in 0..=MAX_AUTH_RETRIES {
+        let output = asc_command_output(repo, args, asc_env, reporter)?;
+        if output.status.success() {
+            return Ok(output);
+        }
+        let combined = command_output_text(&output);
+        let err = anyhow!("`asc {}` failed: {combined}", args.join(" "));
+        if attempt < MAX_AUTH_RETRIES && is_transient_asc_auth_error(&err) {
+            let backoff = Duration::from_secs(2u64.pow(attempt as u32 + 1));
+            reporter.info(&format!(
+                "ASC returned a transient auth failure, retrying in {}s ({}/{})...",
+                backoff.as_secs(),
+                attempt + 1,
+                MAX_AUTH_RETRIES,
+            ));
+            thread::sleep(backoff);
+            last_err = Some(err);
+            continue;
+        }
+        return Err(err);
     }
-    Ok(output)
+    Err(last_err.unwrap_or_else(|| anyhow!("`asc {}` failed after retries", args.join(" "))))
 }
 
 fn asc_command_output(
