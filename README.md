@@ -2,57 +2,83 @@
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/icon.png" alt="ClipKitty icon" width="60">
 
-**Never lose what you copied.**
+**Copy freely. Find it later.**
 
-Unlimited history • Fast, forgiving search • Live preview • iCloud Sync • Secure & Attested
+A fast, private clipboard manager for macOS with deep history, forgiving search, live previews, bookmarks, and optional iCloud sync.
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty clipboard history" width="820">
 
 ## Why ClipKitty
 
-Most clipboard managers feel fine at first.
+Your clipboard should feel safe to use.
 
-Then you need something from last week, last month, or longer ago; and it is gone or hard to find.
+Most clipboard managers work fine when your history is small. Then the thing you need is from last week, last month, or buried under a hundred other clips.
 
-ClipKitty keeps your all clipboard history available and makes it easy to search, preview, and paste.
+ClipKitty is built around a simple idea: your clipboard can remember more without asking more from you.
+
+Keep a deep history of text, links, images, files, code, and colors. Search what you remember. Preview before you paste. Bookmark the things you come back to. Stay in the same fast keyboard flow the whole time.
 
 ## Features
 
-- **Unlimited history**
-- **Fast, forgiving search**; find what you're looking for, even if you only remember parts, or mispell words
-- **Full previews**; see complete text before you paste
-- **Works with more than text**; including images, files, colors, links
-- **Optional iCloud Sync**; 
-- **Private by default**; on-device, no telemetry, no accounts
-- **Open source and attested**; you can verify the app was built from the public source
+- **Deep clipboard history**  
+  Keep far more than the last few things you copied.
+
+- **Fast, forgiving search**  
+  Find clips by typing what you remember, even if your query is partial or misspelled.
+
+- **Live previews**  
+  See full text, code, images, colors, links, and files before you paste.
+
+- **Bookmarks**  
+  Keep important clips close without digging through history.
+
+- **Natural keyboard flow**  
+  Press **⌥Space**, type to search, move with **↑ / ↓**, and press **Return** to paste.
+
+- **Optional iCloud Sync**  
+  Sync your history across your Mac, iPhone, and iPad when you choose.
+
+- **Private by default**  
+  No accounts. No telemetry. No third-party servers. Your clipboard history stays on-device unless you enable iCloud Sync.
+
+- **Open source and attested**  
+  ClipKitty publishes build attestations so you can verify that the app was built from the public source.
 
 ## Installation
 
-### Quick Install 
+### Mac App Store
 
 <a href="https://apps.apple.com/us/app/clipkitty-clipboard-manager/id6759137247?mt=12"><img src="https://github.com/jul-sh/clipkitty/raw/main/distribution/MacAppStore.png" alt="Download on the Mac App Store" width="200"></a>
 
-### Manual Download
+### Manual download
 
 1. Download the latest DMG from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases).
 2. Drag ClipKitty to your Applications folder.
+3. Open ClipKitty and grant clipboard/accessibility permissions if prompted.
 
 ## Getting started
 
-- Press **⌥Space** to open ClipKitty
-- Type to search your clipboard history
-- Use **↑ / ↓** to choose an item
-- Press **Return** to paste
+1. Copy something.
+2. Press **⌥Space** to open ClipKitty.
+3. Type to search your clipboard history.
+4. Use **↑ / ↓** to choose an item.
+5. Press **Return** to paste.
+
+That is the core flow. ClipKitty is designed to stay useful as your history grows, without turning your clipboard into another thing to manage.
 
 ## Privacy
 
-There are no accounts, no telemetry, and no third-party servers.
+ClipKitty is private by default.
 
-If you enable iCloud Sync, your data stays in your private iCloud container.
+There are no accounts, no telemetry, and no third-party servers. Clipboard history is stored locally on your device.
 
-### Verify the build
+If you enable iCloud Sync, your data syncs through your private iCloud container. Sync is optional and off by default.
 
-ClipKitty publishes attested builds; see [VERIFY.md](VERIFY.md).
+## Verification
+
+ClipKitty publishes attested builds.
+
+See [VERIFY.md](VERIFY.md) for instructions on verifying that a release was built from the public source.
 
 ## Alternatives
 
