@@ -534,7 +534,8 @@ fn intro_video(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()
             "testRecordIntroVideo",
             "SyntheticData_video.sqlite",
             &repo.join(format!("marketing/{locale_code}/intro_video.mov")),
-            30,
+            50,
+            29.0,
             reporter,
         )?;
         reporter.info(&format!("  saved marketing/{locale_code}/intro_video.mov"));
@@ -868,6 +869,7 @@ fn record_preview_video(
     db_name: &str,
     output_path: &Utf8Path,
     max_duration: u64,
+    target_duration: f64,
     reporter: &Reporter,
 ) -> Result<()> {
     if env::var("SKIP_SIGNING").ok().as_deref() != Some("1") {
@@ -961,7 +963,13 @@ fn record_preview_video(
     let raw_video = find_video_attachment(&attachments_dir)?
         .ok_or_else(|| anyhow!("no screen recording video found in {attachments_dir}"))?;
     if tool_exists("ffmpeg") && tool_exists("ffprobe") {
-        postprocess_video(&raw_video, output_path, max_duration, reporter)?;
+        postprocess_video(
+            &raw_video,
+            output_path,
+            max_duration,
+            target_duration,
+            reporter,
+        )?;
     } else {
         fs::copy(raw_video.as_std_path(), output_path.as_std_path())
             .with_context(|| format!("copying {raw_video} to {output_path}"))?;
@@ -999,6 +1007,7 @@ fn postprocess_video(
     raw_video: &Utf8Path,
     output_path: &Utf8Path,
     max_duration: u64,
+    target_duration: f64,
     reporter: &Reporter,
 ) -> Result<()> {
     let duration_output = Runner::new(reporter, "ffprobe")
@@ -1023,10 +1032,25 @@ fn postprocess_video(
         .unwrap_or(0.0);
     fs::remove_file(VIDEO_OFFSET_FILE).ok();
 
-    let trim_duration = (raw_duration - start_offset)
-        .max(0.0)
-        .min(max_duration as f64)
-        .min(30.0);
+    // Usable footage is the post-setup portion of the recording. We rescale
+    // it (speed up or slow down) so the final video is exactly
+    // `target_duration` seconds long, rather than trimming.
+    let usable_duration = (raw_duration - start_offset).max(0.0);
+    if usable_duration <= 0.0 {
+        return Err(anyhow!(
+            "raw video usable duration is non-positive (raw={raw_duration:.3}s, offset={start_offset:.3}s)"
+        ));
+    }
+    if usable_duration > max_duration as f64 {
+        return Err(anyhow!(
+            "raw video usable duration {usable_duration:.3}s exceeds {max_duration}s ceiling; tighten the recording script"
+        ));
+    }
+    let speed_factor = usable_duration / target_duration;
+    reporter.info(&format!(
+        "  rescaling {usable_duration:.2}s of footage to {target_duration:.2}s (speed x{speed_factor:.3})"
+    ));
+
     let crop_filter = fs::read_to_string(VIDEO_BOUNDS_FILE)
         .ok()
         .and_then(|raw| {
@@ -1043,7 +1067,8 @@ fn postprocess_video(
         .unwrap_or_default();
     fs::remove_file(VIDEO_BOUNDS_FILE).ok();
 
-    // App Store Connect rejects previews without an audio track, so mux in silence.
+    // App Store Connect rejects previews without an audio track, so mux in
+    // silence sized to match the rescaled output exactly.
     Runner::new(reporter, "ffmpeg")
         .args([
             "-y",
@@ -1059,10 +1084,10 @@ fn postprocess_video(
             "anullsrc=channel_layout=stereo:sample_rate=44100",
         ])
         .arg("-t")
-        .arg(format!("{trim_duration:.3}"))
+        .arg(format!("{target_duration:.3}"))
         .arg("-vf")
         .arg(format!(
-            "{crop_filter}scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0xC0C0C0"
+            "{crop_filter}scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0xC0C0C0,setpts=PTS/{speed_factor:.6}"
         ))
         .args([
             "-r",
