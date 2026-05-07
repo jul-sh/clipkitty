@@ -588,6 +588,17 @@ fn import_metadata(
             Ok(())
         }
         Err(err) => {
+            // ASC sometimes 401s a single per-locale subrequest mid-import even
+            // though the same token has just been used successfully. Retry once
+            // with a freshly invoked `asc` (which mints a new JWT per call).
+            if is_transient_asc_auth_error(&err) {
+                reporter.info(
+                    "ASC returned a transient auth failure, retrying metadata import...",
+                );
+                asc_command(repo, &args, asc_env, reporter)?;
+                reporter.info("Metadata uploaded.");
+                return Ok(());
+            }
             let release_notes_removed = remove_release_notes(&import_metadata)?;
             if release_notes_removed
                 && err.to_string().contains("whatsNew")
@@ -604,6 +615,11 @@ fn import_metadata(
             }
         }
     }
+}
+
+fn is_transient_asc_auth_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string();
+    msg.contains("Authentication credentials are missing or invalid")
 }
 
 fn upload_screenshots(
