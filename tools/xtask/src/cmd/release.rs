@@ -305,11 +305,18 @@ fn publish(
         }
     }
 
+    // Reject the publish before doing any work if a metadata locale is
+    // missing required per-locale text. ASC will otherwise refuse to "Add for
+    // Review" with errors like "Czech - What's New in This Version - This
+    // field is required" — long after we've uploaded the binary.
+    validate_metadata_locales(repo, platform)?;
+
     let publish_result = (|| -> Result<()> {
         reporter.info("\n=== Uploading binary ===");
         upload_binary(repo, platform, &asc_key_id, &asc_issuer_id, reporter)?;
         reporter.info("\n=== Uploading metadata ===");
         let version_id = ensure_editable_version(repo, platform, version, &asc_env, reporter)?;
+        attach_latest_valid_build(repo, platform, &version_id, &asc_env, reporter)?;
         import_metadata(repo, platform, &version_id, &asc_env, reporter)?;
         reporter.info(&format!(
             "\n=== Uploading {} screenshots ===",
@@ -535,6 +542,182 @@ impl std::fmt::Display for VersionLockedError {
 }
 
 impl std::error::Error for VersionLockedError {}
+
+/// Required per-locale fields for an App Store version. ASC blocks "Add for
+/// Review" with an error like "<Locale> - <Field> - This field is required"
+/// if any of these is missing for any locale present in the App Info.
+const REQUIRED_LOCALE_FILES: &[&str] =
+    &["description.txt", "release_notes.txt", "subtitle.txt"];
+
+fn validate_metadata_locales(repo: &RepoRoot, platform: PublishPlatform) -> Result<()> {
+    let metadata_dir = repo.join(format!("distribution/{}", platform.metadata_dir_name));
+    if !metadata_dir.as_std_path().is_dir() {
+        return Err(anyhow!(
+            "metadata directory missing: {metadata_dir}"
+        ));
+    }
+    let mut missing: Vec<String> = Vec::new();
+    for entry in fs::read_dir(metadata_dir.as_std_path())
+        .with_context(|| format!("listing {metadata_dir}"))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let dir_name = entry.file_name().to_string_lossy().to_string();
+        // Skip helper dirs like `review_information`.
+        if !looks_like_locale_dir(&dir_name) {
+            continue;
+        }
+        for required in REQUIRED_LOCALE_FILES {
+            let path = entry.path().join(required);
+            if !path.is_file() {
+                missing.push(format!("{dir_name}/{required}"));
+            }
+        }
+    }
+    if !missing.is_empty() {
+        return Err(anyhow!(
+            "App Store metadata is missing required per-locale files: {}. \
+             Add the missing files under distribution/{} before publishing — \
+             ASC will refuse to submit the version otherwise.",
+            missing.join(", "),
+            platform.metadata_dir_name,
+        ));
+    }
+    Ok(())
+}
+
+fn looks_like_locale_dir(name: &str) -> bool {
+    // Apple locale codes follow ISO-639 + optional region/script suffix:
+    //   en-US, fr-FR, ja, zh-Hans, pt-BR, cs.
+    // The full string is always two lowercase letters, optionally followed by
+    // `-` and at least one letter (no underscores, no whitespace, no
+    // additional `-` segments). This intentionally rejects helper directories
+    // like `review_information`.
+    let bytes = name.as_bytes();
+    if bytes.len() < 2 || !bytes[0].is_ascii_lowercase() || !bytes[1].is_ascii_lowercase() {
+        return false;
+    }
+    if bytes.len() == 2 {
+        return true;
+    }
+    if bytes[2] != b'-' || bytes.len() == 3 {
+        return false;
+    }
+    bytes[3..].iter().all(|b| b.is_ascii_alphabetic())
+}
+
+/// After uploading the IPA/PKG and finding the editable App Store version,
+/// attach the latest VALID build for that version string. ASC otherwise
+/// requires the human to pick a build in the web UI before submitting,
+/// which silently blocks the release.
+fn attach_latest_valid_build(
+    repo: &RepoRoot,
+    platform: PublishPlatform,
+    version_id: &str,
+    asc_env: &[(&str, &str)],
+    reporter: &Reporter,
+) -> Result<()> {
+    // Best build for the version is the most recently uploaded one whose
+    // processing state is VALID. ASC's binary upload happens just before this
+    // step but the build still needs a few seconds to be processed; poll for
+    // up to ~5 minutes.
+    let deadline = Instant::now() + Duration::from_secs(300);
+    let mut last_seen_state: Option<String> = None;
+    let build_id = loop {
+        let builds = asc_json(
+            repo,
+            &[
+                "builds",
+                "list",
+                "--app",
+                platform.app_id,
+                "--limit",
+                "20",
+            ],
+            asc_env,
+            reporter,
+        )?;
+        // Sort by uploadedDate descending, then take the first VALID one.
+        let mut candidates: Vec<&Value> = builds
+            .iter()
+            .filter(|b| {
+                let attrs = b.get("attributes").and_then(Value::as_object);
+                let matches_platform = attrs
+                    .and_then(|a| a.get("platform"))
+                    .and_then(Value::as_str)
+                    .map(|p| p.eq_ignore_ascii_case(platform.asc_platform))
+                    .unwrap_or(true); // some builds list responses omit platform
+                matches_platform
+            })
+            .collect();
+        candidates.sort_by(|a, b| {
+            let date_a = a
+                .get("attributes")
+                .and_then(|attrs| attrs.get("uploadedDate"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let date_b = b
+                .get("attributes")
+                .and_then(|attrs| attrs.get("uploadedDate"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            date_b.cmp(date_a)
+        });
+        let valid = candidates.iter().find(|b| {
+            b.get("attributes")
+                .and_then(|a| a.get("processingState"))
+                .and_then(Value::as_str)
+                == Some("VALID")
+        });
+        if let Some(build) = valid {
+            if let Some(id) = build.get("id").and_then(Value::as_str) {
+                break id.to_string();
+            }
+        }
+        // Track the most recent build's state for diagnostics.
+        if let Some(top) = candidates.first() {
+            last_seen_state = top
+                .get("attributes")
+                .and_then(|a| a.get("processingState"))
+                .and_then(Value::as_str)
+                .map(|s| s.to_string());
+        }
+        if Instant::now() >= deadline {
+            return Err(anyhow!(
+                "no VALID {} build found within 5 minutes (latest seen: {})",
+                platform.label,
+                last_seen_state.as_deref().unwrap_or("none")
+            ));
+        }
+        reporter.info(&format!(
+            "Waiting for {} build to finish processing (last seen: {})...",
+            platform.label,
+            last_seen_state.as_deref().unwrap_or("PROCESSING")
+        ));
+        thread::sleep(Duration::from_secs(15));
+    };
+
+    reporter.info(&format!(
+        "Attaching latest VALID {} build {build_id} to version {version_id}...",
+        platform.label
+    ));
+    asc_command(
+        repo,
+        &[
+            "versions",
+            "attach-build",
+            "--version-id",
+            version_id,
+            "--build",
+            &build_id,
+        ],
+        asc_env,
+        reporter,
+    )?;
+    Ok(())
+}
 
 fn ensure_editable_version(
     repo: &RepoRoot,
@@ -2072,10 +2255,25 @@ fn xml_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        app_preview_state, collect_ids, is_preview_upload_in_progress_error,
+        app_preview_state, collect_ids, is_preview_upload_in_progress_error, looks_like_locale_dir,
         media_ids_with_attribute, AppPreviewState,
     };
     use serde_json::json;
+
+    #[test]
+    fn looks_like_locale_dir_accepts_apple_locale_codes() {
+        assert!(looks_like_locale_dir("en-US"));
+        assert!(looks_like_locale_dir("ja"));
+        assert!(looks_like_locale_dir("zh-Hans"));
+        assert!(looks_like_locale_dir("pt-BR"));
+        assert!(looks_like_locale_dir("cs"));
+        // Helper directories should be rejected so we don't insist on a
+        // localized release_notes.txt under e.g. review_information/.
+        assert!(!looks_like_locale_dir("review_information"));
+        assert!(!looks_like_locale_dir("Review_Info"));
+        assert!(!looks_like_locale_dir(""));
+        assert!(!looks_like_locale_dir("E"));
+    }
 
     #[test]
     fn app_preview_state_waits_for_processing_video() {

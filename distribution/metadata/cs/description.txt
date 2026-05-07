@@ -1,0 +1,23 @@
+ClipKitty je klidný a šikovný správce schránky pro všechno, co kopírujete.
+
+Kopírujte texty, odkazy, obrázky i barvy bez obav, že o něco přijdete. ClipKitty drží historii vaší schránky po ruce, dobře se v ní hledá a snadno se používá, takže vás nic nevytrhne z práce a vždycky najdete to, co zrovna potřebujete.
+
+Kopírujte volně, najdete vše.
+
+Vše máte při ruce
+Uchovejte si bohatou historii všeho, co jste zkopírovali, aniž byste se o ni museli starat.
+
+Hledejte podle toho, co si pamatujete
+Stačí pár slov, útržek nebo i překlep. ClipKitty vám pomůže rychle najít to pravé i tehdy, když si přesně nevzpomenete.
+
+Než vložíte, podívejte se
+Prohlédněte si celý text, kód, obrázky i barvy ještě před vložením. Žádné hádání z drobných oříznutých náhledů.
+
+Pohodlně z klávesnice
+ClipKitty otevřete pomocí Option-Mezerník, hledáte psaním, mezi položkami se pohybujete šipkami a vložíte stiskem Return.
+
+Synchronizace, jen když ji chcete
+Volitelná synchronizace přes iCloud udrží vaši historii v souladu mezi Macem, iPhonem a iPadem. Standardně je vypnutá.
+
+Soukromí na prvním místě
+ClipKitty pracuje jen ve vašem zařízení, bez telemetrie, bez účtů a bez serverů třetích stran. Volitelná synchronizace zůstává ve vašem soukromém kontejneru iCloud. Aplikace má otevřený zdrojový kód a kdokoli si ji může prověřit.
