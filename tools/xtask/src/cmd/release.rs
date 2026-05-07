@@ -289,6 +289,22 @@ fn publish(
 
     reporter.info(&format!("Authenticated (key: {asc_key_id})"));
 
+    // Bail out early before any heavy work (binary upload) if a prior version
+    // is locked in review. We'll surface this as a friendly skip below.
+    match check_no_blocking_version(repo, platform, version, &asc_env, reporter) {
+        Ok(()) => {}
+        Err(err) => {
+            if let Some(locked) = err.downcast_ref::<VersionLockedError>() {
+                reporter.info(&format!("Skipping {} publish: {locked}", platform.label));
+                if !altool_key_existed {
+                    let _ = fs::remove_file(altool_key_path.as_std_path());
+                }
+                return Ok(());
+            }
+            return Err(err);
+        }
+    }
+
     let publish_result = (|| -> Result<()> {
         reporter.info("\n=== Uploading binary ===");
         upload_binary(repo, platform, &asc_key_id, &asc_issuer_id, reporter)?;
@@ -436,6 +452,90 @@ fn upload_binary(
     Ok(())
 }
 
+/// Bail out early (before any binary upload or build work) if a prior App
+/// Store version is locked in a review state that would block creating a
+/// new version. ASC silently refuses `versions create` in those states with
+/// a confusing "App in current state" error otherwise.
+fn check_no_blocking_version(
+    repo: &RepoRoot,
+    platform: PublishPlatform,
+    requested_version: &str,
+    asc_env: &[(&str, &str)],
+    reporter: &Reporter,
+) -> Result<()> {
+    let recent = asc_json(
+        repo,
+        &[
+            "versions",
+            "list",
+            "--app",
+            platform.app_id,
+            "--platform",
+            platform.asc_platform,
+            "--limit",
+            "5",
+        ],
+        asc_env,
+        reporter,
+    )?;
+    for entry in &recent {
+        let state = entry
+            .get("attributes")
+            .and_then(|a| a.get("appStoreState"))
+            .and_then(Value::as_str);
+        let blocking = matches!(
+            state,
+            Some(
+                "WAITING_FOR_REVIEW"
+                    | "IN_REVIEW"
+                    | "PENDING_DEVELOPER_RELEASE"
+                    | "PENDING_APPLE_RELEASE"
+                    | "PROCESSING_FOR_APP_STORE"
+                    | "DEVELOPER_REJECTED"
+                    | "REJECTED"
+                    | "METADATA_REJECTED"
+            )
+        );
+        if blocking {
+            let v = entry
+                .get("attributes")
+                .and_then(|a| a.get("versionString"))
+                .and_then(Value::as_str)
+                .unwrap_or("?");
+            return Err(VersionLockedError {
+                version: v.to_string(),
+                state: state.unwrap_or("?").to_string(),
+                platform_label: platform.label,
+                requested_version: requested_version.to_string(),
+            }
+            .into());
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+struct VersionLockedError {
+    version: String,
+    state: String,
+    platform_label: &'static str,
+    requested_version: String,
+}
+
+impl std::fmt::Display for VersionLockedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "App Store version {} is in state {} for {}. \
+             Resolve that version (cancel review, release, or address rejection) \
+             before publishing {}.",
+            self.version, self.state, self.platform_label, self.requested_version,
+        )
+    }
+}
+
+impl std::error::Error for VersionLockedError {}
+
 fn ensure_editable_version(
     repo: &RepoRoot,
     platform: PublishPlatform,
@@ -443,6 +543,12 @@ fn ensure_editable_version(
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
 ) -> Result<String> {
+    // Defense in depth: even though `publish` calls
+    // `check_no_blocking_version` up front, re-check here so direct
+    // callers of `ensure_editable_version` don't get a confusing
+    // "App in current state" error from `versions create`.
+    check_no_blocking_version(repo, platform, version, asc_env, reporter)?;
+
     let versions = asc_json(
         repo,
         &[

@@ -862,7 +862,12 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: intro-videos
-          path: .
+          # actions/upload-artifact@v4 strips the common path prefix when every
+          # uploaded file lives under it (here `marketing/`), so the artifact
+          # contents are `<locale>/intro_video.mov`, not
+          # `marketing/<locale>/intro_video.mov`. Restore the expected layout
+          # by extracting into `marketing/`.
+          path: marketing
 
       - name: Prepare API Key for Automatic Signing
         run: |
