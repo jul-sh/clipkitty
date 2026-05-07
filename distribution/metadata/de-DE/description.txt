@@ -1,21 +1,23 @@
-ClipKitty ist der Zwischenablage-Manager, der übersichtlich bleibt, auch wenn dein Verlauf kräftig wächst.
+ClipKitty ist ein ruhiger, leistungsstarker Zwischenablage-Manager für alles, was du kopierst.
 
-Er merkt sich, was du kopierst, und bringt es bei Bedarf zurück: Text, Code, Links, Farben, Bilder und Dateien, alles in einem flotten, durchsuchbaren Verlauf.
+Kopiere Texte, Links, Bilder und Farben, ohne dir Sorgen zu machen, was dabei überschrieben wird. ClipKitty hält deinen Verlauf griffbereit, durchsuchbar und übersichtlich; damit du im Flow bleibst und Dinge wiederfindest, wenn du sie brauchst.
 
-VERLAUF OHNE LIMIT
-Keine knappe Obergrenze, kein Ablaufdatum im Nacken. ClipKitty bewahrt deine Einträge so lange auf, wie du sie brauchst.
+Frei kopieren. Wiederfinden.
 
-SUCHE, DIE TIPPFEHLER VERZEIHT
-Tipp ein, woran du dich noch erinnerst, und ClipKitty fischt den passenden Eintrag heraus; auch wenn du nur Bruchstücke weißt oder dich vertippst.
+Alles in Reichweite
+Behalte einen tiefen Verlauf von allem, was du jemals kopiert hast; ohne dass daraus eine weitere lästige Aufgabe wird.
 
-VORSCHAU VOR DEM EINFÜGEN
-Text, Code, Bilder und Farben siehst du in voller Größe, bevor du einfügst. Schluss mit Raten anhand halber Schnipsel.
+Suche nach dem, woran du dich erinnerst
+Tippe ein paar Wörter, Bruchstücke oder sogar einen Tippfehler ein. ClipKitty findet schnell den passenden Eintrag, auch wenn deine Suche unvollständig ist.
 
-ICLOUD-SYNC, WENN DU WILLST
-Schalte die iCloud-Synchronisierung ein und dein Zwischenablage-Verlauf wandert mit dir von Gerät zu Gerät. Oder lass es bleiben, ganz wie du magst.
+Vorschau, bevor du einfügst
+Sieh dir vollständige Texte, Code, Bilder und Farben an, bevor du sie verwendest. Kein Rätselraten mehr bei winzigen, abgeschnittenen Ausschnitten.
 
-FLÜSSIG ÜBER DIE TASTATUR
-Mit Option-Leertaste öffnen, lostippen zum Suchen, mit den Pfeiltasten wählen, Return drückt und fügt ein.
+Schnell per Tastatur
+Öffne ClipKitty mit Option-Space, suche durch Tippen, navigiere mit den Pfeiltasten und drücke Return zum Einfügen.
 
-PRIVAT AB WERK
-ClipKitty läuft lokal auf deinem Gerät; keine Telemetrie, keine Konten, keine fremden Server. Die optionale Synchronisierung bleibt in deinem privaten iCloud-Container. Open Source und für alle nachprüfbar.
+Sync nur, wenn du willst
+Nutze die optionale iCloud-Synchronisierung, um deinen Verlauf auf Mac, iPhone und iPad im Gleichschritt zu halten. Standardmäßig ist sie aus.
+
+Privatsphäre als Standard
+ClipKitty arbeitet lokal auf deinem Gerät; ohne Telemetrie, ohne Konten, ohne Drittanbieter-Server. Die optionale Synchronisierung bleibt in deinem privaten iCloud-Container. Die App ist Open Source und öffentlich überprüfbar.

@@ -1,21 +1,23 @@
-ClipKitty keeps everything you copy within instant reach.
+ClipKitty is a calm, powerful clipboard manager for everything you copy.
 
-Simple enough for daily pastebacks, fast enough for long histories.
+Copy text, links, images, and colors without worrying about what gets overwritten. ClipKitty keeps your clipboard history close, searchable, and easy to use; so you can stay in flow and find things when you need them.
 
-UNLIMITED HISTORY
-No small cap. No short expiration. ClipKitty keeps your copied items for as long as you want them.
+Copy freely. Find it later.
 
-SEARCH THAT FORGIVES TYPOS
-Type what you remember. ClipKitty finds the right item as you type, even when your query is incomplete or misspelled.
+Everything stays within reach
+Keep a deep history of everything you've copied; without turning it into another thing to manage.
 
-SEE BEFORE YOU PASTE
-Preview full text, code, images, and colors in place. No guessing from cut-off snippets.
+Search what you remember
+Type a few words, fragments, or even a typo. ClipKitty helps you find the right item quickly, even when your search is incomplete.
 
-OPTIONAL ICLOUD SYNC
-Keep your clipboard history in step across your Mac, iPhone, and iPad when you want it. Off by default.
+Preview before you paste
+See full text, code, images, and colors before using them. No guessing from tiny cut-off snippets.
 
-NATURAL KEYBOARD FLOW
-Open with Option-Space. Search by typing. Move with the arrow keys. Press Return to paste.
+Move fast from the keyboard
+Open ClipKitty with Option-Space, search by typing, move with the arrow keys, and press Return to paste.
 
-PRIVATE BY DEFAULT
-ClipKitty works on-device with no telemetry, no accounts, and no third-party servers. Optional sync stays in your private iCloud container. Open source and publicly auditable.
+Sync only when you want it
+Use optional iCloud sync to keep your clipboard history in step across Mac, iPhone, and iPad. It is off by default.
+
+Private by default
+ClipKitty works on-device with no telemetry, no accounts, and no third-party servers. Optional sync stays in your private iCloud container. The app is open source and publicly auditable.

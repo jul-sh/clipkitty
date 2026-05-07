@@ -1,21 +1,23 @@
-ClipKitty, c'est le gestionnaire de presse-papiers qui garde les choses simples, même quand votre historique prend du volume.
+ClipKitty est un gestionnaire de presse-papiers discret et puissant pour tout ce que vous copiez.
 
-Il mémorise tout ce que vous copiez et vous aide à le retrouver en un clin d'œil : texte, code, liens, couleurs, images et fichiers, rangés dans un historique rapide à parcourir.
+Copiez du texte, des liens, des images ou des couleurs sans craindre d'écraser ce qui se trouvait déjà dans votre presse-papiers. ClipKitty garde votre historique à portée de main, facile à parcourir et à fouiller, pour que vous restiez concentré et que vous remettiez la main sur ce dont vous avez besoin, au moment où vous en avez besoin.
 
-HISTORIQUE SANS LIMITE
-Aucun plafond, aucune date d'expiration. ClipKitty conserve vos copies aussi longtemps que vous en avez besoin.
+Copiez tout, retrouvez tout.
 
-UNE RECHERCHE QUI PARDONNE
-Tapez ce dont vous vous souvenez, même approximativement. ClipKitty retrouve le bon élément malgré une faute de frappe ou une requête à moitié formulée.
+Tout reste à portée de main
+Conservez un historique complet de ce que vous avez copié, sans en faire une corvée de plus à gérer.
 
-UN APERÇU AVANT DE COLLER
-Visualisez le texte entier, le code, les images et les couleurs au même endroit. Fini de deviner le contenu d'un extrait tronqué.
+Une recherche qui suit votre mémoire
+Tapez quelques mots, un fragment, ou même une faute de frappe. ClipKitty retrouve le bon élément, même quand vos souvenirs sont flous.
 
-SYNC iCLOUD EN OPTION
-Synchronisez votre historique entre vos appareils via iCloud, uniquement si vous le souhaitez.
+Un aperçu avant de coller
+Visualisez le texte, le code, les images et les couleurs en entier avant de les utiliser. Plus besoin de deviner ce que cache un extrait tronqué.
 
-UN FLUX CLAVIER NATUREL
-Option + Espace pour ouvrir, tapez pour chercher, flèches pour naviguer, Entrée pour coller. C'est tout.
+Le clavier comme terrain de jeu
+Ouvrez ClipKitty avec Option-Espace, cherchez en tapant, naviguez avec les flèches et appuyez sur Entrée pour coller.
 
-PRIVÉ PAR DÉFAUT
-ClipKitty tourne en local, sans télémétrie, sans compte, sans serveur tiers. La sync iCloud, quand elle est activée, reste dans votre conteneur privé. Open source et vérifiable par tout le monde.
+La synchronisation, à votre rythme
+Activez la synchronisation iCloud quand vous le souhaitez pour retrouver votre historique sur Mac, iPhone et iPad. Elle est désactivée par défaut.
+
+Confidentiel par nature
+ClipKitty fonctionne en local, sans télémétrie, sans compte et sans serveur tiers. Si vous activez la synchronisation, elle reste dans votre conteneur iCloud privé. L'application est open source et vérifiable par tous.

@@ -1,21 +1,23 @@
-O ClipKitty guarda tudo que você copia e continua leve, mesmo quando seu histórico cresce.
+O ClipKitty é um gerenciador de área de transferência tranquilo e poderoso para tudo que você copia.
 
-Texto, código, links, cores, imagens e arquivos: tudo num só lugar, fácil de achar de novo.
+Copie textos, links, imagens e cores sem se preocupar com o que vai ser sobrescrito. O ClipKitty deixa seu histórico sempre por perto, fácil de pesquisar e de usar, pra você manter o ritmo e achar o que precisa na hora.
 
-HISTÓRICO SEM LIMITE
-Nada de teto baixo de itens nem prazo curto pra expirar. O que você copiou fica disponível pelo tempo que você quiser.
+Copie à vontade, ache depois.
 
-BUSCA QUE PERDOA ERRO DE DIGITAÇÃO
-Digite o que lembrar, mesmo pela metade ou com algum dedo trocado, e o ClipKitty acha o item certo na hora.
+Tudo sempre ao seu alcance
+Mantenha um histórico bem fundo de tudo que você já copiou, sem virar mais uma coisa pra você gerenciar.
 
-VEJA ANTES DE COLAR
-Prévia de texto, código, imagens e cores num painel só. Chega de colar no escuro a partir de um trechinho cortado.
+Pesquise pelo que lembrar
+Digite algumas palavras, pedaços soltos ou até com erro de digitação. O ClipKitty acha o item certo rapidinho, mesmo quando a busca tá pela metade.
 
-SINCRONIZAÇÃO iCLOUD OPCIONAL
-Quando quiser, leve seu histórico de um aparelho pra outro pelo iCloud. Quando não quiser, é só deixar desligado.
+Veja antes de colar
+Visualize o texto inteiro, código, imagens e cores antes de usar. Sem ter que adivinhar a partir de um trechinho cortado.
 
-FLUXO NATURAL NO TECLADO
-Abra com Option-Espaço, pesquise digitando, ande com as setas e aperte Return pra colar.
+Vá rápido pelo teclado
+Abra o ClipKitty com Option-Espaço, pesquise digitando, navegue com as setas e aperte Return pra colar.
 
-PRIVADO POR PADRÃO
-O ClipKitty roda no seu aparelho, sem telemetria, sem conta e sem servidor de terceiro. A sincronização opcional usa o seu contêiner privado do iCloud. É código aberto e pode ser auditado por qualquer pessoa.
+Sincronize só quando quiser
+Use a sincronização opcional pelo iCloud pra manter seu histórico em dia entre Mac, iPhone e iPad. Vem desligada por padrão.
+
+Privado por padrão
+O ClipKitty funciona no seu aparelho, sem telemetria, sem contas e sem servidores de terceiros. A sincronização opcional fica no seu contêiner privado do iCloud. O app é de código aberto e pode ser auditado por qualquer pessoa.
