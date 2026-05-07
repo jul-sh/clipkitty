@@ -39,7 +39,7 @@ Keep a deep history of text, links, images, files, code, and colors. Search what
   No accounts. No telemetry. No third-party servers. Your clipboard history stays on-device unless you enable iCloud Sync.
 
 - **Open source and attested**  
-  ClipKitty publishes build attestations so you can verify that the app was built from the public source.
+  ClipKitty publishes build attestations so you can [verify](VERIFY.md) that the app was built from the public source.
 
 ## Installation
 
@@ -52,30 +52,6 @@ Keep a deep history of text, links, images, files, code, and colors. Search what
 1. Download the latest DMG from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases).
 2. Drag ClipKitty to your Applications folder.
 3. Open ClipKitty and grant clipboard/accessibility permissions if prompted.
-
-## Getting started
-
-1. Copy something.
-2. Press **⌥Space** to open ClipKitty.
-3. Type to search your clipboard history.
-4. Use **↑ / ↓** to choose an item.
-5. Press **Return** to paste.
-
-That is the core flow. ClipKitty is designed to stay useful as your history grows, without turning your clipboard into another thing to manage.
-
-## Privacy
-
-ClipKitty is private by default.
-
-There are no accounts, no telemetry, and no third-party servers. Clipboard history is stored locally on your device.
-
-If you enable iCloud Sync, your data syncs through your private iCloud container. Sync is optional and off by default.
-
-## Verification
-
-ClipKitty publishes attested builds.
-
-See [VERIFY.md](VERIFY.md) for instructions on verifying that a release was built from the public source.
 
 ## Alternatives
 
