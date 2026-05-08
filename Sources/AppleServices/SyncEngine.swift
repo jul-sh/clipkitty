@@ -10,6 +10,7 @@
         public var events: [CKRecord]
         public var snapshots: [CKRecord]
         public var newToken: CKServerChangeToken?
+        public var moreComing: Bool
         public var tokenExpired: Bool
         public var fetchError: Error?
 
@@ -17,12 +18,14 @@
             events: [CKRecord] = [],
             snapshots: [CKRecord] = [],
             newToken: CKServerChangeToken? = nil,
+            moreComing: Bool = false,
             tokenExpired: Bool = false,
             fetchError: Error? = nil
         ) {
             self.events = events
             self.snapshots = snapshots
             self.newToken = newToken
+            self.moreComing = moreComing
             self.tokenExpired = tokenExpired
             self.fetchError = fetchError
         }
@@ -73,10 +76,6 @@
             savePolicy: CKModifyRecordsOperation.RecordSavePolicy
         ) async -> SyncRecordSaveResult
         func deleteRecords(_ recordIDs: [CKRecord.ID]) async -> SyncRecordDeleteResult
-        func fetchAllRecords(
-            ofType recordType: String,
-            in zoneID: CKRecordZone.ID
-        ) async throws -> [CKRecord]
     }
 
     /// Orchestrates iCloud sync via CloudKit using the Rust event-sourced core.
@@ -193,6 +192,12 @@
         private struct MaintenanceState {
             var lastCompactionDate: Date?
             var lastCloudCleanupDate: Date?
+        }
+
+        private struct FullResyncCloudRecords {
+            var events: [CKRecord]
+            var snapshots: [CKRecord]
+            var finalChangeToken: CKServerChangeToken?
         }
 
         // MARK: - Init
@@ -1372,6 +1377,7 @@
                 containerIdentifier: String
             )
             case unresolvedFullResyncTailEvents(count: UInt64)
+            case incompleteFullResyncMissingContinuationToken
 
             var errorDescription: String? {
                 switch self {
@@ -1385,37 +1391,69 @@
                     Full iCloud resync left \(count) event(s) waiting for missing history. \
                     Sync will retry instead of claiming success.
                     """
+                case .incompleteFullResyncMissingContinuationToken:
+                    return """
+                    Full iCloud resync received a paginated CloudKit response without a \
+                    continuation token. Sync will retry instead of claiming success.
+                    """
                 }
             }
         }
 
-        private func fetchAllCloudRecords(ofType recordType: String) async throws -> [CKRecord] {
-            do {
-                return try await cloud.fetchAllRecords(
-                    ofType: recordType,
-                    in: recordZone.zoneID
-                )
-            } catch {
-                if Self.isMissingRecordTypeError(error, recordType: recordType) {
-                    throw SyncEngineSchemaError.missingCloudKitRecordType(
-                        recordType: recordType,
-                        containerIdentifier: Self.cloudKitContainerIdentifier
-                    )
+        private func fetchAllCloudRecordsForFullResync() async throws -> FullResyncCloudRecords {
+            var allEvents: [CKRecord] = []
+            var allSnapshots: [CKRecord] = []
+            var changeToken: CKServerChangeToken?
+            var finalChangeToken: CKServerChangeToken?
+
+            repeat {
+                let changes = await cloud.fetchZoneChanges(in: recordZone.zoneID, since: changeToken)
+                if changes.tokenExpired {
+                    throw CKError(.changeTokenExpired)
                 }
-                throw error
+                if let fetchError = changes.fetchError {
+                    throw fetchError
+                }
+
+                allEvents.append(contentsOf: changes.events)
+                allSnapshots.append(contentsOf: changes.snapshots)
+                finalChangeToken = changes.newToken
+
+                guard changes.moreComing else {
+                    break
+                }
+                guard let nextToken = changes.newToken else {
+                    throw SyncEngineSchemaError.incompleteFullResyncMissingContinuationToken
+                }
+                changeToken = nextToken
+            } while true
+
+            return FullResyncCloudRecords(
+                events: allEvents,
+                snapshots: allSnapshots,
+                finalChangeToken: finalChangeToken
+            )
+        }
+
+        private func updateZoneChangeTokenAfterFullResync(_ changeToken: CKServerChangeToken?) throws {
+            if let changeToken {
+                let tokenData = try NSKeyedArchiver.archivedData(
+                    withRootObject: changeToken,
+                    requiringSecureCoding: true
+                )
+                try store.updateZoneChangeToken(deviceId: deviceId, token: tokenData)
+            } else {
+                try store.updateZoneChangeToken(deviceId: deviceId, token: nil)
             }
         }
 
         private func performFullResync() async throws {
             logger.info("Starting full resync")
-            // 1. Fetch all snapshots (checkpoints) from CloudKit.
-            let allSnapshots = try await fetchAllCloudRecords(ofType: Self.itemSnapshotRecordType)
+            // 1. Fetch the complete custom-zone change feed from CloudKit.
+            let cloudRecords = try await fetchAllCloudRecordsForFullResync()
 
-            // 2. Fetch all events (tail) from CloudKit.
-            let allEvents = try await fetchAllCloudRecords(ofType: Self.itemEventRecordType)
-
-            // 3. Convert to FFI records.
-            let snapshotRecords = try allSnapshots.map { record in
+            // 2. Convert to FFI records.
+            let snapshotRecords = try cloudRecords.snapshots.map { record in
                 try SyncSnapshotRecord(
                     itemId: record.recordID.recordName,
                     snapshotRevision: UInt64(record["snapshotRevision"] as? Int64 ?? 0),
@@ -1425,7 +1463,7 @@
                 )
             }
 
-            let eventRecords: [SyncEventRecord] = try allEvents.map { record in
+            let eventRecords: [SyncEventRecord] = try cloudRecords.events.map { record in
                 try SyncEventRecord(
                     eventId: record.recordID.recordName,
                     itemId: record["itemId"] as? String ?? "",
@@ -1437,7 +1475,7 @@
                 )
             }
 
-            // 4. Pass BOTH checkpoints and tail events to Rust.
+            // 3. Pass BOTH checkpoints and tail events to Rust.
             let result = try store.fullResyncWithTail(
                 snapshotRecords: snapshotRecords,
                 tailEventRecords: eventRecords
@@ -1457,14 +1495,15 @@
                 )
             }
 
-            // 5. Rebuild Tantivy index.
+            // 4. Rebuild Tantivy index.
             try store.rebuildIndex()
             try store.clearIndexDirtyFlag()
 
-            // 6. Clear token (start fresh).
-            try store.updateZoneChangeToken(deviceId: deviceId, token: nil)
+            // 5. Save the fresh zone token from the full feed so the next cycle
+            // resumes incrementally instead of replaying the whole zone again.
+            try updateZoneChangeTokenAfterFullResync(cloudRecords.finalChangeToken)
 
-            // 7. Notify UI.
+            // 6. Notify UI.
             onContentChanged?()
         }
     }
@@ -1530,8 +1569,9 @@
 
                 operation.recordZoneFetchResultBlock = { _, fetchResult in
                     switch fetchResult {
-                    case let .success((token, _, _)):
+                    case let .success((token, _, moreComing)):
                         result.newToken = token
+                        result.moreComing = moreComing
                     case let .failure(error):
                         let nsError = error as NSError
                         if nsError.code == CKError.changeTokenExpired.rawValue {
@@ -1624,48 +1664,6 @@
                 }
 
                 self.database.add(operation)
-            }
-        }
-
-        func fetchAllRecords(
-            ofType recordType: String,
-            in zoneID: CKRecordZone.ID
-        ) async throws -> [CKRecord] {
-            var records: [CKRecord] = []
-            var cursor: CKQueryOperation.Cursor?
-
-            let query = CKQuery(recordType: recordType, predicate: NSPredicate(value: true))
-            let (results, queryCursor) = try await database.records(
-                matching: query,
-                inZoneWith: zoneID,
-                resultsLimit: CKQueryOperation.maximumResults
-            )
-            try collectQueryResults(results, into: &records)
-            cursor = queryCursor
-
-            while let activeCursor = cursor {
-                let (moreResults, nextCursor) = try await database.records(
-                    continuingMatchFrom: activeCursor,
-                    resultsLimit: CKQueryOperation.maximumResults
-                )
-                try collectQueryResults(moreResults, into: &records)
-                cursor = nextCursor
-            }
-
-            return records
-        }
-
-        private func collectQueryResults(
-            _ results: [(CKRecord.ID, Result<CKRecord, Error>)],
-            into records: inout [CKRecord]
-        ) throws {
-            for (_, result) in results {
-                switch result {
-                case let .success(record):
-                    records.append(record)
-                case let .failure(error):
-                    throw error
-                }
             }
         }
     }
