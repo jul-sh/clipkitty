@@ -189,12 +189,30 @@ async fn ranking_word_start_beats_mid_word() {
 
     let contents = search_contents(&store, "url").await;
 
-    // "url" exact/prefix-matches "urlParser", and fuzzy-matches "curl" (edit distance 1).
-    // urlParser should rank first (exact > fuzzy).
+    // "url" exact/prefix-matches "urlParser", and infix-matches "curl".
+    // urlParser should rank first (prefix > infix).
     assert!(!contents.is_empty(), "Should find urlParser");
     assert!(
         contents[0].contains("urlParser"),
         "Word-start 'urlParser' should rank first, got: {:?}",
+        contents
+    );
+}
+
+#[tokio::test]
+async fn ranking_three_char_infix_beats_short_numeric_noise() {
+    let (store, _temp) = create_ranking_test_store(vec![
+        "911396997",             // exact 3-char infix, oldest
+        "99% 370mg",             // formerly a noisy short numeric fuzzy candidate
+        "1,979 1,936 9,999,999", // formerly another noisy numeric candidate
+    ]);
+
+    let contents = search_contents(&store, "997").await;
+
+    assert!(!contents.is_empty(), "Should find the exact numeric infix");
+    assert!(
+        contents[0].contains("911396997"),
+        "Exact 3-char infix should rank first, got: {:?}",
         contents
     );
 }
