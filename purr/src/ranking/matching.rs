@@ -223,7 +223,7 @@ pub(super) fn subsequence_match(query: &str, target: &str) -> Option<u8> {
 
 /// Maximum allowed edit distance based on word length (Milli's graduation).
 /// 1-2 char words get no fuzzy tolerance. 3+ chars can enter the fuzzy path,
-/// with additional short-token and alphabetic-word gating below.
+/// with additional short-token and wordlike-token gating below.
 pub(crate) fn max_edit_distance(word_len: usize) -> u8 {
     if word_len < 3 {
         0
@@ -235,11 +235,15 @@ pub(crate) fn max_edit_distance(word_len: usize) -> u8 {
 }
 
 pub(crate) fn query_allows_fuzzy_recall(query_word: &str) -> bool {
-    query_word.chars().count() >= 3 && query_word.chars().all(char::is_alphabetic)
+    query_word.chars().count() >= 3 && is_wordlike_fuzzy_token(query_word)
 }
 
 fn token_allows_fuzzy_match(token: &str) -> bool {
-    token.chars().all(char::is_alphabetic)
+    is_wordlike_fuzzy_token(token)
+}
+
+fn is_wordlike_fuzzy_token(token: &str) -> bool {
+    token.chars().any(char::is_alphabetic) && token.chars().all(char::is_alphanumeric)
 }
 
 fn allows_short_fuzzy_match(query: &str, target: &str, dist: u8) -> bool {

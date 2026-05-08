@@ -1697,11 +1697,17 @@ mod tests {
             dwm("tha", "the", PrefixMatch::Disabled),
             WordMatchKind::None
         );
-        // Numeric and mixed tokens do not use fuzzy matching.
+        // Numeric tokens do not use fuzzy matching.
         assert_eq!(
             dwm("997", "979", PrefixMatch::Disabled),
             WordMatchKind::None
         );
+        // Alphanumeric identifier-ish tokens can still use fuzzy matching.
+        assert_eq!(
+            dwm("sha256", "sha265", PrefixMatch::Disabled),
+            WordMatchKind::Fuzzy(1)
+        );
+        // But short alphanumeric substitutions are still too noisy.
         assert_eq!(
             dwm("a1c", "abc", PrefixMatch::Disabled),
             WordMatchKind::None
