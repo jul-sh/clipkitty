@@ -14,6 +14,15 @@ pub(crate) enum WordMatchKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FuzzyEditKind {
+    CommonTransposition,
+    RepeatedCharEdit,
+    InsertionOrDeletion,
+    Substitution,
+    MultiEdit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PrefixMatch {
     Disabled,
     Enabled { min_query_chars: usize },
@@ -55,7 +64,7 @@ pub(crate) fn does_word_match(
     let max_typo = max_edit_distance(qw_lower.chars().count());
     if max_typo > 0 {
         if let Some(dist) = edit_distance_bounded(qw_lower, dw_lower, max_typo) {
-            if dist > 0 {
+            if dist > 0 && allows_fuzzy_match(qw_lower, dw_lower, dist) {
                 return WordMatchKind::Fuzzy(dist);
             }
         }
@@ -129,7 +138,7 @@ fn matches_prefix(qw_lower: &str, dw_lower: &str, prefix_match: PrefixMatch) -> 
 fn classify_contained_match(qw_lower: &str, dw_lower: &str, dw_raw: &str) -> Option<WordMatchKind> {
     let query_chars: Vec<char> = qw_lower.chars().collect();
     let doc_lower_chars: Vec<char> = dw_lower.chars().collect();
-    if query_chars.len() < 4 || query_chars.len() >= doc_lower_chars.len() {
+    if query_chars.len() < 3 || query_chars.len() >= doc_lower_chars.len() {
         return None;
     }
 
@@ -213,7 +222,8 @@ pub(super) fn subsequence_match(query: &str, target: &str) -> Option<u8> {
 }
 
 /// Maximum allowed edit distance based on word length (Milli's graduation).
-/// 1-2 char words get no fuzzy tolerance. 3+ chars allow 1 edit (catches transpositions).
+/// 1-2 char words get no fuzzy tolerance. 3+ chars can enter the fuzzy path,
+/// with additional short-token and wordlike-token gating below.
 pub(crate) fn max_edit_distance(word_len: usize) -> u8 {
     if word_len < 3 {
         0
@@ -222,6 +232,136 @@ pub(crate) fn max_edit_distance(word_len: usize) -> u8 {
     } else {
         2
     }
+}
+
+pub(crate) fn query_allows_fuzzy_recall(query_word: &str) -> bool {
+    query_word.chars().count() >= 3 && is_wordlike_fuzzy_token(query_word)
+}
+
+fn token_allows_fuzzy_match(token: &str) -> bool {
+    is_wordlike_fuzzy_token(token)
+}
+
+fn is_wordlike_fuzzy_token(token: &str) -> bool {
+    token.chars().any(char::is_alphabetic) && token.chars().all(char::is_alphanumeric)
+}
+
+fn allows_short_fuzzy_match(query: &str, target: &str, dist: u8) -> bool {
+    match classify_fuzzy_edit(query, target, dist) {
+        FuzzyEditKind::CommonTransposition
+        | FuzzyEditKind::RepeatedCharEdit
+        | FuzzyEditKind::InsertionOrDeletion => true,
+        FuzzyEditKind::Substitution | FuzzyEditKind::MultiEdit => false,
+    }
+}
+
+fn allows_fuzzy_match(query: &str, target: &str, dist: u8) -> bool {
+    if !query_allows_fuzzy_recall(query) || !token_allows_fuzzy_match(target) {
+        return false;
+    }
+
+    if query.chars().count() == 3 {
+        return allows_short_fuzzy_match(query, target, dist);
+    }
+
+    true
+}
+
+pub(crate) fn classify_fuzzy_edit(query: &str, target: &str, dist: u8) -> FuzzyEditKind {
+    if is_adjacent_transposition(query, target) {
+        return FuzzyEditKind::CommonTransposition;
+    }
+
+    if dist == 1 {
+        if let Some(is_repeated_char) = classify_single_insert_delete(query, target) {
+            return if is_repeated_char {
+                FuzzyEditKind::RepeatedCharEdit
+            } else {
+                FuzzyEditKind::InsertionOrDeletion
+            };
+        }
+        return FuzzyEditKind::Substitution;
+    }
+
+    FuzzyEditKind::MultiEdit
+}
+
+fn is_adjacent_transposition(a: &str, b: &str) -> bool {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    if a_chars.len() != b_chars.len() || a_chars.len() < 2 {
+        return false;
+    }
+
+    let mut first_diff = None;
+    for i in 0..a_chars.len() {
+        if a_chars[i] != b_chars[i] {
+            first_diff = Some(i);
+            break;
+        }
+    }
+    let Some(i) = first_diff else {
+        return false;
+    };
+    if i + 1 >= a_chars.len() {
+        return false;
+    }
+
+    if a_chars[i] != b_chars[i + 1] || a_chars[i + 1] != b_chars[i] {
+        return false;
+    }
+
+    for j in (i + 2)..a_chars.len() {
+        if a_chars[j] != b_chars[j] {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Returns whether the edit is a repeated-char insertion/deletion when the strings
+/// differ by a single inserted or deleted character. `None` means it is not a
+/// one-char insertion/deletion relationship.
+fn classify_single_insert_delete(shorter: &str, longer: &str) -> Option<bool> {
+    let shorter_chars: Vec<char> = shorter.chars().collect();
+    let longer_chars: Vec<char> = longer.chars().collect();
+    let (shorter_chars, longer_chars) = if shorter_chars.len() <= longer_chars.len() {
+        (shorter_chars, longer_chars)
+    } else {
+        (longer_chars, shorter_chars)
+    };
+
+    if longer_chars.len() != shorter_chars.len() + 1 {
+        return None;
+    }
+
+    let mut si = 0usize;
+    let mut li = 0usize;
+    let mut skipped_idx = None;
+
+    while si < shorter_chars.len() && li < longer_chars.len() {
+        if shorter_chars[si] == longer_chars[li] {
+            si += 1;
+            li += 1;
+            continue;
+        }
+
+        if skipped_idx.is_some() {
+            return None;
+        }
+
+        skipped_idx = Some(li);
+        li += 1;
+    }
+
+    let skipped_idx = skipped_idx.unwrap_or(longer_chars.len() - 1);
+    let skipped_char = longer_chars[skipped_idx];
+    let repeated_prev = skipped_idx > 0 && longer_chars[skipped_idx - 1] == skipped_char;
+    let repeated_next =
+        skipped_idx + 1 < longer_chars.len() && longer_chars[skipped_idx + 1] == skipped_char;
+
+    Some(repeated_prev || repeated_next)
 }
 
 /// Damerau-Levenshtein edit distance (optimal string alignment) with threshold pruning.

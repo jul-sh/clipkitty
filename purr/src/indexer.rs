@@ -1397,10 +1397,10 @@ impl Indexer {
 
         let mut clauses = Vec::new();
         for (i, word) in words.iter().enumerate() {
-            let len = word.chars().count();
-            if len < 3 {
+            if !crate::ranking::query_allows_fuzzy_recall(word) {
                 continue;
             }
+            let len = word.chars().count();
             let distance = crate::ranking::max_edit_distance(len);
             if distance == 0 {
                 continue;
