@@ -47,7 +47,6 @@ final class SyncEngineTests: XCTestCase {
         var saveSubscriptionHandler: ((CKDatabaseSubscription) throws -> Void)?
         var saveRecordsHandler: (([CKRecord], CKModifyRecordsOperation.RecordSavePolicy) -> SyncRecordSaveResult)?
         var deleteRecordsHandler: (([CKRecord.ID]) -> SyncRecordDeleteResult)?
-        var fetchAllRecordsHandler: ((String, CKRecordZone.ID) throws -> [CKRecord])?
         var onSaveSubscription: (() -> Void)?
 
         private(set) var ensureZoneAttempts = 0
@@ -55,7 +54,7 @@ final class SyncEngineTests: XCTestCase {
         private(set) var subscriptionSaveAttempts = 0
         private(set) var savedSubscriptionIDs: [String] = []
         private(set) var savePolicies: [CKModifyRecordsOperation.RecordSavePolicy] = []
-        private(set) var queriedRecordTypes: [String] = []
+        private(set) var zoneChangeRequestHadToken: [Bool] = []
 
         func accountStatus() async throws -> CKAccountStatus {
             try accountStatusResult.get()
@@ -76,8 +75,9 @@ final class SyncEngineTests: XCTestCase {
 
         func fetchZoneChanges(
             in _: CKRecordZone.ID,
-            since _: CKServerChangeToken?
+            since changeToken: CKServerChangeToken?
         ) async -> SyncZoneChangeResult {
+            zoneChangeRequestHadToken.append(changeToken != nil)
             if zoneChangeResults.isEmpty {
                 return SyncZoneChangeResult()
             }
@@ -96,14 +96,6 @@ final class SyncEngineTests: XCTestCase {
         func deleteRecords(_ recordIDs: [CKRecord.ID]) async -> SyncRecordDeleteResult {
             deleteRecordsHandler?(recordIDs)
                 ?? SyncRecordDeleteResult(deletedRecordIDs: recordIDs)
-        }
-
-        func fetchAllRecords(
-            ofType recordType: String,
-            in zoneID: CKRecordZone.ID
-        ) async throws -> [CKRecord] {
-            queriedRecordTypes.append(recordType)
-            return try fetchAllRecordsHandler?(recordType, zoneID) ?? []
         }
     }
 
@@ -390,7 +382,7 @@ final class SyncEngineTests: XCTestCase {
         await engine.runCoordinatorCycle()
 
         assertSynced(engine.status)
-        XCTAssertEqual(transport.queriedRecordTypes, ["ItemSnapshot", "ItemEvent"])
+        XCTAssertEqual(transport.zoneChangeRequestHadToken, [false, false])
     }
 
     func testCoordinatorFailsOnUnreadableCloudAsset() async throws {
@@ -682,31 +674,22 @@ final class SyncEngineTests: XCTestCase {
         let strippedAggregate = try bundleBase64Fields(from: sourceSnapshot.aggregateData)
         defer { try? FileManager.default.removeItem(at: strippedAggregate.assetURL) }
 
-        transport.fetchAllRecordsHandler = { recordType, zoneID in
-            switch recordType {
-            case "ItemSnapshot":
-                let record = CKRecord(
-                    recordType: "ItemSnapshot",
-                    recordID: CKRecord.ID(recordName: sourceSnapshot.itemId, zoneID: zoneID)
-                )
-                record["snapshotRevision"] = Int64(sourceSnapshot.snapshotRevision) as CKRecordValue
-                record["schemaVersion"] = Int64(sourceSnapshot.schemaVersion) as CKRecordValue
-                record["coversThroughEvent"] = sourceSnapshot.coversThroughEvent as CKRecordValue?
-                record["aggregateData"] = strippedAggregate.strippedJSON as CKRecordValue
-                record["blobBundleAsset"] = CKAsset(fileURL: strippedAggregate.assetURL)
-                return [record]
+        let zoneID = CKRecordZone(zoneName: "ClipKittySync").zoneID
+        let record = CKRecord(
+            recordType: "ItemSnapshot",
+            recordID: CKRecord.ID(recordName: sourceSnapshot.itemId, zoneID: zoneID)
+        )
+        record["snapshotRevision"] = Int64(sourceSnapshot.snapshotRevision) as CKRecordValue
+        record["schemaVersion"] = Int64(sourceSnapshot.schemaVersion) as CKRecordValue
+        record["coversThroughEvent"] = sourceSnapshot.coversThroughEvent as CKRecordValue?
+        record["aggregateData"] = strippedAggregate.strippedJSON as CKRecordValue
+        record["blobBundleAsset"] = CKAsset(fileURL: strippedAggregate.assetURL)
 
-            case "ItemEvent":
-                return []
-
-            default:
-                return []
-            }
-        }
-
-        var result = SyncZoneChangeResult()
-        result.tokenExpired = true
-        transport.zoneChangeResults = [result]
+        var expiredResult = SyncZoneChangeResult()
+        expiredResult.tokenExpired = true
+        var fullResyncResult = SyncZoneChangeResult()
+        fullResyncResult.snapshots = [record]
+        transport.zoneChangeResults = [expiredResult, fullResyncResult]
 
         let engine = makeEngine(
             store: targetStore,
