@@ -2,7 +2,7 @@ O ClipKitty é um gerenciador de área de transferência tranquilo e poderoso pa
 
 Copie textos, links, imagens e cores sem se preocupar com o que vai ser sobrescrito. O ClipKitty deixa seu histórico sempre por perto, fácil de pesquisar e de usar, pra você manter o ritmo e achar o que precisa na hora.
 
-Copie à vontade, ache depois.
+Copie uma vez. Encontre para sempre.
 
 Tudo sempre ao seu alcance
 Mantenha um histórico bem fundo de tudo que você já copiou, sem virar mais uma coisa pra você gerenciar.

@@ -2,7 +2,7 @@ ClipKitty est un gestionnaire de presse-papiers discret et puissant pour tout ce
 
 Copiez du texte, des liens, des images ou des couleurs sans craindre d'écraser ce qui se trouvait déjà dans votre presse-papiers. ClipKitty garde votre historique à portée de main, facile à parcourir et à fouiller, pour que vous restiez concentré et que vous remettiez la main sur ce dont vous avez besoin, au moment où vous en avez besoin.
 
-Copiez tout, retrouvez tout.
+Copiez une fois, gardez à vie.
 
 Tout reste à portée de main
 Conservez un historique complet de ce que vous avez copié, sans en faire une corvée de plus à gérer.

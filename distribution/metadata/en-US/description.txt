@@ -2,7 +2,7 @@ ClipKitty is a calm, powerful clipboard manager for everything you copy.
 
 Copy text, links, images, and colors without worrying about what gets overwritten. ClipKitty keeps your clipboard history close, searchable, and easy to use; so you can stay in flow and find things when you need them.
 
-Copy freely. Find it later.
+Copy it once. Find it forever.
 
 Everything stays within reach
 Keep a deep history of everything you've copied; without turning it into another thing to manage.
