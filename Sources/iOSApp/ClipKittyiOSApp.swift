@@ -9,6 +9,7 @@ import SwiftUI
 enum AppLaunchState {
     case launching
     case ready(AppContainer, AppState)
+    case suspended
     case failed(String)
 }
 
@@ -72,12 +73,11 @@ final class AppState {
         withAnimation(.bouncy) {
             toast = ToastState(message: message, action: action)
         }
-        Task { @MainActor in
+        Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(message.duration))
-            if toast.message == message {
-                withAnimation(.bouncy) {
-                    toast = .init()
-                }
+            guard let self, self.toast.message == message else { return }
+            withAnimation(.bouncy) {
+                self.toast = .init()
             }
         }
     }
@@ -91,6 +91,11 @@ final class AppState {
         let added = await processPendingShareItems()
         if added > 0 { refreshFeed() }
         await autoAddFromClipboard()
+    }
+
+    func prepareForSuspension() {
+        viewModel.prepareForSuspension()
+        toast = .init()
     }
 
     func processPendingShareItems() async -> Int {
@@ -260,17 +265,28 @@ struct ClipKittyiOSApp: App {
 
     var body: some Scene {
         WindowGroup {
-            switch launchState {
-            case .launching:
-                ProgressView("Loading ClipKitty...")
-                    .onAppear { performBootstrap() }
+            content
+                .onChange(of: scenePhase) { _, newPhase in
+                    handleScenePhaseChange(newPhase)
+                }
+        }
+    }
 
-            case let .ready(container, appState):
-                rootView(container: container, appState: appState)
+    @ViewBuilder
+    private var content: some View {
+        switch launchState {
+        case .launching:
+            ProgressView("Loading ClipKitty...")
+                .onAppear { performBootstrap() }
 
-            case let .failed(message):
-                bootstrapFailureView(message: message)
-            }
+        case let .ready(container, appState):
+            rootView(container: container, appState: appState)
+
+        case .suspended:
+            ProgressView("Loading ClipKitty...")
+
+        case let .failed(message):
+            bootstrapFailureView(message: message)
         }
     }
 
@@ -288,19 +304,11 @@ struct ClipKittyiOSApp: App {
             .task {
                 await appState.ingestPendingAndClipboard()
             }
-            .onChange(of: scenePhase) { _, newPhase in
-                if newPhase == .active {
-                    Task { await appState.ingestPendingAndClipboard() }
-                }
-            }
 
         #if ENABLE_ICLOUD_SYNC
             if let coordinator = syncCoordinator {
                 base
                     .environment(coordinator)
-                    .onChange(of: scenePhase) { _, newPhase in
-                        coordinator.handleScenePhaseChange(newPhase)
-                    }
             } else {
                 base
             }
@@ -313,8 +321,11 @@ struct ClipKittyiOSApp: App {
         let customPath = ProcessInfo.processInfo.environment["CLIPKITTY_SCREENSHOT_DB"]
         switch AppContainer.bootstrap(databasePath: customPath) {
         case let .success(container):
-            ClipKittyShortcutRuntime.useRepositoryProvider {
-                container.shortcutRepositoryAvailability()
+            ClipKittyShortcutRuntime.useRepositoryProvider { [weak container] in
+                guard let container else {
+                    return .unavailable("ClipKitty is suspended.")
+                }
+                return container.shortcutRepositoryAvailability()
             }
             let appState = AppState(container: container)
             #if ENABLE_ICLOUD_SYNC
@@ -336,6 +347,55 @@ struct ClipKittyiOSApp: App {
         case let .failure(error):
             launchState = .failed(error.localizedDescription)
         }
+    }
+
+    private func handleScenePhaseChange(_ phase: ScenePhase) {
+        switch phase {
+        case .active:
+            handleForegroundActivation()
+        case .inactive:
+            #if ENABLE_ICLOUD_SYNC
+                syncCoordinator?.handleScenePhaseChange(.inactive)
+            #endif
+        case .background:
+            prepareForSuspension()
+        @unknown default:
+            break
+        }
+    }
+
+    private func handleForegroundActivation() {
+        switch launchState {
+        case .suspended:
+            performBootstrap()
+        case let .ready(_, appState):
+            #if ENABLE_ICLOUD_SYNC
+                syncCoordinator?.handleScenePhaseChange(.active)
+            #endif
+            Task {
+                await appState.ingestPendingAndClipboard()
+            }
+        case .launching, .failed:
+            break
+        }
+    }
+
+    private func prepareForSuspension() {
+        #if ENABLE_ICLOUD_SYNC
+            syncCoordinator?.handleScenePhaseChange(.background)
+            syncCoordinator = nil
+        #endif
+
+        guard case let .ready(container, appState) = launchState else {
+            if case .launching = launchState {
+                launchState = .suspended
+            }
+            return
+        }
+
+        appState.prepareForSuspension()
+        container.prepareForSuspension()
+        launchState = .suspended
     }
 
     private func bootstrapFailureView(message: String) -> some View {

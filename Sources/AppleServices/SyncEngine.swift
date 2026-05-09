@@ -273,6 +273,7 @@
         public func stop() {
             coordinatorTask?.cancel()
             coordinatorTask = nil
+            signalWake()
             removeAccountChangeObserver()
             engineState = .idle(maintenanceState())
             logger.info("SyncEngine stopped")

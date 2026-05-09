@@ -4,7 +4,7 @@ import ClipKittyShared
 import ClipKittyShortcuts
 import Foundation
 
-/// Owns all app-scoped services. Created once at launch.
+/// Owns all app-scoped services for the current foreground session.
 @MainActor
 @Observable
 final class AppContainer {
@@ -115,6 +115,10 @@ final class AppContainer {
 
     func shortcutRepositoryAvailability() -> ClipKittyShortcutRepositoryAvailability {
         .ready(repository)
+    }
+
+    func prepareForSuspension() {
+        store.prepareForSuspend()
     }
 
 }

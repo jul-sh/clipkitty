@@ -203,32 +203,9 @@ public final class BrowserViewModel {
     }
 
     public func handleDisplayReset(initialSearchQuery: String, contentRevision: Int = 0) {
-        searchExecution.cancel()
-        previewTask?.cancel()
-        previewTask = nil
-        #if ENABLE_LINK_PREVIEWS
-            metadataTask?.cancel()
-            metadataTask = nil
-        #endif
-        matchedExcerptTasks.values.forEach { $0.cancel() }
-        matchedExcerptTasks.removeAll()
-        pendingMatchedExcerptItemIds.removeAll()
-        prefetchTask?.cancel()
-        prefetchTask = nil
-        previewSpinnerTask?.cancel()
-        previewSpinnerTask = nil
-        pendingDeleteTask?.cancel()
-        pendingDeleteTask = nil
-        pendingTagSettleTask?.cancel()
-        pendingTagSettleTask = nil
-        queryGeneration += 1
-        previewGeneration += 1
-        #if ENABLE_LINK_PREVIEWS
-            metadataGeneration += 1
-        #endif
+        cancelInFlightWork()
         latestKnownContentRevision = contentRevision
         lastLoadedContentRevision = nil
-        hidePreviewSpinner()
         hasUserNavigated = false
         prefetchCache.removeAll()
         previewPayloadsByItemId.removeAll()
@@ -243,6 +220,15 @@ public final class BrowserViewModel {
         // instead of flashing the empty state while the new results are loading.
         hasAppliedInitialSearch = false
         startInitialSearch(initialSearchQuery: initialSearchQuery, targetContentRevision: contentRevision)
+    }
+
+    public func prepareForSuspension() {
+        cancelInFlightWork()
+        dismissSnackbarNotification()
+        overlayState = .none
+        mutationState = .idle
+        editSession = .inactive
+        hasUserNavigated = false
     }
 
     public func handleContentRevisionChange(_ contentRevision: Int, isPanelVisible: Bool) {
@@ -669,6 +655,33 @@ public final class BrowserViewModel {
             return
         }
         submitSearch(request: contentState.request, targetContentRevision: latestKnownContentRevision)
+    }
+
+    private func cancelInFlightWork() {
+        searchExecution.cancel()
+        previewTask?.cancel()
+        previewTask = nil
+        #if ENABLE_LINK_PREVIEWS
+            metadataTask?.cancel()
+            metadataTask = nil
+        #endif
+        matchedExcerptTasks.values.forEach { $0.cancel() }
+        matchedExcerptTasks.removeAll()
+        pendingMatchedExcerptItemIds.removeAll()
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        previewSpinnerTask?.cancel()
+        previewSpinnerTask = nil
+        pendingDeleteTask?.cancel()
+        pendingDeleteTask = nil
+        pendingTagSettleTask?.cancel()
+        pendingTagSettleTask = nil
+        queryGeneration += 1
+        previewGeneration += 1
+        #if ENABLE_LINK_PREVIEWS
+            metadataGeneration += 1
+        #endif
+        hidePreviewSpinner()
     }
 
     private func startInitialSearch(initialSearchQuery: String, targetContentRevision: Int) {
