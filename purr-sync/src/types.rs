@@ -300,8 +300,8 @@ pub const COMPACTION_AGE_THRESHOLD_SECS: i64 = 7 * 24 * 3600;
 /// Tombstone age (seconds) after which stale events trigger compaction.
 pub const TOMBSTONE_COMPACTION_AGE_SECS: i64 = 30 * 24 * 3600;
 
-/// Retention: keep tombstone snapshots for 90 days.
-pub const TOMBSTONE_SNAPSHOT_RETENTION_SECS: i64 = 90 * 24 * 3600;
+/// Retention: keep tombstone snapshots for 2 years.
+pub const TOMBSTONE_SNAPSHOT_RETENTION_SECS: i64 = 2 * 365 * 24 * 3600;
 /// Retention: keep compacted raw events for 30 days after snapshot coverage.
 pub const COMPACTED_EVENT_RETENTION_SECS: i64 = 30 * 24 * 3600;
 
