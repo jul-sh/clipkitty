@@ -86,7 +86,6 @@
           "clipkitty"
           "clipkitty-debug"
           "clipkitty-hardened"
-          "clipkitty-sparkle"
           "clipkitty-appstore"
           "clipkitty-ios-sim"
         ];

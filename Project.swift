@@ -9,7 +9,6 @@ enum Capability: String, CaseIterable {
     case fileClipboardItems // ENABLE_FILE_CLIPBOARD_ITEMS
     case linkPreviews // ENABLE_LINK_PREVIEWS
     case iCloudSync // ENABLE_ICLOUD_SYNC
-    case sparkleUpdates // ENABLE_SPARKLE_UPDATES
     case buildAttestationLink // ENABLE_BUILD_ATTESTATION_LINK
     case appleShortcuts // ENABLE_APP_SHORTCUTS
     case hardened // CLIPKITTY_HARDENED
@@ -20,7 +19,6 @@ enum Capability: String, CaseIterable {
         case .fileClipboardItems: return "ENABLE_FILE_CLIPBOARD_ITEMS"
         case .linkPreviews: return "ENABLE_LINK_PREVIEWS"
         case .iCloudSync: return "ENABLE_ICLOUD_SYNC"
-        case .sparkleUpdates: return "ENABLE_SPARKLE_UPDATES"
         case .buildAttestationLink: return "ENABLE_BUILD_ATTESTATION_LINK"
         case .appleShortcuts: return "ENABLE_APP_SHORTCUTS"
         case .hardened: return "CLIPKITTY_HARDENED"
@@ -37,7 +35,6 @@ enum Capability: String, CaseIterable {
 enum MacBuildVariant: CaseIterable {
     case debug
     case release
-    case sparkle
     case appStore
     case hardened
 
@@ -47,7 +44,6 @@ enum MacBuildVariant: CaseIterable {
         switch self {
         case .debug: return "Debug"
         case .release: return "Release"
-        case .sparkle: return .configuration("SparkleRelease")
         case .appStore: return .configuration("AppStore")
         case .hardened: return .configuration("Hardened")
         }
@@ -56,7 +52,7 @@ enum MacBuildVariant: CaseIterable {
     var isRelease: Bool {
         switch self {
         case .debug: return false
-        case .release, .sparkle, .appStore, .hardened: return true
+        case .release, .appStore, .hardened: return true
         }
     }
 
@@ -64,7 +60,6 @@ enum MacBuildVariant: CaseIterable {
         switch self {
         case .debug: return "Debug"
         case .release: return "Release"
-        case .sparkle: return "Sparkle"
         case .appStore: return "AppStore"
         case .hardened: return "Hardened"
         }
@@ -73,14 +68,14 @@ enum MacBuildVariant: CaseIterable {
     var bundleIdentifier: String {
         switch self {
         case .hardened: return "com.eviljuliette.clipkitty.hardened"
-        case .debug, .release, .sparkle, .appStore: return "com.eviljuliette.clipkitty"
+        case .debug, .release, .appStore: return "com.eviljuliette.clipkitty"
         }
     }
 
     var displayName: String {
         switch self {
         case .hardened: return "ClipKitty Hardened"
-        case .debug, .release, .sparkle, .appStore: return "ClipKitty"
+        case .debug, .release, .appStore: return "ClipKitty"
         }
     }
 
@@ -88,7 +83,6 @@ enum MacBuildVariant: CaseIterable {
         switch self {
         case .debug: return "Sources/MacApp/ClipKitty.debug.entitlements"
         case .release: return "Sources/MacApp/ClipKitty.oss.entitlements"
-        case .sparkle: return "Sources/MacApp/ClipKitty.sparkle.entitlements"
         case .appStore: return "Sources/MacApp/ClipKitty.appstore.entitlements"
         case .hardened: return "Sources/MacApp/ClipKitty.hardened.entitlements"
         }
@@ -100,7 +94,6 @@ enum MacBuildVariant: CaseIterable {
         switch self {
         case .debug: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .appleShortcuts]
         case .release: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .appleShortcuts]
-        case .sparkle: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .sparkleUpdates, .appleShortcuts]
         case .appStore: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .appleShortcuts]
         case .hardened: return [.syntheticPaste, .hardened]
         }
@@ -136,11 +129,10 @@ enum MacBuildVariant: CaseIterable {
 
     // MARK: Target Name — which macOS app target this variant builds
 
-    /// Variants with different dependency/resource surfaces get distinct targets.
-    /// This keeps Sparkle and Apple Shortcuts out of builds that do not support them.
+    /// Variants with a different dependency or resource surface get a distinct target.
+    /// Today, hardened is the only such variant; all others share the main `ClipKitty` target.
     var macAppTargetName: String {
         switch self {
-        case .sparkle: return "ClipKittySpark"
         case .hardened: return "ClipKittyHardened"
         case .debug, .release, .appStore: return "ClipKitty"
         }
@@ -151,52 +143,15 @@ enum MacBuildVariant: CaseIterable {
             .map(\.compileCondition).sorted().joined(separator: " ")
     }
 
-    /// Whether this variant requires SparkleUpdater in the target dependency graph.
-    var requiresSparkle: Bool {
-        capabilities.contains(.sparkleUpdates)
-    }
-
-    /// Additional target-level dependencies for this variant's target.
-    var additionalTargetDependencies: [TargetDependency] {
-        if requiresSparkle {
-            return [.external(name: "SparkleUpdater")]
-        }
-        return []
-    }
-
-    /// Additional target-level base build settings (e.g. Sparkle feed config).
-    var additionalTargetBaseSettings: SettingsDictionary {
+    /// Variant-specific overrides applied on top of the shared macOS-app base settings.
+    var targetBaseSettings: SettingsDictionary {
         switch self {
-        case .sparkle:
-            return [
-                "PRODUCT_NAME": "ClipKitty",
-                "SPARKLE_FEED_URL": "https://jul-sh.github.io/clipkitty/appcast.xml",
-                "SPARKLE_PUBLIC_KEY": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
-                "SPARKLE_AUTO_CHECK": "YES",
-                "SPARKLE_AUTO_UPDATE": "YES",
-                "SPARKLE_INSTALLER_SERVICE": "YES",
-            ]
         case .hardened:
-            return [
-                "PRODUCT_NAME": "ClipKitty",
-            ]
+            // Force the binary to be named ClipKitty even though the target is ClipKittyHardened.
+            return ["PRODUCT_NAME": "ClipKitty"]
         case .debug, .release, .appStore:
             return [:]
         }
-    }
-
-    /// Additional Info.plist entries for this variant's target.
-    var additionalInfoPlistEntries: [String: Plist.Value] {
-        if requiresSparkle {
-            return [
-                "SUFeedURL": "$(SPARKLE_FEED_URL)",
-                "SUPublicEDKey": "$(SPARKLE_PUBLIC_KEY)",
-                "SUEnableAutomaticChecks": "$(SPARKLE_AUTO_CHECK)",
-                "SUAutomaticallyUpdate": "$(SPARKLE_AUTO_UPDATE)",
-                "SUEnableInstallerLauncherService": "$(SPARKLE_INSTALLER_SERVICE)",
-            ]
-        }
-        return [:]
     }
 
     // MARK: Scheme — derived from the variant
@@ -206,7 +161,6 @@ enum MacBuildVariant: CaseIterable {
         switch self {
         case .debug: return nil // Uses the main "ClipKitty" scheme
         case .release: return nil // Built via main scheme with CONFIGURATION=Release
-        case .sparkle: return "ClipKittySpark" // Separate target with Sparkle dependency
         case .appStore: return "ClipKitty-AppStore"
         case .hardened: return "ClipKitty-Hardened"
         }
@@ -312,13 +266,12 @@ enum MacBuildVariant: CaseIterable {
 
 // MARK: - iOS Build Variant Model
 
-// iOS variants are simpler: Debug, Release, SparkleRelease (no-op), AppStore.
+// iOS variants are simpler: Debug, Release, AppStore.
 // Hardened is macOS-only but must be declared so SPM dependencies build.
 
 enum IOSBuildVariant: CaseIterable {
     case debug
     case release
-    case sparkle // no-op config (maps to Release settings)
     case appStore
     case hardened // no-op config for SPM compat
 
@@ -326,7 +279,6 @@ enum IOSBuildVariant: CaseIterable {
         switch self {
         case .debug: return "Debug"
         case .release: return "Release"
-        case .sparkle: return .configuration("SparkleRelease")
         case .appStore: return .configuration("AppStore")
         case .hardened: return .configuration("Hardened")
         }
@@ -335,7 +287,7 @@ enum IOSBuildVariant: CaseIterable {
     var isRelease: Bool {
         switch self {
         case .debug: return false
-        case .release, .sparkle, .appStore, .hardened: return true
+        case .release, .appStore, .hardened: return true
         }
     }
 
@@ -344,8 +296,8 @@ enum IOSBuildVariant: CaseIterable {
         switch self {
         case .debug, .release:
             return "ENABLE_APP_SHORTCUTS ENABLE_ICLOUD_SYNC ENABLE_LINK_PREVIEWS"
-        case .sparkle, .hardened:
-            return "" // no-op configs
+        case .hardened:
+            return "" // no-op config
         case .appStore:
             return "ENABLE_APP_SHORTCUTS ENABLE_ICLOUD_SYNC ENABLE_LINK_PREVIEWS"
         }
@@ -368,7 +320,7 @@ enum IOSBuildVariant: CaseIterable {
                 "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.entitlements",
                 "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(compilationConditions),
             ]
-        case .sparkle, .hardened:
+        case .hardened:
             settings = [:]
         case .appStore:
             settings = [
@@ -402,7 +354,7 @@ enum IOSBuildVariant: CaseIterable {
                 "CODE_SIGN_IDENTITY": "Apple Development",
                 "CODE_SIGN_ENTITLEMENTS": "Sources/ShareExtension/ClipKittyShare.entitlements",
             ]
-        case .sparkle, .hardened:
+        case .hardened:
             settings = [:]
         case .appStore:
             settings = [
@@ -505,7 +457,7 @@ private let macAppResources: ResourceFileElements = [
     "Sources/MacApp/PrivacyInfo.xcprivacy",
 ]
 
-/// Shared dependencies for all macOS app targets (no Sparkle).
+/// Shared dependencies for all macOS app targets.
 private let macAppCoreDependencies: [TargetDependency] = [
     .target(name: "ClipKittyRust"),
     .target(name: "ClipKittyShared"),
@@ -540,16 +492,13 @@ func macAppDependencies(for variant: MacBuildVariant) -> [TargetDependency] {
             .external(name: "STTextKitPlus"),
         ]
     }
-    return macAppCoreDependencies + variant.additionalTargetDependencies
+    return macAppCoreDependencies
 }
 
 /// Creates macOS app targets, one per distinct `macAppTargetName`.
 ///
 /// Variants are grouped by target name. Each group produces one Tuist target
-/// whose configurations come from its member variants. This is how Sparkle
-/// stays out of non-Sparkle targets: the enum's `requiresSparkle` /
-/// `additionalTargetDependencies` / `additionalTargetBaseSettings` drive
-/// everything — no hardcoded Sparkle knowledge lives here.
+/// whose configurations come from its member variants.
 func makeMacAppTargets() -> [Target] {
     // Group variants by target name, preserving allCases order
     var groups: [(name: String, variants: [MacBuildVariant])] = []
@@ -565,13 +514,8 @@ func makeMacAppTargets() -> [Target] {
     return groups.map { group in
         let representative = group.variants[0]
 
-        var infoPlist = macAppInfoPlist
-        for (key, value) in representative.additionalInfoPlistEntries {
-            infoPlist[key] = value
-        }
-
         var baseSettings = macAppBaseSettings
-        for (key, value) in representative.additionalTargetBaseSettings {
+        for (key, value) in representative.targetBaseSettings {
             baseSettings[key] = value
         }
 
@@ -594,7 +538,7 @@ func makeMacAppTargets() -> [Target] {
             product: .app,
             bundleId: "com.eviljuliette.clipkitty",
             deploymentTargets: .macOS("14.0"),
-            infoPlist: .extendingDefault(with: infoPlist),
+            infoPlist: .extendingDefault(with: macAppInfoPlist),
             sources: macAppSources,
             resources: macAppResources(for: representative),
             dependencies: macAppDependencies(for: representative),
@@ -1085,7 +1029,6 @@ let project = Project(
     additionalFiles: [
         "Sources/MacApp/ClipKitty.oss.entitlements",
         "Sources/MacApp/ClipKitty.debug.entitlements",
-        "Sources/MacApp/ClipKitty.sparkle.entitlements",
         "Sources/MacApp/ClipKitty.hardened.entitlements",
         "Sources/iOSApp/ClipKittyiOS.debug.entitlements",
     ]
