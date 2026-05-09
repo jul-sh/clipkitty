@@ -20,15 +20,15 @@ public enum HighlightAppearance {
         case .exact, .prefix:
             Style(backgroundColor: Color.yellow.opacity(0.4), underlineStyle: false)
         case .prefixTail:
-            Style(backgroundColor: Color.yellow.opacity(0.16), underlineStyle: false)
+            Style(backgroundColor: Color.yellow.opacity(0.08), underlineStyle: false)
         case .subwordPrefix:
-            Style(backgroundColor: Color.yellow.opacity(0.28), underlineStyle: false)
+            Style(backgroundColor: Color.yellow.opacity(0.32), underlineStyle: false)
         case .substring:
-            Style(backgroundColor: Color.orange.opacity(0.2), underlineStyle: false)
-        case .fuzzy:
             Style(backgroundColor: Color.orange.opacity(0.3), underlineStyle: false)
+        case .fuzzy:
+            Style(backgroundColor: Color.orange.opacity(0.18), underlineStyle: false)
         case .subsequence:
-            Style(backgroundColor: Color.orange.opacity(0.2), underlineStyle: true)
+            Style(backgroundColor: Color.orange.opacity(0.16), underlineStyle: true)
         }
     }
 }

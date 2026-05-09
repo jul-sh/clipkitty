@@ -1150,11 +1150,11 @@ fn collect_match_candidates_impl(
                 let wmk = does_word_match(query_word_lower, dw_lower, dw_raw, prefix_match);
                 match wmk {
                     WordMatchKind::Exact => Some(WordMatch::exact(query_word, dpos)),
-                    WordMatchKind::Prefix => Some(WordMatch::prefix(query_word, dpos)),
-                    WordMatchKind::SubwordPrefix => {
+                    WordMatchKind::Prefix { .. } => Some(WordMatch::prefix(query_word, dpos)),
+                    WordMatchKind::SubwordPrefix { .. } => {
                         Some(WordMatch::subword_prefix(query_word, dpos))
                     }
-                    WordMatchKind::InfixSubstring => {
+                    WordMatchKind::InfixSubstring { .. } => {
                         Some(WordMatch::infix_substring(query_word, dpos))
                     }
                     WordMatchKind::Fuzzy(dist) => Some(WordMatch::fuzzy(
@@ -1201,10 +1201,10 @@ fn classify_fast_match_candidate(
 ) -> Option<WordMatch> {
     match does_word_match_fast_raw(query_word_lower, document_token, prefix_match) {
         WordMatchKind::Exact => Some(WordMatch::exact(query_word, doc_word_pos)),
-        WordMatchKind::Prefix => Some(WordMatch::prefix(query_word, doc_word_pos)),
+        WordMatchKind::Prefix { .. } => Some(WordMatch::prefix(query_word, doc_word_pos)),
         WordMatchKind::None => None,
-        WordMatchKind::SubwordPrefix
-        | WordMatchKind::InfixSubstring
+        WordMatchKind::SubwordPrefix { .. }
+        | WordMatchKind::InfixSubstring { .. }
         | WordMatchKind::Fuzzy(_)
         | WordMatchKind::Subsequence(_) => None,
     }
@@ -1377,6 +1377,7 @@ fn compute_exactness(content: &str, query_words: &[&str], word_matches: &[WordMa
 
 #[cfg(test)]
 mod tests {
+    use super::matching::TokenMatchSpan;
     use super::*;
 
     /// Helper: compute bucket score from raw content (handles lowercasing/tokenization).
@@ -1419,6 +1420,10 @@ mod tests {
 
     fn prefix_match(min_query_chars: usize) -> PrefixMatch {
         PrefixMatch::Enabled { min_query_chars }
+    }
+
+    fn span(start: usize, len: usize) -> TokenMatchSpan {
+        TokenMatchSpan { start, len }
     }
 
     fn match_words(
@@ -1617,7 +1622,7 @@ mod tests {
     fn test_does_word_match_prefix() {
         assert_eq!(
             dwm("cl", "clipkitty", prefix_match(2)),
-            WordMatchKind::Prefix
+            WordMatchKind::Prefix { span: span(0, 2) }
         );
         assert_eq!(
             dwm("cl", "clipkitty", PrefixMatch::Disabled),
@@ -1631,7 +1636,7 @@ mod tests {
     fn test_does_word_match_prefix_allows_single_char_when_requested() {
         assert_eq!(
             dwm("c", "clipkitty", prefix_match(1)),
-            WordMatchKind::Prefix
+            WordMatchKind::Prefix { span: span(0, 1) }
         );
     }
 
@@ -1639,11 +1644,11 @@ mod tests {
     fn test_does_word_match_subword_prefix() {
         assert_eq!(
             dwm("code", "responseCode", PrefixMatch::Disabled),
-            WordMatchKind::SubwordPrefix
+            WordMatchKind::SubwordPrefix { span: span(8, 4) }
         );
         assert_eq!(
             dwm("server", "HTTPServer", PrefixMatch::Disabled),
-            WordMatchKind::SubwordPrefix
+            WordMatchKind::SubwordPrefix { span: span(4, 6) }
         );
     }
 
@@ -1651,15 +1656,15 @@ mod tests {
     fn test_does_word_match_infix_substring() {
         assert_eq!(
             dwm("port", "import", PrefixMatch::Disabled),
-            WordMatchKind::InfixSubstring
+            WordMatchKind::InfixSubstring { span: span(2, 4) }
         );
         assert_eq!(
             dwm("auth", "oauth", PrefixMatch::Disabled),
-            WordMatchKind::InfixSubstring
+            WordMatchKind::InfixSubstring { span: span(1, 4) }
         );
         assert_eq!(
             dwm("997", "911396997", PrefixMatch::Disabled),
-            WordMatchKind::InfixSubstring
+            WordMatchKind::InfixSubstring { span: span(6, 3) }
         );
     }
 

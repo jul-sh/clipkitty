@@ -6,11 +6,27 @@ use triple_accel::levenshtein::{levenshtein_simd_k_with_opts, RDAMERAU_COSTS};
 pub(crate) enum WordMatchKind {
     None,
     Exact,
-    Prefix,
-    SubwordPrefix,
-    InfixSubstring,
+    Prefix { span: TokenMatchSpan },
+    SubwordPrefix { span: TokenMatchSpan },
+    InfixSubstring { span: TokenMatchSpan },
     Fuzzy(u8),
     Subsequence(u8),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TokenMatchSpan {
+    pub(crate) start: usize,
+    pub(crate) len: usize,
+}
+
+impl TokenMatchSpan {
+    fn at_start(len: usize) -> Self {
+        Self { start: 0, len }
+    }
+
+    pub(crate) fn end(self) -> usize {
+        self.start + self.len
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,8 +71,8 @@ pub(crate) fn does_word_match(
     if dw_lower == qw_lower {
         return WordMatchKind::Exact;
     }
-    if matches_prefix(qw_lower, dw_lower, prefix_match) {
-        return WordMatchKind::Prefix;
+    if let Some(span) = prefix_match_span(qw_lower, dw_lower, prefix_match) {
+        return WordMatchKind::Prefix { span };
     }
     if let Some(contained_match) = classify_contained_match(qw_lower, dw_lower, dw_raw) {
         return contained_match;
@@ -97,13 +113,8 @@ pub(crate) fn does_word_match_fast_raw(
         if dw_raw.eq_ignore_ascii_case(qw_lower) {
             return WordMatchKind::Exact;
         }
-        if matches!(
-            prefix_match,
-            PrefixMatch::Enabled { min_query_chars }
-                if qw_lower.chars().count() >= min_query_chars
-        ) && ascii_starts_with_ignore_case(dw_raw.as_bytes(), qw_lower.as_bytes())
-        {
-            return WordMatchKind::Prefix;
+        if let Some(span) = ascii_prefix_match_span(qw_lower, dw_raw, prefix_match) {
+            return WordMatchKind::Prefix { span };
         }
         return WordMatchKind::None;
     }
@@ -120,17 +131,39 @@ fn match_fast_lowered(qw_lower: &str, dw_lower: &str, prefix_match: PrefixMatch)
     if dw_lower == qw_lower {
         return WordMatchKind::Exact;
     }
-    if matches_prefix(qw_lower, dw_lower, prefix_match) {
-        return WordMatchKind::Prefix;
+    if let Some(span) = prefix_match_span(qw_lower, dw_lower, prefix_match) {
+        return WordMatchKind::Prefix { span };
     }
     WordMatchKind::None
 }
 
-fn matches_prefix(qw_lower: &str, dw_lower: &str, prefix_match: PrefixMatch) -> bool {
+fn prefix_match_span(
+    qw_lower: &str,
+    dw_lower: &str,
+    prefix_match: PrefixMatch,
+) -> Option<TokenMatchSpan> {
     match prefix_match {
-        PrefixMatch::Disabled => false,
+        PrefixMatch::Disabled => None,
         PrefixMatch::Enabled { min_query_chars } => {
-            qw_lower.chars().count() >= min_query_chars && dw_lower.starts_with(qw_lower)
+            let query_len = qw_lower.chars().count();
+            (query_len >= min_query_chars && dw_lower.starts_with(qw_lower))
+                .then(|| TokenMatchSpan::at_start(query_len))
+        }
+    }
+}
+
+fn ascii_prefix_match_span(
+    qw_lower: &str,
+    dw_raw: &str,
+    prefix_match: PrefixMatch,
+) -> Option<TokenMatchSpan> {
+    match prefix_match {
+        PrefixMatch::Disabled => None,
+        PrefixMatch::Enabled { min_query_chars } => {
+            let query_len = qw_lower.chars().count();
+            (query_len >= min_query_chars
+                && ascii_starts_with_ignore_case(dw_raw.as_bytes(), qw_lower.as_bytes()))
+            .then(|| TokenMatchSpan::at_start(query_len))
         }
     }
 }
@@ -149,10 +182,14 @@ fn classify_contained_match(qw_lower: &str, dw_lower: &str, dw_raw: &str) -> Opt
 
     for start in 1..=(doc_lower_chars.len() - query_chars.len()) {
         if doc_lower_chars[start..start + query_chars.len()] == query_chars[..] {
+            let span = TokenMatchSpan {
+                start,
+                len: query_chars.len(),
+            };
             return Some(if is_subword_boundary(&doc_raw_chars, start) {
-                WordMatchKind::SubwordPrefix
+                WordMatchKind::SubwordPrefix { span }
             } else {
-                WordMatchKind::InfixSubstring
+                WordMatchKind::InfixSubstring { span }
             });
         }
     }
