@@ -272,45 +272,52 @@ pub(crate) fn search_trigram_lazy(
 fn word_match_to_highlight_kind(wmk: WordMatchKind) -> HighlightKind {
     match wmk {
         WordMatchKind::Exact => HighlightKind::Exact,
-        WordMatchKind::Prefix => HighlightKind::Prefix,
-        WordMatchKind::SubwordPrefix => HighlightKind::SubwordPrefix,
-        WordMatchKind::InfixSubstring => HighlightKind::Substring,
+        WordMatchKind::Prefix { .. } => HighlightKind::Prefix,
+        WordMatchKind::SubwordPrefix { .. } => HighlightKind::SubwordPrefix,
+        WordMatchKind::InfixSubstring { .. } => HighlightKind::Substring,
         WordMatchKind::Fuzzy(_) => HighlightKind::Fuzzy,
         WordMatchKind::Subsequence(_) => HighlightKind::Subsequence,
         WordMatchKind::None => HighlightKind::Exact, // unreachable in practice
     }
 }
 
-fn highlight_end_for_match(
+fn token_span_bounds(
     char_start: usize,
     char_end: usize,
-    query_word: &str,
-    word_match_kind: WordMatchKind,
-) -> usize {
-    match word_match_kind {
-        WordMatchKind::Prefix => {
-            let prefix_len = query_word.chars().count();
-            (char_start + prefix_len).min(char_end)
-        }
-        _ => char_end,
-    }
+    span_start: usize,
+    span_end: usize,
+) -> (usize, usize) {
+    let token_len = char_end.saturating_sub(char_start);
+    let relative_start = span_start.min(token_len);
+    let relative_end = span_end.min(token_len).max(relative_start);
+    (char_start + relative_start, char_start + relative_end)
 }
 
 fn append_word_highlight(
     highlights: &mut Vec<(usize, usize, HighlightKind)>,
     char_start: usize,
     char_end: usize,
-    query_word: &str,
     word_match_kind: WordMatchKind,
 ) {
-    let highlight_end = highlight_end_for_match(char_start, char_end, query_word, word_match_kind);
+    let (highlight_start, highlight_end) = match word_match_kind {
+        WordMatchKind::Prefix { span }
+        | WordMatchKind::SubwordPrefix { span }
+        | WordMatchKind::InfixSubstring { span } => {
+            token_span_bounds(char_start, char_end, span.start, span.end())
+        }
+        WordMatchKind::Exact
+        | WordMatchKind::Fuzzy(_)
+        | WordMatchKind::Subsequence(_)
+        | WordMatchKind::None => (char_start, char_end),
+    };
+
     highlights.push((
-        char_start,
+        highlight_start,
         highlight_end,
         word_match_to_highlight_kind(word_match_kind),
     ));
 
-    if matches!(word_match_kind, WordMatchKind::Prefix) && highlight_end < char_end {
+    if matches!(word_match_kind, WordMatchKind::Prefix { .. }) && highlight_end < char_end {
         highlights.push((highlight_end, char_end, HighlightKind::PrefixTail));
     }
 }
@@ -373,7 +380,7 @@ pub(crate) fn highlight_candidate(ctx: &HighlightContext<'_>) -> FuzzyMatch {
                 // are included via the bridging pass when they fall between word highlights,
                 // preventing random punctuation elsewhere from being highlighted.
                 if is_word_token(qw) {
-                    append_word_highlight(&mut word_highlights, *char_start, *char_end, qw, wmk);
+                    append_word_highlight(&mut word_highlights, *char_start, *char_end, wmk);
                 }
                 break; // Don't double-highlight from multiple query words
             }
@@ -871,13 +878,7 @@ fn compute_word_match_highlights(content: &str, query: &str) -> Vec<HighlightRan
                 prefix_match_for_query_word(query_lower.len(), qi, last_word_is_prefix);
             let wmk = does_word_match_fast_raw(qw_lower, doc_word, prefix_match);
             if wmk != WordMatchKind::None {
-                append_word_highlight(
-                    &mut highlights,
-                    *char_start,
-                    *char_end,
-                    &query_words[qi],
-                    wmk,
-                );
+                append_word_highlight(&mut highlights, *char_start, *char_end, wmk);
                 break;
             }
         }
@@ -1721,14 +1722,27 @@ error: Build failed due to failed dependency";
     fn test_highlight_match_kind_subword_prefix() {
         let fm = hc(1, "responseCode", 1000, 1.0, &["code"], false);
         assert_eq!(fm.highlight_ranges.len(), 1);
-        assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::SubwordPrefix);
+        let highlight = &fm.highlight_ranges[0];
+        assert_eq!(highlight.kind, HighlightKind::SubwordPrefix);
+        assert_eq!((highlight.start, highlight.end), (8, 12));
     }
 
     #[test]
     fn test_highlight_match_kind_substring() {
         let fm = hc(1, "import data", 1000, 1.0, &["port"], false);
         assert_eq!(fm.highlight_ranges.len(), 1);
-        assert_eq!(fm.highlight_ranges[0].kind, HighlightKind::Substring);
+        let highlight = &fm.highlight_ranges[0];
+        assert_eq!(highlight.kind, HighlightKind::Substring);
+        assert_eq!((highlight.start, highlight.end), (2, 6));
+    }
+
+    #[test]
+    fn test_highlight_infix_numeric_match_marks_only_literal_span() {
+        let fm = hc(1, "911396997", 1000, 1.0, &["997"], false);
+        assert_eq!(fm.highlight_ranges.len(), 1);
+        let highlight = &fm.highlight_ranges[0];
+        assert_eq!(highlight.kind, HighlightKind::Substring);
+        assert_eq!((highlight.start, highlight.end), (6, 9));
     }
 
     #[test]

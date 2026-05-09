@@ -2,7 +2,7 @@ ClipKitty es un gestor de portapapeles tranquilo y potente para todo lo que copi
 
 Copia textos, enlaces, imágenes y colores sin preocuparte por lo que pisas. ClipKitty mantiene tu historial al alcance, con buscador y fácil de usar, para que no pierdas el hilo y encuentres las cosas cuando las necesitas.
 
-Copia libre, búscalo luego.
+Copia una vez. Encuéntralo siempre.
 
 Todo a mano
 Conserva un historial completo de lo que has copiado, sin que se convierta en otra cosa más que gestionar.

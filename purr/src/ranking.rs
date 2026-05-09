@@ -24,8 +24,9 @@ pub use self::matching::edit_distance_bounded;
 #[cfg(test)]
 use self::matching::subsequence_match;
 pub(crate) use self::matching::{
-    does_word_match, does_word_match_fast, does_word_match_fast_raw, max_edit_distance,
-    prefix_match_for_query_word, PrefixMatch, WordMatchKind,
+    classify_fuzzy_edit, does_word_match, does_word_match_fast, does_word_match_fast_raw,
+    max_edit_distance, prefix_match_for_query_word, query_allows_fuzzy_recall, FuzzyEditKind,
+    PrefixMatch, WordMatchKind,
 };
 use self::policy::{compute_quality_detail, compute_quality_tier, compute_recency_bucket};
 #[cfg(test)]
@@ -1149,11 +1150,11 @@ fn collect_match_candidates_impl(
                 let wmk = does_word_match(query_word_lower, dw_lower, dw_raw, prefix_match);
                 match wmk {
                     WordMatchKind::Exact => Some(WordMatch::exact(query_word, dpos)),
-                    WordMatchKind::Prefix => Some(WordMatch::prefix(query_word, dpos)),
-                    WordMatchKind::SubwordPrefix => {
+                    WordMatchKind::Prefix { .. } => Some(WordMatch::prefix(query_word, dpos)),
+                    WordMatchKind::SubwordPrefix { .. } => {
                         Some(WordMatch::subword_prefix(query_word, dpos))
                     }
-                    WordMatchKind::InfixSubstring => {
+                    WordMatchKind::InfixSubstring { .. } => {
                         Some(WordMatch::infix_substring(query_word, dpos))
                     }
                     WordMatchKind::Fuzzy(dist) => Some(WordMatch::fuzzy(
@@ -1200,110 +1201,23 @@ fn classify_fast_match_candidate(
 ) -> Option<WordMatch> {
     match does_word_match_fast_raw(query_word_lower, document_token, prefix_match) {
         WordMatchKind::Exact => Some(WordMatch::exact(query_word, doc_word_pos)),
-        WordMatchKind::Prefix => Some(WordMatch::prefix(query_word, doc_word_pos)),
+        WordMatchKind::Prefix { .. } => Some(WordMatch::prefix(query_word, doc_word_pos)),
         WordMatchKind::None => None,
-        WordMatchKind::SubwordPrefix
-        | WordMatchKind::InfixSubstring
+        WordMatchKind::SubwordPrefix { .. }
+        | WordMatchKind::InfixSubstring { .. }
         | WordMatchKind::Fuzzy(_)
         | WordMatchKind::Subsequence(_) => None,
     }
 }
 
 fn classify_fuzzy_typo(query: &str, target: &str, dist: u8) -> TypoClass {
-    if is_adjacent_transposition(query, target) {
-        return TypoClass::CommonTransposition;
+    match classify_fuzzy_edit(query, target, dist) {
+        FuzzyEditKind::CommonTransposition => TypoClass::CommonTransposition,
+        FuzzyEditKind::RepeatedCharEdit => TypoClass::RepeatedCharEdit,
+        FuzzyEditKind::InsertionOrDeletion => TypoClass::InsertionOrDeletion,
+        FuzzyEditKind::Substitution => TypoClass::Substitution,
+        FuzzyEditKind::MultiEdit => TypoClass::MultiEdit,
     }
-
-    if dist == 1 {
-        if let Some(is_repeated_char) = classify_single_insert_delete(query, target) {
-            return if is_repeated_char {
-                TypoClass::RepeatedCharEdit
-            } else {
-                TypoClass::InsertionOrDeletion
-            };
-        }
-        return TypoClass::Substitution;
-    }
-
-    TypoClass::MultiEdit
-}
-
-fn is_adjacent_transposition(a: &str, b: &str) -> bool {
-    let a_chars: Vec<char> = a.chars().collect();
-    let b_chars: Vec<char> = b.chars().collect();
-    if a_chars.len() != b_chars.len() || a_chars.len() < 2 {
-        return false;
-    }
-
-    let mut first_diff = None;
-    for i in 0..a_chars.len() {
-        if a_chars[i] != b_chars[i] {
-            first_diff = Some(i);
-            break;
-        }
-    }
-    let Some(i) = first_diff else {
-        return false;
-    };
-    if i + 1 >= a_chars.len() {
-        return false;
-    }
-
-    if a_chars[i] != b_chars[i + 1] || a_chars[i + 1] != b_chars[i] {
-        return false;
-    }
-
-    for j in (i + 2)..a_chars.len() {
-        if a_chars[j] != b_chars[j] {
-            return false;
-        }
-    }
-
-    true
-}
-
-/// Returns whether the edit is a repeated-char insertion/deletion when the strings
-/// differ by a single inserted or deleted character. `None` means it is not a
-/// one-char insertion/deletion relationship.
-fn classify_single_insert_delete(shorter: &str, longer: &str) -> Option<bool> {
-    let shorter_chars: Vec<char> = shorter.chars().collect();
-    let longer_chars: Vec<char> = longer.chars().collect();
-    let (shorter_chars, longer_chars) = if shorter_chars.len() <= longer_chars.len() {
-        (shorter_chars, longer_chars)
-    } else {
-        (longer_chars, shorter_chars)
-    };
-
-    if longer_chars.len() != shorter_chars.len() + 1 {
-        return None;
-    }
-
-    let mut si = 0usize;
-    let mut li = 0usize;
-    let mut skipped_idx = None;
-
-    while si < shorter_chars.len() && li < longer_chars.len() {
-        if shorter_chars[si] == longer_chars[li] {
-            si += 1;
-            li += 1;
-            continue;
-        }
-
-        if skipped_idx.is_some() {
-            return None;
-        }
-
-        skipped_idx = Some(li);
-        li += 1;
-    }
-
-    let skipped_idx = skipped_idx.unwrap_or(longer_chars.len() - 1);
-    let skipped_char = longer_chars[skipped_idx];
-    let repeated_prev = skipped_idx > 0 && longer_chars[skipped_idx - 1] == skipped_char;
-    let repeated_next =
-        skipped_idx + 1 < longer_chars.len() && longer_chars[skipped_idx + 1] == skipped_char;
-
-    Some(repeated_prev || repeated_next)
 }
 
 /// Compute proximity score from matched word positions.
@@ -1463,6 +1377,7 @@ fn compute_exactness(content: &str, query_words: &[&str], word_matches: &[WordMa
 
 #[cfg(test)]
 mod tests {
+    use super::matching::TokenMatchSpan;
     use super::*;
 
     /// Helper: compute bucket score from raw content (handles lowercasing/tokenization).
@@ -1505,6 +1420,10 @@ mod tests {
 
     fn prefix_match(min_query_chars: usize) -> PrefixMatch {
         PrefixMatch::Enabled { min_query_chars }
+    }
+
+    fn span(start: usize, len: usize) -> TokenMatchSpan {
+        TokenMatchSpan { start, len }
     }
 
     fn match_words(
@@ -1703,7 +1622,7 @@ mod tests {
     fn test_does_word_match_prefix() {
         assert_eq!(
             dwm("cl", "clipkitty", prefix_match(2)),
-            WordMatchKind::Prefix
+            WordMatchKind::Prefix { span: span(0, 2) }
         );
         assert_eq!(
             dwm("cl", "clipkitty", PrefixMatch::Disabled),
@@ -1717,7 +1636,7 @@ mod tests {
     fn test_does_word_match_prefix_allows_single_char_when_requested() {
         assert_eq!(
             dwm("c", "clipkitty", prefix_match(1)),
-            WordMatchKind::Prefix
+            WordMatchKind::Prefix { span: span(0, 1) }
         );
     }
 
@@ -1725,11 +1644,11 @@ mod tests {
     fn test_does_word_match_subword_prefix() {
         assert_eq!(
             dwm("code", "responseCode", PrefixMatch::Disabled),
-            WordMatchKind::SubwordPrefix
+            WordMatchKind::SubwordPrefix { span: span(8, 4) }
         );
         assert_eq!(
             dwm("server", "HTTPServer", PrefixMatch::Disabled),
-            WordMatchKind::SubwordPrefix
+            WordMatchKind::SubwordPrefix { span: span(4, 6) }
         );
     }
 
@@ -1737,11 +1656,15 @@ mod tests {
     fn test_does_word_match_infix_substring() {
         assert_eq!(
             dwm("port", "import", PrefixMatch::Disabled),
-            WordMatchKind::InfixSubstring
+            WordMatchKind::InfixSubstring { span: span(2, 4) }
         );
         assert_eq!(
             dwm("auth", "oauth", PrefixMatch::Disabled),
-            WordMatchKind::InfixSubstring
+            WordMatchKind::InfixSubstring { span: span(1, 4) }
+        );
+        assert_eq!(
+            dwm("997", "911396997", PrefixMatch::Disabled),
+            WordMatchKind::InfixSubstring { span: span(6, 3) }
         );
     }
 
@@ -1770,10 +1693,29 @@ mod tests {
             dwm("adn", "and", PrefixMatch::Disabled),
             WordMatchKind::Fuzzy(1)
         );
-        // Short word substitution — also matches (same edit distance)
+        assert_eq!(
+            dwm("tst", "test", PrefixMatch::Disabled),
+            WordMatchKind::Fuzzy(1)
+        );
+        // Short substitutions are too noisy to treat as common typos.
         assert_eq!(
             dwm("tha", "the", PrefixMatch::Disabled),
+            WordMatchKind::None
+        );
+        // Numeric tokens do not use fuzzy matching.
+        assert_eq!(
+            dwm("997", "979", PrefixMatch::Disabled),
+            WordMatchKind::None
+        );
+        // Alphanumeric identifier-ish tokens can still use fuzzy matching.
+        assert_eq!(
+            dwm("sha256", "sha265", PrefixMatch::Disabled),
             WordMatchKind::Fuzzy(1)
+        );
+        // But short alphanumeric substitutions are still too noisy.
+        assert_eq!(
+            dwm("a1c", "abc", PrefixMatch::Disabled),
+            WordMatchKind::None
         );
         // First-char mismatch penalty prevents false positives
         assert_eq!(
