@@ -44,6 +44,34 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedItemId, "2")
     }
 
+    func testPrepareForSuspensionCancelsSearchWithoutStartingReplacement() async {
+        let client = MockBrowserStoreClient()
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        XCTAssertEqual(client.startedSearchRequests.count, 1)
+
+        viewModel.prepareForSuspension()
+        await flushMainActor()
+
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "late")],
+            firstPreviewPayload: nil,
+            totalCount: 1
+        ))
+        await flushMainActor()
+
+        XCTAssertTrue(viewModel.itemIds.isEmpty)
+        XCTAssertEqual(client.startedSearchRequests.count, 1)
+    }
+
     func testStalePreviewCompletionDoesNotOverwriteNewerSelection() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(

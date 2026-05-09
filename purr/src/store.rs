@@ -251,6 +251,14 @@ impl ClipboardStore {
         self.rebuild_index_contents()
     }
 
+    pub fn prepare_for_suspend(&self) {
+        if let Some(token) = self.active_search_token.lock().take() {
+            token.cancel();
+        }
+        let _ = self.indexer.commit();
+        let _ = self.db.checkpoint_for_suspend();
+    }
+
     pub fn start_search(
         &self,
         query: String,

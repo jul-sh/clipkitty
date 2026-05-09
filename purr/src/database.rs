@@ -274,6 +274,16 @@ impl Database {
         &self.pool
     }
 
+    /// Best-effort checkpoint before iOS suspends the process.
+    ///
+    /// The app closes the store immediately after this; the checkpoint just
+    /// shortens any remaining WAL work while the connections are still alive.
+    pub fn checkpoint_for_suspend(&self) -> DatabaseResult<()> {
+        let conn = self.get_conn()?;
+        conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);")?;
+        Ok(())
+    }
+
     /// Set up the database schema (normalized: items + child tables)
     fn setup_schema(&self) -> DatabaseResult<()> {
         let conn = self.get_conn()?;
