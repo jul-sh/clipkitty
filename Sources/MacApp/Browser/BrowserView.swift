@@ -232,9 +232,10 @@ struct BrowserView: View {
                 return handleCommandNumberShortcut(number) ? nil : event
             }
 
-            // ⌘- — delete selected item
+            // Configurable delete-item shortcut (default ⌘-)
+            let deleteHotKey = AppSettings.shared.deleteHotKey
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if modifiers == .command, event.keyCode == 27 {
+            if modifiers == deleteHotKey.modifierMask, UInt32(event.keyCode) == deleteHotKey.keyCode {
                 if viewModel.selectedItem != nil {
                     viewModel.deleteSelectedItem()
                     return nil
