@@ -23,11 +23,6 @@
 #     `Tuist/.build/checkouts/<identity>` and
 #     `Tuist/.build/workspace-state.json` so SwiftPM sees a completed
 #     resolution and skips network I/O.
-#   * distribution/SparkleUpdater is a local `.package(path:)` dependency
-#     of Tuist/Package.swift, which means its own transitive Sparkle pin
-#     has to be made available too — we resolve it by materialising the
-#     same checkouts layout inside the staged distribution/SparkleUpdater
-#     directory.
 #   * The app build layer is variant-driven. Every variant reuses the same
 #     staged source tree, generator step, and xcodebuild wrapper; only
 #     `scheme`, `configuration`, and `destination` change.
@@ -75,11 +70,6 @@ let
   tuistPackageIdentities = [
     "grdb.swift"
     "sttextkitplus"
-    "sparkle"
-  ];
-
-  sparkleUpdaterPackageIdentities = [
-    "sparkle"
   ];
 
 
@@ -96,12 +86,6 @@ let
   # `basedOn`, `artifacts`, `prebuilts`) must all be present even when
   # empty — SwiftPM fails with `keyNotFound` on missing keys and then
   # falls back to fresh network resolution.
-  #
-  # We also emit `fileSystem` dependencies for local `.package(path:)`
-  # packages (e.g. `distribution/SparkleUpdater`). SwiftPM discovers those
-  # via the manifest, so the runtime `location` needs to be patched
-  # in-place during staging — we write a placeholder here and a shell
-  # step below rewrites it to the real build-time directory.
 
   remoteDepEntry = pkg: {
     basedOn = null;
@@ -120,65 +104,22 @@ let
     subpath = pkg.subpath;
   };
 
-  # Placeholder location; replaced at staging time with the absolute path
-  # of the build dir so SwiftPM can open the local package.
-  localDepPlaceholder = "__CLIPKITTY_LOCAL_PACKAGE_ROOT__";
-
-  localDepEntry = { identity, name, subpath, relPath }: {
-    basedOn = null;
-    packageRef = {
-      inherit identity name;
-      kind = "fileSystem";
-      location = "${localDepPlaceholder}/${relPath}";
-    };
-    state = {
-      name = "fileSystem";
-      path = "${localDepPlaceholder}/${relPath}";
-    };
-    inherit subpath;
-  };
-
-  mkWorkspaceState = { remotes, locals }:
-    let
-      dependencies =
-        (map remoteDepEntry remotes)
-        ++ (map localDepEntry locals);
-    in
+  mkWorkspaceState = { remotes }:
     pkgs.writeText "workspace-state.json" (builtins.toJSON {
       object = {
         artifacts = [ ];
-        inherit dependencies;
+        dependencies = map remoteDepEntry remotes;
         prebuilts = [ ];
       };
       version = 7;
     });
 
   tuistFetchedPackages = map fetchSwiftPackage tuistPackageIdentities;
-  sparkleFetchedPackages = map fetchSwiftPackage sparkleUpdaterPackageIdentities;
 
-  tuistWorkspaceState = mkWorkspaceState {
-    remotes = tuistFetchedPackages;
-    locals = [
-      {
-        identity = "sparkleupdater";
-        name = "SparkleUpdater";
-        subpath = "sparkleupdater";
-        relPath = "distribution/SparkleUpdater";
-      }
-    ];
-  };
-
-  sparkleWorkspaceState = mkWorkspaceState {
-    remotes = sparkleFetchedPackages;
-    locals = [ ];
-  };
+  tuistWorkspaceState = mkWorkspaceState { remotes = tuistFetchedPackages; };
 
   # Shell snippet that materializes a pre-resolved SwiftPM .build tree
-  # inside a target directory. The workspace-state.json dropped here
-  # still contains the `__CLIPKITTY_LOCAL_PACKAGE_ROOT__` placeholder for
-  # local `fileSystem` dependencies — `finalizeWorkspaceStateScript` (run
-  # inside `generatedSource.buildPhase`) rewrites it to the current
-  # absolute build directory.
+  # inside a target directory.
   #
   # SwiftPM's checkouts are writable because the toolchain touches marker
   # files inside them during resolution. We use `cp -R` (not symlinks) so
@@ -198,23 +139,6 @@ let
       cp ${workspaceState} "''$${targetDirVar}/.build/workspace-state.json"
       chmod u+w "''$${targetDirVar}/.build/workspace-state.json"
     '';
-
-  # Rewrite the `__CLIPKITTY_LOCAL_PACKAGE_ROOT__` placeholder in every
-  # staged workspace-state.json with the absolute path of the current
-  # build directory. Callers pass `packageRootVar` = shell variable
-  # holding that absolute path.
-  finalizeWorkspaceStateScript = packageRootVar: ''
-    for state in \
-      "''$${packageRootVar}/Tuist/.build/workspace-state.json" \
-      "''$${packageRootVar}/distribution/SparkleUpdater/.build/workspace-state.json"; do
-      if [ -f "$state" ]; then
-        sed -i.bak \
-          -e "s|${localDepPlaceholder}|''$${packageRootVar}|g" \
-          "$state"
-        rm -f "$state.bak"
-      fi
-    done
-  '';
 
   # --- Staged source tree ----------------------------------------------------
   #
@@ -246,27 +170,13 @@ let
 
     # Pre-populate SwiftPM checkouts for the Tuist workspace so the
     # subsequent `tuist install` (and its own SwiftPM run) never hits the
-    # network. Workspace-state.json is written with a placeholder for
-    # local `fileSystem` package paths; `generatedSource`'s buildPhase
-    # rewrites it to the final absolute path at build time.
+    # network.
     TUIST_DIR="$out/Tuist"
     ${stageSwiftCheckoutsScript {
       targetDirVar = "TUIST_DIR";
       packages = tuistFetchedPackages;
       workspaceState = tuistWorkspaceState;
     }}
-
-    # Do the same for distribution/SparkleUpdater — it's a local SwiftPM
-    # package that Tuist/Package.swift depends on via `.package(path:)`,
-    # and SwiftPM recursively resolves its own .build/ too.
-    SPARKLE_DIR="$out/distribution/SparkleUpdater"
-    if [ -d "$SPARKLE_DIR" ]; then
-      ${stageSwiftCheckoutsScript {
-        targetDirVar = "SPARKLE_DIR";
-        packages = sparkleFetchedPackages;
-        workspaceState = sparkleWorkspaceState;
-      }}
-    fi
   '';
 
   # --- Tuist-generated workspace --------------------------------------------
@@ -378,13 +288,6 @@ let
       export IDEPackageSupportDisableManifestSandbox=1
       export IDEPackageSupportDisablePluginExecutionSandbox=1
 
-      # Rewrite the local-package placeholder in every staged
-      # workspace-state.json with the absolute path of the current build
-      # directory. Without this, SwiftPM rejects the state file and falls
-      # back to a fresh network resolution.
-      BUILD_ROOT="$PWD"
-      ${finalizeWorkspaceStateScript "BUILD_ROOT"}
-
       # SwiftPM dependency resolution.
       #
       # We call `swift package resolve` directly rather than
@@ -411,13 +314,6 @@ let
         --package-path Tuist \
         --disable-sandbox \
         resolve
-
-      if [ -d distribution/SparkleUpdater ]; then
-        /usr/bin/xcrun swift package \
-          --package-path distribution/SparkleUpdater \
-          --disable-sandbox \
-          resolve
-      fi
 
       # `tuist generate --no-open` emits the Xcode workspace/projects.
       # Tuist also compiles Tuist/Package.swift through SwiftPM, so we
@@ -627,17 +523,6 @@ let
     universal = true;
   };
 
-  clipkitty-sparkle = buildXcodeVariant {
-    pname = "clipkitty-sparkle";
-    scheme = "ClipKittySpark";
-    configuration = "SparkleRelease";
-    sdk = "macosx";
-    destination = "generic/platform=macOS";
-    productName = "ClipKitty";
-    productPath = "SparkleRelease/ClipKitty.app";
-    universal = true;
-  };
-
   # App Store variant. Builds unsigned — the downstream signing step in
   # distribution/ re-signs with the 3rd Party Mac Developer identities
   # against a keychain that only exists in CI or a prepared dev box.
@@ -687,14 +572,13 @@ let
     paths = [
       clipkitty
       clipkitty-hardened
-      clipkitty-sparkle
       clipkitty-appstore
     ];
   };
 in
 {
   inherit stagedSource generatedSource;
-  inherit clipkitty clipkitty-debug clipkitty-hardened clipkitty-sparkle clipkitty-appstore clipkitty-ios-sim;
+  inherit clipkitty clipkitty-debug clipkitty-hardened clipkitty-appstore clipkitty-ios-sim;
   inherit clipkittyIosSmokeTest;
   inherit all;
 }

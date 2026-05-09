@@ -17,16 +17,14 @@ pub enum Platform {
 /// macOS build/distribution variant — maps 1:1 to nix package names.
 ///
 /// Value names match the canonical build/signing names used throughout the
-/// repository (`Release`, `Debug`, `Hardened`, `SparkleRelease`, `AppStore`),
-/// with lowercase aliases for call sites that prefer kebab-case.
+/// repository (`Release`, `Debug`, `Hardened`, `AppStore`), with lowercase
+/// aliases for call sites that prefer kebab-case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum MacVariant {
     #[value(name = "Debug", alias = "debug")]
     Debug,
     #[value(name = "Release", alias = "release")]
     Release,
-    #[value(name = "SparkleRelease", alias = "sparkle-release")]
-    SparkleRelease,
     #[value(name = "Hardened", alias = "hardened")]
     Hardened,
     #[value(name = "AppStore", alias = "app-store")]
@@ -40,7 +38,6 @@ impl MacVariant {
             Self::Release => "clipkitty",
             Self::Debug => "clipkitty-debug",
             Self::Hardened => "clipkitty-hardened",
-            Self::SparkleRelease => "clipkitty-sparkle",
             Self::AppStore => "clipkitty-appstore",
         }
     }
@@ -51,7 +48,6 @@ impl MacVariant {
             Self::Release => "Release",
             Self::Debug => "Debug",
             Self::Hardened => "Hardened",
-            Self::SparkleRelease => "SparkleRelease",
             Self::AppStore => "AppStore",
         }
     }
@@ -59,10 +55,9 @@ impl MacVariant {
     /// Whether this variant can be signed via `clipkitty sign app`.
     pub fn signing_mode(self) -> Option<SigningMode> {
         match self {
-            Self::Hardened => Some(SigningMode::DeveloperId),
-            Self::SparkleRelease => Some(SigningMode::DeveloperId),
+            Self::Release | Self::Hardened => Some(SigningMode::DeveloperId),
             Self::AppStore => Some(SigningMode::AppStore),
-            Self::Debug | Self::Release => None,
+            Self::Debug => None,
         }
     }
 }
@@ -92,22 +87,6 @@ pub enum SideEffectLevel {
 pub enum SetupAction {
     Init,
     Teardown,
-}
-
-/// Sparkle release channel for appcast state updates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum ReleaseChannel {
-    Stable,
-    Beta,
-}
-
-impl ReleaseChannel {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Stable => "stable",
-            Self::Beta => "beta",
-        }
-    }
 }
 
 /// Which App Store Connect credential field a command needs.

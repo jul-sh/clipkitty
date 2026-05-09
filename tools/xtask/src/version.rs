@@ -6,9 +6,7 @@
 //!
 //! This is the single source of truth for both the GitHub release tag and
 //! the `CFBundleShortVersionString` / `CFBundleVersion` stamped into every
-//! shipped app bundle. Keeping them wired together avoids the class of bug
-//! where the release tag and the installed app disagree; that divergence
-//! makes Sparkle compare stale numbers and silently skip updates.
+//! shipped app bundle.
 
 use std::fs;
 

@@ -104,27 +104,25 @@ jobs:
           VERSION="${MAJOR_MINOR}.${COMMIT_COUNT}"
           echo "Resolved release version: $VERSION"
 
+          # main → GitHub prerelease tagged v<version>-beta;
+          # release → stable GitHub release tagged v<version>.
           if [ "$TARGET_BRANCH" = "main" ]; then
-            CHANNEL="beta"
             RELEASE_TAG="v${VERSION}-beta"
             RELEASE_TITLE="ClipKitty v${VERSION} Beta"
-            RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}-beta/ClipKitty.dmg"
+            IS_PRERELEASE=true
           else
-            # Stable releases from release branch
-            CHANNEL="stable"
             RELEASE_TAG="v${VERSION}"
             RELEASE_TITLE="ClipKitty v${VERSION}"
-            RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/ClipKitty.dmg"
+            IS_PRERELEASE=false
           fi
 
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "BUILD_NUMBER=$COMMIT_COUNT" >> "$GITHUB_ENV"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "build_number=$COMMIT_COUNT" >> "$GITHUB_OUTPUT"
-          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "release_title=$RELEASE_TITLE" >> "$GITHUB_OUTPUT"
-          echo "release_url=$RELEASE_URL" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=$IS_PRERELEASE" >> "$GITHUB_OUTPUT"
           echo "Final release version: $VERSION"
 
       - name: Setup Swift
@@ -205,18 +203,6 @@ jobs:
           fi
           echo "Hardened entitlements verified."
 
-      - name: Verify Hardened Binary Linkage
-        run: |
-          BINARY="DerivedData/Build/Products/Hardened/ClipKitty.app/Contents/MacOS/ClipKitty"
-          echo "=== Hardened binary linkage ==="
-          otool -L "$BINARY"
-          # Verify no Sparkle framework references
-          if otool -L "$BINARY" | grep -qi sparkle; then
-            echo "FAIL: Sparkle found in hardened binary linkage"
-            exit 1
-          fi
-          echo "No Sparkle linkage in hardened binary."
-
       - name: Create Hardened Archive
         run: |
           codesign --force --options runtime --sign "Developer ID Application" --entitlements Sources/MacApp/ClipKitty.hardened.entitlements DerivedData/Build/Products/Hardened/ClipKitty.app
@@ -248,12 +234,6 @@ jobs:
           fi
           echo "✓ No iCloud sync code in binary"
 
-          # Assert Sparkle updater code is compiled out (ENABLE_SPARKLE_UPDATES)
-          if strings "$BINARY" | grep -q "SPUUpdater"; then
-            fail "Sparkle updater class found in hardened binary"
-          fi
-          echo "✓ No Sparkle update code in binary"
-
           # Assert file clipboard code is compiled out (ENABLE_FILE_CLIPBOARD_ITEMS)
           if strings "$BINARY" | grep -q "saveFileItems"; then
             fail "file clipboard method 'saveFileItems' found in hardened binary"
@@ -281,13 +261,6 @@ jobs:
             fail "CKBuildChannel is '$CHANNEL', expected 'Hardened'"
           fi
           echo "✓ Build channel: Hardened"
-
-          # Verify no Sparkle feed URL in Info.plist
-          FEED=$(/usr/libexec/PlistBuddy -c "Print :SUFeedURL" "$PLIST" 2>/dev/null || echo "")
-          if [ -n "$FEED" ]; then
-            fail "SUFeedURL found in hardened Info.plist: $FEED"
-          fi
-          echo "✓ No Sparkle feed URL in Info.plist"
 
           # Verify display name is correct
           DISPLAY_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "$PLIST" 2>/dev/null || echo "")
@@ -473,23 +446,6 @@ jobs:
           echo "Stapling failed after 10 attempts"
           exit 1
 
-      - name: Install Sparkle CLI Tools
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
-        run: make install-sparkle-cli
-
-      - name: Sign DMG with EdDSA
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
-        id: eddsa-sign
-        run: |
-          SIGNATURE=$(echo "$SPARKLE_EDDSA_KEY" | sign_update ClipKitty.dmg --ed-key-file -)
-          # sign_update outputs: sparkle:edSignature="..." length="..."
-          ED_SIGNATURE=$(echo "$SIGNATURE" | sed 's/.*sparkle:edSignature="\([^"]*\)".*/\1/')
-          FILE_LENGTH=$(echo "$SIGNATURE" | sed 's/.*length="\([^"]*\)".*/\1/')
-          echo "ed_signature=$ED_SIGNATURE" >> "$GITHUB_OUTPUT"
-          echo "file_length=$FILE_LENGTH" >> "$GITHUB_OUTPUT"
-        env:
-          SPARKLE_EDDSA_KEY: ${{ steps.secrets.outputs.SPARKLE_EDDSA_KEY }}
-
       - name: Verify lockfiles unchanged before attestation
         run: make check
 
@@ -498,7 +454,7 @@ jobs:
         with:
           subject-path: |
             ClipKitty.dmg
-            DerivedData/Build/Products/SparkleRelease/ClipKitty.app/Contents/MacOS/ClipKitty
+            DerivedData/Build/Products/Release/ClipKitty.app/Contents/MacOS/ClipKitty
             ClipKitty-Hardened.zip
 
       - name: Create Channel Release
@@ -509,14 +465,14 @@ jobs:
           cat > /tmp/release-notes-prepend.md <<'EOF'
           ## Downloads
 
-          - **`ClipKitty.dmg`** — the standard build. Install this one.
+          - **`ClipKitty.dmg`** — the standard build. Install this one. Update by downloading the next release yourself.
           - **`ClipKitty-Hardened.zip`** — a stripped-down build for particularly security sensitive enviroments.
 
           ## About the hardened build
 
-          The hardened build is a separate ClipKitty binary with features that touches the network or filesystem compiled out — no auto-updates, no iCloud sync, no link previews, no file clipboard items, etc. What remains runs under a macOS App Sandbox that further restricts access to the network and filesystem.
+          The hardened build is a separate ClipKitty binary with features that touch the network or filesystem compiled out — no iCloud sync, no link previews, no file clipboard items. What remains runs under a macOS App Sandbox that further restricts access to the network and filesystem.
 
-          It ships as a separate app (`com.eviljuliette.clipkitty.hardened`) with its own sandbox container, so it coexists with the standard build without sharing data. Because auto-updates are compiled out, you update it by downloading the next release yourself.
+          It ships as a separate app (`com.eviljuliette.clipkitty.hardened`) with its own sandbox container, so it coexists with the standard build without sharing data.
 
           Every release is built on GitHub's infrastructure and cryptographically attested — see [VERIFY.md](https://github.com/jul-sh/clipkitty/blob/main/VERIFY.md) for how to check that a download matches its source commit.
 
@@ -534,7 +490,7 @@ jobs:
             ClipKitty-Hardened.zip
           )
 
-          if [ "${{ steps.resolve-version.outputs.channel }}" = "beta" ]; then
+          if [ "${{ steps.resolve-version.outputs.is_prerelease }}" = "true" ]; then
             args+=(--prerelease)
           fi
 
@@ -639,31 +595,10 @@ jobs:
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_2.png" marketing_2.png
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_3.png" marketing_3.png
 
-          if [ -n "${{ steps.eddsa-sign.outputs.ed_signature }}" ] && [ -n "${{ steps.eddsa-sign.outputs.file_length }}" ]; then
-            [ -f appcast-state.json ] || printf '{}\n' > appcast-state.json
-
-            make -C "$GITHUB_WORKSPACE" release-appcast-update \
-              STATE_PATH="$(pwd)/appcast-state.json" \
-              CHANNEL="${{ steps.resolve-version.outputs.channel }}" \
-              VERSION="${{ steps.resolve-version.outputs.version }}" \
-              URL="${{ steps.resolve-version.outputs.release_url }}" \
-              SIGNATURE="${{ steps.eddsa-sign.outputs.ed_signature }}" \
-              LENGTH="${{ steps.eddsa-sign.outputs.file_length }}"
-
-            make -C "$GITHUB_WORKSPACE" release-appcast-generate \
-              STATE_PATH="$(pwd)/appcast-state.json" \
-              OUTPUT_PATH="$(pwd)/appcast.xml"
-
-            xmllint --noout appcast.xml
-          else
-            echo "Skipping appcast update because the signed update metadata was not produced."
-          fi
-
           # Generate landing page from README.md (cmark-gfm installed via Nix)
           make -C "$GITHUB_WORKSPACE" site-landing-page > index.html
 
           git add icon.png privacy.html marketing_1.png marketing_2.png marketing_3.png index.html
-          git add appcast.xml appcast-state.json 2>/dev/null || true
           git commit -m "Update site, screenshots and icon [skip ci]" || echo "No changes to commit"
           git push origin gh-pages
 

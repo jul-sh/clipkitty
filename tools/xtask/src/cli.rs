@@ -1,7 +1,6 @@
-use camino::Utf8PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use crate::model::{AscAuthField, ReleaseChannel};
+use crate::model::AscAuthField;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -79,8 +78,6 @@ pub struct InstallArgs {
 pub enum InstallTarget {
     #[value(name = "hooks")]
     Hooks,
-    #[value(name = "sparkle-cli")]
-    SparkleCli,
 }
 
 #[derive(Subcommand, Debug)]
@@ -112,11 +109,8 @@ pub enum ReleaseCmd {
     MacosAppstore(ReleaseMacArgs),
     /// Materialize, archive, export, and upload the iOS App Store variant.
     IosAppstore(ReleaseMacArgs),
-    /// Build a signed Sparkle app and package it into a DMG.
+    /// Build a signed standard release app and package it into a DMG.
     Dmg(DmgArgs),
-    /// Appcast generation and state update (Sparkle).
-    #[command(subcommand)]
-    Appcast(AppcastCmd),
     /// Print the resolved release version for the current repo state.
     Version(VersionArgs),
 }
@@ -148,38 +142,6 @@ pub struct ReleaseMacArgs {
 
 #[derive(Args, Debug)]
 pub struct DmgArgs {}
-
-#[derive(Subcommand, Debug)]
-pub enum AppcastCmd {
-    /// Render appcast.xml from state JSON.
-    Generate(AppcastGenerateArgs),
-    /// Mutate the release state JSON atomically.
-    UpdateState(AppcastUpdateStateArgs),
-}
-
-#[derive(Args, Debug)]
-pub struct AppcastGenerateArgs {
-    #[arg(long)]
-    pub state_path: Utf8PathBuf,
-    #[arg(long)]
-    pub output_path: Utf8PathBuf,
-}
-
-#[derive(Args, Debug)]
-pub struct AppcastUpdateStateArgs {
-    #[arg(long)]
-    pub state_path: Utf8PathBuf,
-    #[arg(long, value_enum)]
-    pub channel: ReleaseChannel,
-    #[arg(long)]
-    pub version: String,
-    #[arg(long)]
-    pub url: String,
-    #[arg(long)]
-    pub signature: String,
-    #[arg(long)]
-    pub length: u64,
-}
 
 #[derive(Subcommand, Debug)]
 pub enum MarketingCmd {

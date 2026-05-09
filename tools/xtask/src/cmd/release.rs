@@ -7,7 +7,6 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;
-use std::fmt::Write as _;
 use std::fs;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -15,14 +14,11 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;
 use camino::{Utf8Path, Utf8PathBuf};
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tempfile::{tempdir, NamedTempFile};
 
 use crate::cli::{
-    AppcastCmd, AppcastGenerateArgs, AppcastUpdateStateArgs, DmgArgs, ReleaseCmd, ReleaseMacArgs,
-    VersionArgs, VersionField,
+    DmgArgs, ReleaseCmd, ReleaseMacArgs, VersionArgs, VersionField,
 };
 use crate::cmd::build;
 use crate::cmd::secrets;
@@ -40,7 +36,6 @@ pub fn run(cmd: &ReleaseCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
         ReleaseCmd::MacosAppstore(args) => macos_appstore(&repo, args, dry_run, reporter),
         ReleaseCmd::IosAppstore(args) => ios_appstore(&repo, args, dry_run, reporter),
         ReleaseCmd::Dmg(args) => dmg(&repo, args, dry_run, reporter),
-        ReleaseCmd::Appcast(sub) => appcast(&repo, sub, dry_run, reporter),
         ReleaseCmd::Version(args) => print_version(&repo, args, reporter),
     }
 }
@@ -1908,7 +1903,7 @@ fn dmg(repo: &RepoRoot, args: &DmgArgs, dry_run: bool, reporter: &Reporter) -> R
 
     if dry_run {
         reporter.info(&format!(
-            "[dry-run] would build and sign Sparkle app, then package DMG {output}"
+            "[dry-run] would build and sign Release app, then package DMG {output}"
         ));
         return Ok(());
     }
@@ -1917,7 +1912,7 @@ fn dmg(repo: &RepoRoot, args: &DmgArgs, dry_run: bool, reporter: &Reporter) -> R
     sign::sign_app(
         repo,
         &sign::SignAppRequest {
-            variant: MacVariant::SparkleRelease,
+            variant: MacVariant::Release,
             version: Some(resolved.version),
             build_number: Some(resolved.build_number),
         },
@@ -1925,7 +1920,7 @@ fn dmg(repo: &RepoRoot, args: &DmgArgs, dry_run: bool, reporter: &Reporter) -> R
         reporter,
     )?;
 
-    let app = build::staged_app_path(repo, MacVariant::SparkleRelease);
+    let app = build::staged_app_path(repo, MacVariant::Release);
     if !app.as_std_path().is_dir() {
         return Err(anyhow!("app not found at {app}"));
     }
@@ -2073,183 +2068,6 @@ end tell
 
     reporter.success(&format!("DMG created successfully: {output}"));
     Ok(())
-}
-
-fn appcast(repo: &RepoRoot, sub: &AppcastCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
-    match sub {
-        AppcastCmd::Generate(args) => appcast_generate(repo, args, dry_run, reporter),
-        AppcastCmd::UpdateState(args) => appcast_update_state(repo, args, dry_run, reporter),
-    }
-}
-
-fn appcast_generate(
-    _repo: &RepoRoot,
-    args: &AppcastGenerateArgs,
-    dry_run: bool,
-    reporter: &Reporter,
-) -> Result<()> {
-    if dry_run {
-        reporter.info(&format!(
-            "[dry-run] would render {} → {}",
-            args.state_path, args.output_path
-        ));
-        return Ok(());
-    }
-
-    let state = read_appcast_state(&args.state_path)?;
-    let xml = render_appcast_xml(&state)?;
-    fs::write(args.output_path.as_std_path(), xml)
-        .with_context(|| format!("writing {}", args.output_path))?;
-    reporter.success(&format!("Rendered appcast → {}", args.output_path));
-    Ok(())
-}
-
-fn appcast_update_state(
-    _repo: &RepoRoot,
-    args: &AppcastUpdateStateArgs,
-    dry_run: bool,
-    reporter: &Reporter,
-) -> Result<()> {
-    if dry_run {
-        reporter.info(&format!(
-            "[dry-run] would update {} ({}) → v{} @ {} ({} bytes)",
-            args.state_path,
-            args.channel.as_str(),
-            args.version,
-            args.url,
-            args.length
-        ));
-        return Ok(());
-    }
-
-    let mut state = read_appcast_state(&args.state_path)?;
-    let entry = AppcastRelease {
-        version: args.version.clone(),
-        url: args.url.clone(),
-        signature: args.signature.clone(),
-        length: args.length,
-        published_at: Utc::now().to_rfc3339(),
-    };
-    match args.channel {
-        crate::model::ReleaseChannel::Stable => state.stable = Some(entry),
-        crate::model::ReleaseChannel::Beta => state.beta = Some(entry),
-    }
-    let json = serde_json::to_string_pretty(&state)?;
-    fs::write(args.state_path.as_std_path(), format!("{json}\n"))
-        .with_context(|| format!("writing {}", args.state_path))?;
-    reporter.success(&format!("Updated appcast state → {}", args.state_path));
-    Ok(())
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct AppcastState {
-    #[serde(default)]
-    beta: Option<AppcastRelease>,
-    #[serde(default)]
-    stable: Option<AppcastRelease>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct AppcastRelease {
-    version: String,
-    url: String,
-    signature: String,
-    length: u64,
-    published_at: String,
-}
-
-fn read_appcast_state(path: &Utf8Path) -> Result<AppcastState> {
-    if !path.as_std_path().exists() {
-        return Ok(AppcastState::default());
-    }
-    let raw = fs::read_to_string(path.as_std_path()).with_context(|| format!("reading {path}"))?;
-    serde_json::from_str(&raw).with_context(|| format!("parsing {path}"))
-}
-
-fn render_appcast_xml(state: &AppcastState) -> Result<String> {
-    let mut xml = String::from(
-        r#"<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
-  <channel>
-    <title>ClipKitty Updates</title>
-    <link>https://jul-sh.github.io/clipkitty/appcast.xml</link>
-    <language>en</language>
-"#,
-    );
-
-    if let Some(release) = &state.beta {
-        push_appcast_item(&mut xml, "beta", release)?;
-    }
-    if let Some(release) = &state.stable {
-        push_appcast_item(&mut xml, "stable", release)?;
-    }
-
-    xml.push_str("  </channel>\n</rss>\n");
-    Ok(xml)
-}
-
-fn push_appcast_item(xml: &mut String, channel: &str, release: &AppcastRelease) -> Result<()> {
-    let pub_date = format_pub_date(Some(&release.published_at))?;
-    let title = if channel == "beta" {
-        format!("ClipKitty {} Beta", release.version)
-    } else {
-        format!("ClipKitty {}", release.version)
-    };
-    writeln!(xml, "    <item>").unwrap();
-    writeln!(xml, "      <title>{}</title>", xml_escape(&title)).unwrap();
-    writeln!(
-        xml,
-        "      <sparkle:version>{}</sparkle:version>",
-        xml_escape(&release.version)
-    )
-    .unwrap();
-    writeln!(
-        xml,
-        "      <sparkle:shortVersionString>{}</sparkle:shortVersionString>",
-        xml_escape(&release.version)
-    )
-    .unwrap();
-    writeln!(
-        xml,
-        "      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>"
-    )
-    .unwrap();
-    if channel == "beta" {
-        writeln!(xml, "      <sparkle:channel>beta</sparkle:channel>").unwrap();
-    }
-    writeln!(xml, "      <pubDate>{}</pubDate>", xml_escape(&pub_date)).unwrap();
-    writeln!(
-        xml,
-        "      <enclosure url=\"{}\" type=\"application/octet-stream\" sparkle:edSignature=\"{}\" length=\"{}\" />",
-        xml_escape(&release.url),
-        xml_escape(&release.signature),
-        release.length
-    )
-    .unwrap();
-    writeln!(xml, "    </item>").unwrap();
-    Ok(())
-}
-
-fn format_pub_date(value: Option<&str>) -> Result<String> {
-    if let Some(value) = value.filter(|value| !value.is_empty()) {
-        let normalized = value.replace('Z', "+00:00");
-        let dt = DateTime::parse_from_rfc3339(&normalized)
-            .with_context(|| format!("parsing RFC3339 timestamp `{value}`"))?;
-        Ok(dt
-            .with_timezone(&Utc)
-            .format("%a, %d %b %Y %H:%M:%S GMT")
-            .to_string())
-    } else {
-        Ok(Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string())
-    }
-}
-
-fn xml_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
 }
 
 #[cfg(test)]

@@ -36,9 +36,8 @@ pub struct CodesignArgs<'a> {
 
 pub fn codesign(reporter: &Reporter, args: CodesignArgs<'_>) -> Result<()> {
     // The Nix build produces unsigned bundles (CODE_SIGNING_ALLOWED=NO), so
-    // any embedded frameworks (e.g. SparkleUpdater.framework) must be signed
-    // before the outer bundle — codesign refuses to sign a container whose
-    // subcomponents aren't signed.
+    // any embedded frameworks must be signed before the outer bundle —
+    // codesign refuses to sign a container whose subcomponents aren't signed.
     for nested in nested_bundles_to_sign(args.bundle)? {
         codesign_nested(reporter, args.identity, args.include_timestamp, &nested)?;
     }
@@ -86,8 +85,7 @@ fn codesign_nested(
 ) -> Result<()> {
     // `--deep` is safe here because nested bundles don't carry their own
     // entitlements — we only want to apply the .app's entitlements to the
-    // outer bundle. Using --deep recursively signs helpers like
-    // Sparkle.framework/Versions/B/Autoupdate and Updater.app.
+    // outer bundle.
     let mut runner =
         Runner::new(reporter, "codesign").args(["--force", "--deep", "--options", "runtime"]);
     if include_timestamp {

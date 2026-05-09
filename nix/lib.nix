@@ -33,21 +33,15 @@ let
   #   * editor / macOS metadata files
   #   * generated SwiftPM resolution files (`Package.resolved`) — the
   #     canonical Swift pinset lives below in `swiftPackagePins`
-  #   * `distribution/` — explicitly out of scope for this workstream
+  #   * `distribution/` — DMG building, notarisation scripts, marketing
+  #     automation. Inert files that the build never touches.
   #   * everything under `Sources/ClipKittyRust*` that we know is regenerated
   #     by the Rust overlay, so cached outputs never sneak into the sandbox
   filterCommon = { extraExcludeBaseNames ? [ ] }: path: type:
     let
       base = baseNameOf path;
       rel = lib.removePrefix (toString repoRoot + "/") (toString path);
-      # `distribution/` was historically carved out of the Nix build, but
-      # `distribution/SparkleUpdater` is a local SwiftPM package that the
-      # Tuist manifest depends on via `.package(path:)`, so it must be
-      # part of the app source tree. The rest of `distribution/` (DMG
-      # building, notarisation scripts, marketing automation) is still
-      # out of scope but lives here as inert files — the build never
-      # touches them.
-      isDist = false;
+      isDist = rel == "distribution" || lib.hasPrefix "distribution/" rel;
       # Generated Rust overlay artifacts that live under Sources/ClipKittyRust*
       # — we never want to pick up stale copies of these from a dirty checkout.
       isGeneratedRustOverlay =
@@ -149,15 +143,6 @@ let
       rev = "aa0079aeb82a4bf00324561a40bffe68c6fe1c26";
       version = "7.9.0";
       sha256 = "sha256-bqiHRby5+WHyPv45JENaveVzGRycSZiL2BEc6zCaO6g=";
-    };
-    "sparkle" = {
-      identity = "sparkle";
-      name = "Sparkle";
-      subpath = "Sparkle";
-      url = "https://github.com/sparkle-project/Sparkle.git";
-      rev = "066e75a8b3e99962685d6a90cdd5293ebffd9261";
-      version = "2.9.1";
-      sha256 = "sha256-ltZehumY8/Y+HA3Abbuk6pH73OsVEtV9qEgokuiALzw=";
     };
     "sttextkitplus" = {
       identity = "sttextkitplus";
