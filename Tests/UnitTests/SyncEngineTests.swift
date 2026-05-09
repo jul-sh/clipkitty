@@ -385,6 +385,42 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertEqual(transport.zoneChangeRequestHadToken, [false, false])
     }
 
+    func testCoordinatorFullResyncPreservesLocalItemWithoutDeleteProof() async throws {
+        let store = try makeStore()
+        let defaults = makeDefaults()
+        let transport = FakeCloudTransport()
+        let deviceId = "survivor-device"
+        let localId = try store.saveText(
+            text: "local survivor",
+            sourceApp: nil,
+            sourceAppBundleId: nil
+        )
+
+        var expiredResult = SyncZoneChangeResult()
+        expiredResult.tokenExpired = true
+        transport.zoneChangeResults = [expiredResult, SyncZoneChangeResult()]
+
+        let engine = makeEngine(
+            store: store,
+            transport: transport,
+            defaults: defaults,
+            deviceId: deviceId
+        )
+
+        await engine.runCoordinatorCycle()
+
+        assertSynced(engine.status)
+        let items = try store.fetchByIds(itemIds: [localId])
+        XCTAssertEqual(items.count, 1)
+        guard case let .text(value) = items[0].content else {
+            return XCTFail("Expected text item to survive full resync")
+        }
+        XCTAssertEqual(value, "local survivor")
+        XCTAssertTrue(try store.pendingLocalEvents().isEmpty)
+        XCTAssertEqual(try store.pendingSnapshotRecords().map(\.itemId), [localId])
+        XCTAssertEqual(transport.zoneChangeRequestHadToken, [false, false])
+    }
+
     func testCoordinatorFailsOnUnreadableCloudAsset() async throws {
         let store = try makeStore()
         let defaults = makeDefaults()

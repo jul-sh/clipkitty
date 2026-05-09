@@ -26,6 +26,15 @@ use r2d2_sqlite::SqliteConnectionManager;
 
 /// Build an ItemSnapshotData from a StoredItem for sync transport.
 pub(crate) fn snapshot_from_stored_item(item: &StoredItem) -> ItemSnapshotData {
+    snapshot_from_stored_item_with_bookmark(item, false)
+}
+
+/// Build an ItemSnapshotData from a StoredItem, carrying bookmark state when the
+/// caller is reconstructing a full local aggregate rather than an insert event.
+pub(crate) fn snapshot_from_stored_item_with_bookmark(
+    item: &StoredItem,
+    is_bookmarked: bool,
+) -> ItemSnapshotData {
     let type_specific = match &item.content {
         ClipboardContent::Text { value } => TypeSpecificData::Text {
             value: value.clone(),
@@ -88,7 +97,7 @@ pub(crate) fn snapshot_from_stored_item(item: &StoredItem) -> ItemSnapshotData {
         source_app: item.source_app.clone(),
         source_app_bundle_id: item.source_app_bundle_id.clone(),
         timestamp_unix: item.timestamp_unix,
-        is_bookmarked: false,
+        is_bookmarked,
         thumbnail_base64: item.thumbnail.as_ref().map(|d| base64_encode(d)),
         color_rgba: item.color_rgba,
         type_specific,

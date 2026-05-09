@@ -18,6 +18,7 @@ use purr_sync::types::{
 };
 
 use purr::database::Database;
+use purr::interface::ItemTag;
 use purr::ClipboardStore;
 use purr::ClipboardStoreApi;
 use tempfile::TempDir;
@@ -108,6 +109,28 @@ fn tombstone_aggregate(content_type: &str, versions: VersionVector) -> ItemAggre
         versions,
         content_type: content_type.to_string(),
     })
+}
+
+fn snapshot_record(snapshot: &ItemSnapshot) -> purr::interface::SyncSnapshotRecord {
+    purr::interface::SyncSnapshotRecord {
+        item_id: snapshot.item_id.clone(),
+        snapshot_revision: snapshot.snapshot_revision,
+        schema_version: snapshot.schema_version,
+        covers_through_event: snapshot.covers_through_event.clone(),
+        aggregate_data: snapshot.aggregate_data(),
+    }
+}
+
+fn event_record(event: &ItemEvent) -> purr::interface::SyncEventRecord {
+    purr::interface::SyncEventRecord {
+        event_id: event.event_id.clone(),
+        item_id: event.item_id.clone(),
+        origin_device_id: event.origin_device_id.clone(),
+        schema_version: event.schema_version,
+        recorded_at: event.recorded_at,
+        payload_type: event.payload_type(),
+        payload_data: event.payload_data(),
+    }
 }
 
 fn default_versions() -> VersionVector {
@@ -1107,15 +1130,17 @@ mod compaction_tests {
 
     fn seed_item_with_events(db: &Database, global_id: &str, n_events: usize) {
         let sync = SyncStore::new(db.pool());
+        let recorded_at_base = chrono::Utc::now().timestamp();
 
         // Create the item.
-        let create_event = ItemEvent::new_local(
+        let mut create_event = ItemEvent::new_local(
             global_id.to_string(),
             "device-A",
             ItemEventPayload::ItemCreated {
                 snapshot: text_snapshot("compaction test"),
             },
         );
+        create_event.recorded_at = recorded_at_base;
         sync.append_local_event(&create_event).unwrap();
 
         let agg = ItemAggregate::Live(LiveItemState {
@@ -1134,7 +1159,7 @@ mod compaction_tests {
 
         // Add touch events.
         for i in 0..n_events {
-            let touch_event = ItemEvent::new_local(
+            let mut touch_event = ItemEvent::new_local(
                 global_id.to_string(),
                 "device-A",
                 ItemEventPayload::ItemTouched {
@@ -1142,6 +1167,7 @@ mod compaction_tests {
                     base_touch_version: 1 + (i as u64),
                 },
             );
+            touch_event.recorded_at = recorded_at_base + 1 + i as i64;
             sync.append_local_event(&touch_event).unwrap();
         }
     }
@@ -2395,37 +2421,121 @@ mod replay_audit_tests {
     }
 
     #[test]
-    fn full_resync_with_tail_replaces_stale_local_rows() {
+    fn full_resync_with_tail_preserves_local_survivors_without_delete_proof() {
         let (store, dir) = test_store();
 
-        let stale_id = store
-            .save_text("stale local row".to_string(), None, None)
+        let local_id = store
+            .save_text("local survivor".to_string(), None, None)
             .unwrap();
-        assert!(!stale_id.is_empty());
+        store.add_tag(local_id.clone(), ItemTag::Bookmark).unwrap();
+        assert!(!local_id.is_empty());
 
         let aggregate = ItemAggregate::Live(LiveItemState {
             snapshot: text_snapshot("remote truth"),
             versions: default_versions(),
         });
         let snapshot = ItemSnapshot::initial("remote-item".to_string(), aggregate);
-        let record = purr::interface::SyncSnapshotRecord {
-            item_id: snapshot.item_id.clone(),
-            snapshot_revision: snapshot.snapshot_revision,
-            schema_version: snapshot.schema_version,
-            covers_through_event: snapshot.covers_through_event.clone(),
-            aggregate_data: snapshot.aggregate_data(),
-        };
+        let record = snapshot_record(&snapshot);
 
         let result = store.full_resync_with_tail(vec![record], vec![]).unwrap();
         assert_eq!(result.checkpoints_applied, 1);
         assert_eq!(result.tail_events_applied, 0);
 
         let db = store_db(&dir);
-        assert!(db.fetch_items_by_item_ids(&[stale_id]).unwrap().is_empty());
+        assert_eq!(
+            db.fetch_items_by_item_ids(&[local_id.clone()])
+                .unwrap()
+                .len(),
+            1
+        );
 
         let all_items = db.fetch_all_items().unwrap();
-        assert_eq!(all_items.len(), 1);
-        assert_eq!(all_items[0].text_content(), "remote truth");
+        assert_eq!(all_items.len(), 2);
+        assert!(all_items
+            .iter()
+            .any(|item| item.item_id == local_id && item.text_content() == "local survivor"));
+        assert!(all_items
+            .iter()
+            .any(|item| item.item_id == "remote-item" && item.text_content() == "remote truth"));
+
+        let pending_snapshots = store.pending_snapshot_records().unwrap();
+        assert_eq!(pending_snapshots.len(), 1);
+        assert_eq!(pending_snapshots[0].item_id, local_id);
+        let aggregate: ItemAggregate =
+            serde_json::from_str(&pending_snapshots[0].aggregate_data).unwrap();
+        match aggregate {
+            ItemAggregate::Live(live) => {
+                assert!(live.snapshot.is_bookmarked);
+                assert_eq!(live.versions.bookmark, 1);
+            }
+            other => panic!("expected survivor live snapshot, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn full_resync_with_tail_deletes_local_rows_with_tombstone_proof() {
+        let (store, dir) = test_store();
+
+        let local_id = store
+            .save_text("delete only with proof".to_string(), None, None)
+            .unwrap();
+        let mut versions = default_versions();
+        versions.existence = 2;
+        let tombstone = ItemSnapshot::compacted(
+            local_id.clone(),
+            1,
+            "delete-proof-event".to_string(),
+            tombstone_aggregate("text", versions),
+        );
+
+        let result = store
+            .full_resync_with_tail(vec![snapshot_record(&tombstone)], vec![])
+            .unwrap();
+        assert_eq!(result.checkpoints_applied, 1);
+
+        let db = store_db(&dir);
+        assert!(db
+            .fetch_items_by_item_ids(&[local_id.clone()])
+            .unwrap()
+            .is_empty());
+
+        let sync = SyncStore::new(db.pool());
+        let projection = sync.fetch_projection(&local_id).unwrap().unwrap();
+        assert_projection_tombstoned(&projection);
+        assert!(store.pending_snapshot_records().unwrap().is_empty());
+    }
+
+    #[test]
+    fn full_resync_with_tail_deletes_local_rows_with_tail_delete_proof() {
+        let (store, dir) = test_store();
+
+        let local_id = store
+            .save_text("delete from tail event".to_string(), None, None)
+            .unwrap();
+        let deleted = ItemEvent::new_local(
+            local_id.clone(),
+            "device-A",
+            ItemEventPayload::ItemDeleted {
+                base_existence_version: 1,
+            },
+        );
+
+        let result = store
+            .full_resync_with_tail(vec![], vec![event_record(&deleted)])
+            .unwrap();
+        assert_eq!(result.checkpoints_applied, 0);
+        assert_eq!(result.tail_events_applied, 1);
+        assert_eq!(result.tail_events_deferred, 0);
+
+        let db = store_db(&dir);
+        assert!(db
+            .fetch_items_by_item_ids(&[local_id.clone()])
+            .unwrap()
+            .is_empty());
+
+        let sync = SyncStore::new(db.pool());
+        let projection = sync.fetch_projection(&local_id).unwrap().unwrap();
+        assert_projection_tombstoned(&projection);
     }
 
     #[test]
@@ -2590,6 +2700,10 @@ mod replay_audit_tests {
         };
 
         assert!(store.apply_remote_snapshot(make_record()).unwrap());
+        assert!(
+            store.pending_snapshot_records().unwrap().is_empty(),
+            "snapshots fetched from CloudKit should not be echoed back as pending uploads"
+        );
 
         let db = store_db(&dir);
         let row_id = db.fetch_all_items().unwrap()[0].id.unwrap();

@@ -424,7 +424,7 @@ enum IOSBuildVariant: CaseIterable {
 // MARK: - Shared Scheme Components
 
 /// Rust pre-build action shared across all macOS app schemes.
-/// Detects purr/ changes via git tree hash and rebuilds bindings when needed.
+/// Detects Rust bridge input changes and rebuilds bindings when needed.
 ///
 /// When CLIPKITTY_SKIP_RUST_PREBUILD=1 is set, the script is a no-op: this is
 /// the contract with the Nix flake, which supplies Rust bridge artifacts into
@@ -436,11 +436,24 @@ if [ "${CLIPKITTY_SKIP_RUST_PREBUILD:-0}" = "1" ]; then
     exit 0
 fi
 
-# Use git tree hash to detect purr/ changes (fast, handles branches/rebases)
+# Hash the actual Rust bridge inputs, including uncommitted edits. Using only
+# HEAD:purr can leave Xcode linked against a stale libpurr.a during local test
+# runs, and purr-sync changes matter because the app builds purr with sync on.
 cd "$PROJECT_DIR"
 MARKER=".make/rust-tree-hash"
 LIB="Sources/ClipKittyRust/libpurr.a"
-CURRENT_HASH=$(git rev-parse HEAD:purr 2>/dev/null || echo "unknown")
+HASH_INPUTS="Cargo.toml Cargo.lock purr purr-sync"
+CURRENT_HASH=$(
+    {
+        git ls-files -s -- $HASH_INPUTS
+        git diff --binary -- $HASH_INPUTS
+        git diff --cached --binary -- $HASH_INPUTS
+        git ls-files --others --exclude-standard -- $HASH_INPUTS | while IFS= read -r path; do
+            printf 'untracked %s\\n' "$path"
+            git hash-object "$path"
+        done
+    } | shasum -a 256 | awk '{print $1}'
+)
 STORED_HASH=$(cat "$MARKER" 2>/dev/null || echo "none")
 
 if [ -f "$LIB" ] && [ "$CURRENT_HASH" = "$STORED_HASH" ]; then

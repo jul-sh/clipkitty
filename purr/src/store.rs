@@ -8,7 +8,7 @@ use crate::interface::{
     SearchOutcome, SearchResult, StoreBootstrapPlan,
 };
 #[cfg(feature = "sync")]
-use crate::sync_bridge::{RealSyncEmitter, SyncEmitter};
+use crate::sync_bridge::{snapshot_from_stored_item_with_bookmark, RealSyncEmitter, SyncEmitter};
 use crate::{match_presentation, save_service, search_service};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -775,6 +775,68 @@ impl ClipboardStore {
             fallback_local_item_id,
         )
     }
+
+    fn local_snapshots_for_full_resync(
+        &self,
+    ) -> Result<Vec<purr_sync::snapshot::ItemSnapshot>, ClipKittyError> {
+        use purr_sync::snapshot::ItemSnapshot;
+        use purr_sync::store::SyncStore;
+        use purr_sync::types::{ItemAggregate, LiveItemState, VersionVector, SYNC_SCHEMA_VERSION};
+
+        let items = self.db.fetch_all_items()?;
+        let item_ids: Vec<String> = items.iter().map(|item| item.item_id.clone()).collect();
+        let tags_by_item_id = self.db.get_tags_for_item_ids(&item_ids)?;
+        let sync = SyncStore::new(self.db.pool());
+
+        items
+            .into_iter()
+            .map(|item| {
+                let item_id = item.item_id.clone();
+                let existing_snapshot = sync.fetch_snapshot(&item_id)?;
+                let is_bookmarked = tags_by_item_id
+                    .get(&item_id)
+                    .map(|tags| tags.contains(&ItemTag::Bookmark))
+                    .unwrap_or(false);
+
+                let mut versions = match existing_snapshot
+                    .as_ref()
+                    .map(|snapshot| &snapshot.aggregate)
+                {
+                    Some(ItemAggregate::Live(live)) => live.versions,
+                    Some(ItemAggregate::Tombstoned(_)) | None => VersionVector {
+                        content: 1,
+                        bookmark: if is_bookmarked { 1 } else { 0 },
+                        existence: 1,
+                        touch: 1,
+                        metadata: 1,
+                    },
+                };
+                if is_bookmarked && versions.bookmark == 0 {
+                    versions.bookmark = 1;
+                }
+
+                let aggregate = ItemAggregate::Live(LiveItemState {
+                    snapshot: snapshot_from_stored_item_with_bookmark(&item, is_bookmarked),
+                    versions,
+                });
+                let snapshot = ItemSnapshot {
+                    item_id: item_id.clone(),
+                    snapshot_revision: existing_snapshot
+                        .as_ref()
+                        .map(|snapshot| snapshot.snapshot_revision.max(1))
+                        .unwrap_or(1),
+                    schema_version: SYNC_SCHEMA_VERSION,
+                    covers_through_event: existing_snapshot
+                        .and_then(|snapshot| snapshot.covers_through_event),
+                    aggregate,
+                    uploaded: false,
+                    uploaded_at: None,
+                };
+
+                Ok(snapshot)
+            })
+            .collect()
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -894,7 +956,7 @@ impl ClipboardStore {
                 record.schema_version,
                 record.covers_through_event.clone(),
                 &record.aggregate_data,
-                false,
+                true,
                 None,
             )
             .map_err(|e| ClipKittyError::InvalidInput(e))?;
@@ -1053,7 +1115,7 @@ impl ClipboardStore {
             record.schema_version,
             record.covers_through_event,
             &record.aggregate_data,
-            false,
+            true,
             None,
         )
         .map_err(|e| ClipKittyError::InvalidInput(e))?;
@@ -1084,44 +1146,14 @@ impl ClipboardStore {
     }
 
     /// Perform a full resync from the provided snapshots.
-    /// Clears all sync state, rebuilds from snapshots, and materializes
-    /// live items into the local items table + Tantivy index.
+    /// Reconciles CloudKit's explicit live/tombstoned states with local items.
     pub fn full_resync(
         &self,
         snapshot_records: Vec<crate::interface::SyncSnapshotRecord>,
     ) -> Result<u64, ClipKittyError> {
-        use purr_sync::replay;
-        use purr_sync::snapshot::ItemSnapshot;
-
-        let snapshots: Vec<ItemSnapshot> = snapshot_records
-            .into_iter()
-            .map(|r| {
-                ItemSnapshot::from_stored(
-                    r.item_id,
-                    r.snapshot_revision,
-                    r.schema_version,
-                    r.covers_through_event,
-                    &r.aggregate_data,
-                    false,
-                    None,
-                )
-                .map_err(|e| ClipKittyError::InvalidInput(e))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let applied = replay::full_resync_from_snapshots(self.db.pool(), &snapshots)?;
-
-        self.db.clear_all()?;
-        self.indexer.clear()?;
-
-        // Materialize all snapshots into the read model.
-        for snapshot in &snapshots {
-            let _ =
-                self.materialize_aggregate(&snapshot.item_id, &snapshot.aggregate, true, None)?;
-        }
-        let _ = self.indexer.commit();
-
-        Ok(applied as u64)
+        Ok(self
+            .full_resync_with_tail(snapshot_records, Vec::new())?
+            .checkpoints_applied)
     }
 
     /// Perform a full resync from checkpoints and tail events.
@@ -1137,8 +1169,11 @@ impl ClipboardStore {
         use purr_sync::replay;
         use purr_sync::snapshot::ItemSnapshot;
         use purr_sync::store::SyncStore;
+        use std::collections::HashSet;
 
-        let snapshots: Vec<ItemSnapshot> = snapshot_records
+        let local_snapshots_before_resync = self.local_snapshots_for_full_resync()?;
+
+        let remote_snapshots: Vec<ItemSnapshot> = snapshot_records
             .into_iter()
             .map(|r| {
                 ItemSnapshot::from_stored(
@@ -1147,12 +1182,30 @@ impl ClipboardStore {
                     r.schema_version,
                     r.covers_through_event,
                     &r.aggregate_data,
-                    false,
+                    true,
                     None,
                 )
                 .map_err(|e| ClipKittyError::InvalidInput(e))
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let remote_item_ids: HashSet<String> = remote_snapshots
+            .iter()
+            .map(|snapshot| snapshot.item_id.clone())
+            .collect();
+        let mut local_base_snapshots: Vec<ItemSnapshot> = local_snapshots_before_resync
+            .into_iter()
+            .filter(|snapshot| !remote_item_ids.contains(&snapshot.item_id))
+            .map(|mut snapshot| {
+                // Local bases are not CloudKit checkpoints. They exist so tail
+                // events with explicit item IDs can apply, while plain absence
+                // from CloudKit still cannot delete local data.
+                snapshot.covers_through_event = None;
+                snapshot
+            })
+            .collect();
+        let local_base_count = local_base_snapshots.len();
+        let mut resync_snapshots = remote_snapshots;
+        resync_snapshots.append(&mut local_base_snapshots);
 
         let tail_events: Vec<ItemEvent> = tail_event_records
             .into_iter()
@@ -1170,12 +1223,11 @@ impl ClipboardStore {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let result = replay::full_resync(self.db.pool(), &snapshots, &tail_events)?;
+        let mut result = replay::full_resync(self.db.pool(), &resync_snapshots, &tail_events)?;
+        result.checkpoints_applied = result.checkpoints_applied.saturating_sub(local_base_count);
 
-        self.db.clear_all()?;
-        self.indexer.clear()?;
-
-        // Materialize all live snapshots into the read model.
+        // CloudKit only deletes local data via explicit tombstone snapshots/events.
+        // Absence from the full feed means "missing remote proof", not "deleted".
         let sync = SyncStore::new(self.db.pool());
         let all_snapshots = sync.fetch_all_snapshots()?;
         for snapshot in &all_snapshots {
