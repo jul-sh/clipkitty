@@ -311,7 +311,7 @@ fn publish(
         upload_binary(repo, platform, &asc_key_id, &asc_issuer_id, reporter)?;
         reporter.info("\n=== Uploading metadata ===");
         let version_id = ensure_editable_version(repo, platform, version, &asc_env, reporter)?;
-        attach_latest_valid_build(repo, platform, &version_id, &asc_env, reporter)?;
+        attach_latest_valid_build(repo, platform, version, &version_id, &asc_env, reporter)?;
         import_metadata(repo, platform, &version_id, &asc_env, reporter)?;
         reporter.info(&format!(
             "\n=== Uploading {} screenshots ===",
@@ -610,6 +610,7 @@ fn looks_like_locale_dir(name: &str) -> bool {
 fn attach_latest_valid_build(
     repo: &RepoRoot,
     platform: PublishPlatform,
+    version: &str,
     version_id: &str,
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
@@ -618,6 +619,11 @@ fn attach_latest_valid_build(
     // processing state is VALID. ASC's binary upload happens just before this
     // step but the build still needs a few seconds to be processed; poll for
     // up to ~5 minutes.
+    //
+    // ClipKitty's macOS and iOS apps share one app_id, so we MUST filter by
+    // platform server-side — otherwise an iOS build with the same version
+    // string will be returned and `versions attach-build` rejects it with
+    // "The specified build has a different platform than the version."
     let deadline = Instant::now() + Duration::from_secs(300);
     let mut last_seen_state: Option<String> = None;
     let build_id = loop {
@@ -628,6 +634,10 @@ fn attach_latest_valid_build(
                 "list",
                 "--app",
                 platform.app_id,
+                "--platform",
+                platform.asc_platform,
+                "--version",
+                version,
                 "--limit",
                 "20",
             ],
@@ -638,13 +648,10 @@ fn attach_latest_valid_build(
         let mut candidates: Vec<&Value> = builds
             .iter()
             .filter(|b| {
-                let attrs = b.get("attributes").and_then(Value::as_object);
-                let matches_platform = attrs
+                b.get("attributes")
                     .and_then(|a| a.get("platform"))
                     .and_then(Value::as_str)
-                    .map(|p| p.eq_ignore_ascii_case(platform.asc_platform))
-                    .unwrap_or(true); // some builds list responses omit platform
-                matches_platform
+                    .is_none_or(|p| p.eq_ignore_ascii_case(platform.asc_platform))
             })
             .collect();
         candidates.sort_by(|a, b| {
