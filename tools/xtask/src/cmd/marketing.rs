@@ -534,7 +534,7 @@ fn intro_video(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()
             "testRecordIntroVideo",
             "SyntheticData_video.sqlite",
             &repo.join(format!("marketing/{locale_code}/intro_video.mov")),
-            50,
+            65,
             29.0,
             reporter,
         )?;
