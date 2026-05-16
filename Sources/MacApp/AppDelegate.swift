@@ -2,10 +2,14 @@ import AppKit
 import ClipKittyMacPlatform
 import ClipKittyRust
 import ClipKittyShared
+import Combine
 import os
 import SwiftUI
 #if ENABLE_APP_SHORTCUTS
     import ClipKittyShortcuts
+#endif
+#if ENABLE_SPARKLE_UPDATES
+    import SparkleUpdater
 #endif
 
 private enum LaunchMode {
@@ -38,9 +42,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var welcomeWindowController: WelcomeWindowController?
     private var showHistoryMenuItem: NSMenuItem?
     private var statusMenu: NSMenu?
+    private var cancellables = Set<AnyCancellable>()
     private var snackbarCoordinator: SnackbarCoordinator!
     #if ENABLE_ICLOUD_SYNC
         private var syncPreferenceController: SyncPreferenceController?
+    #endif
+    #if ENABLE_SPARKLE_UPDATES
+        private var updater: SparkleAppUpdater?
     #endif
 
     /// Set activation policy before the app finishes launching.
@@ -107,6 +115,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             name: .clipKittyOpenSettings,
             object: nil
         )
+
+        #if ENABLE_SPARKLE_UPDATES
+            let sparkleUpdater = SparkleAppUpdater()
+            sparkleUpdater.start { state in
+                // Convert SparkleUpdater.UpdateCheckState to app's UpdateCheckState
+                let prevState = AppSettings.shared.updateCheckState
+                switch state {
+                case .idle: AppSettings.shared.updateCheckState = .idle
+                case .checking: AppSettings.shared.updateCheckState = .checking
+                case .downloading: AppSettings.shared.updateCheckState = .downloading
+                case .installing: AppSettings.shared.updateCheckState = .installing
+                case .available: AppSettings.shared.updateCheckState = .available
+                case .checkFailed(let msg): AppSettings.shared.updateCheckState = .checkFailed(errorMessage: msg)
+                }
+
+                if prevState == .checking && state != .checking {
+                    AppSettings.shared.lastUpdateCheckDate = Date()
+                    AppSettings.shared.lastUpdateCheckResult = AppSettings.shared.updateCheckState
+                }
+            }
+            updater = sparkleUpdater
+            AppSettings.shared.$autoInstallUpdates
+                .dropFirst()
+                .sink { [weak sparkleUpdater] enabled in
+                    sparkleUpdater?.setAutoInstall(enabled)
+                }
+                .store(in: &cancellables)
+            sparkleUpdater.setUpdateChannel(AppSettings.shared.updateChannel)
+            AppSettings.shared.$updateChannel
+                .dropFirst()
+                .sink { [weak sparkleUpdater] channel in
+                    sparkleUpdater?.setUpdateChannel(channel)
+                }
+                .store(in: &cancellables)
+        #endif
 
         // Show welcome screen on first launch
         if !AppSettings.shared.hasCompletedOnboarding, case .production = launchMode {
@@ -223,13 +266,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func openSettings() {
         if settingsWindow == nil {
-            let settingsView = SettingsView(
-                store: store,
-                onHotKeyChanged: { [weak self] hotKey in
-                    self?.hotKeyManager.register(hotKey: hotKey)
-                    self?.updateMenuHotKey()
-                }
-            )
+            #if ENABLE_SPARKLE_UPDATES
+                let settingsView = SettingsView(
+                    store: store,
+                    onHotKeyChanged: { [weak self] hotKey in
+                        self?.hotKeyManager.register(hotKey: hotKey)
+                        self?.updateMenuHotKey()
+                    },
+                    onInstallUpdate: { [weak self] in
+                        self?.updater?.installUpdate()
+                    },
+                    onCheckForUpdates: { [weak self] in
+                        self?.updater?.checkForUpdates()
+                    }
+                )
+            #else
+                let settingsView = SettingsView(
+                    store: store,
+                    onHotKeyChanged: { [weak self] hotKey in
+                        self?.hotKeyManager.register(hotKey: hotKey)
+                        self?.updateMenuHotKey()
+                    }
+                )
+            #endif
 
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 400, height: 250),

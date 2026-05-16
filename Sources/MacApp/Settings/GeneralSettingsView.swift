@@ -6,6 +6,7 @@ import ClipKittyShared
     import CloudKit
 #endif
 import SwiftUI
+import OSLog
 
 struct GeneralSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
@@ -16,8 +17,13 @@ struct GeneralSettingsView: View {
     #endif
     @State private var isICloudAvailable = true
     @State private var iCloudStatusMessage: String? = nil
+    @State private var logsCopied = false
 
     let store: ClipboardStore
+    #if ENABLE_SPARKLE_UPDATES
+        var onInstallUpdate: (() -> Void)? = nil
+        var onCheckForUpdates: (() -> Void)? = nil
+    #endif
 
     private static let relativeDateFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
@@ -145,6 +151,148 @@ struct GeneralSettingsView: View {
                     Text(String(localized: "Delete all clipboard history? This cannot be undone."))
                 }
             }
+
+            #if ENABLE_SPARKLE_UPDATES
+                Section(String(localized: "Updates")) {
+                    HStack {
+                        Text(String(localized: "Status:"))
+                        Spacer()
+                        switch settings.updateCheckState {
+                        case .idle:
+                            Text(String(localized: "Up to date"))
+                                .foregroundStyle(.secondary)
+                        case .checking:
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text(String(localized: "Checking…"))
+                                    .foregroundStyle(.secondary)
+                            }
+                        case .downloading:
+                            Text(String(localized: "Downloading update…"))
+                                .foregroundStyle(.secondary)
+                        case .installing:
+                            Text(String(localized: "Installing update…"))
+                                .foregroundStyle(.secondary)
+                        case .available:
+                            HStack(spacing: 6) {
+                                Text(String(localized: "Update available"))
+                                    .fontWeight(.semibold)
+                                Button(String(localized: "Install")) {
+                                    onInstallUpdate?()
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                        case .checkFailed(let errorMessage):
+                            VStack(alignment: .trailing, spacing: 6) {
+                                Label(
+                                    String(localized: "Update check failed"),
+                                    systemImage: "exclamationmark.triangle"
+                                )
+                                .foregroundStyle(.orange)
+
+                                Text(errorMessage)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.trailing)
+
+                                Button(String(localized: "View Releases on GitHub")) {
+                                    NSWorkspace.shared.open(
+                                        URL(
+                                            string:
+                                            "https://github.com/jul-sh/clipkitty/releases/latest"
+                                        )!
+                                    )
+                                }
+                                .font(.subheadline)
+                            }
+                        }
+                    }
+
+                    if let lastChecked = settings.lastUpdateCheckDate {
+                        HStack(spacing: 4) {
+                            switch settings.lastUpdateCheckResult {
+                            case .idle:
+                                Text(String(localized: "Up to date, as of"))
+                            case .available:
+                                Text(String(localized: "Update available, as of"))
+                            case .downloading:
+                                Text(String(localized: "Downloading update, as of"))
+                            case .installing:
+                                Text(String(localized: "Installing update, as of"))
+                            case .checkFailed:
+                                Text(String(localized: "Update check failed, as of"))
+                            case .checking:
+                                EmptyView()
+                            }
+
+                            Text(lastChecked, style: .date)
+                            Text(lastChecked, style: .time)
+                        }
+                        .foregroundStyle(.secondary)
+                    }
+
+                    Toggle(
+                        String(localized: "Automatically install updates"),
+                        isOn: $settings.autoInstallUpdates
+                    )
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Toggle(
+                            String(localized: "Get beta updates"),
+                            isOn: Binding(
+                                get: {
+                                    switch settings.updateChannel {
+                                    case .stable:
+                                        return false
+                                    case .beta:
+                                        return true
+                                    }
+                                },
+                                set: { isBetaEnabled in
+                                    settings.updateChannel = isBetaEnabled ? .beta : .stable
+                                }
+                            )
+                        )
+
+                        Text(String(localized: "Test new features before release."))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if case .beta = settings.updateChannel {
+                        Button(String(localized: "Check for Updates")) {
+                            onCheckForUpdates?()
+                        }
+                        .disabled(settings.updateCheckState != .idle)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(
+                                String(
+                                    localized:
+                                    "Found a bug? Report it on GitHub with steps to reproduce."
+                                )
+                            )
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                            Button(String(localized: "Report a Bug")) {
+                                NSWorkspace.shared.open(
+                                    URL(
+                                        string:
+                                        "https://github.com/jul-sh/clipkitty/issues/new/choose"
+                                    )!
+                                )
+                            }
+                        }
+
+                        Button(logsCopied ? String(localized: "Logs Copied!") : String(localized: "Copy Recent Logs")) {
+                            copyRecentLogs()
+                        }
+                        .disabled(logsCopied)
+                    }
+                }
+            #endif
 
             Section(String(localized: "About")) {
                 LabeledContent(String(localized: "Version")) {
@@ -328,6 +476,28 @@ struct GeneralSettingsView: View {
             return entitlements["com.apple.application-identifier"] != nil
         }()
     #endif
+
+    private func copyRecentLogs() {
+        do {
+            let store = try OSLogStore(scope: .currentProcessIdentifier)
+            let since = store.position(date: Date().addingTimeInterval(-3600))
+            let entries = try store.getEntries(at: since)
+                .compactMap { $0 as? OSLogEntryLog }
+                .map { "[\($0.date.formatted(.iso8601))] [\($0.category)] \($0.composedMessage)" }
+                .joined(separator: "\n")
+
+            let header = "ClipKitty \(appVersion) (\(buildNumber)) \(buildChannel) — logs from last hour"
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString("\(header)\n\n\(entries)", forType: .string)
+            logsCopied = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                logsCopied = false
+            }
+        } catch {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString("Failed to read logs: \(error.localizedDescription)", forType: .string)
+        }
+    }
 
     #if ENABLE_BUILD_ATTESTATION_LINK
     private func checkAttestation() async {

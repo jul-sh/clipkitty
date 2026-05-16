@@ -5,12 +5,17 @@ import PackageDescription
 import ProjectDescription
 
 let packageSettings = PackageSettings(
-    // Custom configurations must be declared so SPM dependencies build for all configs.
-    // AppStore and Hardened map to Release base, so they get Release-optimized builds.
+    productTypes: [
+        "Sparkle": .framework,
+        "SparkleUpdater": .framework,
+    ],
+    // Custom configurations must be declared so SPM dependencies build for all configs
+    // SparkleRelease and AppStore map to Release base, so they get Release-optimized builds
     baseSettings: .settings(
         configurations: [
             .debug(name: "Debug"),
             .release(name: "Release"),
+            .release(name: .configuration("SparkleRelease")),
             .release(name: .configuration("AppStore")),
             .release(name: .configuration("Hardened")),
         ]
@@ -24,5 +29,7 @@ let package = Package(
         // GRDB used for FTS integration tests
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0"),
         .package(url: "https://github.com/krzyzanowskim/STTextKitPlus.git", from: "0.3.0"),
+        // SparkleUpdater wraps Sparkle for auto-update functionality (Release builds only)
+        .package(path: "../distribution/SparkleUpdater"),
     ]
 )

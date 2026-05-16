@@ -35,6 +35,7 @@ const OVERLAY_FILES: &[&str] = &[
 const STRAY_SWIFTPM: &[&str] = &[
     "Package.resolved",
     "Tuist/Package.resolved",
+    "distribution/SparkleUpdater/Package.resolved",
 ];
 
 pub(crate) struct BuildAppRequest {

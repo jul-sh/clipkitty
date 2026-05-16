@@ -470,6 +470,136 @@
         }
       }
     },
+    "Automatically install updates": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Updates automatisch installieren"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatically install updates"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instalar actualizaciones automáticamente"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installer les mises à jour automatiquement"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アップデートを自動でインストール"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "업데이트 자동 설치"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instalar atualizações automaticamente"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Автоматически устанавливать обновления"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动安装更新"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動安裝更新"
+          }
+        }
+      }
+    },
+    "Beta releases are for testing new features early. Turn this on to try the latest improvements before they roll out to everyone.": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beta-Versionen dienen zum frühen Testen neuer Funktionen. Aktivieren Sie dies, um die neuesten Verbesserungen auszuprobieren, bevor sie für alle ausgerollt werden."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beta releases are for testing new features early. Turn this on to try the latest improvements before they roll out to everyone."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Las versiones beta son para probar nuevas funciones antes. Activa esto para probar las últimas mejoras antes de que se publiquen para todos."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les versions beta permettent de tester les nouvelles fonctionnalités en avant-première. Activez ceci pour essayer les dernières améliorations avant leur déploiement général."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ベータ版は新機能を早期にテストするためのものです。これをオンにすると、一般公開前に最新の改善を試すことができます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "베타 릴리스는 새로운 기능을 미리 테스트하기 위한 것입니다. 이 옵션을 켜면 모든 사용자에게 배포되기 전에 최신 개선 사항을 먼저 경험할 수 있습니다."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As versões beta são para testar novos recursos antecipadamente. Ative isto para experimentar as últimas melhorias antes do lançamento para todos."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Бета-версии предназначены для раннего тестирования новых функций. Включите это, чтобы попробовать последние улучшения до их публикации для всех."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beta 版本用于提前测试新功能。启用此选项可在正式发布前体验最新改进。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beta 版本用於提前測試新功能。啟用此選項可在正式發布前體驗最新改進。"
+          }
+        }
+      }
+    },
     "Bookmark": {
       "localizations": {
         "de": {
@@ -856,6 +986,71 @@
         }
       }
     },
+    "Check for Updates": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nach Updates suchen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Check for Updates"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Buscar actualizaciones"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rechercher des mises à jour"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アップデートを確認"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "업데이트 확인"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verificar atualizações"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверить обновления"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检查更新"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "檢查更新"
+          }
+        }
+      }
+    },
     "Check that the file exists and you have permission to access it.": {
       "localizations": {
         "de": {
@@ -916,6 +1111,71 @@
           "stringUnit": {
             "state": "translated",
             "value": "請檢查檔案是否存在以及您是否有存取權限。"
+          }
+        }
+      }
+    },
+    "Checking…": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Überprüfung…"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verificando…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vérification…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "確認中…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "확인 중…"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verificando…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверка…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在检查…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在檢查…"
           }
         }
       }
@@ -2012,6 +2272,71 @@
           "stringUnit": {
             "state": "translated",
             "value": "拷貝"
+          }
+        }
+      }
+    },
+    "Copy Recent Logs": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktuelle Protokolle kopieren"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy Recent Logs"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copiar registros recientes"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copier les journaux récents"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近のログをコピー"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최근 로그 복사"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copiar registros recentes"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Скопировать последние логи"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "复制最近的日志"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "複製最近的日誌"
           }
         }
       }
@@ -3240,6 +3565,136 @@
         }
       }
     },
+    "Downloading update, as of": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update wird heruntergeladen, Stand"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading update, as of"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Descargando actualización, el"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Téléchargement de la mise à jour, au"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アップデートをダウンロード中、確認日時:"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "업데이트 다운로드 중, 기준:"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Baixando atualização em"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Скачивание обновления по состоянию на"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在下载更新，截至"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在下載更新，截至"
+          }
+        }
+      }
+    },
+    "Downloading update…": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update wird heruntergeladen…"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading update…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Descargando actualización…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Téléchargement de la mise à jour…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アップデートをダウンロード中…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "업데이트 다운로드 중…"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Baixando atualização…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Загрузка обновления…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在下载更新…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在下載更新…"
+          }
+        }
+      }
+    },
     "Downloads web content. May trigger tracking links.": {
       "localizations": {
         "de": {
@@ -4206,6 +4661,71 @@
       }
     },
     "Get Started": {},
+    "Get beta updates": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beta-Updates erhalten"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Get beta updates"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recibir actualizaciones beta"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recevoir les mises a jour beta"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ベータ版アップデートを受け取る"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "베타 업데이트 받기"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Receber atualizacoes beta"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Получать бета-обновления"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "获取 Beta 更新"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取得 Beta 更新"
+          }
+        }
+      }
+    },
     "Got It": {},
     "Grant Accessibility permission to enable automatic pasting. Without it, items will only be copied to the clipboard. Restart the app after updating accessibility permissions for the change to take effect.": {
       "extractionState": "stale",
@@ -4401,6 +4921,71 @@
         }
       }
     },
+    "If you hit a bug in a beta build, please report it on GitHub with what broke, steps to reproduce it, your ClipKitty version, and your macOS version.": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wenn in einer Beta-Version ein Fehler auftritt, melden Sie ihn bitte auf GitHub mit einer Beschreibung des Problems, Reproduktionsschritten sowie Ihrer ClipKitty- und macOS-Version."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "If you hit a bug in a beta build, please report it on GitHub with what broke, steps to reproduce it, your ClipKitty version, and your macOS version."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Si encuentras un error en una compilacion beta, informalo en GitHub indicando que fallo, como reproducirlo, tu version de ClipKitty y tu version de macOS."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Si vous rencontrez un bug dans une build beta, signalez-le sur GitHub en indiquant ce qui casse, les etapes de reproduction, votre version de ClipKitty et votre version de macOS."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ベータ版ビルドで不具合が発生した場合は、何が壊れたか、再現手順、ClipKitty のバージョン、macOS のバージョンを添えて GitHub で報告してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "베타 빌드에서 버그를 발견하면 무엇이 깨졌는지, 재현 단계, ClipKitty 버전, macOS 버전을 포함해 GitHub에 제보해 주세요."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se voce encontrar um bug em uma build beta, relate-o no GitHub informando o que quebrou, como reproduzir, sua versao do ClipKitty e sua versao do macOS."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Если вы столкнулись с ошибкой в бета-сборке, сообщите о ней на GitHub: что сломалось, как это воспроизвести, вашу версию ClipKitty и версию macOS."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "如果你在 Beta 构建中遇到问题，请在 GitHub 上报告，并说明哪里出了问题、如何复现、你的 ClipKitty 版本以及 macOS 版本。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "如果你在 Beta 版本中遇到問題，請到 GitHub 回報，並附上故障內容、重現步驟、你的 ClipKitty 版本，以及 macOS 版本。"
+          }
+        }
+      }
+    },
     "Image": {
       "extractionState": "stale",
       "localizations": {
@@ -4591,6 +5176,201 @@
           "stringUnit": {
             "state": "translated",
             "value": "影像"
+          }
+        }
+      }
+    },
+    "Install": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installieren"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Install"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instalar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installer"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "インストール"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설치"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instalar"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Установить"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "安装"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "安裝"
+          }
+        }
+      }
+    },
+    "Installing update, as of": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update wird installiert, Stand"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installing update, as of"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instalando actualización, el"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installation de la mise à jour, au"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アップデートをインストール中、確認日時:"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "업데이트 설치 중, 기준:"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instalando atualização em"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Установка обновления по состоянию на"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在安装更新，截至"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在安裝更新，截至"
+          }
+        }
+      }
+    },
+    "Installing update…": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update wird installiert…"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installing update…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instalando actualización…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installation de la mise à jour…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アップデートをインストール中…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "업데이트 설치 중…"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Instalando atualização…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Установка обновления…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在安装更新…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在安裝更新…"
           }
         }
       }
@@ -5045,6 +5825,71 @@
           "stringUnit": {
             "state": "translated",
             "value": "連結"
+          }
+        }
+      }
+    },
+    "Logs Copied!": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Protokolle kopiert!"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Logs Copied!"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "¡Registros copiados!"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Journaux copiés !"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ログをコピーしました！"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "로그가 복사되었습니다!"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Registros copiados!"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Логи скопированы!"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "日志已复制！"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "日誌已複製！"
           }
         }
       }
@@ -6404,6 +7249,71 @@
         }
       }
     },
+    "Report a Bug": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fehler melden"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Report a Bug"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reportar un error"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Signaler un bug"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不具合を報告"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "버그 신고"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reportar erro"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сообщить об ошибке"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "报告问题"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回報問題"
+          }
+        }
+      }
+    },
     "Requires Permission": {
       "extractionState": "stale",
       "localizations": {
@@ -7307,6 +8217,71 @@
         }
       }
     },
+    "Status:": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Status:"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Status:"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estado:"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "État :"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ステータス:"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "상태:"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Status:"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Статус:"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "状态:"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "狀態:"
+          }
+        }
+      }
+    },
     "Storage": {
       "extractionState": "stale",
       "localizations": {
@@ -7562,6 +8537,71 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在同步…"
+          }
+        }
+      }
+    },
+    "Test new features before release.": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neue Funktionen vor der Veröffentlichung testen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Test new features before release."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prueba nuevas funciones antes del lanzamiento."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Testez les nouvelles fonctionnalités avant leur sortie."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リリース前に新機能をテストできます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "출시 전에 새로운 기능을 테스트하세요."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Teste novos recursos antes do lançamento."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Тестируйте новые функции до релиза."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在发布前测试新功能。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在發佈前測試新功能。"
           }
         }
       }
@@ -8270,6 +9310,333 @@
         }
       }
     },
+    "Up to date": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktuell"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Up to date"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Actualizado"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "À jour"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最新です"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최신 상태"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Atualizado"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Обновлено"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已是最新版本"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已是最新版本"
+          }
+        }
+      }
+    },
+    "Up to date, as of": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktuell, Stand"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Up to date, as of"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Al día, el"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "À jour, au"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最新、確認日時:"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최신 상태, 기준:"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Atualizado em"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Обновлено по состоянию на"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最新，截至"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最新，截至"
+          }
+        }
+      }
+    },
+    "Update available": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update verfügbar"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update available"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Actualización disponible"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mise à jour disponible"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アップデートがあります"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "업데이트 사용 가능"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Atualização disponível"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Доступно обновление"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有可用更新"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有可用更新"
+          }
+        }
+      }
+    },
+    "Update available, as of": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update verfügbar, Stand"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update available, as of"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Actualización disponible, el"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mise à jour disponible, au"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アップデートあり、確認日時:"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "업데이트 가능, 기준:"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Atualização disponível em"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Доступно обновление по состоянию на"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有新版本，截至"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "有新版本，截至"
+          }
+        }
+      }
+    },
+    "Update check failed": {},
+    "Update check failed, as of": {},
+    "Updates": {
+      "extractionState": "stale",
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Updates"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Updates"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Actualizaciones"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mises à jour"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "アップデート"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "업데이트"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Atualizações"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Обновления"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "更新"
+          }
+        }
+      }
+    },
     "Verify": {
       "localizations": {
         "de": {
@@ -8398,6 +9765,7 @@
         }
       }
     },
+    "View Releases on GitHub": {},
     "Waiting to sync": {
       "localizations": {
         "de": {
@@ -9111,1094 +10479,1094 @@
       }
     },
     "✏️": {},
-    "Save Text to ClipKitty": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Text in ClipKitty speichern"
+      "Save Text to ClipKitty": {
+          "localizations": {
+              "de": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Text in ClipKitty speichern"
+                  }
+              },
+              "en": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Save Text to ClipKitty"
+                  }
+              },
+              "es": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Guardar texto en ClipKitty"
+                  }
+              },
+              "fr": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Enregistrer le texte dans ClipKitty"
+                  }
+              },
+              "ja": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "テキストをClipKittyに保存"
+                  }
+              },
+              "ko": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "텍스트를 ClipKitty에 저장"
+                  }
+              },
+              "pt-BR": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Salvar texto no ClipKitty"
+                  }
+              },
+              "ru": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Сохранить текст в ClipKitty"
+                  }
+              },
+              "zh-Hans": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "将文本保存到 ClipKitty"
+                  }
+              },
+              "zh-Hant": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "將文字儲存到 ClipKitty"
+                  }
+              }
           }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save Text to ClipKitty"
+      },
+      "Save text into ClipKitty's clipboard history.": {
+          "localizations": {
+              "de": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Text im ClipKitty-Zwischenablageverlauf speichern."
+                  }
+              },
+              "en": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Save text into ClipKitty's clipboard history."
+                  }
+              },
+              "es": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Guarda texto en el historial del portapapeles de ClipKitty."
+                  }
+              },
+              "fr": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Enregistrez le texte dans l’historique du presse-papiers de ClipKitty."
+                  }
+              },
+              "ja": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "テキストをClipKittyのクリップボード履歴に保存します。"
+                  }
+              },
+              "ko": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "텍스트를 ClipKitty 클립보드 기록에 저장합니다."
+                  }
+              },
+              "pt-BR": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Salve texto no histórico da área de transferência do ClipKitty."
+                  }
+              },
+              "ru": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Сохранить текст в истории буфера обмена ClipKitty."
+                  }
+              },
+              "zh-Hans": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "将文本保存到 ClipKitty 的剪贴板历史记录中。"
+                  }
+              },
+              "zh-Hant": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "將文字儲存到 ClipKitty 的剪貼簿記錄中。"
+                  }
+              }
           }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Guardar texto en ClipKitty"
+      },
+      "Save Clipboard to ClipKitty": {
+          "localizations": {
+              "de": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Zwischenablage in ClipKitty speichern"
+                  }
+              },
+              "en": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Save Clipboard to ClipKitty"
+                  }
+              },
+              "es": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Guardar portapapeles en ClipKitty"
+                  }
+              },
+              "fr": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Enregistrer le presse-papiers dans ClipKitty"
+                  }
+              },
+              "ja": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "クリップボードをClipKittyに保存"
+                  }
+              },
+              "ko": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "클립보드를 ClipKitty에 저장"
+                  }
+              },
+              "pt-BR": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Salvar área de transferência no ClipKitty"
+                  }
+              },
+              "ru": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Сохранить буфер обмена в ClipKitty"
+                  }
+              },
+              "zh-Hans": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "将剪贴板保存到 ClipKitty"
+                  }
+              },
+              "zh-Hant": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "將剪貼簿儲存到 ClipKitty"
+                  }
+              }
           }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Enregistrer le texte dans ClipKitty"
+      },
+      "Save the current text or image clipboard item into ClipKitty.": {
+          "localizations": {
+              "de": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Aktuellen Text- oder Bildinhalt der Zwischenablage in ClipKitty speichern."
+                  }
+              },
+              "en": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Save the current text or image clipboard item into ClipKitty."
+                  }
+              },
+              "es": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Guarda en ClipKitty el texto o la imagen actual del portapapeles."
+                  }
+              },
+              "fr": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Enregistrez le texte ou l’image actuelle du presse-papiers dans ClipKitty."
+                  }
+              },
+              "ja": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "現在のクリップボードのテキストまたは画像をClipKittyに保存します。"
+                  }
+              },
+              "ko": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "현재 클립보드의 텍스트 또는 이미지를 ClipKitty에 저장합니다."
+                  }
+              },
+              "pt-BR": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Salve no ClipKitty o texto ou a imagem atual da área de transferência."
+                  }
+              },
+              "ru": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Сохранить текущий текст или изображение из буфера обмена в ClipKitty."
+                  }
+              },
+              "zh-Hans": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "将当前剪贴板中的文本或图像保存到 ClipKitty。"
+                  }
+              },
+              "zh-Hant": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "將目前剪貼簿中的文字或影像儲存到 ClipKitty。"
+                  }
+              }
           }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "テキストをClipKittyに保存"
+      },
+      "Search ClipKitty Text": {
+          "localizations": {
+              "de": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "ClipKitty-Text durchsuchen"
+                  }
+              },
+              "en": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Search ClipKitty Text"
+                  }
+              },
+              "es": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Buscar texto en ClipKitty"
+                  }
+              },
+              "fr": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Rechercher du texte dans ClipKitty"
+                  }
+              },
+              "ja": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "ClipKittyのテキストを検索"
+                  }
+              },
+              "ko": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "ClipKitty 텍스트 검색"
+                  }
+              },
+              "pt-BR": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Pesquisar texto no ClipKitty"
+                  }
+              },
+              "ru": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Искать текст в ClipKitty"
+                  }
+              },
+              "zh-Hans": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "搜索 ClipKitty 文本"
+                  }
+              },
+              "zh-Hant": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "搜尋 ClipKitty 文字"
+                  }
+              }
           }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "텍스트를 ClipKitty에 저장"
+      },
+      "Search ClipKitty's text clipboard history.": {
+          "localizations": {
+              "de": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Den Textverlauf der ClipKitty-Zwischenablage durchsuchen."
+                  }
+              },
+              "en": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Search ClipKitty's text clipboard history."
+                  }
+              },
+              "es": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Busca en el historial de texto del portapapeles de ClipKitty."
+                  }
+              },
+              "fr": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Recherchez dans l’historique du presse-papiers texte de ClipKitty."
+                  }
+              },
+              "ja": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "ClipKittyのテキストクリップボード履歴を検索します。"
+                  }
+              },
+              "ko": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "ClipKitty의 텍스트 클립보드 기록을 검색합니다."
+                  }
+              },
+              "pt-BR": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Pesquise no histórico de texto da área de transferência do ClipKitty."
+                  }
+              },
+              "ru": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Искать в текстовой истории буфера обмена ClipKitty."
+                  }
+              },
+              "zh-Hans": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "搜索 ClipKitty 的文本剪贴板历史记录。"
+                  }
+              },
+              "zh-Hant": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "搜尋 ClipKitty 的文字剪貼簿記錄。"
+                  }
+              }
           }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Salvar texto no ClipKitty"
+      },
+      "Get Recent ClipKitty Text": {
+          "localizations": {
+              "de": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Aktuellen ClipKitty-Text abrufen"
+                  }
+              },
+              "en": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Get Recent ClipKitty Text"
+                  }
+              },
+              "es": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Obtener texto reciente de ClipKitty"
+                  }
+              },
+              "fr": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Obtenir le texte récent de ClipKitty"
+                  }
+              },
+              "ja": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "最近のClipKittyテキストを取得"
+                  }
+              },
+              "ko": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "최근 ClipKitty 텍스트 가져오기"
+                  }
+              },
+              "pt-BR": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Obter texto recente do ClipKitty"
+                  }
+              },
+              "ru": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Получить недавний текст ClipKitty"
+                  }
+              },
+              "zh-Hans": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "获取最近的 ClipKitty 文本"
+                  }
+              },
+              "zh-Hant": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "取得最近的 ClipKitty 文字"
+                  }
+              }
           }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Сохранить текст в ClipKitty"
+      },
+      "Get recent text clips from ClipKitty.": {
+          "localizations": {
+              "de": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Aktuelle Textclips aus ClipKitty abrufen."
+                  }
+              },
+              "en": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Get recent text clips from ClipKitty."
+                  }
+              },
+              "es": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Obtén clips de texto recientes de ClipKitty."
+                  }
+              },
+              "fr": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Obtenez les clips de texte récents de ClipKitty."
+                  }
+              },
+              "ja": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "ClipKittyから最近のテキストクリップを取得します。"
+                  }
+              },
+              "ko": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "ClipKitty에서 최근 텍스트 클립을 가져옵니다."
+                  }
+              },
+              "pt-BR": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Obtenha clipes de texto recentes do ClipKitty."
+                  }
+              },
+              "ru": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Получить недавние текстовые фрагменты из ClipKitty."
+                  }
+              },
+              "zh-Hans": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "从 ClipKitty 获取最近的文本剪辑。"
+                  }
+              },
+              "zh-Hant": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "從 ClipKitty 取得最近的文字片段。"
+                  }
+              }
           }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "将文本保存到 ClipKitty"
+      },
+      "Query": {
+          "localizations": {
+              "de": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Suchbegriff"
+                  }
+              },
+              "en": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Query"
+                  }
+              },
+              "es": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Consulta"
+                  }
+              },
+              "fr": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Requête"
+                  }
+              },
+              "ja": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "検索語句"
+                  }
+              },
+              "ko": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "쿼리"
+                  }
+              },
+              "pt-BR": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Consulta"
+                  }
+              },
+              "ru": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Запрос"
+                  }
+              },
+              "zh-Hans": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "查询"
+                  }
+              },
+              "zh-Hant": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "查詢"
+                  }
+              }
           }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "將文字儲存到 ClipKitty"
+      },
+      "Maximum Results": {
+          "localizations": {
+              "de": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Maximale Ergebnisse"
+                  }
+              },
+              "en": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Maximum Results"
+                  }
+              },
+              "es": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Resultados máximos"
+                  }
+              },
+              "fr": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Nombre maximal de résultats"
+                  }
+              },
+              "ja": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "最大結果数"
+                  }
+              },
+              "ko": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "최대 결과 수"
+                  }
+              },
+              "pt-BR": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Máximo de resultados"
+                  }
+              },
+              "ru": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Максимум результатов"
+                  }
+              },
+              "zh-Hans": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "最大结果数"
+                  }
+              },
+              "zh-Hant": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "最大結果數"
+                  }
+              }
           }
-        }
+      },
+      "Save Text": {
+          "localizations": {
+              "de": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Text speichern"
+                  }
+              },
+              "en": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Save Text"
+                  }
+              },
+              "es": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Guardar texto"
+                  }
+              },
+              "fr": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Enregistrer le texte"
+                  }
+              },
+              "ja": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "テキストを保存"
+                  }
+              },
+              "ko": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "텍스트 저장"
+                  }
+              },
+              "pt-BR": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Salvar texto"
+                  }
+              },
+              "ru": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Сохранить текст"
+                  }
+              },
+              "zh-Hans": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "保存文本"
+                  }
+              },
+              "zh-Hant": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "儲存文字"
+                  }
+              }
+          }
+      },
+      "Save Clipboard": {
+          "localizations": {
+              "de": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Zwischenablage speichern"
+                  }
+              },
+              "en": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Save Clipboard"
+                  }
+              },
+              "es": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Guardar portapapeles"
+                  }
+              },
+              "fr": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Enregistrer le presse-papiers"
+                  }
+              },
+              "ja": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "クリップボードを保存"
+                  }
+              },
+              "ko": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "클립보드 저장"
+                  }
+              },
+              "pt-BR": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Salvar área de transferência"
+                  }
+              },
+              "ru": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Сохранить буфер обмена"
+                  }
+              },
+              "zh-Hans": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "保存剪贴板"
+                  }
+              },
+              "zh-Hant": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "儲存剪貼簿"
+                  }
+              }
+          }
+      },
+      "Search Text": {
+          "localizations": {
+              "de": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Text suchen"
+                  }
+              },
+              "en": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Search Text"
+                  }
+              },
+              "es": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Buscar texto"
+                  }
+              },
+              "fr": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Rechercher le texte"
+                  }
+              },
+              "ja": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "テキストを検索"
+                  }
+              },
+              "ko": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "텍스트 검색"
+                  }
+              },
+              "pt-BR": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Pesquisar texto"
+                  }
+              },
+              "ru": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Искать текст"
+                  }
+              },
+              "zh-Hans": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "搜索文本"
+                  }
+              },
+              "zh-Hant": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "搜尋文字"
+                  }
+              }
+          }
+      },
+      "Recent Text": {
+          "localizations": {
+              "de": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Aktueller Text"
+                  }
+              },
+              "en": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Recent Text"
+                  }
+              },
+              "es": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Texto reciente"
+                  }
+              },
+              "fr": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Texte récent"
+                  }
+              },
+              "ja": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "最近のテキスト"
+                  }
+              },
+              "ko": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "최근 텍스트"
+                  }
+              },
+              "pt-BR": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Texto recente"
+                  }
+              },
+              "ru": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Недавний текст"
+                  }
+              },
+              "zh-Hans": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "最近文本"
+                  }
+              },
+              "zh-Hant": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "最近文字"
+                  }
+              }
+          }
+      },
+      "Saved to ClipKitty.": {
+          "localizations": {
+              "de": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "In ClipKitty gespeichert."
+                  }
+              },
+              "en": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Saved to ClipKitty."
+                  }
+              },
+              "es": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Guardado en ClipKitty."
+                  }
+              },
+              "fr": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Enregistré dans ClipKitty."
+                  }
+              },
+              "ja": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "ClipKittyに保存しました。"
+                  }
+              },
+              "ko": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "ClipKitty에 저장됨."
+                  }
+              },
+              "pt-BR": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Salvo no ClipKitty."
+                  }
+              },
+              "ru": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Сохранено в ClipKitty."
+                  }
+              },
+              "zh-Hans": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "已保存到 ClipKitty。"
+                  }
+              },
+              "zh-Hant": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "已儲存到 ClipKitty。"
+                  }
+              }
+          }
+      },
+      "Already in ClipKitty.": {
+          "localizations": {
+              "de": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Bereits in ClipKitty."
+                  }
+              },
+              "en": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Already in ClipKitty."
+                  }
+              },
+              "es": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Ya está en ClipKitty."
+                  }
+              },
+              "fr": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Déjà dans ClipKitty."
+                  }
+              },
+              "ja": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "すでにClipKittyにあります。"
+                  }
+              },
+              "ko": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "이미 ClipKitty에 있습니다."
+                  }
+              },
+              "pt-BR": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Já está no ClipKitty."
+                  }
+              },
+              "ru": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Уже в ClipKitty."
+                  }
+              },
+              "zh-Hans": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "已在 ClipKitty 中。"
+                  }
+              },
+              "zh-Hant": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "已在 ClipKitty 中。"
+                  }
+              }
+          }
+      },
+      "Already in ClipKitty": {
+          "localizations": {
+              "de": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Bereits in ClipKitty"
+                  }
+              },
+              "en": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Already in ClipKitty"
+                  }
+              },
+              "es": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Ya está en ClipKitty"
+                  }
+              },
+              "fr": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Déjà dans ClipKitty"
+                  }
+              },
+              "ja": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "すでにClipKittyにあります"
+                  }
+              },
+              "ko": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "이미 ClipKitty에 있습니다"
+                  }
+              },
+              "pt-BR": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Já está no ClipKitty"
+                  }
+              },
+              "ru": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "Уже в ClipKitty"
+                  }
+              },
+              "zh-Hans": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "已在 ClipKitty 中"
+                  }
+              },
+              "zh-Hant": {
+                  "stringUnit": {
+                      "state": "translated",
+                      "value": "已在 ClipKitty 中"
+                  }
+              }
+          }
       }
-    },
-    "Save text into ClipKitty's clipboard history.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Text im ClipKitty-Zwischenablageverlauf speichern."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save text into ClipKitty's clipboard history."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Guarda texto en el historial del portapapeles de ClipKitty."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Enregistrez le texte dans l’historique du presse-papiers de ClipKitty."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "テキストをClipKittyのクリップボード履歴に保存します。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "텍스트를 ClipKitty 클립보드 기록에 저장합니다."
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Salve texto no histórico da área de transferência do ClipKitty."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Сохранить текст в истории буфера обмена ClipKitty."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "将文本保存到 ClipKitty 的剪贴板历史记录中。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "將文字儲存到 ClipKitty 的剪貼簿記錄中。"
-          }
-        }
-      }
-    },
-    "Save Clipboard to ClipKitty": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Zwischenablage in ClipKitty speichern"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save Clipboard to ClipKitty"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Guardar portapapeles en ClipKitty"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Enregistrer le presse-papiers dans ClipKitty"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "クリップボードをClipKittyに保存"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "클립보드를 ClipKitty에 저장"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Salvar área de transferência no ClipKitty"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Сохранить буфер обмена в ClipKitty"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "将剪贴板保存到 ClipKitty"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "將剪貼簿儲存到 ClipKitty"
-          }
-        }
-      }
-    },
-    "Save the current text or image clipboard item into ClipKitty.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Aktuellen Text- oder Bildinhalt der Zwischenablage in ClipKitty speichern."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save the current text or image clipboard item into ClipKitty."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Guarda en ClipKitty el texto o la imagen actual del portapapeles."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Enregistrez le texte ou l’image actuelle du presse-papiers dans ClipKitty."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "現在のクリップボードのテキストまたは画像をClipKittyに保存します。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "현재 클립보드의 텍스트 또는 이미지를 ClipKitty에 저장합니다."
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Salve no ClipKitty o texto ou a imagem atual da área de transferência."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Сохранить текущий текст или изображение из буфера обмена в ClipKitty."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "将当前剪贴板中的文本或图像保存到 ClipKitty。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "將目前剪貼簿中的文字或影像儲存到 ClipKitty。"
-          }
-        }
-      }
-    },
-    "Search ClipKitty Text": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ClipKitty-Text durchsuchen"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Search ClipKitty Text"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Buscar texto en ClipKitty"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Rechercher du texte dans ClipKitty"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ClipKittyのテキストを検索"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ClipKitty 텍스트 검색"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Pesquisar texto no ClipKitty"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Искать текст в ClipKitty"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "搜索 ClipKitty 文本"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "搜尋 ClipKitty 文字"
-          }
-        }
-      }
-    },
-    "Search ClipKitty's text clipboard history.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Den Textverlauf der ClipKitty-Zwischenablage durchsuchen."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Search ClipKitty's text clipboard history."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Busca en el historial de texto del portapapeles de ClipKitty."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Recherchez dans l’historique du presse-papiers texte de ClipKitty."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ClipKittyのテキストクリップボード履歴を検索します。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ClipKitty의 텍스트 클립보드 기록을 검색합니다."
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Pesquise no histórico de texto da área de transferência do ClipKitty."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Искать в текстовой истории буфера обмена ClipKitty."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "搜索 ClipKitty 的文本剪贴板历史记录。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "搜尋 ClipKitty 的文字剪貼簿記錄。"
-          }
-        }
-      }
-    },
-    "Get Recent ClipKitty Text": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Aktuellen ClipKitty-Text abrufen"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Get Recent ClipKitty Text"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Obtener texto reciente de ClipKitty"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Obtenir le texte récent de ClipKitty"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最近のClipKittyテキストを取得"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "최근 ClipKitty 텍스트 가져오기"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Obter texto recente do ClipKitty"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Получить недавний текст ClipKitty"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "获取最近的 ClipKitty 文本"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "取得最近的 ClipKitty 文字"
-          }
-        }
-      }
-    },
-    "Get recent text clips from ClipKitty.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Aktuelle Textclips aus ClipKitty abrufen."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Get recent text clips from ClipKitty."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Obtén clips de texto recientes de ClipKitty."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Obtenez les clips de texte récents de ClipKitty."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ClipKittyから最近のテキストクリップを取得します。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ClipKitty에서 최근 텍스트 클립을 가져옵니다."
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Obtenha clipes de texto recentes do ClipKitty."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Получить недавние текстовые фрагменты из ClipKitty."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "从 ClipKitty 获取最近的文本剪辑。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "從 ClipKitty 取得最近的文字片段。"
-          }
-        }
-      }
-    },
-    "Query": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Suchbegriff"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Query"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Consulta"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Requête"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "検索語句"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "쿼리"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Consulta"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Запрос"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "查询"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "查詢"
-          }
-        }
-      }
-    },
-    "Maximum Results": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Maximale Ergebnisse"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Maximum Results"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Resultados máximos"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Nombre maximal de résultats"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最大結果数"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "최대 결과 수"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Máximo de resultados"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Максимум результатов"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最大结果数"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最大結果數"
-          }
-        }
-      }
-    },
-    "Save Text": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Text speichern"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save Text"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Guardar texto"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Enregistrer le texte"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "テキストを保存"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "텍스트 저장"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Salvar texto"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Сохранить текст"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "保存文本"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "儲存文字"
-          }
-        }
-      }
-    },
-    "Save Clipboard": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Zwischenablage speichern"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Save Clipboard"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Guardar portapapeles"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Enregistrer le presse-papiers"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "クリップボードを保存"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "클립보드 저장"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Salvar área de transferência"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Сохранить буфер обмена"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "保存剪贴板"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "儲存剪貼簿"
-          }
-        }
-      }
-    },
-    "Search Text": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Text suchen"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Search Text"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Buscar texto"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Rechercher le texte"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "テキストを検索"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "텍스트 검색"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Pesquisar texto"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Искать текст"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "搜索文本"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "搜尋文字"
-          }
-        }
-      }
-    },
-    "Recent Text": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Aktueller Text"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Recent Text"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Texto reciente"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Texte récent"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最近のテキスト"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "최근 텍스트"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Texto recente"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Недавний текст"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最近文本"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "最近文字"
-          }
-        }
-      }
-    },
-    "Saved to ClipKitty.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "In ClipKitty gespeichert."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Saved to ClipKitty."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Guardado en ClipKitty."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Enregistré dans ClipKitty."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ClipKittyに保存しました。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ClipKitty에 저장됨."
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Salvo no ClipKitty."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Сохранено в ClipKitty."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已保存到 ClipKitty。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已儲存到 ClipKitty。"
-          }
-        }
-      }
-    },
-    "Already in ClipKitty.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Bereits in ClipKitty."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Already in ClipKitty."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ya está en ClipKitty."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Déjà dans ClipKitty."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "すでにClipKittyにあります。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이미 ClipKitty에 있습니다."
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Já está no ClipKitty."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Уже в ClipKitty."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已在 ClipKitty 中。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已在 ClipKitty 中。"
-          }
-        }
-      }
-    },
-    "Already in ClipKitty": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Bereits in ClipKitty"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Already in ClipKitty"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Ya está en ClipKitty"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Déjà dans ClipKitty"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "すでにClipKittyにあります"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "이미 ClipKitty에 있습니다"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Já está no ClipKitty"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Уже в ClipKitty"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已在 ClipKitty 中"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已在 ClipKitty 中"
-          }
-        }
-      }
-    }
   },
   "version": "1.0"
 }

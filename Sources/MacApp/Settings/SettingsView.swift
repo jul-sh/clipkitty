@@ -17,6 +17,10 @@ struct SettingsView: View {
 
     let store: ClipboardStore
     let onHotKeyChanged: (HotKey) -> Void
+    #if ENABLE_SPARKLE_UPDATES
+        var onInstallUpdate: (() -> Void)? = nil
+        var onCheckForUpdates: (() -> Void)? = nil
+    #endif
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -45,6 +49,16 @@ struct SettingsView: View {
     }
 
     private var generalSettingsView: GeneralSettingsView {
-        GeneralSettingsView(store: store)
+        #if ENABLE_SPARKLE_UPDATES
+            GeneralSettingsView(
+                store: store,
+                onInstallUpdate: onInstallUpdate,
+                onCheckForUpdates: onCheckForUpdates
+            )
+        #else
+            GeneralSettingsView(
+                store: store
+            )
+        #endif
     }
 }

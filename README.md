@@ -98,10 +98,15 @@ The important idea is that search quality does not come from doing expensive wor
 ```bash
 git clone https://github.com/jul-sh/clipkitty
 cd clipkitty
-make release-dmg     # Standard signed DMG
-make app-hardened    # Hardened bundle (no network/files/sync)
+make
 ```
 
-The hardened build is a separate binary with different capabilities, not the same app with a few checkboxes unchecked.
+Build a specific variant by setting `CONFIGURATION`. If you want the hardened one, you are building a different binary with different capabilities, not the same app with a few checkboxes unchecked.
+
+```bash
+make all CONFIGURATION=SparkleRelease  # With auto-update support
+make all CONFIGURATION=Hardened        # Hardened (no network/files/sync)
+make -C distribution hardened          # Hardened signed DMG
+```
 
 Requires macOS 15+ and Swift 6.2+.

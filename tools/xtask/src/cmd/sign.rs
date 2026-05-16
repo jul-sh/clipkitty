@@ -39,15 +39,17 @@ pub(crate) struct SignAppRequest {
     pub build_number: Option<String>,
 }
 
-/// Resolved signing plan. Developer ID and App Store carry structurally
-/// different data — Developer ID needs `--timestamp` and no provisioning
-/// profile; App Store needs the opposite — so capturing this as an enum
-/// kills the former `struct { identity, entitlements, include_timestamp: bool }`
-/// + `if args.configuration == AppStore { ... }` combo.
+/// Resolved signing plan. The two variants carry structurally different
+/// data — Developer ID needs `--timestamp` and never embeds a provisioning
+/// profile; App Store is the opposite — so capturing this as an enum kills
+/// the former `struct { identity, entitlements, include_timestamp: bool }` +
+/// `if args.configuration == AppStore { ... }` combo, both of which were
+/// parallel-boolean smells.
 enum SigningPlan {
     DeveloperId {
         identity: String,
         entitlements: Utf8PathBuf,
+        embeds_provisioning_profile: bool,
     },
     AppStore {
         identity: String,
@@ -69,10 +71,13 @@ fn signing_plan(repo: &RepoRoot, variant: MacVariant) -> Result<SigningPlan> {
             identity: env::var("SIGNING_IDENTITY")
                 .unwrap_or_else(|_| "Developer ID Application".to_string()),
             entitlements: match variant {
-                MacVariant::Release => repo.join("Sources/MacApp/ClipKitty.oss.entitlements"),
+                MacVariant::SparkleRelease => {
+                    repo.join("Sources/MacApp/ClipKitty.sparkle.entitlements")
+                }
                 MacVariant::Hardened => repo.join("Sources/MacApp/ClipKitty.hardened.entitlements"),
                 _ => unreachable!("non-DeveloperId variant routed here"),
             },
+            embeds_provisioning_profile: matches!(variant, MacVariant::SparkleRelease),
         }),
         SigningMode::AppStore => Ok(SigningPlan::AppStore {
             identity: env::var("APPSTORE_SIGNING_IDENTITY")
@@ -100,9 +105,15 @@ pub(crate) fn sign_app(
             SigningPlan::DeveloperId {
                 identity,
                 entitlements,
+                embeds_provisioning_profile,
             } => reporter.info(&format!(
-                "[dry-run] would build + sign {:?} with identity `{identity}` using entitlements {entitlements}",
+                "[dry-run] would build + sign {:?} with identity `{identity}` using entitlements {entitlements}{}",
                 request.variant,
+                if *embeds_provisioning_profile {
+                    " and embed the Developer ID provisioning profile"
+                } else {
+                    ""
+                }
             )),
             SigningPlan::AppStore {
                 identity,
@@ -152,7 +163,11 @@ pub(crate) fn sign_app(
         SigningPlan::DeveloperId {
             identity,
             entitlements,
+            embeds_provisioning_profile,
         } => {
+            if *embeds_provisioning_profile {
+                embed_developer_id_profile(repo, &app_path, reporter)?;
+            }
             reporter.info(&format!(
                 "Signing {APP_NAME} ({:?}) with '{identity}'...",
                 request.variant
@@ -195,6 +210,23 @@ pub(crate) fn sign_app(
     }
     apple::codesign_verify(reporter, &app_path)?;
     reporter.success(&format!("Signed app staged at {app_path}"));
+    Ok(())
+}
+
+fn embed_developer_id_profile(
+    repo: &RepoRoot,
+    app_path: &Utf8PathBuf,
+    reporter: &Reporter,
+) -> Result<()> {
+    let profile_bytes = if let Ok(path) = env::var("DEVELOPER_ID_PROVISIONING_PROFILE") {
+        fs::read(&path)
+            .map_err(|err| anyhow!("reading DEVELOPER_ID_PROVISIONING_PROFILE `{path}`: {err}"))?
+    } else {
+        decode_secret_base64(repo, "DEVELOPER_ID_PROVISION_PROFILE_BASE64", reporter)?
+    };
+    let destination = app_path.join("Contents/embedded.provisionprofile");
+    fs::write(destination.as_std_path(), profile_bytes)
+        .map_err(|err| anyhow!("writing embedded Developer ID provisioning profile: {err}"))?;
     Ok(())
 }
 

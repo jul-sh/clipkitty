@@ -1,14 +1,17 @@
-//! `clipkitty env` — local helpers the repo owns (git hooks).
+//! `clipkitty env` — local helpers the repo owns (git hooks, Sparkle CLI).
 //!
 //! Entering the pinned Nix dev shell is **not** this module's job. The
 //! `Makefile` (and CI workflows) wrap every xtask invocation in
 //! `nix develop --command`; xtask itself always assumes it is already running
 //! inside the shell.
 
+use std::env;
 use std::fs;
+use std::io::Write;
 
 use anyhow::{anyhow, Context, Result};
 use camino::Utf8PathBuf;
+use tempfile::tempdir;
 
 use crate::cli::{EnvCmd, InstallArgs, InstallTarget, InternalCmd};
 use crate::cmd::check;
@@ -39,6 +42,10 @@ fn install(args: &InstallArgs, dry_run: bool, reporter: &Reporter) -> Result<()>
             let _ = SideEffectLevel::LocalMutation;
             let repo = RepoRoot::discover(reporter)?;
             install_hooks(&repo, dry_run, reporter)
+        }
+        InstallTarget::SparkleCli => {
+            let _ = SideEffectLevel::Networked;
+            install_sparkle_cli(dry_run, reporter)
         }
     }
 }
@@ -72,6 +79,62 @@ exec nix develop --no-update-lock-file --experimental-features 'nix-command flak
         .run()
         .with_context(|| format!("chmod +x {hook_path}"))?;
     reporter.success(&format!("Installed pre-commit hook at {hook_path}"));
+    Ok(())
+}
+
+fn install_sparkle_cli(dry_run: bool, reporter: &Reporter) -> Result<()> {
+    const SPARKLE_VERSION: &str = "2.9.0";
+    const SPARKLE_SHA256: &str = "01e0f0ebf6614061ea816d414de50f937d64ffa6822ad572243031ca3676fe19";
+    let install_dir = Utf8PathBuf::from("/tmp/sparkle");
+    let archive_dir = tempdir().context("creating temporary Sparkle download dir")?;
+    let archive_dir = Utf8PathBuf::from_path_buf(archive_dir.path().to_path_buf())
+        .map_err(|p| anyhow!("non-UTF-8 temp path: {p:?}"))?;
+    let archive_path = archive_dir.join("Sparkle.tar.xz");
+    let url = format!(
+        "https://github.com/sparkle-project/Sparkle/releases/download/{SPARKLE_VERSION}/Sparkle-{SPARKLE_VERSION}.tar.xz"
+    );
+
+    if dry_run {
+        reporter.info(&format!(
+            "[dry-run] would download Sparkle {SPARKLE_VERSION} to {install_dir}"
+        ));
+        return Ok(());
+    }
+
+    Runner::new(reporter, "curl")
+        .arg("-sL")
+        .arg(&url)
+        .arg("-o")
+        .arg(archive_path.as_std_path())
+        .run()?;
+    let checksum_input = format!("{SPARKLE_SHA256}  {archive_path}");
+    Runner::new(reporter, "shasum")
+        .args(["-a", "256", "--check"])
+        .stdin_bytes(checksum_input)
+        .run()?;
+    fs::create_dir_all(install_dir.as_std_path())
+        .with_context(|| format!("creating {install_dir}"))?;
+    Runner::new(reporter, "tar")
+        .arg("-xf")
+        .arg(archive_path.as_std_path())
+        .arg("-C")
+        .arg(install_dir.as_std_path())
+        .run()?;
+
+    if let Ok(github_path) = env::var("GITHUB_PATH") {
+        let line = format!("{}/bin\n", install_dir);
+        fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&github_path)
+            .with_context(|| format!("opening GITHUB_PATH file {github_path}"))?
+            .write_all(line.as_bytes())
+            .with_context(|| format!("writing Sparkle bin path to {github_path}"))?;
+    }
+
+    reporter.success(&format!(
+        "Sparkle CLI {SPARKLE_VERSION} installed to {install_dir}"
+    ));
     Ok(())
 }
 

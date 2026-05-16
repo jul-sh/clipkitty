@@ -2,10 +2,10 @@
 
 use clap::Parser;
 use xtask::cli::{
-    AppArgs, AppTarget, Cli, EnvCmd, InstallTarget, MarketingCmd, ReleaseCmd, ScreenshotPlatform,
-    SecretsCmd, SiteCmd, SiteRenderTarget, TopLevel,
+    AppArgs, AppTarget, AppcastCmd, Cli, EnvCmd, InstallTarget, MarketingCmd, ReleaseCmd,
+    ScreenshotPlatform, SecretsCmd, SiteCmd, SiteRenderTarget, TopLevel,
 };
-use xtask::model::AscAuthField;
+use xtask::model::{AscAuthField, ReleaseChannel};
 
 #[test]
 fn parses_check() {
@@ -35,7 +35,10 @@ fn parses_app_targets() {
 
 #[test]
 fn parses_env_install_targets() {
-    for (input, expected) in [("hooks", InstallTarget::Hooks)] {
+    for (input, expected) in [
+        ("hooks", InstallTarget::Hooks),
+        ("sparkle-cli", InstallTarget::SparkleCli),
+    ] {
         let cli = Cli::parse_from(["clipkitty", "env", "install", input]);
         let TopLevel::Env(EnvCmd::Install(args)) = cli.command else {
             panic!("expected env install");
@@ -60,6 +63,33 @@ fn parses_release_dmg() {
     let TopLevel::Release(ReleaseCmd::Dmg(_args)) = cli.command else {
         panic!("expected release dmg");
     };
+}
+
+#[test]
+fn parses_release_appcast_update_state() {
+    let cli = Cli::parse_from([
+        "clipkitty",
+        "release",
+        "appcast",
+        "update-state",
+        "--state-path",
+        "/tmp/state.json",
+        "--channel",
+        "beta",
+        "--version",
+        "1.0",
+        "--url",
+        "https://example.com/app.dmg",
+        "--signature",
+        "sig",
+        "--length",
+        "1234",
+    ]);
+    let TopLevel::Release(ReleaseCmd::Appcast(AppcastCmd::UpdateState(args))) = cli.command else {
+        panic!("expected release appcast update-state");
+    };
+    assert_eq!(args.channel, ReleaseChannel::Beta);
+    assert_eq!(args.length, 1234);
 }
 
 #[test]
@@ -145,6 +175,7 @@ fn rejects_internalized_legacy_commands() {
         ["clipkitty", "sign", "app", "Hardened"].as_slice(),
         ["clipkitty", "app", "release"].as_slice(),
         ["clipkitty", "env", "install-hooks"].as_slice(),
+        ["clipkitty", "env", "install-sparkle-cli"].as_slice(),
         ["clipkitty", "marketing", "screenshots-macos"].as_slice(),
         ["clipkitty", "marketing", "patch-demo-items"].as_slice(),
         ["clipkitty", "perf", "run", "typing"].as_slice(),

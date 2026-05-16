@@ -30,6 +30,7 @@ const PINNED_LOCKFILES: &[&str] = &["Cargo.lock", "flake.lock"];
 const STRAY_SWIFT_RESOLVED: &[&str] = &[
     "Package.resolved",
     "Tuist/Package.resolved",
+    "distribution/SparkleUpdater/Package.resolved",
 ];
 
 fn check_pins(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
