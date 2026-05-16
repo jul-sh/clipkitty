@@ -84,40 +84,12 @@ pub(crate) fn save_file(
     file_size: u64,
     uti: String,
     bookmark_data: Vec<u8>,
-    thumbnail: Option<Vec<u8>>,
-    source_app: Option<String>,
-    source_app_bundle_id: Option<String>,
-) -> Result<InsertOutcome, ClipKittyError> {
-    save_file_with_preview(
-        db,
-        indexer,
-        path,
-        filename,
-        file_size,
-        uti,
-        bookmark_data,
-        FilePreviewSnapshot::not_captured(),
-        thumbnail,
-        source_app,
-        source_app_bundle_id,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn save_file_with_preview(
-    db: &Database,
-    indexer: &Indexer,
-    path: String,
-    filename: String,
-    file_size: u64,
-    uti: String,
-    bookmark_data: Vec<u8>,
     preview: FilePreviewSnapshot,
     thumbnail: Option<Vec<u8>>,
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
 ) -> Result<InsertOutcome, ClipKittyError> {
-    let item = StoredItem::new_file_with_preview(
+    let item = StoredItem::new_file(
         path,
         filename,
         file_size,
@@ -140,44 +112,20 @@ pub(crate) fn save_files(
     file_sizes: Vec<u64>,
     utis: Vec<String>,
     bookmark_data_list: Vec<Vec<u8>>,
-    thumbnail: Option<Vec<u8>>,
-    source_app: Option<String>,
-    source_app_bundle_id: Option<String>,
-) -> Result<InsertOutcome, ClipKittyError> {
-    let preview_snapshots = paths
-        .iter()
-        .map(|_| FilePreviewSnapshot::not_captured())
-        .collect();
-    save_files_with_previews(
-        db,
-        indexer,
-        paths,
-        filenames,
-        file_sizes,
-        utis,
-        bookmark_data_list,
-        preview_snapshots,
-        thumbnail,
-        source_app,
-        source_app_bundle_id,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn save_files_with_previews(
-    db: &Database,
-    indexer: &Indexer,
-    paths: Vec<String>,
-    filenames: Vec<String>,
-    file_sizes: Vec<u64>,
-    utis: Vec<String>,
-    bookmark_data_list: Vec<Vec<u8>>,
     preview_snapshots: Vec<FilePreviewSnapshot>,
     thumbnail: Option<Vec<u8>>,
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
 ) -> Result<InsertOutcome, ClipKittyError> {
-    let item = StoredItem::new_files_with_previews(
+    validate_file_metadata_lengths(
+        paths.len(),
+        filenames.len(),
+        file_sizes.len(),
+        utis.len(),
+        bookmark_data_list.len(),
+        preview_snapshots.len(),
+    )?;
+    let item = StoredItem::new_files(
         paths,
         filenames,
         file_sizes,
@@ -189,6 +137,38 @@ pub(crate) fn save_files_with_previews(
         source_app_bundle_id,
     );
     dedupe_or_insert_and_index(db, indexer, item)
+}
+
+fn validate_file_metadata_lengths(
+    paths_len: usize,
+    filenames_len: usize,
+    file_sizes_len: usize,
+    utis_len: usize,
+    bookmark_data_list_len: usize,
+    preview_snapshots_len: usize,
+) -> Result<(), ClipKittyError> {
+    if paths_len == 0 {
+        return Err(ClipKittyError::InvalidInput("No files provided".into()));
+    }
+
+    let expected = paths_len;
+    let fields = [
+        ("filenames", filenames_len),
+        ("file_sizes", file_sizes_len),
+        ("utis", utis_len),
+        ("bookmark_data_list", bookmark_data_list_len),
+        ("preview_snapshots", preview_snapshots_len),
+    ];
+
+    for (field, actual) in fields {
+        if actual != expected {
+            return Err(ClipKittyError::InvalidInput(format!(
+                "file metadata length mismatch: paths has {expected} entries but {field} has {actual}"
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 pub(crate) fn save_image(

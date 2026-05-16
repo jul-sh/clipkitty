@@ -141,36 +141,23 @@ public final class ClipboardRepository: @unchecked Sendable {
         fileSizes: [UInt64],
         utis: [String],
         bookmarkDataList: [Data],
-        previewSnapshots: [FilePreviewSnapshot]? = nil,
+        previewSnapshots: [FilePreviewSnapshot],
         thumbnail: Data?,
         sourceApp: String?,
         sourceAppBundleId: String?
     ) async -> Result<String, ClipboardError> {
         await runRepositoryOperation("saveFiles", on: store) { store in
-            if let previewSnapshots {
-                return try store.saveFilesWithPreviews(
-                    paths: paths,
-                    filenames: filenames,
-                    fileSizes: fileSizes,
-                    utis: utis,
-                    bookmarkDataList: bookmarkDataList,
-                    previewSnapshots: previewSnapshots,
-                    thumbnail: thumbnail,
-                    sourceApp: sourceApp,
-                    sourceAppBundleId: sourceAppBundleId
-                )
-            } else {
-                return try store.saveFiles(
-                    paths: paths,
-                    filenames: filenames,
-                    fileSizes: fileSizes,
-                    utis: utis,
-                    bookmarkDataList: bookmarkDataList,
-                    thumbnail: thumbnail,
-                    sourceApp: sourceApp,
-                    sourceAppBundleId: sourceAppBundleId
-                )
-            }
+            try store.saveFiles(
+                paths: paths,
+                filenames: filenames,
+                fileSizes: fileSizes,
+                utis: utis,
+                bookmarkDataList: bookmarkDataList,
+                previewSnapshots: previewSnapshots,
+                thumbnail: thumbnail,
+                sourceApp: sourceApp,
+                sourceAppBundleId: sourceAppBundleId
+            )
         }
     }
 

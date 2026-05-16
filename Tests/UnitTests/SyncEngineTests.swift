@@ -617,6 +617,7 @@ final class SyncEngineTests: XCTestCase {
             fileSizes: [UInt64(largeBookmark.count)],
             utis: ["public.data"],
             bookmarkDataList: [largeBookmark],
+            previewSnapshots: [.unavailable(reason: .notCaptured)],
             thumbnail: largeThumbnail,
             sourceApp: nil,
             sourceAppBundleId: nil
@@ -697,6 +698,7 @@ final class SyncEngineTests: XCTestCase {
             fileSizes: [UInt64(largeBookmark.count)],
             utis: ["public.data"],
             bookmarkDataList: [largeBookmark],
+            previewSnapshots: [.unavailable(reason: .notCaptured)],
             thumbnail: largeThumbnail,
             sourceApp: nil,
             sourceAppBundleId: nil

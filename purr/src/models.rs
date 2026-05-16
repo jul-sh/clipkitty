@@ -88,34 +88,9 @@ impl StoredItem {
         }
     }
 
-    /// Create a file item with optional QuickLook thumbnail
+    /// Create a file item with optional QuickLook thumbnail and explicit preview state.
     #[allow(clippy::too_many_arguments)]
     pub fn new_file(
-        path: String,
-        filename: String,
-        file_size: u64,
-        uti: String,
-        bookmark_data: Vec<u8>,
-        thumbnail: Option<Vec<u8>>,
-        source_app: Option<String>,
-        source_app_bundle_id: Option<String>,
-    ) -> Self {
-        Self::new_file_with_preview(
-            path,
-            filename,
-            file_size,
-            uti,
-            bookmark_data,
-            FilePreviewSnapshot::not_captured(),
-            thumbnail,
-            source_app,
-            source_app_bundle_id,
-        )
-    }
-
-    /// Create a file item with an explicit preview snapshot.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_file_with_preview(
         path: String,
         filename: String,
         file_size: u64,
@@ -126,7 +101,7 @@ impl StoredItem {
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Self {
-        Self::new_files_with_previews(
+        Self::new_files(
             vec![path],
             vec![filename],
             vec![file_size],
@@ -139,38 +114,9 @@ impl StoredItem {
         )
     }
 
-    /// Create a (possibly grouped) file item from multiple files
+    /// Create a (possibly grouped) file item from multiple files with explicit previews.
     #[allow(clippy::too_many_arguments)]
     pub fn new_files(
-        paths: Vec<String>,
-        filenames: Vec<String>,
-        file_sizes: Vec<u64>,
-        utis: Vec<String>,
-        bookmark_data_list: Vec<Vec<u8>>,
-        thumbnail: Option<Vec<u8>>,
-        source_app: Option<String>,
-        source_app_bundle_id: Option<String>,
-    ) -> Self {
-        let preview_snapshots = paths
-            .iter()
-            .map(|_| FilePreviewSnapshot::not_captured())
-            .collect();
-        Self::new_files_with_previews(
-            paths,
-            filenames,
-            file_sizes,
-            utis,
-            bookmark_data_list,
-            preview_snapshots,
-            thumbnail,
-            source_app,
-            source_app_bundle_id,
-        )
-    }
-
-    /// Create a (possibly grouped) file item with explicit per-file previews.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_files_with_previews(
         paths: Vec<String>,
         filenames: Vec<String>,
         file_sizes: Vec<u64>,
@@ -194,6 +140,31 @@ impl StoredItem {
         let content_hash = Self::hash_string(&hash_input);
 
         let file_count = paths.len();
+        assert_eq!(
+            filenames.len(),
+            file_count,
+            "new_files requires filenames length to match paths length"
+        );
+        assert_eq!(
+            file_sizes.len(),
+            file_count,
+            "new_files requires file_sizes length to match paths length"
+        );
+        assert_eq!(
+            utis.len(),
+            file_count,
+            "new_files requires utis length to match paths length"
+        );
+        assert_eq!(
+            bookmark_data_list.len(),
+            file_count,
+            "new_files requires bookmark_data_list length to match paths length"
+        );
+        assert_eq!(
+            preview_snapshots.len(),
+            file_count,
+            "new_files requires preview_snapshots length to match paths length"
+        );
 
         let folder_count = utis
             .iter()
@@ -232,10 +203,7 @@ impl StoredItem {
                 uti: utis[i].clone(),
                 bookmark_data: bookmark_data_list[i].clone(),
                 file_status: FileStatus::Available,
-                preview: preview_snapshots
-                    .get(i)
-                    .cloned()
-                    .unwrap_or_else(FilePreviewSnapshot::not_captured),
+                preview: preview_snapshots[i].clone(),
             })
             .collect();
 
@@ -360,6 +328,12 @@ impl StoredItem {
 mod tests {
     use super::*;
 
+    fn not_captured_previews(count: usize) -> Vec<FilePreviewSnapshot> {
+        (0..count)
+            .map(|_| FilePreviewSnapshot::not_captured())
+            .collect()
+    }
+
     #[test]
     fn test_stored_item_text() {
         let item = StoredItem::new_text(
@@ -470,6 +444,7 @@ mod tests {
             vec![100, 200],
             vec!["public.plain-text".into(), "public.plain-text".into()],
             vec![vec![1], vec![2]],
+            not_captured_previews(2),
             None,
             None,
             None,
@@ -487,6 +462,7 @@ mod tests {
             vec![100, 200, 300],
             vec!["public.plain-text".into(); 3],
             vec![vec![1], vec![2], vec![3]],
+            not_captured_previews(3),
             None,
             None,
             None,
@@ -500,6 +476,7 @@ mod tests {
             vec![42],
             vec!["public.plain-text".into()],
             vec![vec![1]],
+            not_captured_previews(1),
             None,
             None,
             None,
@@ -515,6 +492,7 @@ mod tests {
             vec![100, 200],
             vec!["public.plain-text".into(); 2],
             vec![vec![1], vec![2]],
+            not_captured_previews(2),
             None,
             None,
             None,
@@ -526,6 +504,7 @@ mod tests {
             vec![200, 100],
             vec!["public.plain-text".into(); 2],
             vec![vec![2], vec![1]],
+            not_captured_previews(2),
             None,
             None,
             None,
@@ -545,6 +524,7 @@ mod tests {
             vec![100, 200],
             vec!["public.plain-text".into(); 2],
             vec![vec![1], vec![2]],
+            not_captured_previews(2),
             None,
             None,
             None,

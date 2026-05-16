@@ -1,4 +1,5 @@
 use crate::database::Database;
+use crate::interface::FilePreviewSnapshot;
 use crate::models::StoredItem;
 use crate::ClipboardStore;
 use anyhow::Result;
@@ -274,6 +275,7 @@ fn build_item(
                 32_768,
                 uti.to_string(),
                 vec![1, 2, 3, 4],
+                FilePreviewSnapshot::not_captured(),
                 None,
                 Some(app_name.to_string()),
                 Some(bundle_id.to_string()),

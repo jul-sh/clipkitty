@@ -367,12 +367,6 @@ impl FilePreviewSnapshot {
         }
     }
 
-    pub fn legacy() -> Self {
-        FilePreviewSnapshot::Unavailable {
-            reason: FilePreviewUnavailableReason::Legacy,
-        }
-    }
-
     pub fn from_database(
         kind: &str,
         reason: Option<&str>,
@@ -869,20 +863,6 @@ pub trait ClipboardStoreApi: Send + Sync {
         file_size: u64,
         uti: String,
         bookmark_data: Vec<u8>,
-        thumbnail: Option<Vec<u8>>,
-        source_app: Option<String>,
-        source_app_bundle_id: Option<String>,
-    ) -> Result<String, ClipKittyError>;
-
-    /// Save a file item with an explicit preview snapshot. Returns new item's stable ID, or empty string if duplicate.
-    #[allow(clippy::too_many_arguments)]
-    fn save_file_with_preview(
-        &self,
-        path: String,
-        filename: String,
-        file_size: u64,
-        uti: String,
-        bookmark_data: Vec<u8>,
         preview: FilePreviewSnapshot,
         thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
@@ -892,21 +872,6 @@ pub trait ClipboardStoreApi: Send + Sync {
     /// Save multiple file items as a single grouped entry. Returns new item's stable ID, or empty string if duplicate.
     #[allow(clippy::too_many_arguments)]
     fn save_files(
-        &self,
-        paths: Vec<String>,
-        filenames: Vec<String>,
-        file_sizes: Vec<u64>,
-        utis: Vec<String>,
-        bookmark_data_list: Vec<Vec<u8>>,
-        thumbnail: Option<Vec<u8>>,
-        source_app: Option<String>,
-        source_app_bundle_id: Option<String>,
-    ) -> Result<String, ClipKittyError>;
-
-    /// Save multiple file items as a single grouped entry with explicit per-file preview snapshots.
-    /// Returns new item's stable ID, or empty string if duplicate.
-    #[allow(clippy::too_many_arguments)]
-    fn save_files_with_previews(
         &self,
         paths: Vec<String>,
         filenames: Vec<String>,
