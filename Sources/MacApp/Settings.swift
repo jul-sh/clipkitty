@@ -39,6 +39,10 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
+    @Published var deleteHotKey: HotKey {
+        didSet { save() }
+    }
+
     @Published var maxDatabaseSizeGB: Double {
         didSet { save() }
     }
@@ -154,6 +158,7 @@ final class AppSettings: ObservableObject {
 
     private let defaults = UserDefaults.standard
     private let hotKeyKey = "hotKey"
+    private let deleteHotKeyKey = "deleteHotKey"
     private let maxDbSizeKey = "maxDatabaseSizeGB"
     private let launchAtLoginKey = "launchAtLogin"
     #if ENABLE_SYNTHETIC_PASTE
@@ -186,6 +191,14 @@ final class AppSettings: ObservableObject {
             hotKey = decoded
         } else {
             hotKey = .default
+        }
+
+        if let data = defaults.data(forKey: deleteHotKeyKey),
+           let decoded = try? JSONDecoder().decode(HotKey.self, from: data)
+        {
+            deleteHotKey = decoded
+        } else {
+            deleteHotKey = .deleteDefault
         }
 
         if let stored = defaults.object(forKey: maxDbSizeKey) as? NSNumber {
@@ -280,6 +293,9 @@ final class AppSettings: ObservableObject {
         guard !isInitializing else { return }
         if let data = try? JSONEncoder().encode(hotKey) {
             defaults.set(data, forKey: hotKeyKey)
+        }
+        if let data = try? JSONEncoder().encode(deleteHotKey) {
+            defaults.set(data, forKey: deleteHotKeyKey)
         }
         defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
         defaults.set(launchAtLoginEnabled, forKey: launchAtLoginKey)

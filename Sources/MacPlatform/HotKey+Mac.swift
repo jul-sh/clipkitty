@@ -4,12 +4,17 @@ import ClipKittyShared
 
 public extension HotKey {
     static let `default` = HotKey(keyCode: 49, modifiers: UInt32(optionKey)) // Option+Space
+    static let deleteDefault = HotKey(keyCode: 27, modifiers: UInt32(cmdKey)) // Command+-
 
     private static let keyCodeNames: [UInt32: String] = [
         0: "A", 1: "S", 2: "D", 3: "F", 4: "H", 5: "G", 6: "Z", 7: "X",
         8: "C", 9: "V", 11: "B", 12: "Q", 13: "W", 14: "E", 15: "R",
         16: "Y", 17: "T", 31: "O", 32: "U", 34: "I", 35: "P", 37: "L",
         38: "J", 40: "K", 45: "N", 46: "M",
+        18: "1", 19: "2", 20: "3", 21: "4", 22: "6", 23: "5",
+        25: "9", 26: "7", 28: "8", 29: "0",
+        24: "=", 27: "-", 33: "[", 30: "]", 39: "'",
+        41: ";", 42: "\\", 43: ",", 44: "/", 47: ".", 50: "`",
         49: "Space", 36: "Return", 48: "Tab", 51: "Delete",
         53: "Escape", 123: "←", 124: "→", 125: "↓", 126: "↑",
     ]
