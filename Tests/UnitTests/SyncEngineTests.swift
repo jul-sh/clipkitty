@@ -607,7 +607,6 @@ final class SyncEngineTests: XCTestCase {
         let transport = FakeCloudTransport()
         let deviceId = "snapshot-blob-bundle-device"
         let largeBookmark = Data(repeating: 0x5A, count: 420_000)
-        let largeThumbnail = Data(repeating: 0x11, count: 420_000)
         var sawSnapshotBlobBundleAsset = false
 
         store.setSyncDeviceId(deviceId: deviceId)
@@ -617,7 +616,7 @@ final class SyncEngineTests: XCTestCase {
             fileSizes: [UInt64(largeBookmark.count)],
             utis: ["public.data"],
             bookmarkDataList: [largeBookmark],
-            thumbnail: largeThumbnail,
+            previewSnapshots: [.unavailable(reason: .notCaptured)],
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -633,7 +632,6 @@ final class SyncEngineTests: XCTestCase {
                 if let snapshotRecord = records.first(where: { $0.recordType == "ItemSnapshot" }) {
                     let aggregateData = snapshotRecord["aggregateData"] as? String ?? ""
                     XCTAssertTrue(aggregateData.contains(#""bookmark_data_base64":"""#))
-                    XCTAssertTrue(aggregateData.contains(#""thumbnail_base64":"""#))
 
                     guard let asset = snapshotRecord["blobBundleAsset"] as? CKAsset else {
                         XCTFail("Expected blob bundle asset for large snapshot payload")
@@ -642,12 +640,9 @@ final class SyncEngineTests: XCTestCase {
 
                     do {
                         let bundle = try readBlobBundle(from: asset)
-                        XCTAssertEqual(bundle.entries.count, 2)
+                        XCTAssertEqual(bundle.entries.count, 1)
                         XCTAssertTrue(
                             bundle.entries.contains(where: { pathContainsKey($0.path, key: "bookmark_data_base64") })
-                        )
-                        XCTAssertTrue(
-                            bundle.entries.contains(where: { pathContainsKey($0.path, key: "thumbnail_base64") })
                         )
                         sawSnapshotBlobBundleAsset = true
                     } catch {
@@ -688,7 +683,6 @@ final class SyncEngineTests: XCTestCase {
         let transport = FakeCloudTransport()
         let deviceId = "full-resync-blob-bundle-device"
         let largeBookmark = Data(repeating: 0x7C, count: 420_000)
-        let largeThumbnail = Data(repeating: 0x22, count: 420_000)
 
         sourceStore.setSyncDeviceId(deviceId: deviceId)
         _ = try sourceStore.saveFiles(
@@ -697,7 +691,7 @@ final class SyncEngineTests: XCTestCase {
             fileSizes: [UInt64(largeBookmark.count)],
             utis: ["public.data"],
             bookmarkDataList: [largeBookmark],
-            thumbnail: largeThumbnail,
+            previewSnapshots: [.unavailable(reason: .notCaptured)],
             sourceApp: nil,
             sourceAppBundleId: nil
         )

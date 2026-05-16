@@ -7,8 +7,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::interface::{
-    BaselineExcerpt, ClipboardContent, ClipboardItem, FileEntry, FileStatus, ItemIcon, ItemMetadata,
-    ListPresentationProfile,
+    BaselineExcerpt, ClipboardContent, ClipboardItem, FileEntry, FilePreviewSnapshot, FileStatus,
+    ItemIcon, ItemMetadata, ListPresentationProfile,
 };
 #[cfg(test)]
 use crate::interface::{IconType, LinkMetadataPayload, LinkMetadataState};
@@ -28,7 +28,7 @@ pub struct StoredItem {
     pub timestamp_unix: i64,
     pub source_app: Option<String>,
     pub source_app_bundle_id: Option<String>,
-    /// Thumbnail for images/files/links (small preview, stored in items.thumbnail)
+    /// Thumbnail for images and links (small preview, stored in items.thumbnail)
     pub thumbnail: Option<Vec<u8>>,
     /// Parsed color RGBA for color content (stored for quick display)
     pub color_rgba: Option<u32>,
@@ -88,7 +88,7 @@ impl StoredItem {
         }
     }
 
-    /// Create a file item with optional QuickLook thumbnail
+    /// Create a file item with explicit preview state.
     #[allow(clippy::too_many_arguments)]
     pub fn new_file(
         path: String,
@@ -96,7 +96,7 @@ impl StoredItem {
         file_size: u64,
         uti: String,
         bookmark_data: Vec<u8>,
-        thumbnail: Option<Vec<u8>>,
+        preview: FilePreviewSnapshot,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Self {
@@ -106,13 +106,13 @@ impl StoredItem {
             vec![file_size],
             vec![uti],
             vec![bookmark_data],
-            thumbnail,
+            vec![preview],
             source_app,
             source_app_bundle_id,
         )
     }
 
-    /// Create a (possibly grouped) file item from multiple files
+    /// Create a (possibly grouped) file item from multiple files with explicit previews.
     #[allow(clippy::too_many_arguments)]
     pub fn new_files(
         paths: Vec<String>,
@@ -120,7 +120,7 @@ impl StoredItem {
         file_sizes: Vec<u64>,
         utis: Vec<String>,
         bookmark_data_list: Vec<Vec<u8>>,
-        thumbnail: Option<Vec<u8>>,
+        preview_snapshots: Vec<FilePreviewSnapshot>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Self {
@@ -137,6 +137,31 @@ impl StoredItem {
         let content_hash = Self::hash_string(&hash_input);
 
         let file_count = paths.len();
+        assert_eq!(
+            filenames.len(),
+            file_count,
+            "new_files requires filenames length to match paths length"
+        );
+        assert_eq!(
+            file_sizes.len(),
+            file_count,
+            "new_files requires file_sizes length to match paths length"
+        );
+        assert_eq!(
+            utis.len(),
+            file_count,
+            "new_files requires utis length to match paths length"
+        );
+        assert_eq!(
+            bookmark_data_list.len(),
+            file_count,
+            "new_files requires bookmark_data_list length to match paths length"
+        );
+        assert_eq!(
+            preview_snapshots.len(),
+            file_count,
+            "new_files requires preview_snapshots length to match paths length"
+        );
 
         let folder_count = utis
             .iter()
@@ -175,6 +200,7 @@ impl StoredItem {
                 uti: utis[i].clone(),
                 bookmark_data: bookmark_data_list[i].clone(),
                 file_status: FileStatus::Available,
+                preview: preview_snapshots[i].clone(),
             })
             .collect();
 
@@ -189,7 +215,7 @@ impl StoredItem {
             timestamp_unix: chrono::Utc::now().timestamp(),
             source_app,
             source_app_bundle_id,
-            thumbnail,
+            thumbnail: None,
             color_rgba: None,
         }
     }
@@ -263,7 +289,10 @@ impl StoredItem {
         }
     }
 
-    pub fn baseline_excerpt_for_profile(&self, profile: ListPresentationProfile) -> BaselineExcerpt {
+    pub fn baseline_excerpt_for_profile(
+        &self,
+        profile: ListPresentationProfile,
+    ) -> BaselineExcerpt {
         BaselineExcerpt {
             text: crate::search::generate_preview_for_profile(self.text_content(), profile),
         }
@@ -295,6 +324,12 @@ impl StoredItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn not_captured_previews(count: usize) -> Vec<FilePreviewSnapshot> {
+        (0..count)
+            .map(|_| FilePreviewSnapshot::not_captured())
+            .collect()
+    }
 
     #[test]
     fn test_stored_item_text() {
@@ -406,7 +441,7 @@ mod tests {
             vec![100, 200],
             vec!["public.plain-text".into(), "public.plain-text".into()],
             vec![vec![1], vec![2]],
-            None,
+            not_captured_previews(2),
             None,
             None,
         );
@@ -423,7 +458,7 @@ mod tests {
             vec![100, 200, 300],
             vec!["public.plain-text".into(); 3],
             vec![vec![1], vec![2], vec![3]],
-            None,
+            not_captured_previews(3),
             None,
             None,
         );
@@ -436,7 +471,7 @@ mod tests {
             vec![42],
             vec!["public.plain-text".into()],
             vec![vec![1]],
-            None,
+            not_captured_previews(1),
             None,
             None,
         );
@@ -451,7 +486,7 @@ mod tests {
             vec![100, 200],
             vec!["public.plain-text".into(); 2],
             vec![vec![1], vec![2]],
-            None,
+            not_captured_previews(2),
             None,
             None,
         );
@@ -462,7 +497,7 @@ mod tests {
             vec![200, 100],
             vec!["public.plain-text".into(); 2],
             vec![vec![2], vec![1]],
-            None,
+            not_captured_previews(2),
             None,
             None,
         );
@@ -481,7 +516,7 @@ mod tests {
             vec![100, 200],
             vec!["public.plain-text".into(); 2],
             vec![vec![1], vec![2]],
-            None,
+            not_captured_previews(2),
             None,
             None,
         );

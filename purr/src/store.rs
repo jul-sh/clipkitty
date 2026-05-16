@@ -3,9 +3,9 @@
 use crate::database::Database;
 use crate::indexer::{IndexInspection, Indexer};
 use crate::interface::{
-    ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag,
-    ListPresentationProfile, MatchedExcerptRequest, MatchedExcerptResolution, PreviewPayload,
-    SearchOutcome, SearchResult, StoreBootstrapPlan,
+    ClipKittyError, ClipboardItem, ClipboardStoreApi, FilePreviewSnapshot, ItemQueryFilter,
+    ItemTag, ListPresentationProfile, MatchedExcerptRequest, MatchedExcerptResolution,
+    PreviewPayload, SearchOutcome, SearchResult, StoreBootstrapPlan,
 };
 #[cfg(feature = "sync")]
 use crate::sync_bridge::{snapshot_from_stored_item_with_bookmark, RealSyncEmitter, SyncEmitter};
@@ -415,13 +415,10 @@ impl ClipboardStoreApi for ClipboardStore {
         file_sizes: Vec<u64>,
         utis: Vec<String>,
         bookmark_data_list: Vec<Vec<u8>>,
-        thumbnail: Option<Vec<u8>>,
+        preview_snapshots: Vec<FilePreviewSnapshot>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Result<String, ClipKittyError> {
-        if paths.is_empty() {
-            return Err(ClipKittyError::InvalidInput("No files provided".into()));
-        }
         let outcome = save_service::save_files(
             &self.db,
             &self.indexer,
@@ -430,7 +427,7 @@ impl ClipboardStoreApi for ClipboardStore {
             file_sizes,
             utis,
             bookmark_data_list,
-            thumbnail,
+            preview_snapshots,
             source_app,
             source_app_bundle_id,
         )?;
@@ -446,7 +443,7 @@ impl ClipboardStoreApi for ClipboardStore {
         file_size: u64,
         uti: String,
         bookmark_data: Vec<u8>,
-        thumbnail: Option<Vec<u8>>,
+        preview: FilePreviewSnapshot,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Result<String, ClipKittyError> {
@@ -458,7 +455,7 @@ impl ClipboardStoreApi for ClipboardStore {
             file_size,
             uti,
             bookmark_data,
-            thumbnail,
+            preview,
             source_app,
             source_app_bundle_id,
         )?;

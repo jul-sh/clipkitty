@@ -4,8 +4,9 @@
 //! Uses r2d2 connection pooling to allow concurrent reads without mutex blocking.
 
 use crate::interface::{
-    BaselineExcerpt, ClipboardContent, ContentTypeFilter, FileEntry, FileStatus, ItemIcon,
-    ItemMetadata, ItemTag, LinkMetadataState, ListPresentationProfile,
+    BaselineExcerpt, ClipboardContent, ContentTypeFilter, FileEntry, FilePreviewSnapshot,
+    FileStatus, FileTextPreviewSnapshot, ItemIcon, ItemMetadata, ItemTag, LinkMetadataState,
+    ListPresentationProfile,
 };
 use crate::models::StoredItem;
 use crate::search::{generate_preview_for_profile, SNIPPET_CONTEXT_CHARS};
@@ -73,6 +74,20 @@ struct RawSearchRowMetadata {
     content_hash: String,
     db_type: String,
     row_metadata: RawRowMetadata,
+}
+
+struct FileEntryRow {
+    path: String,
+    filename: String,
+    file_size: u64,
+    uti: String,
+    bookmark_data: Vec<u8>,
+    file_status: FileStatus,
+    preview_kind: String,
+    preview_reason: Option<String>,
+    preview_text: Option<String>,
+    preview_data: Option<Vec<u8>>,
+    preview_truncated: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -331,7 +346,12 @@ impl Database {
                 fileSize INTEGER NOT NULL DEFAULT 0,
                 uti TEXT NOT NULL DEFAULT 'public.item',
                 bookmarkData BLOB NOT NULL,
-                fileStatus TEXT NOT NULL DEFAULT 'available'
+                fileStatus TEXT NOT NULL DEFAULT 'available',
+                previewKind TEXT NOT NULL DEFAULT 'unavailable',
+                previewReason TEXT DEFAULT 'migrated_without_preview',
+                previewText TEXT,
+                previewData BLOB,
+                previewTruncated INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE INDEX IF NOT EXISTS idx_items_hash ON items(contentHash);
@@ -348,10 +368,33 @@ impl Database {
         "#,
         )?;
 
+        conn.execute(
+            "INSERT OR IGNORE INTO item_tags (itemId, tag)
+             SELECT itemId, 'bookmark' FROM item_tags WHERE tag = 'pinned'",
+            [],
+        )?;
+        conn.execute("DELETE FROM item_tags WHERE tag = 'pinned'", [])?;
+
         // Migration: Add is_animated column to existing image_items tables
         // This is idempotent - if the column already exists, the ALTER TABLE will fail silently
         let _ = conn.execute(
             "ALTER TABLE image_items ADD COLUMN is_animated INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+
+        // Migration: Add file preview snapshot columns to existing file_items tables.
+        let _ = conn.execute(
+            "ALTER TABLE file_items ADD COLUMN previewKind TEXT NOT NULL DEFAULT 'unavailable'",
+            [],
+        );
+        let _ = conn.execute(
+            "ALTER TABLE file_items ADD COLUMN previewReason TEXT DEFAULT 'migrated_without_preview'",
+            [],
+        );
+        let _ = conn.execute("ALTER TABLE file_items ADD COLUMN previewText TEXT", []);
+        let _ = conn.execute("ALTER TABLE file_items ADD COLUMN previewData BLOB", []);
+        let _ = conn.execute(
+            "ALTER TABLE file_items ADD COLUMN previewTruncated INTEGER NOT NULL DEFAULT 0",
             [],
         );
 
@@ -526,9 +569,18 @@ impl Database {
             }
             ClipboardContent::File { files, .. } => {
                 for (ordinal, file) in files.iter().enumerate() {
+                    let (
+                        preview_kind,
+                        preview_reason,
+                        preview_text,
+                        preview_data,
+                        preview_truncated,
+                    ) = Self::file_preview_database_fields(&file.preview);
                     tx.execute(
-                        r#"INSERT INTO file_items (itemId, ordinal, path, filename, fileSize, uti, bookmarkData, fileStatus)
-                           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"#,
+                        r#"INSERT INTO file_items
+                           (itemId, ordinal, path, filename, fileSize, uti, bookmarkData, fileStatus,
+                            previewKind, previewReason, previewText, previewData, previewTruncated)
+                           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)"#,
                         params![
                             item_id,
                             ordinal as i64,
@@ -538,6 +590,11 @@ impl Database {
                             file.uti,
                             file.bookmark_data,
                             file.file_status.to_database_str(),
+                            preview_kind,
+                            preview_reason,
+                            preview_text,
+                            preview_data,
+                            preview_truncated,
                         ],
                     )?;
                 }
@@ -545,6 +602,37 @@ impl Database {
         }
 
         Ok(())
+    }
+
+    fn file_preview_database_fields(
+        preview: &FilePreviewSnapshot,
+    ) -> (
+        &'static str,
+        Option<String>,
+        Option<&str>,
+        Option<&[u8]>,
+        i32,
+    ) {
+        match preview {
+            FilePreviewSnapshot::Unavailable { reason } => (
+                "unavailable",
+                Some(reason.to_database_str().to_string()),
+                None,
+                None,
+                0,
+            ),
+            FilePreviewSnapshot::Text { text } => match text {
+                FileTextPreviewSnapshot::Complete { sample } => {
+                    ("text", None, Some(sample.as_str()), None, 0)
+                }
+                FileTextPreviewSnapshot::Truncated { sample } => {
+                    ("text", None, Some(sample.as_str()), None, 1)
+                }
+            },
+            FilePreviewSnapshot::Image { preview_data } => {
+                ("image", None, None, Some(preview_data.as_slice()), 0)
+            }
+        }
     }
 
     /// Find an existing item by content hash
@@ -1409,26 +1497,55 @@ impl Database {
             ClipboardContent::File { display_name, .. } => {
                 let display_name = display_name.clone();
                 let mut stmt = conn.prepare(
-                    "SELECT path, filename, fileSize, uti, bookmarkData, fileStatus FROM file_items WHERE itemId = ?1 ORDER BY ordinal"
+                    "SELECT path, filename, fileSize, uti, bookmarkData, fileStatus, previewKind, previewReason, previewText, previewData, previewTruncated FROM file_items WHERE itemId = ?1 ORDER BY ordinal"
                 )?;
-                let files: Vec<FileEntry> = stmt
-                    .query_map([item_id], |row| {
-                        let path: String = row.get(0)?;
-                        let filename: String = row.get(1)?;
-                        let file_size: i64 = row.get(2)?;
-                        let uti: String = row.get(3)?;
-                        let bookmark_data: Vec<u8> = row.get(4)?;
-                        let file_status_str: String = row.get(5)?;
-                        Ok(FileEntry {
-                            path,
-                            filename,
-                            file_size: file_size as u64,
-                            uti,
-                            bookmark_data,
-                            file_status: FileStatus::from_database_str(&file_status_str),
-                        })
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?;
+                let rows = stmt.query_map([item_id], |row| {
+                    let path: String = row.get(0)?;
+                    let filename: String = row.get(1)?;
+                    let file_size: i64 = row.get(2)?;
+                    let uti: String = row.get(3)?;
+                    let bookmark_data: Vec<u8> = row.get(4)?;
+                    let file_status_str: String = row.get(5)?;
+                    let preview_truncated: i32 = row.get(10)?;
+                    Ok(FileEntryRow {
+                        path,
+                        filename,
+                        file_size: file_size as u64,
+                        uti,
+                        bookmark_data,
+                        file_status: FileStatus::from_database_str(&file_status_str),
+                        preview_kind: row.get(6)?,
+                        preview_reason: row.get(7)?,
+                        preview_text: row.get(8)?,
+                        preview_data: row.get(9)?,
+                        preview_truncated: preview_truncated != 0,
+                    })
+                })?;
+                let mut files = Vec::new();
+                for row in rows {
+                    let row = row?;
+                    let preview = FilePreviewSnapshot::from_database(
+                        &row.preview_kind,
+                        row.preview_reason.as_deref(),
+                        row.preview_text,
+                        row.preview_data,
+                        row.preview_truncated,
+                    )
+                    .map_err(|message| {
+                        DatabaseError::InconsistentData(format!(
+                            "file item {item_id} has invalid preview state: {message}"
+                        ))
+                    })?;
+                    files.push(FileEntry {
+                        path: row.path,
+                        filename: row.filename,
+                        file_size: row.file_size,
+                        uti: row.uti,
+                        bookmark_data: row.bookmark_data,
+                        file_status: row.file_status,
+                        preview,
+                    });
+                }
                 item.content = ClipboardContent::File {
                     display_name,
                     files,
@@ -1654,6 +1771,68 @@ mod tests {
         let items = db.fetch_items_by_item_ids(&item_ids).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].content.text_content(), "legacy text");
+    }
+
+    #[test]
+    fn test_pinned_item_tags_are_migrated_to_bookmarks() {
+        let temp = NamedTempFile::new().unwrap();
+        {
+            let conn = rusqlite::Connection::open(temp.path()).unwrap();
+            conn.execute_batch(
+                r#"
+                PRAGMA foreign_keys=ON;
+                CREATE TABLE items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    item_id TEXT NOT NULL UNIQUE,
+                    contentType TEXT NOT NULL,
+                    contentHash TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    sourceApp TEXT,
+                    sourceAppBundleId TEXT,
+                    thumbnail BLOB,
+                    colorRgba INTEGER
+                );
+                CREATE TABLE text_items (
+                    itemId INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+                    value TEXT NOT NULL
+                );
+                CREATE TABLE item_tags (
+                    itemId INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                    tag TEXT NOT NULL,
+                    PRIMARY KEY (itemId, tag)
+                );
+                INSERT INTO items (id, item_id, contentType, contentHash, content, timestamp)
+                VALUES (1, 'tagged-item', 'text', 'hash-text-tagged', 'tagged text', '2026-01-01 00:00:00');
+                INSERT INTO text_items (itemId, value) VALUES (1, 'tagged text');
+                INSERT INTO item_tags (itemId, tag) VALUES (1, 'pinned');
+                "#,
+            )
+            .unwrap();
+        }
+
+        let db = Database::open(temp.path()).unwrap();
+        let conn = db.get_conn().unwrap();
+        let tags = {
+            let mut stmt = conn
+                .prepare("SELECT tag FROM item_tags WHERE itemId = 1 ORDER BY tag")
+                .unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<Vec<String>, _>>()
+                .unwrap()
+        };
+        drop(conn);
+
+        assert_eq!(tags, vec!["bookmark".to_string()]);
+        assert_eq!(
+            db.filter_ids_by_tag(&[1], ItemTag::Bookmark).unwrap(),
+            vec![1]
+        );
+        assert_eq!(
+            db.get_tags_for_ids(&[1]).unwrap().get(&1).cloned(),
+            Some(vec![ItemTag::Bookmark])
+        );
     }
 
     #[test]

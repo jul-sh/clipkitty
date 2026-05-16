@@ -18,7 +18,7 @@ use purr_sync::types::{
 };
 
 use purr::database::Database;
-use purr::interface::ItemTag;
+use purr::interface::{FilePreviewSnapshot, ItemTag};
 use purr::ClipboardStore;
 use purr::ClipboardStoreApi;
 use tempfile::TempDir;
@@ -2185,7 +2185,7 @@ mod write_path_audit_tests {
                 1024,
                 "public.plain-text".to_string(),
                 vec![1, 2, 3],
-                None,
+                FilePreviewSnapshot::not_captured(),
                 None,
                 None,
             )

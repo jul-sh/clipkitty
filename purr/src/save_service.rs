@@ -1,6 +1,8 @@
 use crate::database::Database;
 use crate::indexer::Indexer;
-use crate::interface::{ClipKittyError, ItemTag, LinkMetadataPayload, LinkMetadataState};
+use crate::interface::{
+    ClipKittyError, FilePreviewSnapshot, ItemTag, LinkMetadataPayload, LinkMetadataState,
+};
 use crate::models::StoredItem;
 use chrono::Utc;
 
@@ -82,7 +84,7 @@ pub(crate) fn save_file(
     file_size: u64,
     uti: String,
     bookmark_data: Vec<u8>,
-    thumbnail: Option<Vec<u8>>,
+    preview: FilePreviewSnapshot,
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
 ) -> Result<InsertOutcome, ClipKittyError> {
@@ -92,7 +94,7 @@ pub(crate) fn save_file(
         file_size,
         uti,
         bookmark_data,
-        thumbnail,
+        preview,
         source_app,
         source_app_bundle_id,
     );
@@ -108,21 +110,61 @@ pub(crate) fn save_files(
     file_sizes: Vec<u64>,
     utis: Vec<String>,
     bookmark_data_list: Vec<Vec<u8>>,
-    thumbnail: Option<Vec<u8>>,
+    preview_snapshots: Vec<FilePreviewSnapshot>,
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
 ) -> Result<InsertOutcome, ClipKittyError> {
+    validate_file_metadata_lengths(
+        paths.len(),
+        filenames.len(),
+        file_sizes.len(),
+        utis.len(),
+        bookmark_data_list.len(),
+        preview_snapshots.len(),
+    )?;
     let item = StoredItem::new_files(
         paths,
         filenames,
         file_sizes,
         utis,
         bookmark_data_list,
-        thumbnail,
+        preview_snapshots,
         source_app,
         source_app_bundle_id,
     );
     dedupe_or_insert_and_index(db, indexer, item)
+}
+
+fn validate_file_metadata_lengths(
+    paths_len: usize,
+    filenames_len: usize,
+    file_sizes_len: usize,
+    utis_len: usize,
+    bookmark_data_list_len: usize,
+    preview_snapshots_len: usize,
+) -> Result<(), ClipKittyError> {
+    if paths_len == 0 {
+        return Err(ClipKittyError::InvalidInput("No files provided".into()));
+    }
+
+    let expected = paths_len;
+    let fields = [
+        ("filenames", filenames_len),
+        ("file_sizes", file_sizes_len),
+        ("utis", utis_len),
+        ("bookmark_data_list", bookmark_data_list_len),
+        ("preview_snapshots", preview_snapshots_len),
+    ];
+
+    for (field, actual) in fields {
+        if actual != expected {
+            return Err(ClipKittyError::InvalidInput(format!(
+                "file metadata length mismatch: paths has {expected} entries but {field} has {actual}"
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 pub(crate) fn save_image(

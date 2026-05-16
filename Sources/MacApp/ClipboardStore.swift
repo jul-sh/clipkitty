@@ -18,6 +18,17 @@ import UniformTypeIdentifiers
 private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ClipKitty", category: "ClipboardStore")
 private let maxAnimatedFrames = 50
 private let maxAnimatedDuration: Double = 3.0
+private let fileTextPreviewMaxBytes = 32 * 1024
+private let fileTextPreviewOriginalMaxBytes: UInt64 = 1 * 1024 * 1024
+private let fileImagePreviewMaxBytes = 256 * 1024
+private let fileImagePreviewOriginalMaxBytes: UInt64 = 10 * 1024 * 1024
+private let filePreviewImageMaxDimensions = [1024, 768, 512]
+private let filePreviewImageQualities: [CGFloat] = [0.55, 0.4, 0.28]
+private let rawTextPreviewExtensions: Set<String> = [
+    "bash", "c", "cc", "conf", "cpp", "cs", "css", "csv", "env", "go", "h", "hpp", "html",
+    "ini", "java", "js", "json", "log", "m", "md", "mm", "plist", "py", "rb", "rs", "sh",
+    "sql", "swift", "toml", "ts", "tsx", "txt", "xml", "yaml", "yml",
+]
 
 private final class MissingRepositorySearchOperation: ClipboardSearchOperation {
     func cancel() {}
@@ -125,6 +136,12 @@ final class ClipboardStore {
     private var searchExecution: SearchExecution = .idle
     /// Current search query
     private var currentSearchQuery: String = ""
+
+    private enum FilePreviewCandidate {
+        case image
+        case text
+        case unsupported
+    }
 
     /// Increments each time the display is reset - views observe this to reset local state
     /// Uses Int which will overflow after ~2 billion increments, but this is acceptable
@@ -875,6 +892,138 @@ final class ClipboardStore {
         return encodeCGImage(resized, type: "public.jpeg" as CFString, quality: 0.6)
     }
 
+    private nonisolated static func filePreviewCandidate(for url: URL, utiIdentifier: String) -> FilePreviewCandidate {
+        let explicitType = UTType(utiIdentifier)
+        let extensionType = UTType(filenameExtension: url.pathExtension)
+        let candidates = [explicitType, extensionType].compactMap { $0 }
+
+        if candidates.contains(where: { $0.conforms(to: .image) }) {
+            return .image
+        }
+
+        if candidates.contains(where: { $0.conforms(to: .text) }) {
+            return .text
+        }
+
+        if rawTextPreviewExtensions.contains(url.pathExtension.lowercased()) {
+            return .text
+        }
+
+        return .unsupported
+    }
+
+    private nonisolated static func filePreviewSnapshot(
+        for url: URL,
+        utiIdentifier: String,
+        fileSize: UInt64?,
+        isDirectory: Bool
+    ) -> FilePreviewSnapshot {
+        guard !isDirectory else {
+            return .unavailable(reason: .directory)
+        }
+
+        let didStartAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if didStartAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        switch filePreviewCandidate(for: url, utiIdentifier: utiIdentifier) {
+        case .text:
+            guard fileSize.map({ $0 <= fileTextPreviewOriginalMaxBytes }) ?? true else {
+                return .unavailable(reason: .tooLarge)
+            }
+            return textFilePreviewSnapshot(for: url)
+
+        case .image:
+            guard let fileSize, fileSize <= fileImagePreviewOriginalMaxBytes else {
+                return .unavailable(reason: .tooLarge)
+            }
+            return imageFilePreviewSnapshot(for: url)
+
+        case .unsupported:
+            return .unavailable(reason: .unsupportedType)
+        }
+    }
+
+    private nonisolated static func textFilePreviewSnapshot(for url: URL) -> FilePreviewSnapshot {
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
+            return .unavailable(reason: .unreadable)
+        }
+        defer {
+            try? handle.close()
+        }
+
+        let readLimit = fileTextPreviewMaxBytes + 1
+        let data: Data
+        do {
+            data = try handle.read(upToCount: readLimit) ?? Data()
+        } catch {
+            return .unavailable(reason: .unreadable)
+        }
+        guard !data.isEmpty else {
+            return .text(text: .complete(sample: ""))
+        }
+
+        let isTruncated = data.count > fileTextPreviewMaxBytes
+        let sampleData = Data(data.prefix(fileTextPreviewMaxBytes))
+        guard let sample = decodedTextSample(from: sampleData, allowTrailingTrim: isTruncated) else {
+            return .unavailable(reason: .unreadable)
+        }
+        return .text(text: isTruncated ? .truncated(sample: sample) : .complete(sample: sample))
+    }
+
+    private nonisolated static func decodedTextSample(from data: Data, allowTrailingTrim: Bool) -> String? {
+        let encodings: [String.Encoding] = [.utf8, .unicode, .utf16LittleEndian, .utf16BigEndian]
+        for encoding in encodings {
+            if let sample = String(data: data, encoding: encoding) {
+                return sample
+            }
+        }
+
+        guard allowTrailingTrim, data.count > 1 else { return nil }
+        for trimCount in 1 ... min(4, data.count - 1) {
+            let trimmed = Data(data.dropLast(trimCount))
+            for encoding in encodings {
+                if let sample = String(data: trimmed, encoding: encoding) {
+                    return sample
+                }
+            }
+        }
+        return nil
+    }
+
+    private nonisolated static func imageFilePreviewSnapshot(for url: URL) -> FilePreviewSnapshot {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            return .unavailable(reason: .unreadable)
+        }
+
+        for dimension in filePreviewImageMaxDimensions {
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: dimension,
+            ]
+            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+                continue
+            }
+
+            for quality in filePreviewImageQualities {
+                guard let previewData = encodeCGImage(cgImage, type: UTType.jpeg.identifier as CFString, quality: quality) else {
+                    continue
+                }
+                guard previewData.count <= fileImagePreviewMaxBytes else {
+                    continue
+                }
+
+                return .image(previewData: previewData)
+            }
+        }
+
+        return .unavailable(reason: .tooLarge)
+    }
+
     // MARK: - File Items
 
     #if ENABLE_FILE_CLIPBOARD_ITEMS
@@ -894,6 +1043,8 @@ final class ClipboardStore {
             var fileSizes: [UInt64] = []
             var utis: [String] = []
             var bookmarkDataList: [Data] = []
+            var previewSnapshots: [FilePreviewSnapshot] = []
+            var capturedPreview = false
 
             for url in urls {
                 guard url.isFileURL else { continue }
@@ -901,20 +1052,44 @@ final class ClipboardStore {
                 paths.append(url.path)
                 filenames.append(url.lastPathComponent)
 
-                let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
-                fileSizes.append(UInt64(resourceValues?.fileSize ?? 0))
+                let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .totalFileSizeKey])
+                let reportedFileSize = resourceValues?.fileSize ?? resourceValues?.totalFileSize
+                fileSizes.append(UInt64(reportedFileSize ?? 0))
 
                 let isDirectory = resourceValues?.isDirectory == true
+                let uti: String
                 if isDirectory {
-                    utis.append("public.folder")
+                    uti = "public.folder"
                 } else {
-                    utis.append(UTType(filenameExtension: url.pathExtension)?.identifier ?? "public.item")
+                    uti = UTType(filenameExtension: url.pathExtension)?.identifier ?? "public.item"
                 }
+                utis.append(uti)
 
                 // NOTE: Bookmark data is always empty in sandboxed mode (App Store build).
                 // Security-scoped bookmarks require user-initiated file selection via NSOpenPanel.
                 // For clipboard monitoring, we use direct file paths which are accessible while the app is running.
                 bookmarkDataList.append(Data())
+
+                let snapshot: FilePreviewSnapshot
+                if capturedPreview {
+                    snapshot = .unavailable(reason: .notCaptured)
+                } else {
+                    snapshot = Self.filePreviewSnapshot(
+                        for: url,
+                        utiIdentifier: uti,
+                        fileSize: reportedFileSize.map { UInt64($0) },
+                        isDirectory: isDirectory
+                    )
+                    switch snapshot {
+                    case .text:
+                        capturedPreview = true
+                    case .image:
+                        capturedPreview = true
+                    case .unavailable:
+                        break
+                    }
+                }
+                previewSnapshots.append(snapshot)
             }
 
             guard !paths.isEmpty else { return }
@@ -925,7 +1100,7 @@ final class ClipboardStore {
                 fileSizes: fileSizes,
                 utis: utis,
                 bookmarkDataList: bookmarkDataList,
-                thumbnail: nil,
+                previewSnapshots: previewSnapshots,
                 sourceApp: sourceApp,
                 sourceAppBundleId: sourceAppBundleID
             )

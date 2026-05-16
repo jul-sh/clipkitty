@@ -134,6 +134,33 @@ struct FilePreviewView: View {
     }
 
     var body: some View {
+        if let previewFile {
+            switch previewFile.preview {
+            case let .text(text):
+                fileTextPreview(file: previewFile, text: text)
+            case let .image(previewData):
+                fileImagePreview(file: previewFile, previewData: previewData)
+            case .unavailable:
+                fileList
+            }
+        } else {
+            fileList
+        }
+    }
+
+    private var previewFile: FileEntry? {
+        for file in files {
+            switch file.preview {
+            case .text, .image:
+                return file
+            case .unavailable:
+                continue
+            }
+        }
+        return nil
+    }
+
+    private var fileList: some View {
         ScrollView(.vertical, showsIndicators: true) {
             VStack(spacing: 0) {
                 ForEach(Array(files.enumerated()), id: \.offset) { offset, file in
@@ -144,6 +171,91 @@ struct FilePreviewView: View {
                 }
             }
             .padding(.vertical, 12)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func previewHeader(file: FileEntry) -> some View {
+        HStack(spacing: 12) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: file.path))
+                .resizable()
+                .frame(width: 32, height: 32)
+
+            VStack(alignment: .leading, spacing: 3) {
+                highlightedFileText(file.filename, font: .system(size: 13, weight: .medium), color: .primary)
+                    .lineLimit(1)
+                highlightedFileText(file.path, font: .system(size: 11), color: .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.black.opacity(0.035))
+    }
+
+    private func fileTextPreview(file: FileEntry, text: FileTextPreviewSnapshot) -> some View {
+        let sample: String
+        switch text {
+        case let .complete(value):
+            sample = value
+        case let .truncated(value):
+            sample = value
+        }
+
+        return VStack(spacing: 0) {
+            previewHeader(file: file)
+            Divider()
+            ScrollView(.vertical, showsIndicators: true) {
+                if queryWords.isEmpty {
+                    Text(sample)
+                        .font(.custom(FontManager.mono, size: 12))
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                } else {
+                    Text(HighlightStyler.attributedText(sample, highlights: HighlightStyler.exactHighlights(in: sample, queryWords: queryWords)))
+                        .font(.custom(FontManager.mono, size: 12))
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                }
+            }
+            switch text {
+            case .complete:
+                EmptyView()
+            case .truncated:
+                Divider()
+                Text("Preview truncated")
+                    .font(.custom(FontManager.sansSerif, size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 6)
+                    .background(.black.opacity(0.035))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func fileImagePreview(file: FileEntry, previewData: Data) -> some View {
+        VStack(spacing: 0) {
+            previewHeader(file: file)
+            Divider()
+            ZStack {
+                Color.black.opacity(0.04)
+                if let nsImage = NSImage(data: previewData) {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .padding(16)
+                } else {
+                    fileList
+                }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

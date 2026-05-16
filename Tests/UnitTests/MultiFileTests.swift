@@ -12,6 +12,10 @@ final class MultiFileTests: XCTestCase {
         return try ClipKittyRust.ClipboardStore(dbPath: dbPath)
     }
 
+    private func notCapturedPreviews(count: Int) -> [FilePreviewSnapshot] {
+        Array(repeating: .unavailable(reason: .notCaptured), count: count)
+    }
+
     // MARK: - saveFiles roundtrip
 
     func testSaveFilesRoundtripThreeFiles() throws {
@@ -23,7 +27,7 @@ final class MultiFileTests: XCTestCase {
             fileSizes: [1000, 2000, 3000],
             utis: ["com.adobe.pdf", "public.plain-text", "public.png"],
             bookmarkDataList: [Data([1, 2]), Data([3, 4]), Data([5, 6])],
-            thumbnail: nil,
+            previewSnapshots: notCapturedPreviews(count: 3),
             sourceApp: "Finder",
             sourceAppBundleId: "com.apple.finder"
         )
@@ -55,7 +59,7 @@ final class MultiFileTests: XCTestCase {
             fileSizes: [42],
             utis: ["public.plain-text"],
             bookmarkDataList: [Data([1, 2, 3])],
-            thumbnail: nil,
+            previewSnapshots: notCapturedPreviews(count: 1),
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -83,7 +87,7 @@ final class MultiFileTests: XCTestCase {
             fileSizes: [100, 200],
             utis: ["public.plain-text", "public.plain-text"],
             bookmarkDataList: [Data([1]), Data([2])],
-            thumbnail: nil,
+            previewSnapshots: notCapturedPreviews(count: 2),
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -95,7 +99,7 @@ final class MultiFileTests: XCTestCase {
             fileSizes: [100, 200],
             utis: ["public.plain-text", "public.plain-text"],
             bookmarkDataList: [Data([1]), Data([2])],
-            thumbnail: nil,
+            previewSnapshots: notCapturedPreviews(count: 2),
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -111,7 +115,7 @@ final class MultiFileTests: XCTestCase {
             fileSizes: [100, 200],
             utis: ["public.plain-text", "public.plain-text"],
             bookmarkDataList: [Data([1]), Data([2])],
-            thumbnail: nil,
+            previewSnapshots: notCapturedPreviews(count: 2),
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -124,7 +128,7 @@ final class MultiFileTests: XCTestCase {
             fileSizes: [200, 100],
             utis: ["public.plain-text", "public.plain-text"],
             bookmarkDataList: [Data([2]), Data([1])],
-            thumbnail: nil,
+            previewSnapshots: notCapturedPreviews(count: 2),
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -142,7 +146,7 @@ final class MultiFileTests: XCTestCase {
             fileSizes: [100, 200],
             utis: ["public.plain-text", "public.plain-text"],
             bookmarkDataList: [Data([1]), Data([2])],
-            thumbnail: nil,
+            previewSnapshots: notCapturedPreviews(count: 2),
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -160,7 +164,7 @@ final class MultiFileTests: XCTestCase {
             fileSizes: [100, 200, 300],
             utis: ["public.plain-text", "public.plain-text", "public.plain-text"],
             bookmarkDataList: [Data([1]), Data([2]), Data([3])],
-            thumbnail: nil,
+            previewSnapshots: notCapturedPreviews(count: 3),
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -180,7 +184,7 @@ final class MultiFileTests: XCTestCase {
             fileSizes: [1000, 2000],
             utis: ["com.adobe.pdf", "org.openxmlformats.wordprocessingml.document"],
             bookmarkDataList: [Data([1]), Data([2])],
-            thumbnail: nil,
+            previewSnapshots: notCapturedPreviews(count: 2),
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -205,7 +209,7 @@ final class MultiFileTests: XCTestCase {
             fileSize: 100,
             uti: "com.adobe.pdf",
             bookmarkData: Data([1]),
-            thumbnail: nil,
+            preview: .unavailable(reason: .notCaptured),
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -228,7 +232,7 @@ final class MultiFileTests: XCTestCase {
             fileSizes: [100, 200],
             utis: ["public.plain-text", "public.plain-text"],
             bookmarkDataList: [bookmark1, bookmark2],
-            thumbnail: nil,
+            previewSnapshots: notCapturedPreviews(count: 2),
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -242,5 +246,51 @@ final class MultiFileTests: XCTestCase {
         XCTAssertEqual(files.count, 2)
         XCTAssertEqual(files[0].bookmarkData, bookmark1, "First file bookmark should match")
         XCTAssertEqual(files[1].bookmarkData, bookmark2, "Second file bookmark should match")
+    }
+
+    func testSaveFilesPreviewSnapshotsRoundtrip() throws {
+        let store = try makeStore()
+        let imagePreview = Data([0xFF, 0xD8, 0xFF])
+
+        let id = try store.saveFiles(
+            paths: ["/tmp/readme.md", "/tmp/screenshot.jpg", "/tmp/archive.zip"],
+            filenames: ["readme.md", "screenshot.jpg", "archive.zip"],
+            fileSizes: [64, 1024, 2048],
+            utis: ["net.daringfireball.markdown", "public.jpeg", "public.zip-archive"],
+            bookmarkDataList: [Data(), Data(), Data()],
+            previewSnapshots: [
+                .text(text: .truncated(sample: "hello")),
+                .image(previewData: imagePreview),
+                .unavailable(reason: .unsupportedType),
+            ],
+            sourceApp: nil,
+            sourceAppBundleId: nil
+        )
+
+        let items = try store.fetchByIds(itemIds: [id])
+        guard case let .file(_, files) = items[0].content else {
+            XCTFail("Expected File content")
+            return
+        }
+
+        guard case let .text(text) = files[0].preview,
+              case let .truncated(sample) = text
+        else {
+            XCTFail("Expected truncated text preview")
+            return
+        }
+        XCTAssertEqual(sample, "hello")
+
+        guard case let .image(previewData) = files[1].preview else {
+            XCTFail("Expected image preview")
+            return
+        }
+        XCTAssertEqual(previewData, imagePreview)
+
+        guard case let .unavailable(reason) = files[2].preview else {
+            XCTFail("Expected unavailable preview")
+            return
+        }
+        XCTAssertEqual(reason, .unsupportedType)
     }
 }
