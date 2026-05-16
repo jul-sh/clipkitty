@@ -28,7 +28,7 @@ pub struct StoredItem {
     pub timestamp_unix: i64,
     pub source_app: Option<String>,
     pub source_app_bundle_id: Option<String>,
-    /// Thumbnail for images/files/links (small preview, stored in items.thumbnail)
+    /// Thumbnail for images and links (small preview, stored in items.thumbnail)
     pub thumbnail: Option<Vec<u8>>,
     /// Parsed color RGBA for color content (stored for quick display)
     pub color_rgba: Option<u32>,
@@ -88,7 +88,7 @@ impl StoredItem {
         }
     }
 
-    /// Create a file item with optional QuickLook thumbnail and explicit preview state.
+    /// Create a file item with explicit preview state.
     #[allow(clippy::too_many_arguments)]
     pub fn new_file(
         path: String,
@@ -97,7 +97,6 @@ impl StoredItem {
         uti: String,
         bookmark_data: Vec<u8>,
         preview: FilePreviewSnapshot,
-        thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Self {
@@ -108,7 +107,6 @@ impl StoredItem {
             vec![uti],
             vec![bookmark_data],
             vec![preview],
-            thumbnail,
             source_app,
             source_app_bundle_id,
         )
@@ -123,7 +121,6 @@ impl StoredItem {
         utis: Vec<String>,
         bookmark_data_list: Vec<Vec<u8>>,
         preview_snapshots: Vec<FilePreviewSnapshot>,
-        thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Self {
@@ -218,7 +215,7 @@ impl StoredItem {
             timestamp_unix: chrono::Utc::now().timestamp(),
             source_app,
             source_app_bundle_id,
-            thumbnail,
+            thumbnail: None,
             color_rgba: None,
         }
     }
@@ -447,7 +444,6 @@ mod tests {
             not_captured_previews(2),
             None,
             None,
-            None,
         );
         assert_eq!(item.text_content(), "2 Files: a.txt, b.txt");
 
@@ -465,7 +461,6 @@ mod tests {
             not_captured_previews(3),
             None,
             None,
-            None,
         );
         assert_eq!(item.text_content(), "3 Files: a.txt and 2 more");
 
@@ -477,7 +472,6 @@ mod tests {
             vec!["public.plain-text".into()],
             vec![vec![1]],
             not_captured_previews(1),
-            None,
             None,
             None,
         );
@@ -495,7 +489,6 @@ mod tests {
             not_captured_previews(2),
             None,
             None,
-            None,
         );
 
         let item2 = StoredItem::new_files(
@@ -505,7 +498,6 @@ mod tests {
             vec!["public.plain-text".into(); 2],
             vec![vec![2], vec![1]],
             not_captured_previews(2),
-            None,
             None,
             None,
         );
@@ -525,7 +517,6 @@ mod tests {
             vec!["public.plain-text".into(); 2],
             vec![vec![1], vec![2]],
             not_captured_previews(2),
-            None,
             None,
             None,
         );

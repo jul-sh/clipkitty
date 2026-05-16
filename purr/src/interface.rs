@@ -97,15 +97,13 @@ pub enum ItemTag {
 impl ItemTag {
     pub fn database_str(&self) -> &'static str {
         match self {
-            // Keep "pinned" for database backwards compatibility
-            ItemTag::Bookmark => "pinned",
+            ItemTag::Bookmark => "bookmark",
         }
     }
 
     pub fn from_database_str(value: &str) -> Result<Self, String> {
         match value {
-            // Accept "pinned" from database for backwards compatibility
-            "pinned" => Ok(ItemTag::Bookmark),
+            "bookmark" | "pinned" => Ok(ItemTag::Bookmark),
             other => Err(format!("unknown item tag `{other}`")),
         }
     }
@@ -148,7 +146,7 @@ impl Default for ItemIcon {
 
 impl ItemIcon {
     /// Determine icon from database fields.
-    /// `thumbnail` is the unified thumbnail column — covers images, files, AND link preview images.
+    /// `thumbnail` is the unified thumbnail column for images and link preview images.
     pub fn from_database(
         db_type: &str,
         color_rgba: Option<u32>,
@@ -167,17 +165,18 @@ impl ItemIcon {
             "link" => ItemIcon::Symbol {
                 icon_type: IconType::Link,
             },
-            "image" | "file" => {
+            "image" => {
                 if let Some(thumb) = thumbnail {
                     ItemIcon::Thumbnail { bytes: thumb }
                 } else {
-                    let icon_type = match db_type {
-                        "image" => IconType::Image,
-                        _ => IconType::File,
-                    };
-                    ItemIcon::Symbol { icon_type }
+                    ItemIcon::Symbol {
+                        icon_type: IconType::Image,
+                    }
                 }
             }
+            "file" => ItemIcon::Symbol {
+                icon_type: IconType::File,
+            },
             _ => ItemIcon::Symbol {
                 icon_type: IconType::Text,
             },
@@ -313,7 +312,7 @@ pub enum FilePreviewUnavailableReason {
     TooLarge,
     Unreadable,
     Directory,
-    Legacy,
+    MigratedWithoutPreview,
 }
 
 impl FilePreviewUnavailableReason {
@@ -324,7 +323,7 @@ impl FilePreviewUnavailableReason {
             FilePreviewUnavailableReason::TooLarge => "too_large",
             FilePreviewUnavailableReason::Unreadable => "unreadable",
             FilePreviewUnavailableReason::Directory => "directory",
-            FilePreviewUnavailableReason::Legacy => "legacy",
+            FilePreviewUnavailableReason::MigratedWithoutPreview => "migrated_without_preview",
         }
     }
 
@@ -335,7 +334,9 @@ impl FilePreviewUnavailableReason {
             "too_large" => Ok(FilePreviewUnavailableReason::TooLarge),
             "unreadable" => Ok(FilePreviewUnavailableReason::Unreadable),
             "directory" => Ok(FilePreviewUnavailableReason::Directory),
-            "legacy" => Ok(FilePreviewUnavailableReason::Legacy),
+            "legacy" | "migrated_without_preview" => {
+                Ok(FilePreviewUnavailableReason::MigratedWithoutPreview)
+            }
             other => Err(format!("unknown file preview unavailable reason `{other}`")),
         }
     }
@@ -377,7 +378,7 @@ impl FilePreviewSnapshot {
         match kind {
             "unavailable" => Ok(FilePreviewSnapshot::Unavailable {
                 reason: FilePreviewUnavailableReason::from_database_str(
-                    reason.unwrap_or("legacy"),
+                    reason.unwrap_or("migrated_without_preview"),
                 )?,
             }),
             "text" => {
@@ -864,7 +865,6 @@ pub trait ClipboardStoreApi: Send + Sync {
         uti: String,
         bookmark_data: Vec<u8>,
         preview: FilePreviewSnapshot,
-        thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Result<String, ClipKittyError>;
@@ -879,7 +879,6 @@ pub trait ClipboardStoreApi: Send + Sync {
         utis: Vec<String>,
         bookmark_data_list: Vec<Vec<u8>>,
         preview_snapshots: Vec<FilePreviewSnapshot>,
-        thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Result<String, ClipKittyError>;

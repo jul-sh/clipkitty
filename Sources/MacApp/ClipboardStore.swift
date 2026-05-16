@@ -1101,7 +1101,6 @@ final class ClipboardStore {
                 utis: utis,
                 bookmarkDataList: bookmarkDataList,
                 previewSnapshots: previewSnapshots,
-                thumbnail: nil,
                 sourceApp: sourceApp,
                 sourceAppBundleId: sourceAppBundleID
             )

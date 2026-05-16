@@ -28,7 +28,6 @@ final class MultiFileTests: XCTestCase {
             utis: ["com.adobe.pdf", "public.plain-text", "public.png"],
             bookmarkDataList: [Data([1, 2]), Data([3, 4]), Data([5, 6])],
             previewSnapshots: notCapturedPreviews(count: 3),
-            thumbnail: nil,
             sourceApp: "Finder",
             sourceAppBundleId: "com.apple.finder"
         )
@@ -61,7 +60,6 @@ final class MultiFileTests: XCTestCase {
             utis: ["public.plain-text"],
             bookmarkDataList: [Data([1, 2, 3])],
             previewSnapshots: notCapturedPreviews(count: 1),
-            thumbnail: nil,
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -90,7 +88,6 @@ final class MultiFileTests: XCTestCase {
             utis: ["public.plain-text", "public.plain-text"],
             bookmarkDataList: [Data([1]), Data([2])],
             previewSnapshots: notCapturedPreviews(count: 2),
-            thumbnail: nil,
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -103,7 +100,6 @@ final class MultiFileTests: XCTestCase {
             utis: ["public.plain-text", "public.plain-text"],
             bookmarkDataList: [Data([1]), Data([2])],
             previewSnapshots: notCapturedPreviews(count: 2),
-            thumbnail: nil,
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -120,7 +116,6 @@ final class MultiFileTests: XCTestCase {
             utis: ["public.plain-text", "public.plain-text"],
             bookmarkDataList: [Data([1]), Data([2])],
             previewSnapshots: notCapturedPreviews(count: 2),
-            thumbnail: nil,
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -134,7 +129,6 @@ final class MultiFileTests: XCTestCase {
             utis: ["public.plain-text", "public.plain-text"],
             bookmarkDataList: [Data([2]), Data([1])],
             previewSnapshots: notCapturedPreviews(count: 2),
-            thumbnail: nil,
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -153,7 +147,6 @@ final class MultiFileTests: XCTestCase {
             utis: ["public.plain-text", "public.plain-text"],
             bookmarkDataList: [Data([1]), Data([2])],
             previewSnapshots: notCapturedPreviews(count: 2),
-            thumbnail: nil,
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -172,7 +165,6 @@ final class MultiFileTests: XCTestCase {
             utis: ["public.plain-text", "public.plain-text", "public.plain-text"],
             bookmarkDataList: [Data([1]), Data([2]), Data([3])],
             previewSnapshots: notCapturedPreviews(count: 3),
-            thumbnail: nil,
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -193,7 +185,6 @@ final class MultiFileTests: XCTestCase {
             utis: ["com.adobe.pdf", "org.openxmlformats.wordprocessingml.document"],
             bookmarkDataList: [Data([1]), Data([2])],
             previewSnapshots: notCapturedPreviews(count: 2),
-            thumbnail: nil,
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -219,7 +210,6 @@ final class MultiFileTests: XCTestCase {
             uti: "com.adobe.pdf",
             bookmarkData: Data([1]),
             preview: .unavailable(reason: .notCaptured),
-            thumbnail: nil,
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -243,7 +233,6 @@ final class MultiFileTests: XCTestCase {
             utis: ["public.plain-text", "public.plain-text"],
             bookmarkDataList: [bookmark1, bookmark2],
             previewSnapshots: notCapturedPreviews(count: 2),
-            thumbnail: nil,
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -274,7 +263,6 @@ final class MultiFileTests: XCTestCase {
                 .image(previewData: imagePreview),
                 .unavailable(reason: .unsupportedType),
             ],
-            thumbnail: nil,
             sourceApp: nil,
             sourceAppBundleId: nil
         )

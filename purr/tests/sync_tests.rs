@@ -2188,7 +2188,6 @@ mod write_path_audit_tests {
                 FilePreviewSnapshot::not_captured(),
                 None,
                 None,
-                None,
             )
             .unwrap();
         assert!(!id.is_empty());

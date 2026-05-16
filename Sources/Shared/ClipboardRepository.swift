@@ -142,7 +142,6 @@ public final class ClipboardRepository: @unchecked Sendable {
         utis: [String],
         bookmarkDataList: [Data],
         previewSnapshots: [FilePreviewSnapshot],
-        thumbnail: Data?,
         sourceApp: String?,
         sourceAppBundleId: String?
     ) async -> Result<String, ClipboardError> {
@@ -154,7 +153,6 @@ public final class ClipboardRepository: @unchecked Sendable {
                 utis: utis,
                 bookmarkDataList: bookmarkDataList,
                 previewSnapshots: previewSnapshots,
-                thumbnail: thumbnail,
                 sourceApp: sourceApp,
                 sourceAppBundleId: sourceAppBundleId
             )

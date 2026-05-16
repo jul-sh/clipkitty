@@ -338,7 +338,7 @@ impl Database {
                 bookmarkData BLOB NOT NULL,
                 fileStatus TEXT NOT NULL DEFAULT 'available',
                 previewKind TEXT NOT NULL DEFAULT 'unavailable',
-                previewReason TEXT DEFAULT 'legacy',
+                previewReason TEXT DEFAULT 'migrated_without_preview',
                 previewText TEXT,
                 previewData BLOB,
                 previewTruncated INTEGER NOT NULL DEFAULT 0
@@ -358,6 +358,13 @@ impl Database {
         "#,
         )?;
 
+        conn.execute(
+            "INSERT OR IGNORE INTO item_tags (itemId, tag)
+             SELECT itemId, 'bookmark' FROM item_tags WHERE tag = 'pinned'",
+            [],
+        )?;
+        conn.execute("DELETE FROM item_tags WHERE tag = 'pinned'", [])?;
+
         // Migration: Add is_animated column to existing image_items tables
         // This is idempotent - if the column already exists, the ALTER TABLE will fail silently
         let _ = conn.execute(
@@ -371,7 +378,7 @@ impl Database {
             [],
         );
         let _ = conn.execute(
-            "ALTER TABLE file_items ADD COLUMN previewReason TEXT DEFAULT 'legacy'",
+            "ALTER TABLE file_items ADD COLUMN previewReason TEXT DEFAULT 'migrated_without_preview'",
             [],
         );
         let _ = conn.execute("ALTER TABLE file_items ADD COLUMN previewText TEXT", []);
@@ -1754,6 +1761,68 @@ mod tests {
         let items = db.fetch_items_by_item_ids(&item_ids).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].content.text_content(), "legacy text");
+    }
+
+    #[test]
+    fn test_pinned_item_tags_are_migrated_to_bookmarks() {
+        let temp = NamedTempFile::new().unwrap();
+        {
+            let conn = rusqlite::Connection::open(temp.path()).unwrap();
+            conn.execute_batch(
+                r#"
+                PRAGMA foreign_keys=ON;
+                CREATE TABLE items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    item_id TEXT NOT NULL UNIQUE,
+                    contentType TEXT NOT NULL,
+                    contentHash TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    sourceApp TEXT,
+                    sourceAppBundleId TEXT,
+                    thumbnail BLOB,
+                    colorRgba INTEGER
+                );
+                CREATE TABLE text_items (
+                    itemId INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+                    value TEXT NOT NULL
+                );
+                CREATE TABLE item_tags (
+                    itemId INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+                    tag TEXT NOT NULL,
+                    PRIMARY KEY (itemId, tag)
+                );
+                INSERT INTO items (id, item_id, contentType, contentHash, content, timestamp)
+                VALUES (1, 'tagged-item', 'text', 'hash-text-tagged', 'tagged text', '2026-01-01 00:00:00');
+                INSERT INTO text_items (itemId, value) VALUES (1, 'tagged text');
+                INSERT INTO item_tags (itemId, tag) VALUES (1, 'pinned');
+                "#,
+            )
+            .unwrap();
+        }
+
+        let db = Database::open(temp.path()).unwrap();
+        let conn = db.get_conn().unwrap();
+        let tags = {
+            let mut stmt = conn
+                .prepare("SELECT tag FROM item_tags WHERE itemId = 1 ORDER BY tag")
+                .unwrap();
+            stmt.query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<Result<Vec<String>, _>>()
+                .unwrap()
+        };
+        drop(conn);
+
+        assert_eq!(tags, vec!["bookmark".to_string()]);
+        assert_eq!(
+            db.filter_ids_by_tag(&[1], ItemTag::Bookmark).unwrap(),
+            vec![1]
+        );
+        assert_eq!(
+            db.get_tags_for_ids(&[1]).unwrap().get(&1).cloned(),
+            Some(vec![ItemTag::Bookmark])
+        );
     }
 
     #[test]

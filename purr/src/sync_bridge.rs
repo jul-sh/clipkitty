@@ -90,6 +90,11 @@ pub(crate) fn snapshot_from_stored_item_with_bookmark(
         },
     };
 
+    let thumbnail_base64 = match &item.content {
+        ClipboardContent::File { .. } => None,
+        _ => item.thumbnail.as_ref().map(|d| base64_encode(d)),
+    };
+
     ItemSnapshotData {
         content_type: item.content.database_type().to_string(),
         content_text: item.content.text_content().to_string(),
@@ -98,7 +103,7 @@ pub(crate) fn snapshot_from_stored_item_with_bookmark(
         source_app_bundle_id: item.source_app_bundle_id.clone(),
         timestamp_unix: item.timestamp_unix,
         is_bookmarked,
-        thumbnail_base64: item.thumbnail.as_ref().map(|d| base64_encode(d)),
+        thumbnail_base64,
         color_rgba: item.color_rgba,
         type_specific,
     }
@@ -198,12 +203,15 @@ pub(crate) fn stored_item_from_snapshot(
         }
     };
 
-    let thumbnail = snapshot
-        .thumbnail_base64
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .map(base64_decode)
-        .transpose()?;
+    let thumbnail = match &content {
+        ClipboardContent::File { .. } => None,
+        _ => snapshot
+            .thumbnail_base64
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(base64_decode)
+            .transpose()?,
+    };
 
     Ok(crate::models::StoredItem {
         id: None,

@@ -276,7 +276,6 @@ fn build_item(
                 uti.to_string(),
                 vec![1, 2, 3, 4],
                 FilePreviewSnapshot::not_captured(),
-                None,
                 Some(app_name.to_string()),
                 Some(bundle_id.to_string()),
             )

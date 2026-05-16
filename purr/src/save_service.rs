@@ -85,7 +85,6 @@ pub(crate) fn save_file(
     uti: String,
     bookmark_data: Vec<u8>,
     preview: FilePreviewSnapshot,
-    thumbnail: Option<Vec<u8>>,
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
 ) -> Result<InsertOutcome, ClipKittyError> {
@@ -96,7 +95,6 @@ pub(crate) fn save_file(
         uti,
         bookmark_data,
         preview,
-        thumbnail,
         source_app,
         source_app_bundle_id,
     );
@@ -113,7 +111,6 @@ pub(crate) fn save_files(
     utis: Vec<String>,
     bookmark_data_list: Vec<Vec<u8>>,
     preview_snapshots: Vec<FilePreviewSnapshot>,
-    thumbnail: Option<Vec<u8>>,
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
 ) -> Result<InsertOutcome, ClipKittyError> {
@@ -132,7 +129,6 @@ pub(crate) fn save_files(
         utis,
         bookmark_data_list,
         preview_snapshots,
-        thumbnail,
         source_app,
         source_app_bundle_id,
     );
