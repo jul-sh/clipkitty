@@ -306,6 +306,108 @@ impl LinkMetadataState {
 }
 
 /// A single file entry within a file clipboard item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FilePreviewUnavailableReason {
+    NotCaptured,
+    UnsupportedType,
+    TooLarge,
+    Unreadable,
+    Directory,
+    Legacy,
+}
+
+impl FilePreviewUnavailableReason {
+    pub fn to_database_str(&self) -> &'static str {
+        match self {
+            FilePreviewUnavailableReason::NotCaptured => "not_captured",
+            FilePreviewUnavailableReason::UnsupportedType => "unsupported_type",
+            FilePreviewUnavailableReason::TooLarge => "too_large",
+            FilePreviewUnavailableReason::Unreadable => "unreadable",
+            FilePreviewUnavailableReason::Directory => "directory",
+            FilePreviewUnavailableReason::Legacy => "legacy",
+        }
+    }
+
+    pub fn from_database_str(value: &str) -> Result<Self, String> {
+        match value {
+            "not_captured" => Ok(FilePreviewUnavailableReason::NotCaptured),
+            "unsupported_type" => Ok(FilePreviewUnavailableReason::UnsupportedType),
+            "too_large" => Ok(FilePreviewUnavailableReason::TooLarge),
+            "unreadable" => Ok(FilePreviewUnavailableReason::Unreadable),
+            "directory" => Ok(FilePreviewUnavailableReason::Directory),
+            "legacy" => Ok(FilePreviewUnavailableReason::Legacy),
+            other => Err(format!("unknown file preview unavailable reason `{other}`")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum FileTextPreviewSnapshot {
+    Complete { sample: String },
+    Truncated { sample: String },
+}
+
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum FilePreviewSnapshot {
+    Unavailable {
+        reason: FilePreviewUnavailableReason,
+    },
+    Text {
+        text: FileTextPreviewSnapshot,
+    },
+    Image {
+        preview_data: Vec<u8>,
+    },
+}
+
+impl FilePreviewSnapshot {
+    pub fn not_captured() -> Self {
+        FilePreviewSnapshot::Unavailable {
+            reason: FilePreviewUnavailableReason::NotCaptured,
+        }
+    }
+
+    pub fn legacy() -> Self {
+        FilePreviewSnapshot::Unavailable {
+            reason: FilePreviewUnavailableReason::Legacy,
+        }
+    }
+
+    pub fn from_database(
+        kind: &str,
+        reason: Option<&str>,
+        text: Option<String>,
+        data: Option<Vec<u8>>,
+        is_truncated: bool,
+    ) -> Result<Self, String> {
+        match kind {
+            "unavailable" => Ok(FilePreviewSnapshot::Unavailable {
+                reason: FilePreviewUnavailableReason::from_database_str(
+                    reason.unwrap_or("legacy"),
+                )?,
+            }),
+            "text" => {
+                let sample =
+                    text.ok_or_else(|| "text file preview row is missing text".to_string())?;
+                Ok(FilePreviewSnapshot::Text {
+                    text: if is_truncated {
+                        FileTextPreviewSnapshot::Truncated { sample }
+                    } else {
+                        FileTextPreviewSnapshot::Complete { sample }
+                    },
+                })
+            }
+            "image" => {
+                let preview_data =
+                    data.ok_or_else(|| "image file preview row is missing data".to_string())?;
+                Ok(FilePreviewSnapshot::Image { preview_data })
+            }
+            other => Err(format!("unknown file preview kind `{other}`")),
+        }
+    }
+}
+
+/// A single file entry within a file clipboard item.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct FileEntry {
     pub path: String,
@@ -314,6 +416,7 @@ pub struct FileEntry {
     pub uti: String,
     pub bookmark_data: Vec<u8>,
     pub file_status: FileStatus,
+    pub preview: FilePreviewSnapshot,
 }
 
 /// Type-safe clipboard content representation
@@ -771,6 +874,21 @@ pub trait ClipboardStoreApi: Send + Sync {
         source_app_bundle_id: Option<String>,
     ) -> Result<String, ClipKittyError>;
 
+    /// Save a file item with an explicit preview snapshot. Returns new item's stable ID, or empty string if duplicate.
+    #[allow(clippy::too_many_arguments)]
+    fn save_file_with_preview(
+        &self,
+        path: String,
+        filename: String,
+        file_size: u64,
+        uti: String,
+        bookmark_data: Vec<u8>,
+        preview: FilePreviewSnapshot,
+        thumbnail: Option<Vec<u8>>,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Result<String, ClipKittyError>;
+
     /// Save multiple file items as a single grouped entry. Returns new item's stable ID, or empty string if duplicate.
     #[allow(clippy::too_many_arguments)]
     fn save_files(
@@ -780,6 +898,22 @@ pub trait ClipboardStoreApi: Send + Sync {
         file_sizes: Vec<u64>,
         utis: Vec<String>,
         bookmark_data_list: Vec<Vec<u8>>,
+        thumbnail: Option<Vec<u8>>,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Result<String, ClipKittyError>;
+
+    /// Save multiple file items as a single grouped entry with explicit per-file preview snapshots.
+    /// Returns new item's stable ID, or empty string if duplicate.
+    #[allow(clippy::too_many_arguments)]
+    fn save_files_with_previews(
+        &self,
+        paths: Vec<String>,
+        filenames: Vec<String>,
+        file_sizes: Vec<u64>,
+        utis: Vec<String>,
+        bookmark_data_list: Vec<Vec<u8>>,
+        preview_snapshots: Vec<FilePreviewSnapshot>,
         thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,

@@ -243,4 +243,51 @@ final class MultiFileTests: XCTestCase {
         XCTAssertEqual(files[0].bookmarkData, bookmark1, "First file bookmark should match")
         XCTAssertEqual(files[1].bookmarkData, bookmark2, "Second file bookmark should match")
     }
+
+    func testSaveFilesWithPreviewSnapshotsRoundtrip() throws {
+        let store = try makeStore()
+        let imagePreview = Data([0xFF, 0xD8, 0xFF])
+
+        let id = try store.saveFilesWithPreviews(
+            paths: ["/tmp/readme.md", "/tmp/screenshot.jpg", "/tmp/archive.zip"],
+            filenames: ["readme.md", "screenshot.jpg", "archive.zip"],
+            fileSizes: [64, 1024, 2048],
+            utis: ["net.daringfireball.markdown", "public.jpeg", "public.zip-archive"],
+            bookmarkDataList: [Data(), Data(), Data()],
+            previewSnapshots: [
+                .text(text: .truncated(sample: "hello")),
+                .image(previewData: imagePreview),
+                .unavailable(reason: .unsupportedType),
+            ],
+            thumbnail: nil,
+            sourceApp: nil,
+            sourceAppBundleId: nil
+        )
+
+        let items = try store.fetchByIds(itemIds: [id])
+        guard case let .file(_, files) = items[0].content else {
+            XCTFail("Expected File content")
+            return
+        }
+
+        guard case let .text(text) = files[0].preview,
+              case let .truncated(sample) = text
+        else {
+            XCTFail("Expected truncated text preview")
+            return
+        }
+        XCTAssertEqual(sample, "hello")
+
+        guard case let .image(previewData) = files[1].preview else {
+            XCTFail("Expected image preview")
+            return
+        }
+        XCTAssertEqual(previewData, imagePreview)
+
+        guard case let .unavailable(reason) = files[2].preview else {
+            XCTFail("Expected unavailable preview")
+            return
+        }
+        XCTAssertEqual(reason, .unsupportedType)
+    }
 }

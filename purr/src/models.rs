@@ -7,8 +7,8 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::interface::{
-    BaselineExcerpt, ClipboardContent, ClipboardItem, FileEntry, FileStatus, ItemIcon, ItemMetadata,
-    ListPresentationProfile,
+    BaselineExcerpt, ClipboardContent, ClipboardItem, FileEntry, FilePreviewSnapshot, FileStatus,
+    ItemIcon, ItemMetadata, ListPresentationProfile,
 };
 #[cfg(test)]
 use crate::interface::{IconType, LinkMetadataPayload, LinkMetadataState};
@@ -100,12 +100,39 @@ impl StoredItem {
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Self {
-        Self::new_files(
+        Self::new_file_with_preview(
+            path,
+            filename,
+            file_size,
+            uti,
+            bookmark_data,
+            FilePreviewSnapshot::not_captured(),
+            thumbnail,
+            source_app,
+            source_app_bundle_id,
+        )
+    }
+
+    /// Create a file item with an explicit preview snapshot.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_file_with_preview(
+        path: String,
+        filename: String,
+        file_size: u64,
+        uti: String,
+        bookmark_data: Vec<u8>,
+        preview: FilePreviewSnapshot,
+        thumbnail: Option<Vec<u8>>,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Self {
+        Self::new_files_with_previews(
             vec![path],
             vec![filename],
             vec![file_size],
             vec![uti],
             vec![bookmark_data],
+            vec![preview],
             thumbnail,
             source_app,
             source_app_bundle_id,
@@ -120,6 +147,36 @@ impl StoredItem {
         file_sizes: Vec<u64>,
         utis: Vec<String>,
         bookmark_data_list: Vec<Vec<u8>>,
+        thumbnail: Option<Vec<u8>>,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Self {
+        let preview_snapshots = paths
+            .iter()
+            .map(|_| FilePreviewSnapshot::not_captured())
+            .collect();
+        Self::new_files_with_previews(
+            paths,
+            filenames,
+            file_sizes,
+            utis,
+            bookmark_data_list,
+            preview_snapshots,
+            thumbnail,
+            source_app,
+            source_app_bundle_id,
+        )
+    }
+
+    /// Create a (possibly grouped) file item with explicit per-file previews.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_files_with_previews(
+        paths: Vec<String>,
+        filenames: Vec<String>,
+        file_sizes: Vec<u64>,
+        utis: Vec<String>,
+        bookmark_data_list: Vec<Vec<u8>>,
+        preview_snapshots: Vec<FilePreviewSnapshot>,
         thumbnail: Option<Vec<u8>>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
@@ -175,6 +232,10 @@ impl StoredItem {
                 uti: utis[i].clone(),
                 bookmark_data: bookmark_data_list[i].clone(),
                 file_status: FileStatus::Available,
+                preview: preview_snapshots
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(FilePreviewSnapshot::not_captured),
             })
             .collect();
 
@@ -263,7 +324,10 @@ impl StoredItem {
         }
     }
 
-    pub fn baseline_excerpt_for_profile(&self, profile: ListPresentationProfile) -> BaselineExcerpt {
+    pub fn baseline_excerpt_for_profile(
+        &self,
+        profile: ListPresentationProfile,
+    ) -> BaselineExcerpt {
         BaselineExcerpt {
             text: crate::search::generate_preview_for_profile(self.text_content(), profile),
         }

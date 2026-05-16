@@ -131,7 +131,9 @@ pub(crate) fn stored_item_from_snapshot(
     item_id: String,
     snapshot: &purr_sync::types::ItemSnapshotData,
 ) -> Result<crate::models::StoredItem, String> {
-    use crate::interface::{ClipboardContent, FileEntry, FileStatus, LinkMetadataState};
+    use crate::interface::{
+        ClipboardContent, FileEntry, FilePreviewSnapshot, FileStatus, LinkMetadataState,
+    };
 
     let content = match &snapshot.type_specific {
         purr_sync::types::TypeSpecificData::Text { value } => ClipboardContent::Text {
@@ -185,6 +187,7 @@ pub(crate) fn stored_item_from_snapshot(
                         uti: f.uti.clone(),
                         bookmark_data: base64_decode(&f.bookmark_data_base64)?,
                         file_status: FileStatus::from_database_str(&f.file_status),
+                        preview: FilePreviewSnapshot::not_captured(),
                     })
                 })
                 .collect::<Result<Vec<_>, String>>()?;

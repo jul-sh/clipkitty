@@ -1,6 +1,8 @@
 use crate::database::Database;
 use crate::indexer::Indexer;
-use crate::interface::{ClipKittyError, ItemTag, LinkMetadataPayload, LinkMetadataState};
+use crate::interface::{
+    ClipKittyError, FilePreviewSnapshot, ItemTag, LinkMetadataPayload, LinkMetadataState,
+};
 use crate::models::StoredItem;
 use chrono::Utc;
 
@@ -86,12 +88,42 @@ pub(crate) fn save_file(
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
 ) -> Result<InsertOutcome, ClipKittyError> {
-    let item = StoredItem::new_file(
+    save_file_with_preview(
+        db,
+        indexer,
         path,
         filename,
         file_size,
         uti,
         bookmark_data,
+        FilePreviewSnapshot::not_captured(),
+        thumbnail,
+        source_app,
+        source_app_bundle_id,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn save_file_with_preview(
+    db: &Database,
+    indexer: &Indexer,
+    path: String,
+    filename: String,
+    file_size: u64,
+    uti: String,
+    bookmark_data: Vec<u8>,
+    preview: FilePreviewSnapshot,
+    thumbnail: Option<Vec<u8>>,
+    source_app: Option<String>,
+    source_app_bundle_id: Option<String>,
+) -> Result<InsertOutcome, ClipKittyError> {
+    let item = StoredItem::new_file_with_preview(
+        path,
+        filename,
+        file_size,
+        uti,
+        bookmark_data,
+        preview,
         thumbnail,
         source_app,
         source_app_bundle_id,
@@ -112,12 +144,46 @@ pub(crate) fn save_files(
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
 ) -> Result<InsertOutcome, ClipKittyError> {
-    let item = StoredItem::new_files(
+    let preview_snapshots = paths
+        .iter()
+        .map(|_| FilePreviewSnapshot::not_captured())
+        .collect();
+    save_files_with_previews(
+        db,
+        indexer,
         paths,
         filenames,
         file_sizes,
         utis,
         bookmark_data_list,
+        preview_snapshots,
+        thumbnail,
+        source_app,
+        source_app_bundle_id,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn save_files_with_previews(
+    db: &Database,
+    indexer: &Indexer,
+    paths: Vec<String>,
+    filenames: Vec<String>,
+    file_sizes: Vec<u64>,
+    utis: Vec<String>,
+    bookmark_data_list: Vec<Vec<u8>>,
+    preview_snapshots: Vec<FilePreviewSnapshot>,
+    thumbnail: Option<Vec<u8>>,
+    source_app: Option<String>,
+    source_app_bundle_id: Option<String>,
+) -> Result<InsertOutcome, ClipKittyError> {
+    let item = StoredItem::new_files_with_previews(
+        paths,
+        filenames,
+        file_sizes,
+        utis,
+        bookmark_data_list,
+        preview_snapshots,
         thumbnail,
         source_app,
         source_app_bundle_id,

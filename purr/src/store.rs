@@ -3,9 +3,9 @@
 use crate::database::Database;
 use crate::indexer::{IndexInspection, Indexer};
 use crate::interface::{
-    ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag,
-    ListPresentationProfile, MatchedExcerptRequest, MatchedExcerptResolution, PreviewPayload,
-    SearchOutcome, SearchResult, StoreBootstrapPlan,
+    ClipKittyError, ClipboardItem, ClipboardStoreApi, FilePreviewSnapshot, ItemQueryFilter,
+    ItemTag, ListPresentationProfile, MatchedExcerptRequest, MatchedExcerptResolution,
+    PreviewPayload, SearchOutcome, SearchResult, StoreBootstrapPlan,
 };
 #[cfg(feature = "sync")]
 use crate::sync_bridge::{snapshot_from_stored_item_with_bookmark, RealSyncEmitter, SyncEmitter};
@@ -431,6 +431,39 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(outcome.ffi_id())
     }
 
+    fn save_files_with_previews(
+        &self,
+        paths: Vec<String>,
+        filenames: Vec<String>,
+        file_sizes: Vec<u64>,
+        utis: Vec<String>,
+        bookmark_data_list: Vec<Vec<u8>>,
+        preview_snapshots: Vec<FilePreviewSnapshot>,
+        thumbnail: Option<Vec<u8>>,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Result<String, ClipKittyError> {
+        if paths.is_empty() {
+            return Err(ClipKittyError::InvalidInput("No files provided".into()));
+        }
+        let outcome = save_service::save_files_with_previews(
+            &self.db,
+            &self.indexer,
+            paths,
+            filenames,
+            file_sizes,
+            utis,
+            bookmark_data_list,
+            preview_snapshots,
+            thumbnail,
+            source_app,
+            source_app_bundle_id,
+        )?;
+        #[cfg(feature = "sync")]
+        self.emit_for_insert(&outcome)?;
+        Ok(outcome.ffi_id())
+    }
+
     fn save_file(
         &self,
         path: String,
@@ -450,6 +483,36 @@ impl ClipboardStoreApi for ClipboardStore {
             file_size,
             uti,
             bookmark_data,
+            thumbnail,
+            source_app,
+            source_app_bundle_id,
+        )?;
+        #[cfg(feature = "sync")]
+        self.emit_for_insert(&outcome)?;
+        Ok(outcome.ffi_id())
+    }
+
+    fn save_file_with_preview(
+        &self,
+        path: String,
+        filename: String,
+        file_size: u64,
+        uti: String,
+        bookmark_data: Vec<u8>,
+        preview: FilePreviewSnapshot,
+        thumbnail: Option<Vec<u8>>,
+        source_app: Option<String>,
+        source_app_bundle_id: Option<String>,
+    ) -> Result<String, ClipKittyError> {
+        let outcome = save_service::save_file_with_preview(
+            &self.db,
+            &self.indexer,
+            path,
+            filename,
+            file_size,
+            uti,
+            bookmark_data,
+            preview,
             thumbnail,
             source_app,
             source_app_bundle_id,
