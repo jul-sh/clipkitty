@@ -377,7 +377,7 @@ const IOS_PLATFORM: PublishPlatform = PublishPlatform {
     pkg_name: "ClipKittyiOS.ipa",
     metadata_dir_name: "metadata",
     marketing_dir_name: "marketing-ios",
-    screenshot_device_types: &["IPHONE_61"],
+    screenshot_device_types: &["IPHONE_65"],
     preview_device_types: &[],
 };
 
@@ -1503,10 +1503,11 @@ fn wait_for_app_previews(
         }
 
         if started.elapsed() >= timeout {
-            return Err(anyhow!(
-                "timed out waiting for app preview processing: {}",
+            reporter.info(&format!(
+                "Warning: timed out waiting for app preview processing; ASC accepted the uploads but has not reported delivery states yet: {}",
                 pending.join("; ")
             ));
+            return Ok(());
         }
 
         reporter.info(&format!(
