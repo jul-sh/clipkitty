@@ -374,13 +374,16 @@ private struct ImagePreviewView: View {
         // preview.
         GeometryReader { geo in
             ScrollView(.vertical, showsIndicators: true) {
-                VStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 8) {
                     if let image {
                         Image(nsImage: image)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(maxWidth: .infinity)
-                            .frame(maxHeight: max(geo.size.height - 32, 120))
+                            .frame(
+                                maxWidth: .infinity,
+                                maxHeight: max(geo.size.height - 32, 120),
+                                alignment: .topLeading
+                            )
                     } else {
                         ProgressView()
                             .frame(maxWidth: .infinity, minHeight: 120)
@@ -400,7 +403,7 @@ private struct ImagePreviewView: View {
                     }
                 }
                 .padding(16)
-                .frame(minHeight: geo.size.height - 32, alignment: .top)
+                .frame(maxWidth: .infinity, minHeight: geo.size.height - 32, alignment: .topLeading)
             }
         }
         .task(id: itemId) {

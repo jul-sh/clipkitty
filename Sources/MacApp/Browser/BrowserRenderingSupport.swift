@@ -245,17 +245,19 @@ struct FilePreviewView: View {
         VStack(spacing: 0) {
             previewHeader(file: file)
             Divider()
-            ZStack {
+            ZStack(alignment: .topLeading) {
                 Color.black.opacity(0.04)
                 if let nsImage = NSImage(data: previewData) {
                     Image(nsImage: nsImage)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                         .padding(16)
                 } else {
                     fileList
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
