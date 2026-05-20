@@ -2860,10 +2860,10 @@ pub const VIDEO_ITEMS_PT_BR: &[DemoItem] = &[
 // ============================================================================
 
 const VIDEO_SCENES_RU: LocalizedVideoScenes = LocalizedVideoScenes {
-    welcome_query: "добро пожаловать clipkitty",
-    find_forever_query: "скопировал найдёшь когда угодно",
-    multiline_query: "многострочный предпросмотр",
-    secure_private_query: "приватность открытый исходный код",
+    welcome_query: "clipkitty",
+    find_forever_query: "найдёшь",
+    multiline_query: "предпросмотр",
+    secure_private_query: "приватность",
     fast_query: "быстро",
 };
 

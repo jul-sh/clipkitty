@@ -1042,7 +1042,7 @@ fn upload_screenshots(
     Ok(())
 }
 
-/// Poll the screenshot set for up to ~30s, returning `Ok(())` once it has
+/// Poll the screenshot set for up to ~3m, returning `Ok(())` once it has
 /// `expected` screenshots and all of them are `COMPLETE`. Returns
 /// `Err(reason)` if the deadline passes without that state being reached.
 ///
@@ -1058,7 +1058,7 @@ fn wait_for_screenshot_set_ready(
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
 ) -> Result<std::result::Result<(), String>> {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + Duration::from_secs(180);
     loop {
         let screenshots =
             list_screenshot_set(repo, localization_id, device_type, asc_env, reporter)?;
