@@ -381,7 +381,7 @@ struct GeneralSettingsView: View {
                     Image(systemName: "icloud").foregroundStyle(.secondary)
                 case .connecting:
                     ProgressView().controlSize(.small)
-                case .syncing:
+                case .syncing(_):
                     ProgressView().controlSize(.small)
                 case .synced:
                     Image(systemName: "checkmark.icloud").foregroundStyle(.green)
@@ -406,8 +406,8 @@ struct GeneralSettingsView: View {
                 return String(localized: "Waiting to sync")
             case .connecting:
                 return String(localized: "Connecting to iCloud…")
-            case .syncing:
-                return String(localized: "Syncing…")
+            case let .syncing(activity):
+                return syncStatusText(for: activity)
             case let .synced(lastSync):
                 let relative = Self.relativeDateFormatter.localizedString(for: lastSync, relativeTo: Date())
                 return String(localized: "Synced \(relative)")
@@ -417,6 +417,43 @@ struct GeneralSettingsView: View {
                 return String(localized: "iCloud temporarily unavailable")
             case .unavailable:
                 return String(localized: "iCloud not available")
+            }
+        }
+
+        private func syncStatusText(for activity: SyncEngine.SyncActivity) -> String {
+            switch activity {
+            case let .downloading(download):
+                switch download {
+                case .startingFullResync:
+                    return String(localized: "Downloading iCloud history…")
+                case let .incremental(records), let .fullResync(records):
+                    return String(localized: "Downloading \(records.events + records.snapshots) changes…")
+                }
+            case let .applying(download):
+                switch download {
+                case .startingFullResync:
+                    return String(localized: "Applying iCloud history…")
+                case let .incremental(records), let .fullResync(records):
+                    return String(localized: "Applying \(records.events + records.snapshots) changes…")
+                }
+            case let .rebuildingIndex(indexActivity):
+                switch indexActivity {
+                case .localMaintenance:
+                    return String(localized: "Rebuilding index…")
+                case .downloadedContent:
+                    return String(localized: "Indexing downloaded content…")
+                }
+            case .compacting:
+                return String(localized: "Compacting history…")
+            case let .uploading(upload):
+                switch upload {
+                case let .events(count):
+                    return String(localized: "Uploading \(count) changes…")
+                case let .snapshots(count):
+                    return String(localized: "Uploading \(count) checkpoints…")
+                }
+            case let .cleaningUp(count):
+                return String(localized: "Cleaning up \(count) cloud records…")
             }
         }
 

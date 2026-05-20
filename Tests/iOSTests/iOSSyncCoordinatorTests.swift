@@ -24,6 +24,10 @@
         func handleRemoteNotification() { handleRemoteNotificationCallCount += 1 }
     }
 
+    private let sampleSyncingStatus = SyncEngine.SyncStatus.syncing(
+        .applying(.incremental(records: .init(events: 2, snapshots: 1)))
+    )
+
     // MARK: - Tests
 
     @MainActor
@@ -127,8 +131,8 @@
                 onContentChanged: {},
                 engineFactory: spyFactory()
             )
-            latestEngine?.stubbedStatus = .syncing
-            XCTAssertEqual(coordinator.status, .syncing)
+            latestEngine?.stubbedStatus = sampleSyncingStatus
+            XCTAssertEqual(coordinator.status, sampleSyncingStatus)
         }
 
         // MARK: - setSyncEnabled transitions
@@ -197,7 +201,7 @@
                 onContentChanged: {},
                 engineFactory: spyFactory()
             )
-            latestEngine?.stubbedStatus = .syncing
+            latestEngine?.stubbedStatus = sampleSyncingStatus
 
             coordinator.setSyncEnabled(false)
 
