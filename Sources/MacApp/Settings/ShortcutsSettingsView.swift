@@ -20,35 +20,29 @@ struct ShortcutsSettingsView: View {
                     label: String(localized: "Open ClipKitty"),
                     target: .open,
                     hotKey: settings.hotKey,
+                    defaultHotKey: .default,
                     onRecorded: { hotKey in
                         settings.hotKey = hotKey
                         onHotKeyChanged(hotKey)
-                    }
-                )
-
-                if settings.hotKey != .default {
-                    Button(String(localized: "Reset to Default (⌥Space)")) {
+                    },
+                    onRestoreDefault: {
                         settings.hotKey = .default
                         onHotKeyChanged(.default)
                     }
-                    .font(.subheadline)
-                }
+                )
 
                 shortcutRow(
                     label: String(localized: "Delete Item"),
                     target: .delete,
                     hotKey: settings.deleteHotKey,
+                    defaultHotKey: .deleteDefault,
                     onRecorded: { hotKey in
                         settings.deleteHotKey = hotKey
-                    }
-                )
-
-                if settings.deleteHotKey != .deleteDefault {
-                    Button(String(localized: "Reset to Default (⌘-)")) {
+                    },
+                    onRestoreDefault: {
                         settings.deleteHotKey = .deleteDefault
                     }
-                    .font(.subheadline)
-                }
+                )
             }
         }
         .formStyle(.grouped)
@@ -58,7 +52,9 @@ struct ShortcutsSettingsView: View {
         label: String,
         target: HotKeyTarget,
         hotKey: HotKey,
-        onRecorded: @escaping (HotKey) -> Void
+        defaultHotKey: HotKey,
+        onRecorded: @escaping (HotKey) -> Void,
+        onRestoreDefault: @escaping () -> Void
     ) -> some View {
         let isRecording = recording == target
         let recorderState = Binding<HotKeyEditState>(
@@ -76,22 +72,39 @@ struct ShortcutsSettingsView: View {
         return HStack {
             Text(label)
             Spacer()
-            Button(action: { recording = target }) {
-                let labelText = isRecording
-                    ? String(localized: "Press keys...")
-                    : hotKey.displayString
-                let background = isRecording
-                    ? Color.accentColor.opacity(0.2)
-                    : Color.secondary.opacity(0.1)
+            HStack(spacing: 8) {
+                Button(action: { recording = target }) {
+                    let labelText = isRecording
+                        ? String(localized: "Press keys...")
+                        : hotKey.displayString
+                    let background = isRecording
+                        ? Color.accentColor.opacity(0.2)
+                        : Color.secondary.opacity(0.1)
 
-                Text(labelText)
-                    .frame(minWidth: 100)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(background)
-                    .cornerRadius(6)
+                    Text(labelText)
+                        .frame(minWidth: 100)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(background)
+                        .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+
+                if hotKey != defaultHotKey {
+                    Button {
+                        if recording == target { recording = nil }
+                        onRestoreDefault()
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                            .frame(width: 24, height: 24)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help(String(localized: "Restore Default"))
+                    .accessibilityLabel(String(localized: "Restore Default"))
+                }
             }
-            .buttonStyle(.plain)
         }
         .background(
             HotKeyRecorder(
