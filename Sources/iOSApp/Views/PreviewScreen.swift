@@ -271,7 +271,7 @@ struct PreviewScreen: View {
     // MARK: - Image Content
 
     private func imageContent(data: Data, description: String, highlights: [Utf16HighlightRange]) -> some View {
-        VStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
             DecodedImageView(
                 namespace: "preview-image",
                 itemId: itemId,
@@ -280,7 +280,7 @@ struct PreviewScreen: View {
                 ProgressView()
                     .frame(maxWidth: .infinity, minHeight: 180)
             }
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if !description.isEmpty {
                 if highlights.isEmpty {
