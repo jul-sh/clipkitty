@@ -101,29 +101,31 @@ struct BrowserPreviewPane: View {
                         return content.origin.isUserInitiated ? .trackHighlight : .autoScroll
                     }
                 }(),
-                onTextChange: { newText in
-                    viewModel.onTextEdit(newText, for: item.itemMetadata.itemId, originalText: item.content.textContent)
-                },
-                onEditingStateChange: { editing in
-                    viewModel.onEditingStateChange(editing, for: item.itemMetadata.itemId)
-                },
-                onCmdReturn: {
-                    viewModel.confirmSelection()
-                },
-                onCmdK: {
-                    guard case .inactive = viewModel.editSession else { return }
-                    viewModel.openActionsOverlay(highlight: .index(0))
-                },
-                onSave: {
-                    viewModel.commitCurrentEdit()
-                    focusSearchField()
-                },
-                onEscape: {
-                    if case let .dirty(dirtyId, _) = viewModel.editSession, dirtyId == item.itemMetadata.itemId {
-                        viewModel.discardCurrentEdit()
+                interaction: .editable(actions: TextPreviewEditingActions(
+                    onTextChange: { newText in
+                        viewModel.onTextEdit(newText, for: item.itemMetadata.itemId, originalText: item.content.textContent)
+                    },
+                    onEditingStateChange: { editing in
+                        viewModel.onEditingStateChange(editing, for: item.itemMetadata.itemId)
+                    },
+                    onCmdReturn: {
+                        viewModel.confirmSelection()
+                    },
+                    onCmdK: {
+                        guard case .inactive = viewModel.editSession else { return }
+                        viewModel.openActionsOverlay(highlight: .index(0))
+                    },
+                    onSave: {
+                        viewModel.commitCurrentEdit()
+                        focusSearchField()
+                    },
+                    onEscape: {
+                        if case let .dirty(dirtyId, _) = viewModel.editSession, dirtyId == item.itemMetadata.itemId {
+                            viewModel.discardCurrentEdit()
+                        }
+                        focusSearchField()
                     }
-                    focusSearchField()
-                }
+                ))
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topLeading) {
@@ -176,7 +178,11 @@ struct BrowserPreviewPane: View {
                 .padding(16)
             }
         case let .file(_, files):
-            FilePreviewView(files: files, searchQuery: viewModel.searchText)
+            FilePreviewView(
+                itemId: item.itemMetadata.itemId,
+                files: files,
+                searchQuery: viewModel.searchText
+            )
         }
     }
 

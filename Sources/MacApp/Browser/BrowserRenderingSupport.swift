@@ -121,7 +121,115 @@ extension View {
 
 // MARK: - File Preview
 
+@MainActor
+private enum FilePreviewIconCache {
+    private static let icons: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 256
+        return cache
+    }()
+
+    static func icon(forFile path: String) -> NSImage {
+        if let icon = icons.object(forKey: path as NSString) {
+            return icon
+        }
+        let icon = NSWorkspace.shared.icon(forFile: path)
+        icons.setObject(icon, forKey: path as NSString)
+        return icon
+    }
+}
+
+@MainActor
+private enum FileTextPreviewHighlightCache {
+    private static var highlightsByKey: [String: [Utf16HighlightRange]] = [:]
+
+    static func highlights(
+        forPreviewId previewId: String,
+        sample: String,
+        queryWords: [String]
+    ) -> [Utf16HighlightRange] {
+        guard !queryWords.isEmpty else { return [] }
+
+        let key = "\(previewId)|\(sample.utf16.count)|\(queryWords.joined(separator: "\u{1F}"))"
+        if let cached = highlightsByKey[key] {
+            return cached
+        }
+
+        let highlights = HighlightStyler.exactHighlights(in: sample, queryWords: queryWords)
+        highlightsByKey[key] = highlights
+        return highlights
+    }
+}
+
+private final class FilePreviewImageCache {
+    static let shared = FilePreviewImageCache()
+
+    private let cache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 32
+        return cache
+    }()
+
+    func image(forKey key: String) -> NSImage? {
+        cache.object(forKey: key as NSString)
+    }
+
+    func setImage(_ image: NSImage, forKey key: String) {
+        cache.setObject(image, forKey: key as NSString)
+    }
+}
+
+private struct FilePreviewImageView<Fallback: View>: View {
+    private enum DecodeState {
+        case loading
+        case decoded(NSImage)
+        case failed
+    }
+
+    let cacheKey: String
+    let previewData: Data
+    let fallback: () -> Fallback
+
+    @State private var decodeState: DecodeState = .loading
+
+    var body: some View {
+        Group {
+            switch decodeState {
+            case .loading:
+                ProgressView()
+            case let .decoded(image):
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(16)
+            case .failed:
+                fallback()
+            }
+        }
+        .task(id: cacheKey) {
+            if let cached = FilePreviewImageCache.shared.image(forKey: cacheKey) {
+                decodeState = .decoded(cached)
+                return
+            }
+
+            decodeState = .loading
+            let decoded = await Task.detached(priority: .userInitiated) { [previewData] in
+                NSImage(data: previewData)
+            }.value
+            guard !Task.isCancelled else { return }
+            guard let decoded else {
+                decodeState = .failed
+                return
+            }
+            FilePreviewImageCache.shared.setImage(decoded, forKey: cacheKey)
+            decodeState = .decoded(decoded)
+        }
+    }
+}
+
 struct FilePreviewView: View {
+    let itemId: String
     let files: [FileEntry]
     var searchQuery: String = ""
 
@@ -177,7 +285,7 @@ struct FilePreviewView: View {
 
     private func previewHeader(file: FileEntry) -> some View {
         HStack(spacing: 12) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: file.path))
+            Image(nsImage: FilePreviewIconCache.icon(forFile: file.path))
                 .resizable()
                 .frame(width: 32, height: 32)
 
@@ -204,26 +312,25 @@ struct FilePreviewView: View {
             sample = value
         }
 
+        let previewId = "\(itemId):\(file.path)"
+        let highlights = FileTextPreviewHighlightCache.highlights(
+            forPreviewId: previewId,
+            sample: sample,
+            queryWords: queryWords
+        )
+        let _ = { TextPreviewView.textCache[previewId] = sample }()
+
         return VStack(spacing: 0) {
             previewHeader(file: file)
             Divider()
-            ScrollView(.vertical, showsIndicators: true) {
-                if queryWords.isEmpty {
-                    Text(sample)
-                        .font(.custom(FontManager.mono, size: 12))
-                        .foregroundStyle(.primary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(16)
-                } else {
-                    Text(HighlightStyler.attributedText(sample, highlights: HighlightStyler.exactHighlights(in: sample, queryWords: queryWords)))
-                        .font(.custom(FontManager.mono, size: 12))
-                        .foregroundStyle(.primary)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(16)
-                }
-            }
+            TextPreviewView(
+                itemId: previewId,
+                fontName: FontManager.mono,
+                fontSize: 12,
+                highlights: highlights,
+                scrollBehavior: .autoScroll,
+                interaction: .readOnly
+            )
             switch text {
             case .complete:
                 EmptyView()
@@ -247,13 +354,10 @@ struct FilePreviewView: View {
             Divider()
             ZStack(alignment: .topLeading) {
                 Color.black.opacity(0.04)
-                if let nsImage = NSImage(data: previewData) {
-                    Image(nsImage: nsImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        .padding(16)
-                } else {
+                FilePreviewImageView(
+                    cacheKey: "\(itemId):\(file.path):\(previewData.count)",
+                    previewData: previewData
+                ) {
                     fileList
                 }
             }
@@ -264,7 +368,7 @@ struct FilePreviewView: View {
 
     private func fileRow(_ file: FileEntry) -> some View {
         HStack(spacing: 12) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: file.path))
+            Image(nsImage: FilePreviewIconCache.icon(forFile: file.path))
                 .resizable()
                 .frame(width: 40, height: 40)
 
@@ -449,6 +553,20 @@ class TextPreviewContent: Equatable {
     }
 }
 
+struct TextPreviewEditingActions {
+    let onTextChange: (String) -> Void
+    let onEditingStateChange: (Bool) -> Void
+    let onCmdReturn: () -> Void
+    let onCmdK: () -> Void
+    let onSave: () -> Void
+    let onEscape: () -> Void
+}
+
+enum TextPreviewInteraction {
+    case readOnly
+    case editable(actions: TextPreviewEditingActions)
+}
+
 struct TextPreviewView: NSViewRepresentable {
     private static let maxAutoScaleCharacters = 4096
     private static let maxAutoScaleLines = 14
@@ -466,14 +584,7 @@ struct TextPreviewView: NSViewRepresentable {
     /// - `.autoScroll`: Scroll to content once, no KVO recentering (search-driven changes)
     /// - `.trackHighlight`: Scroll to highlight with KVO recentering (user navigation)
     var scrollBehavior: PreviewScrollBehavior = .autoScroll
-
-    // Edit callbacks
-    var onTextChange: ((String) -> Void)?
-    var onEditingStateChange: ((Bool) -> Void)?
-    var onCmdReturn: (() -> Void)?
-    var onCmdK: (() -> Void)?
-    var onSave: (() -> Void)?
-    var onEscape: (() -> Void)?
+    var interaction: TextPreviewInteraction = .readOnly
 
     fileprivate enum ScrollTarget {
         case top
@@ -489,7 +600,6 @@ struct TextPreviewView: NSViewRepresentable {
         // NSTextView() defaults to TextKit 2 on macOS 12+.
         // IMPORTANT: never access .layoutManager — that silently downgrades to TextKit 1.
         let textView = PreviewTextView()
-        textView.isEditable = true
         textView.isSelectable = true
         textView.isRichText = false // Plain text for editing
         textView.allowsUndo = true
@@ -507,12 +617,7 @@ struct TextPreviewView: NSViewRepresentable {
 
         // Setup delegate for text changes
         textView.delegate = context.coordinator
-        textView.onCmdReturn = onCmdReturn
-        textView.onCmdK = onCmdK
-        textView.onSave = onSave
-        textView.onEscape = onEscape
-        installFocusHandler(on: textView, coordinator: context.coordinator)
-        context.coordinator.onTextChange = onTextChange
+        applyInteraction(to: textView, coordinator: context.coordinator)
 
         scrollView.documentView = textView
         return scrollView
@@ -585,7 +690,8 @@ struct TextPreviewView: NSViewRepresentable {
 
     private func installFocusHandler(
         on textView: PreviewTextView,
-        coordinator: Coordinator
+        coordinator: Coordinator,
+        onEditingStateChange: ((Bool) -> Void)?
     ) {
         textView.onFocusChange = { [weak coordinator] isFocused in
             onEditingStateChange?(isFocused)
@@ -602,6 +708,36 @@ struct TextPreviewView: NSViewRepresentable {
         }
     }
 
+    private func applyInteraction(
+        to textView: PreviewTextView,
+        coordinator: Coordinator
+    ) {
+        textView.isSelectable = true
+
+        switch interaction {
+        case .readOnly:
+            textView.isEditable = false
+            textView.onCmdReturn = nil
+            textView.onCmdK = nil
+            textView.onSave = nil
+            textView.onEscape = nil
+            coordinator.onTextChange = nil
+            installFocusHandler(on: textView, coordinator: coordinator, onEditingStateChange: nil)
+        case let .editable(actions):
+            textView.isEditable = true
+            textView.onCmdReturn = actions.onCmdReturn
+            textView.onCmdK = actions.onCmdK
+            textView.onSave = actions.onSave
+            textView.onEscape = actions.onEscape
+            coordinator.onTextChange = actions.onTextChange
+            installFocusHandler(
+                on: textView,
+                coordinator: coordinator,
+                onEditingStateChange: actions.onEditingStateChange
+            )
+        }
+    }
+
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? PreviewTextView else { return }
 
@@ -613,12 +749,7 @@ struct TextPreviewView: NSViewRepresentable {
             coordinator.prepareForDisplayedItemChange(to: itemId, in: textView)
         }
 
-        coordinator.onTextChange = onTextChange
-        textView.onCmdReturn = onCmdReturn
-        textView.onCmdK = onCmdK
-        textView.onSave = onSave
-        textView.onEscape = onEscape
-        installFocusHandler(on: textView, coordinator: coordinator)
+        applyInteraction(to: textView, coordinator: coordinator)
         textView.onViewportLayoutDidLayout = { [weak coordinator] observedTextView, textViewportLayoutController in
             guard let coordinator,
                   scrollBehavior != .manual,
