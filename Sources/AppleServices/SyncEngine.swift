@@ -189,6 +189,8 @@
                 self.events = events
                 self.snapshots = snapshots
             }
+
+            public var total: Int { events + snapshots }
         }
 
         public enum SyncDownloadActivity: Equatable, Sendable {
@@ -214,6 +216,45 @@
             case compacting
             case uploading(SyncUploadActivity)
             case cleaningUp(count: Int)
+
+            /// Single source of truth for the settings status line shown on both
+            /// iOS and macOS. Per-platform overlays may present different copy.
+            public var statusDescription: String {
+                switch self {
+                case let .downloading(download):
+                    switch download {
+                    case .startingFullResync:
+                        return String(localized: "Downloading iCloud history…")
+                    case let .incremental(records), let .fullResync(records):
+                        return String(localized: "Downloading \(records.total) changes…")
+                    }
+                case let .applying(download):
+                    switch download {
+                    case .startingFullResync:
+                        return String(localized: "Applying iCloud history…")
+                    case let .incremental(records), let .fullResync(records):
+                        return String(localized: "Applying \(records.total) changes…")
+                    }
+                case let .rebuildingIndex(indexActivity):
+                    switch indexActivity {
+                    case .localMaintenance:
+                        return String(localized: "Rebuilding index…")
+                    case .downloadedContent:
+                        return String(localized: "Indexing downloaded content…")
+                    }
+                case .compacting:
+                    return String(localized: "Compacting history…")
+                case let .uploading(upload):
+                    switch upload {
+                    case let .events(count):
+                        return String(localized: "Uploading \(count) changes…")
+                    case let .snapshots(count):
+                        return String(localized: "Uploading \(count) checkpoints…")
+                    }
+                case let .cleaningUp(count):
+                    return String(localized: "Cleaning up \(count) cloud records…")
+                }
+            }
         }
 
         private enum ActivityState: Equatable {

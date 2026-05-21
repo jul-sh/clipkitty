@@ -1,6 +1,8 @@
 # Swift / Xcode
-/Package.resolved  # Xcode-generated stray state; Swift package pins live in nix/lib.nix
-Tuist/Package.resolved  # Tuist-generated stray state; Swift package pins live in nix/lib.nix
+# Generated SwiftPM resolution; Swift package pins live in nix/lib.nix.
+# (Trailing inline comments are NOT supported by gitignore, so keep them on their own lines.)
+/Package.resolved
+Tuist/Package.resolved
 .build/
 .make/
 build/

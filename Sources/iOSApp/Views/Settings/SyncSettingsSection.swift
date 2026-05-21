@@ -52,7 +52,7 @@
                     Spacer()
                     ProgressView()
                         .controlSize(.small)
-                    Text(syncingStatusText(for: activity))
+                    Text(activity.statusDescription)
                         .foregroundStyle(.secondary)
                 }
             case let .synced(lastSync):
@@ -94,43 +94,6 @@
                 return .synced(lastSync: last)
             }
             return actual
-        }
-
-        private func syncingStatusText(for activity: SyncEngine.SyncActivity) -> String {
-            switch activity {
-            case let .downloading(download):
-                switch download {
-                case .startingFullResync:
-                    return String(localized: "Downloading iCloud history")
-                case let .incremental(records), let .fullResync(records):
-                    return String(localized: "Downloading \(records.events + records.snapshots) changes")
-                }
-            case let .applying(download):
-                switch download {
-                case .startingFullResync:
-                    return String(localized: "Applying iCloud history")
-                case let .incremental(records), let .fullResync(records):
-                    return String(localized: "Applying \(records.events + records.snapshots) changes")
-                }
-            case let .rebuildingIndex(indexActivity):
-                switch indexActivity {
-                case .localMaintenance:
-                    return String(localized: "Rebuilding index")
-                case .downloadedContent:
-                    return String(localized: "Indexing downloaded content")
-                }
-            case .compacting:
-                return String(localized: "Compacting history")
-            case let .uploading(upload):
-                switch upload {
-                case let .events(count):
-                    return String(localized: "Uploading \(count) changes")
-                case let .snapshots(count):
-                    return String(localized: "Uploading \(count) checkpoints")
-                }
-            case let .cleaningUp(count):
-                return String(localized: "Cleaning up \(count) cloud records")
-            }
         }
     }
 

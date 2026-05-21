@@ -26,13 +26,19 @@ struct RootView: View {
     @ViewBuilder
     private var syncActivityOverlay: some View {
         #if ENABLE_ICLOUD_SYNC
-            switch syncCoordinator.status {
-            case let .syncing(activity):
-                ICloudSyncActivityOverlay(activity: activity)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            case .idle, .connecting, .synced, .error, .temporarilyUnavailable, .unavailable:
-                EmptyView()
+            Group {
+                switch syncCoordinator.status {
+                case let .syncing(activity):
+                    ICloudSyncActivityOverlay(activity: activity)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                case .idle, .connecting, .synced, .error, .temporarilyUnavailable, .unavailable:
+                    EmptyView()
+                }
             }
+            // The status comes from an `@Observable` coordinator, so updates
+            // aren't wrapped in `withAnimation` at the mutation site; drive the
+            // overlay's transition from the status value itself.
+            .animation(.bouncy, value: syncCoordinator.status)
         #else
             EmptyView()
         #endif
@@ -144,7 +150,7 @@ struct RootView: View {
                     detail: String(localized: "ClipKitty is catching up")
                 )
             case let .incremental(records), let .fullResync(records):
-                let total = records.events + records.snapshots
+                let total = records.total
                 guard total >= Self.largeDownloadThreshold else { return .hidden }
                 return .visible(
                     title: String(localized: "\(verb) iCloud content"),
@@ -161,7 +167,7 @@ struct RootView: View {
                     detail: String(localized: "Preparing search")
                 )
             case let .incremental(records), let .fullResync(records):
-                let total = records.events + records.snapshots
+                let total = records.total
                 guard total >= Self.largeDownloadThreshold else { return .hidden }
                 return .visible(
                     title: String(localized: "Indexing downloaded content"),
