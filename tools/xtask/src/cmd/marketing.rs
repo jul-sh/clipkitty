@@ -345,8 +345,27 @@ fn run_screenshot_plan(
                 kind.tmp_prefix_stem()
             )),
         };
-        let status = run_screenshot_xcodebuild(repo, plan, &log_path, reporter)?;
-        let copied = copy_screenshots(repo, plan, locale, reporter)?;
+        // iOS/iPad simulator launches flake on CI, so retry a wedged capture
+        // after resetting the simulators. macOS captures run once.
+        let max_attempts = if plan.ios_device_kind().is_some() {
+            IOS_SCREENSHOT_MAX_ATTEMPTS
+        } else {
+            1
+        };
+        let mut status = run_screenshot_xcodebuild(repo, plan, &log_path, reporter)?;
+        let mut copied = copy_screenshots(repo, plan, locale, reporter)?;
+        let mut attempt = 1;
+        while !copied && attempt < max_attempts {
+            attempt += 1;
+            reporter.info(&format!(
+                "No {:?} screenshots for {locale_code} on attempt {}; resetting simulators and retrying ({attempt}/{max_attempts}).",
+                plan.platform,
+                attempt - 1
+            ));
+            reset_ios_simulators(reporter);
+            status = run_screenshot_xcodebuild(repo, plan, &log_path, reporter)?;
+            copied = copy_screenshots(repo, plan, locale, reporter)?;
+        }
         if !copied {
             let log_tail = fs::read_to_string(log_path.as_std_path())
                 .unwrap_or_else(|err| format!("(failed to read {log_path}: {err})"));
@@ -390,6 +409,36 @@ fn screenshot_db_name(locale: MarketingLocale, mode: ScreenshotDbMode) -> String
             }
         }
         ScreenshotDbMode::SharedEnglishDatabase => "SyntheticData.sqlite".to_string(),
+    }
+}
+
+/// Maximum number of times we run the screenshot xcodebuild for a single
+/// locale before giving up. CI runners intermittently wedge CoreSimulator
+/// (the app launch is denied with `RequestDenied` / "Cannot allocate
+/// memory" initializing the device set), which produces no screenshots even
+/// though the build itself is fine. Shutting the simulators down between
+/// attempts clears that state.
+const IOS_SCREENSHOT_MAX_ATTEMPTS: u32 = 3;
+
+/// Shut down all booted simulators so the next `xcodebuild test` boots a
+/// fresh device. Best-effort: a failure here is logged, not propagated,
+/// because it only matters as a recovery step before a retry.
+fn reset_ios_simulators(reporter: &Reporter) {
+    let result = Runner::new(reporter, "xcrun")
+        .args(["simctl", "shutdown", "all"])
+        .capture_stdout()
+        .capture_stderr()
+        .status();
+    match result {
+        Ok(status) if status.success() => {
+            reporter.info("Shut down booted simulators before retrying.");
+        }
+        Ok(status) => {
+            reporter.info(&format!("`simctl shutdown all` exited with {status}; continuing."));
+        }
+        Err(err) => {
+            reporter.info(&format!("`simctl shutdown all` failed to run: {err}; continuing."));
+        }
     }
 }
 
