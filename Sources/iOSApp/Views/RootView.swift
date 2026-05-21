@@ -87,46 +87,40 @@ struct RootView: View {
             switch content {
             case .hidden:
                 EmptyView()
-            case let .visible(title, detail):
+            case let .visible(icon, label):
+                // Mirror `toastOverlay`: a single-line glass capsule with a
+                // leading icon, `.subheadline.weight(.medium)` text, and a
+                // trailing affordance (here a spinner instead of an action).
                 GlassEffectContainer {
-                    HStack(spacing: 12) {
-                        Image(systemName: "icloud.and.arrow.down")
-                            .font(.headline)
+                    HStack(spacing: 10) {
+                        Image(systemName: icon)
+                            .font(.subheadline.weight(.medium))
                             .foregroundStyle(.tint)
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(title)
-                                .font(.subheadline.weight(.semibold))
-                            Text(detail)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.82)
-
-                        Spacer(minLength: 8)
+                        Text(label)
+                            .font(.subheadline.weight(.medium))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
 
                         ProgressView()
                             .controlSize(.small)
                     }
-                    .padding(.horizontal, 14)
-                    .frame(maxWidth: 420, minHeight: 52)
-                    .glassEffect(.regular, in: .rect(cornerRadius: 18))
+                    .padding(.horizontal, 16)
+                    .frame(height: 44)
+                    .glassEffect(.regular.interactive(), in: .capsule)
                 }
             }
         }
 
         private enum Content {
             case hidden
-            case visible(title: String, detail: String)
+            case visible(icon: String, label: String)
         }
 
         private var content: Content {
             switch activity {
-            case let .downloading(download):
-                return downloadContent(download, verb: String(localized: "Downloading"))
-            case let .applying(download):
-                return downloadContent(download, verb: String(localized: "Updating"))
+            case let .downloading(download), let .applying(download):
+                return downloadContent(download)
             case let .rebuildingIndex(indexActivity):
                 switch indexActivity {
                 case .localMaintenance:
@@ -139,22 +133,19 @@ struct RootView: View {
             }
         }
 
-        private func downloadContent(
-            _ download: SyncEngine.SyncDownloadActivity,
-            verb: String
-        ) -> Content {
+        private func downloadContent(_ download: SyncEngine.SyncDownloadActivity) -> Content {
             switch download {
             case .startingFullResync:
                 return .visible(
-                    title: String(localized: "Downloading iCloud history"),
-                    detail: String(localized: "ClipKitty is catching up")
+                    icon: "icloud.and.arrow.down",
+                    label: String(localized: "Catching up with iCloud")
                 )
             case let .incremental(records), let .fullResync(records):
                 let total = records.total
                 guard total >= Self.largeDownloadThreshold else { return .hidden }
                 return .visible(
-                    title: String(localized: "\(verb) iCloud content"),
-                    detail: String(localized: "\(total) changes")
+                    icon: "icloud.and.arrow.down",
+                    label: String(localized: "Syncing \(total) changes from iCloud")
                 )
             }
         }
@@ -163,15 +154,15 @@ struct RootView: View {
             switch download {
             case .startingFullResync:
                 return .visible(
-                    title: String(localized: "Indexing downloaded content"),
-                    detail: String(localized: "Preparing search")
+                    icon: "magnifyingglass",
+                    label: String(localized: "Preparing search")
                 )
             case let .incremental(records), let .fullResync(records):
                 let total = records.total
                 guard total >= Self.largeDownloadThreshold else { return .hidden }
                 return .visible(
-                    title: String(localized: "Indexing downloaded content"),
-                    detail: String(localized: "\(total) changes")
+                    icon: "magnifyingglass",
+                    label: String(localized: "Indexing \(total) changes")
                 )
             }
         }
