@@ -381,7 +381,7 @@ struct GeneralSettingsView: View {
                     Image(systemName: "icloud").foregroundStyle(.secondary)
                 case .connecting:
                     ProgressView().controlSize(.small)
-                case .syncing:
+                case .syncing(_):
                     ProgressView().controlSize(.small)
                 case .synced:
                     Image(systemName: "checkmark.icloud").foregroundStyle(.green)
@@ -406,8 +406,8 @@ struct GeneralSettingsView: View {
                 return String(localized: "Waiting to sync")
             case .connecting:
                 return String(localized: "Connecting to iCloud…")
-            case .syncing:
-                return String(localized: "Syncing…")
+            case let .syncing(activity):
+                return activity.statusDescription
             case let .synced(lastSync):
                 let relative = Self.relativeDateFormatter.localizedString(for: lastSync, relativeTo: Date())
                 return String(localized: "Synced \(relative)")

@@ -46,13 +46,13 @@
                     Text("Connecting")
                         .foregroundStyle(.secondary)
                 }
-            case .syncing:
+            case let .syncing(activity):
                 HStack {
                     Text("Status")
                     Spacer()
                     ProgressView()
                         .controlSize(.small)
-                    Text("Syncing")
+                    Text(activity.statusDescription)
                         .foregroundStyle(.secondary)
                 }
             case let .synced(lastSync):
@@ -87,7 +87,7 @@
         /// we synced very recently.
         private var displayStatus: SyncEngine.SyncStatus {
             let actual = syncCoordinator.status
-            if case .syncing = actual,
+            if case .syncing(_) = actual,
                let last = lastSyncDate,
                -last.timeIntervalSinceNow < Self.syncingSuppressionInterval
             {
