@@ -66,8 +66,9 @@ private struct QuickStartPageView: View {
     }
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 20) {
             Spacer()
+                .frame(height: 8)
 
             Image(nsImage: NSApp.applicationIconImage)
                 .resizable()
@@ -76,121 +77,131 @@ private struct QuickStartPageView: View {
             Text("Quick Start")
                 .font(.system(size: 22, weight: .bold))
 
-            VStack(spacing: 0) {
-                // Launch at Login row
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Start at Login")
-                            .font(.system(size: 13, weight: .medium))
-                        Text("Keep ClipKitty running in the background")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Toggle("", isOn: launchAtLoginBinding)
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-
-                Divider()
-                    .padding(.horizontal, 16)
-
-                // Hotkey row — clickable to record
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Activation Shortcut")
-                            .font(.system(size: 13, weight: .medium))
-                        Text("Open your clipboard history anytime")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button(action: { hotKeyState = .recording }) {
-                        let state = hotKeyState
-                        let labelAndBackground: (String, Color) = {
-                            switch state {
-                            case .recording:
-                                return (String(localized: "Press keys..."), Color.accentColor.opacity(0.2))
-                            case .idle:
-                                return (settings.hotKey.displayString, Color.secondary.opacity(0.1))
-                            }
-                        }()
-
-                        Text(labelAndBackground.0)
-                            .font(.system(size: 13, weight: .medium, design: .rounded))
-                            .frame(minWidth: 80)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(labelAndBackground.1, in: RoundedRectangle(cornerRadius: 6))
-                    }
-                    .buttonStyle(.plain)
-                }
-                .background(
-                    HotKeyRecorder(
-                        state: $hotKeyState,
-                        onHotKeyRecorded: { hotKey in
-                            settings.hotKey = hotKey
-                            onHotKeyChanged(hotKey)
-                        }
-                    )
-                )
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-
-                #if ENABLE_SYNTHETIC_PASTE
-                    Divider()
-                        .padding(.horizontal, 16)
-
-                    // Paste Items row
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Paste Items")
-                            .font(.system(size: 13, weight: .medium))
-                        PasteItemsSettingView()
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                #endif
-
-                #if ENABLE_ICLOUD_SYNC
-                    Divider()
-                        .padding(.horizontal, 16)
-
-                    // iCloud Sync row
+            VStack(spacing: 14) {
+                // Hotkey pane
+                VStack(spacing: 0) {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("iCloud Sync")
+                            Text("Activation Shortcut")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("Sync clipboard history across your devices")
+                            Text("Open your clipboard history anytime")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Toggle("", isOn: $settings.syncEnabled)
+                        Button(action: { hotKeyState = .recording }) {
+                            let state = hotKeyState
+                            let labelAndBackground: (String, Color) = {
+                                switch state {
+                                case .recording:
+                                    return (
+                                        String(localized: "Press keys..."),
+                                        Color.accentColor.opacity(0.2)
+                                    )
+                                case .idle:
+                                    return (settings.hotKey.displayString, Color.secondary.opacity(0.1))
+                                }
+                            }()
+
+                            Text(labelAndBackground.0)
+                                .font(.system(size: 13, weight: .medium, design: .rounded))
+                                .frame(minWidth: 80)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(labelAndBackground.1, in: RoundedRectangle(cornerRadius: 6))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .background(
+                        HotKeyRecorder(
+                            state: $hotKeyState,
+                            onHotKeyRecorded: { hotKey in
+                                settings.hotKey = hotKey
+                                onHotKeyChanged(hotKey)
+                            }
+                        )
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                }
+                .background(.ultraThickMaterial, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(.quaternary, lineWidth: 1)
+                )
+
+                HStack(spacing: 6) {
+                    Image(systemName: "menubar.arrow.up.rectangle")
+                        .font(.system(size: 12))
+                    Text("You can also click the menu bar icon to open ClipKitty.")
+                        .font(.system(size: 12))
+                }
+                .foregroundStyle(.secondary)
+
+                VStack(spacing: 0) {
+                    #if ENABLE_SYNTHETIC_PASTE
+                        // Paste Items row
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Paste Items")
+                                .font(.system(size: 13, weight: .medium))
+                            PasteItemsSettingView()
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+
+                        Divider()
+                            .padding(.horizontal, 16)
+                    #endif
+
+                    #if ENABLE_ICLOUD_SYNC
+                        // iCloud Sync row
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("iCloud Sync")
+                                    .font(.system(size: 13, weight: .medium))
+                                Text("Sync clipboard history across your devices")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $settings.syncEnabled)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+
+                        Divider()
+                            .padding(.horizontal, 16)
+                    #endif
+
+                    // Launch at Login row
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Start at Login")
+                                .font(.system(size: 13, weight: .medium))
+                            Text("Keep ClipKitty running in the background")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: launchAtLoginBinding)
                             .labelsHidden()
                             .toggleStyle(.switch)
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
-                #endif
+                }
+                .background(.ultraThickMaterial, in: RoundedRectangle(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .strokeBorder(.quaternary, lineWidth: 1)
+                )
             }
-            .background(.ultraThickMaterial, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(.quaternary, lineWidth: 1)
-            )
             .padding(.horizontal, 40)
 
-            HStack(spacing: 6) {
-                Image(systemName: "menubar.arrow.up.rectangle")
-                    .font(.system(size: 12))
-                Text("You can also click the menu bar icon to open ClipKitty.")
-                    .font(.system(size: 12))
-            }
-            .foregroundStyle(.secondary)
-
             Spacer()
+                .frame(height: 8)
 
             Button(action: onComplete) {
                 Text("Got It")
@@ -204,7 +215,14 @@ private struct QuickStartPageView: View {
             Spacer()
                 .frame(height: 24)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
+    }
+}
+
+private struct ContentHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
@@ -212,6 +230,7 @@ private struct WelcomeContentView: View {
     @State private var currentPage = 0
     let onHotKeyChanged: (HotKey) -> Void
     let onComplete: () -> Void
+    let onContentHeightChanged: (CGFloat) -> Void
 
     var body: some View {
         Group {
@@ -221,6 +240,7 @@ private struct WelcomeContentView: View {
                         currentPage = 1
                     }
                 })
+                .frame(minHeight: 480)
                 .transition(.asymmetric(
                     insertion: .move(edge: .trailing).combined(with: .opacity),
                     removal: .move(edge: .leading).combined(with: .opacity)
@@ -236,17 +256,37 @@ private struct WelcomeContentView: View {
                 ))
             }
         }
-        .frame(width: 500, height: 580)
+        .frame(width: 500)
         .background(
-            LinearGradient(
-                colors: [
-                    Color(nsColor: .controlBackgroundColor),
-                    Color(nsColor: .controlBackgroundColor).opacity(0.95),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+            GeometryReader { proxy in
+                Color.clear
+                    .preference(key: ContentHeightPreferenceKey.self, value: proxy.size.height)
+            }
         )
+        .onPreferenceChange(ContentHeightPreferenceKey.self) { height in
+            onContentHeightChanged(height)
+        }
+        .welcomeGlassBackground()
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func welcomeGlassBackground() -> some View {
+        let radius = systemWindowCornerRadius
+        if #available(macOS 26.0, *) {
+            if let radius {
+                glassEffect(.regular.interactive(), in: .rect(cornerRadius: radius, style: .continuous))
+            } else {
+                glassEffect(.regular.interactive(), in: .rect)
+            }
+        } else {
+            if let radius {
+                background(.regularMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+            } else {
+                background(.regularMaterial)
+            }
+        }
     }
 }
 
@@ -271,6 +311,9 @@ final class WelcomeWindowController {
             },
             onComplete: { [weak self] in
                 self?.complete()
+            },
+            onContentHeightChanged: { [weak self] height in
+                self?.updateWindowHeight(height)
             }
         )
 
@@ -314,5 +357,20 @@ final class WelcomeWindowController {
     private func complete() {
         onComplete?()
         close()
+    }
+
+    private func updateWindowHeight(_ contentHeight: CGFloat) {
+        guard let window, contentHeight > 0 else { return }
+        let targetHeight = ceil(contentHeight)
+        let currentFrame = window.frame
+        let currentContentHeight = window.contentRect(forFrameRect: currentFrame).height
+        guard abs(currentContentHeight - targetHeight) > 0.5 else { return }
+
+        let frameDelta = targetHeight - currentContentHeight
+        var newFrame = currentFrame
+        newFrame.size.height += frameDelta
+        // Keep the window visually anchored at its top edge as it grows/shrinks.
+        newFrame.origin.y -= frameDelta
+        window.setFrame(newFrame, display: true, animate: window.isVisible)
     }
 }
