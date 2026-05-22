@@ -217,6 +217,15 @@ pub(crate) fn archive_ios(
     fs::create_dir_all(archive_parent.as_std_path())?;
     remove_path(&archive_path)?;
 
+    // Archive into a dedicated, freshly-cleaned derived-data path rather than
+    // Xcode's shared global cache. Reusing a stale cache lets Xcode 26's
+    // incremental archiver treat the main app's link inputs as up to date and
+    // skip re-linking it; the resulting `.app` keeps its embedded extension and
+    // resources but loses its top-level Mach-O, and App Store Connect rejects
+    // the upload with "does not contain a bundle executable" (90207).
+    let derived_data = repo.join("DerivedData/ios-archive");
+    remove_path(&derived_data)?;
+
     reporter.info(&format!(
         "Archiving iOS {} ({}) → {archive_path}",
         request.version, request.build_number
@@ -229,8 +238,10 @@ pub(crate) fn archive_ios(
             "ClipKittyiOS-AppStore",
             "-destination",
             "generic/platform=iOS",
-            "-archivePath",
+            "-derivedDataPath",
         ])
+        .arg(derived_data.as_std_path())
+        .arg("-archivePath")
         .arg(archive_path.as_std_path())
         .arg(format!("MARKETING_VERSION={}", request.version))
         .arg(format!("CURRENT_PROJECT_VERSION={}", request.build_number))
