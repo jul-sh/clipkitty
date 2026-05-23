@@ -459,10 +459,43 @@ fn upload_binary(
     Ok(())
 }
 
+/// States that block creating a new App Store version. ASC silently refuses
+/// `versions create` while one of these is outstanding, surfacing a confusing
+/// "App in current state" error instead.
+///
+/// They split into two classes. *Rejected* states are back in our hands — the
+/// version isn't progressing anywhere on its own, so we recover automatically
+/// by canceling its open review submission (see `recover_rejected_version`).
+/// *In-flight* states are live in Apple's pipeline (queued, under review, or
+/// approved and awaiting release); canceling those is a real product decision,
+/// so we skip the publish and leave them for a human.
+fn blocker_class(state: &str) -> Option<BlockerClass> {
+    match state {
+        "DEVELOPER_REJECTED" | "REJECTED" | "METADATA_REJECTED" => Some(BlockerClass::Rejected),
+        "WAITING_FOR_REVIEW"
+        | "IN_REVIEW"
+        | "PENDING_DEVELOPER_RELEASE"
+        | "PENDING_APPLE_RELEASE"
+        | "PROCESSING_FOR_APP_STORE" => Some(BlockerClass::InFlight),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockerClass {
+    /// Rejected by us or Apple; recoverable by canceling the open submission.
+    Rejected,
+    /// Live in Apple's review/release pipeline; only a human should intervene.
+    InFlight,
+}
+
 /// Bail out early (before any binary upload or build work) if a prior App
-/// Store version is locked in a review state that would block creating a
-/// new version. ASC silently refuses `versions create` in those states with
-/// a confusing "App in current state" error otherwise.
+/// Store version is locked in a state that would block creating a new version.
+///
+/// For *rejected* versions this clears the blocker in place by canceling the
+/// open review submission, then returns `Ok` so the publish can proceed. For
+/// *in-flight* versions it returns a `VersionLockedError`, which `publish`
+/// turns into a friendly skip.
 fn check_no_blocking_version(
     repo: &RepoRoot,
     platform: PublishPlatform,
@@ -490,35 +523,153 @@ fn check_no_blocking_version(
             .get("attributes")
             .and_then(|a| a.get("appStoreState"))
             .and_then(Value::as_str);
-        let blocking = matches!(
-            state,
-            Some(
-                "WAITING_FOR_REVIEW"
-                    | "IN_REVIEW"
-                    | "PENDING_DEVELOPER_RELEASE"
-                    | "PENDING_APPLE_RELEASE"
-                    | "PROCESSING_FOR_APP_STORE"
-                    | "DEVELOPER_REJECTED"
-                    | "REJECTED"
-                    | "METADATA_REJECTED"
-            )
-        );
-        if blocking {
-            let v = entry
-                .get("attributes")
-                .and_then(|a| a.get("versionString"))
-                .and_then(Value::as_str)
-                .unwrap_or("?");
-            return Err(VersionLockedError {
-                version: v.to_string(),
-                state: state.unwrap_or("?").to_string(),
-                platform_label: platform.label,
-                requested_version: requested_version.to_string(),
+        let Some(class) = state.and_then(blocker_class) else {
+            continue;
+        };
+        let version = entry
+            .get("attributes")
+            .and_then(|a| a.get("versionString"))
+            .and_then(Value::as_str)
+            .unwrap_or("?");
+        match class {
+            BlockerClass::Rejected => {
+                reporter.info(&format!(
+                    "Found {} version {version} in state {} (rejected); clearing it to publish {requested_version}...",
+                    platform.label,
+                    state.unwrap_or("?"),
+                ));
+                recover_rejected_version(repo, platform, asc_env, reporter)?;
+                // The version is editable again (or will be recreated by
+                // `ensure_editable_version`); nothing else blocks us.
+                return Ok(());
             }
-            .into());
+            BlockerClass::InFlight => {
+                return Err(VersionLockedError {
+                    version: version.to_string(),
+                    state: state.unwrap_or("?").to_string(),
+                    platform_label: platform.label,
+                    requested_version: requested_version.to_string(),
+                }
+                .into());
+            }
         }
     }
     Ok(())
+}
+
+/// Cancel the open review submission for `platform`, releasing a rejected
+/// version back to `PREPARE_FOR_SUBMISSION` so a new build can be attached.
+///
+/// A rejected version still has a review submission attached on ASC's side;
+/// until it is canceled, `versions create`/`update` keeps failing. There is at
+/// most one open submission per app+platform, so we cancel every submission
+/// that isn't already in a terminal state.
+fn recover_rejected_version(
+    repo: &RepoRoot,
+    platform: PublishPlatform,
+    asc_env: &[(&str, &str)],
+    reporter: &Reporter,
+) -> Result<()> {
+    let submissions = asc_json(
+        repo,
+        &[
+            "review",
+            "submissions-list",
+            "--app",
+            platform.app_id,
+            "--platform",
+            platform.asc_platform,
+        ],
+        asc_env,
+        reporter,
+    )?;
+
+    // ASC marks a submission terminal once it is canceled or fully processed;
+    // those can't (and needn't) be canceled again.
+    const TERMINAL: &[&str] = &["COMPLETING", "COMPLETE", "CANCELING", "CANCELED"];
+
+    let mut canceled_any = false;
+    for submission in &submissions {
+        let state = submission
+            .get("attributes")
+            .and_then(|a| a.get("state"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if TERMINAL.contains(&state) {
+            continue;
+        }
+        let id = submission
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("review submission entry missing id"))?;
+        reporter.info(&format!(
+            "Canceling {} review submission {id} (state {state})...",
+            platform.label
+        ));
+        asc_command(
+            repo,
+            &["review", "submissions-cancel", "--id", id, "--confirm"],
+            asc_env,
+            reporter,
+        )
+        .with_context(|| format!("canceling review submission {id}"))?;
+        canceled_any = true;
+    }
+
+    if !canceled_any {
+        reporter.info(&format!(
+            "No open {} review submission to cancel; version should already be editable.",
+            platform.label
+        ));
+        return Ok(());
+    }
+
+    // Cancellation is asynchronous: the submission moves through CANCELING
+    // before the rejected version flips back to an editable state. Creating
+    // the new version too soon fails with "App in current state", so wait for
+    // the blocker to clear before returning to `ensure_editable_version`.
+    let deadline = Instant::now() + Duration::from_secs(180);
+    loop {
+        let still_blocked = asc_json(
+            repo,
+            &[
+                "versions",
+                "list",
+                "--app",
+                platform.app_id,
+                "--platform",
+                platform.asc_platform,
+                "--limit",
+                "5",
+            ],
+            asc_env,
+            reporter,
+        )?
+        .iter()
+        .any(|entry| {
+            entry
+                .get("attributes")
+                .and_then(|a| a.get("appStoreState"))
+                .and_then(Value::as_str)
+                .and_then(blocker_class)
+                .is_some()
+        });
+        if !still_blocked {
+            reporter.info(&format!(
+                "{} version is editable again after cancellation.",
+                platform.label
+            ));
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(anyhow!(
+                "{} version still blocked 180s after canceling its review submission; \
+                 ASC may need longer to process the cancellation. Re-run the publish.",
+                platform.label
+            ));
+        }
+        thread::sleep(Duration::from_secs(10));
+    }
 }
 
 #[derive(Debug)]
