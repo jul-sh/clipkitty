@@ -249,13 +249,23 @@ pub(crate) fn archive_ios(
         .sanitize_for_xcode()
         .run()?;
 
-    // Confirm the archive actually contains the main app's Mach-O before we
-    // hand it to the exporter. Xcode 26's incremental archiver has been seen to
-    // stage a `.app` with all its resources and embedded extension but no
-    // top-level executable; catching it here pins the blame on the archive
-    // (rather than the export) and fails before we waste an upload.
+    // Confirm the archive actually contains a *valid* Mach-O for the main app
+    // before we hand it to the exporter. Two distinct failures land here:
+    //   * Xcode 26's incremental archiver stages a `.app` with resources and
+    //     the embedded extension but no top-level executable.
+    //   * When the Metal toolchain fails to download (`error: no tool provided`,
+    //     status=255 — usually a transient FlakeHub/network auth failure) the
+    //     archive still "succeeds" but leaves a stale/invalid executable.
+    // Both make App Store Connect reject the upload with the cryptic "does not
+    // contain a bundle executable" (90207) ~a minute into the upload. A Mach-O
+    // check catches both and pins the blame on the archive, not the export.
     let archived_app = archive_path.join(format!("Products/Applications/{APP_NAME}iOS.app"));
-    verify_app_has_executable(&archived_app, &format!("{APP_NAME}iOS"), "archived app")?;
+    verify_app_has_executable(
+        reporter,
+        &archived_app,
+        &format!("{APP_NAME}iOS"),
+        "archived app",
+    )?;
 
     let export_app = export_dir.join(format!("{APP_NAME}iOS.app"));
     let _ = remove_path(&export_app);
@@ -284,14 +294,43 @@ pub(crate) fn archive_ios(
     Ok(())
 }
 
-/// Fail unless `<app>/<executable>` exists and is a non-empty file.
-fn verify_app_has_executable(app: &Utf8Path, executable: &str, label: &str) -> Result<()> {
+/// Fail unless `<app>/<executable>` exists and is a valid Mach-O binary. A
+/// merely non-empty file isn't enough: a broken archive can leave a stale or
+/// truncated placeholder that App Store Connect still rejects as having no
+/// bundle executable, so confirm `lipo` recognises it as a real Mach-O.
+fn verify_app_has_executable(
+    reporter: &Reporter,
+    app: &Utf8Path,
+    executable: &str,
+    label: &str,
+) -> Result<()> {
     let exe = app.join(executable);
     let meta = fs::metadata(exe.as_std_path())
         .with_context(|| format!("{label} {app} is missing its bundle executable {executable}"))?;
     if !meta.is_file() || meta.len() == 0 {
         return Err(anyhow!(
             "{label} {app}: bundle executable {executable} is not a non-empty file"
+        ));
+    }
+    // `lipo -info` exits non-zero and prints nothing useful for a non-Mach-O,
+    // so a clean run with an architecture line is our validity signal.
+    let info = Runner::new(reporter, "lipo")
+        .arg("-info")
+        .arg(exe.as_std_path())
+        .capture_stdout()
+        .capture_stderr()
+        .output()
+        .with_context(|| {
+            format!(
+                "{label} {app}: bundle executable {executable} is not a valid Mach-O \
+                 (the archive likely failed to link or compile it — check for \
+                 `error: no tool provided` / Metal toolchain download failures)"
+            )
+        })?;
+    if !info.stdout_string()?.contains("architecture") {
+        return Err(anyhow!(
+            "{label} {app}: `lipo -info` did not report an architecture for {executable}; \
+             the executable is not a usable Mach-O"
         ));
     }
     Ok(())
@@ -303,20 +342,29 @@ fn verify_ipa_has_executable(reporter: &Reporter, ipa: &Utf8Path, app: &str) -> 
     if !ipa.as_std_path().is_file() {
         return Err(anyhow!("expected exported IPA at {ipa}, but it is missing"));
     }
+    // `unzip -l` lists "<size> <date> <time> <name>" so we can confirm the
+    // executable entry is present *and* non-trivial in size.
     let listing = Runner::new(reporter, "unzip")
-        .arg("-Z1")
+        .arg("-l")
         .arg(ipa.as_std_path())
         .capture_stdout()
         .capture_stderr()
         .output()?;
     let entries = listing.stdout_string()?;
     let exe_entry = format!("Payload/{app}.app/{app}");
-    if entries.lines().any(|line| line.trim() == exe_entry) {
+    let executable_ok = entries.lines().any(|line| {
+        let mut fields = line.split_whitespace();
+        let size: Option<u64> = fields.next().and_then(|s| s.parse().ok());
+        let name = line.split_whitespace().last();
+        name == Some(exe_entry.as_str()) && size.is_some_and(|s| s > 0)
+    });
+    if executable_ok {
         return Ok(());
     }
     Err(anyhow!(
-        "exported IPA {ipa} does not contain bundle executable `{exe_entry}` \
-         (App Store Connect rejects this with error 90207). IPA contents:\n{entries}"
+        "exported IPA {ipa} does not contain a non-empty bundle executable \
+         `{exe_entry}` (App Store Connect rejects this with error 90207). \
+         IPA contents:\n{entries}"
     ))
 }
 

@@ -1006,6 +1006,26 @@ jobs:
       - name: Verify repo invariants
         run: make check
 
+      # Archiving runs appintentsmetadataprocessor, which needs the on-demand
+      # Metal toolchain. If its download fails (`error: no tool provided`,
+      # status=255 — a transient auth/network hiccup) the archive silently
+      # produces an app with an invalid executable that App Store Connect later
+      # rejects with 90207. Pre-fetch it here with retries so the archive runs
+      # against a present toolchain.
+      - name: Pre-download Metal toolchain
+        run: |
+          unset TOOLCHAINS
+          for attempt in 1 2 3; do
+            if xcodebuild -downloadComponent MetalToolchain; then
+              echo "Metal toolchain ready (attempt $attempt)."
+              exit 0
+            fi
+            echo "Metal toolchain download failed (attempt $attempt); retrying in 30s..."
+            sleep 30
+          done
+          echo "::error::Metal toolchain download failed after 3 attempts."
+          exit 1
+
       - name: Build and Publish iOS to App Store Connect
         run: |
           unset TOOLCHAINS
