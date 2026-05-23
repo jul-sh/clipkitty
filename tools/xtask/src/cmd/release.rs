@@ -344,6 +344,12 @@ fn publish(
     publish_result
 }
 
+/// How a version leaves review. `AFTER_APPROVAL` releases automatically the
+/// moment Apple approves it, with no manual "Release this version" step. The
+/// alternatives are `MANUAL` (wait for a human) and `SCHEDULED` (release on a
+/// chosen date).
+const RELEASE_TYPE: &str = "AFTER_APPROVAL";
+
 #[derive(Debug, Clone, Copy)]
 struct PublishPlatform {
     label: &'static str,
@@ -951,7 +957,7 @@ fn ensure_editable_version(
             "--version",
             version,
             "--release-type",
-            "MANUAL",
+            RELEASE_TYPE,
         ],
         asc_env,
         reporter,
@@ -988,7 +994,7 @@ fn update_app_store_version(
             "--version",
             version,
             "--release-type",
-            "MANUAL",
+            RELEASE_TYPE,
         ],
         asc_env,
         reporter,
