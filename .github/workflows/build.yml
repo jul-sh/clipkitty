@@ -12,6 +12,16 @@ permissions:
   id-token: write
   attestations: write
 
+# Authenticate Nix's GitHub fetches (flake inputs like rust-overlay are pulled
+# via api.github.com). Without a token these hit unauthenticated rate limits and
+# fail intermittently with "HTTP error 401", breaking jobs at "Install CI tools
+# from Nix" long before any real work. Set globally so every `nix` call inherits
+# it. The Determinate installer's separate FlakeHub login (`flakehub: false`) is
+# unaffected; its login warning is non-fatal.
+env:
+  NIX_CONFIG: |
+    access-tokens = github.com=${{ github.token }}
+
 jobs:
   rust-tests:
     name: Rust Tests
