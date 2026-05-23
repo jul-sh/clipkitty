@@ -10,8 +10,6 @@ A fast, private clipboard manager for macOS with deep history, forgiving search,
 
 ## Why ClipKitty
 
-Your clipboard should feel safe to use.
-
 Most clipboard managers work fine when your history is small. Then the thing you need is from last week, last month, or buried under a hundred other clips.
 
 ClipKitty is built around a simple idea: your clipboard can remember more without asking more from you.
