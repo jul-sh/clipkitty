@@ -883,6 +883,63 @@ fn attach_latest_valid_build(
     Ok(())
 }
 
+/// A pre-release version that ASC will let us edit in place (change its build,
+/// version string, and release type) but which blocks `versions create`.
+struct ReusableVersion {
+    id: String,
+    version_string: String,
+}
+
+/// Find an existing version that is rejected (back in our hands) so we can
+/// repurpose it instead of creating a new one. `recover_rejected_version` has
+/// already canceled any open review submission; whatever rejected version
+/// remains is editable in place. There is at most one such pre-release version
+/// per app+platform, so we return the first match.
+fn find_reusable_rejected_version(
+    repo: &RepoRoot,
+    platform: PublishPlatform,
+    asc_env: &[(&str, &str)],
+    reporter: &Reporter,
+) -> Result<Option<ReusableVersion>> {
+    let recent = asc_json(
+        repo,
+        &[
+            "versions",
+            "list",
+            "--app",
+            platform.app_id,
+            "--platform",
+            platform.asc_platform,
+            "--limit",
+            "5",
+        ],
+        asc_env,
+        reporter,
+    )?;
+    for entry in &recent {
+        let attrs = entry.get("attributes");
+        let state = attrs
+            .and_then(|a| a.get("appStoreState"))
+            .and_then(Value::as_str);
+        if state.and_then(blocker_class) != Some(BlockerClass::Rejected) {
+            continue;
+        }
+        let id = entry
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("version list entry missing id"))?;
+        let version_string = attrs
+            .and_then(|a| a.get("versionString"))
+            .and_then(Value::as_str)
+            .unwrap_or("?");
+        return Ok(Some(ReusableVersion {
+            id: id.to_string(),
+            version_string: version_string.to_string(),
+        }));
+    }
+    Ok(None)
+}
+
 fn ensure_editable_version(
     repo: &RepoRoot,
     platform: PublishPlatform,
@@ -938,6 +995,30 @@ fn ensure_editable_version(
             .with_context(|| {
                 format!(
                     "updating existing App Store version {existing_version} (ID: {existing_id}) to {version}"
+                )
+            })?;
+        reporter.info(&format!("Target version ID: {id}"));
+        return Ok(id);
+    }
+
+    // No PREPARE_FOR_SUBMISSION version exists. A version that is rejected but
+    // has no open review submission to cancel (e.g. DEVELOPER_REJECTED after
+    // the submission already processed) stays in that state — it is editable in
+    // ASC's UI but `versions create` refuses to add a *second* pre-release
+    // version while it occupies the editable slot ("App in current state").
+    // `recover_rejected_version` already tried to cancel its submission and
+    // found none, so reuse the version in place: point it at the new version
+    // string and release type instead of creating a fresh one.
+    if let Some(reusable) = find_reusable_rejected_version(repo, platform, asc_env, reporter)? {
+        reporter.info(&format!(
+            "Reusing rejected App Store version {} (ID: {}) for {version}...",
+            reusable.version_string, reusable.id
+        ));
+        let id = update_app_store_version(repo, &reusable.id, version, asc_env, reporter)
+            .with_context(|| {
+                format!(
+                    "reusing rejected App Store version {} (ID: {}) for {version}",
+                    reusable.version_string, reusable.id
                 )
             })?;
         reporter.info(&format!("Target version ID: {id}"));

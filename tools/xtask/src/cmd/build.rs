@@ -249,6 +249,19 @@ pub(crate) fn archive_ios(
         .sanitize_for_xcode()
         .run()?;
 
+    // Confirm the archive actually contains the main app's Mach-O before we
+    // hand it to the exporter. Xcode 26's incremental archiver has been seen to
+    // stage a `.app` with all its resources and embedded extension but no
+    // top-level executable; catching it here pins the blame on the archive
+    // (rather than the export) and fails before we waste an upload.
+    let archived_app = archive_path.join(format!("Products/Applications/{APP_NAME}iOS.app"));
+    verify_app_has_executable(&archived_app, &format!("{APP_NAME}iOS"), "archived app")?;
+
+    let export_app = export_dir.join(format!("{APP_NAME}iOS.app"));
+    let _ = remove_path(&export_app);
+    let exported_ipa = export_dir.join(format!("{APP_NAME}iOS.ipa"));
+    let _ = remove_path(&exported_ipa);
+
     reporter.info(&format!("Exporting iOS archive → {export_dir}"));
     Runner::new(reporter, "xcodebuild")
         .args(["-exportArchive", "-archivePath"])
@@ -261,8 +274,50 @@ pub(crate) fn archive_ios(
         .sanitize_for_xcode()
         .run()?;
 
+    // App Store Connect rejects an IPA whose `Payload/<app>` has no executable
+    // with the cryptic "does not contain a bundle executable" (90207), long
+    // after the upload starts. Verify the exported IPA up front so a broken
+    // export fails loudly here with a directory listing instead.
+    verify_ipa_has_executable(reporter, &exported_ipa, &format!("{APP_NAME}iOS"))?;
+
     reporter.success(&format!("Exported iOS archive to {export_dir}"));
     Ok(())
+}
+
+/// Fail unless `<app>/<executable>` exists and is a non-empty file.
+fn verify_app_has_executable(app: &Utf8Path, executable: &str, label: &str) -> Result<()> {
+    let exe = app.join(executable);
+    let meta = fs::metadata(exe.as_std_path())
+        .with_context(|| format!("{label} {app} is missing its bundle executable {executable}"))?;
+    if !meta.is_file() || meta.len() == 0 {
+        return Err(anyhow!(
+            "{label} {app}: bundle executable {executable} is not a non-empty file"
+        ));
+    }
+    Ok(())
+}
+
+/// Fail unless the exported IPA contains `Payload/<app>.app/<app>`. Lists the
+/// IPA contents on failure so CI shows exactly what the export produced.
+fn verify_ipa_has_executable(reporter: &Reporter, ipa: &Utf8Path, app: &str) -> Result<()> {
+    if !ipa.as_std_path().is_file() {
+        return Err(anyhow!("expected exported IPA at {ipa}, but it is missing"));
+    }
+    let listing = Runner::new(reporter, "unzip")
+        .arg("-Z1")
+        .arg(ipa.as_std_path())
+        .capture_stdout()
+        .capture_stderr()
+        .output()?;
+    let entries = listing.stdout_string()?;
+    let exe_entry = format!("Payload/{app}.app/{app}");
+    if entries.lines().any(|line| line.trim() == exe_entry) {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "exported IPA {ipa} does not contain bundle executable `{exe_entry}` \
+         (App Store Connect rejects this with error 90207). IPA contents:\n{entries}"
+    ))
 }
 
 fn remove_path(path: &Utf8Path) -> Result<()> {
