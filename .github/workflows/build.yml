@@ -633,14 +633,15 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
           # Authenticate git over HTTPS with the job token explicitly. The
-          # runner has no credential helper configured ("could not read
-          # Username for 'https://github.com': Device not configured"), and the
-          # checkout's persisted credentials don't reliably reach the worktree
-          # we create below, so push the token into the remote URL and an
-          # Authorization header that all git invocations in this step inherit.
+          # runner has no credential helper ("could not read Username ...
+          # Device not configured"), so put the token in the remote URL. The
+          # checkout step also injects a global http.<host>.extraheader
+          # Authorization; combined with a URL credential that yields
+          # `remote: Duplicate header: "Authorization"` (HTTP 400), so drop the
+          # inherited extraheader and let the URL alone carry the credential.
+          git config --local --unset-all "http.https://github.com/.extraheader" || true
+          git config --global --unset-all "http.https://github.com/.extraheader" || true
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-          git config --global "http.https://github.com/.extraheader" \
-            "AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64)"
 
           git fetch origin gh-pages || true
           rm -rf /tmp/gh-pages
