@@ -363,6 +363,15 @@ struct PublishPlatform {
     preview_device_types: &'static [&'static str],
 }
 
+impl PublishPlatform {
+    /// Whether the upload artifact is an `.ipa` (iOS) rather than a `.pkg`
+    /// (macOS). Drives the altool upload mode (`--upload-app` vs
+    /// `--upload-package`).
+    fn uses_ipa(&self) -> bool {
+        self.pkg_name.ends_with(".ipa")
+    }
+}
+
 const MACOS_PLATFORM: PublishPlatform = PublishPlatform {
     label: "macOS",
     app_id: "6759137247",
@@ -435,9 +444,24 @@ fn upload_binary(
     reporter: &Reporter,
 ) -> Result<()> {
     let artifact = repo.join(platform.pkg_name);
-    let output = Runner::new(reporter, "xcrun")
-        .args(["altool", "--upload-package"])
-        .arg(artifact.as_std_path())
+    // `--upload-package` treats the file as an opaque archive and relies on
+    // metadata baked into a signed `productbuild` package — correct for the
+    // macOS `.pkg`. An `.ipa` carries no such manifest, so feeding it to
+    // `--upload-package` makes App Store Connect reject it with the misleading
+    // 90207 "does not contain a bundle executable" even though the bundle is
+    // valid. `--upload-app -f` introspects the bundle for its identifiers,
+    // which is the right path for an IPA.
+    let mut runner = Runner::new(reporter, "xcrun");
+    runner = if platform.uses_ipa() {
+        runner
+            .args(["altool", "--upload-app", "-f"])
+            .arg(artifact.as_std_path())
+    } else {
+        runner
+            .args(["altool", "--upload-package"])
+            .arg(artifact.as_std_path())
+    };
+    let output = runner
         .arg("--type")
         .arg(platform.altool_type)
         .arg("--apiKey")
@@ -450,7 +474,10 @@ fn upload_binary(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{stdout}{stderr}");
-    let succeeded = combined.contains("UPLOAD SUCCEEDED");
+    // altool prints "UPLOAD SUCCEEDED" for --upload-package and
+    // "No errors uploading" for --upload-app; accept either.
+    let succeeded =
+        combined.contains("UPLOAD SUCCEEDED") || combined.contains("No errors uploading");
     let failed = !output.status.success()
         || combined.contains("Failed to upload package.")
         || combined.contains(" ERROR: ");
