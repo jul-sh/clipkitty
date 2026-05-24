@@ -327,12 +327,40 @@ fn verify_app_has_executable(
                  `error: no tool provided` / Metal toolchain download failures)"
             )
         })?;
-    if !info.stdout_string()?.contains("architecture") {
+    let lipo_info = info.stdout_string()?;
+    if !lipo_info.contains("architecture") {
         return Err(anyhow!(
             "{label} {app}: `lipo -info` did not report an architecture for {executable}; \
              the executable is not a usable Mach-O"
         ));
     }
+
+    // Log the executable's architecture and Mach-O platform. A binary built for
+    // the simulator or Mac Catalyst (rather than device iOS) is a known cause
+    // of App Store Connect's 90207, so surface the platform load command for
+    // diagnosis even when the file is otherwise a valid Mach-O.
+    let platform = Runner::new(reporter, "otool")
+        .args(["-l"])
+        .arg(exe.as_std_path())
+        .capture_stdout()
+        .capture_stderr()
+        .output()
+        .ok()
+        .and_then(|o| o.stdout_string().ok())
+        .map(|load_commands| {
+            load_commands
+                .lines()
+                .skip_while(|l| !l.contains("LC_BUILD_VERSION") && !l.contains("LC_VERSION_MIN"))
+                .take(6)
+                .map(str::trim)
+                .collect::<Vec<_>>()
+                .join(" | ")
+        })
+        .unwrap_or_default();
+    reporter.info(&format!(
+        "{label} executable {executable}: {} [{platform}]",
+        lipo_info.trim()
+    ));
     Ok(())
 }
 

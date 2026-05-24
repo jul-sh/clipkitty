@@ -468,6 +468,10 @@ fn upload_binary(
         .arg(asc_key_id)
         .arg("--apiIssuer")
         .arg(asc_issuer_id)
+        // `--verbose` makes altool log exactly which file inside the bundle it
+        // inspects for the executable, so a 90207 surfaces a concrete reason
+        // instead of the opaque "does not contain a bundle executable".
+        .arg("--verbose")
         .capture_stdout()
         .capture_stderr()
         .output_status()?;
