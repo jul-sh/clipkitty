@@ -405,9 +405,35 @@ fn verify_ipa_has_executable(reporter: &Reporter, ipa: &Utf8Path, app: &str) -> 
         ));
     }
 
-    // ASC keys off CFBundleExecutable; read it the same way rather than
-    // assuming the executable is named after the app.
-    let info_plist = app_bundle.join("Info.plist");
+    // Validate the main app bundle and every embedded bundle (app extensions
+    // under PlugIns, frameworks under Frameworks). App Store Connect rejects
+    // the *whole* upload with 90207 — naming the outer `<app>.app` — if any
+    // embedded bundle declares a CFBundleExecutable whose Mach-O is missing or
+    // misnamed, so a valid main executable is not sufficient.
+    verify_bundle_executable(reporter, &app_bundle, "exported IPA app")?;
+    for subdir in ["PlugIns", "Frameworks"] {
+        let dir = app_bundle.join(subdir);
+        if !dir.as_std_path().is_dir() {
+            continue;
+        }
+        for entry in fs::read_dir(dir.as_std_path()).with_context(|| format!("listing {dir}"))? {
+            let path = entry?.path();
+            let ext = path.extension().and_then(|e| e.to_str());
+            if !matches!(ext, Some("appex" | "framework")) {
+                continue;
+            }
+            let bundle = Utf8PathBuf::from_path_buf(path)
+                .map_err(|p| anyhow!("non-UTF-8 bundle path: {p:?}"))?;
+            verify_bundle_executable(reporter, &bundle, &format!("embedded {subdir} bundle"))?;
+        }
+    }
+    Ok(())
+}
+
+/// Read a bundle's `CFBundleExecutable` and confirm a valid Mach-O of that name
+/// exists — the lookup App Store Connect performs for every bundle it ships.
+fn verify_bundle_executable(reporter: &Reporter, bundle: &Utf8Path, label: &str) -> Result<()> {
+    let info_plist = bundle.join("Info.plist");
     let plutil = Runner::new(reporter, "plutil")
         .args(["-extract", "CFBundleExecutable", "raw", "-o", "-"])
         .arg(info_plist.as_std_path())
@@ -418,14 +444,13 @@ fn verify_ipa_has_executable(reporter: &Reporter, ipa: &Utf8Path, app: &str) -> 
     let executable_name = plutil.stdout_string()?.trim().to_string();
     if executable_name.is_empty() {
         return Err(anyhow!(
-            "exported IPA {ipa}: {app}.app/Info.plist has no CFBundleExecutable"
+            "{label} {bundle}: Info.plist has no CFBundleExecutable"
         ));
     }
     reporter.info(&format!(
-        "Exported IPA declares CFBundleExecutable = {executable_name}"
+        "{label} {bundle} declares CFBundleExecutable = {executable_name}"
     ));
-
-    verify_app_has_executable(reporter, &app_bundle, &executable_name, "exported IPA app")
+    verify_app_has_executable(reporter, bundle, &executable_name, label)
 }
 
 fn remove_path(path: &Utf8Path) -> Result<()> {
