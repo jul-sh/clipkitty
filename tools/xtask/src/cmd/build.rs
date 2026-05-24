@@ -336,36 +336,68 @@ fn verify_app_has_executable(
     Ok(())
 }
 
-/// Fail unless the exported IPA contains `Payload/<app>.app/<app>`. Lists the
-/// IPA contents on failure so CI shows exactly what the export produced.
+/// Fail unless the exported IPA's `Payload/<app>.app` contains a non-empty
+/// Mach-O executable whose name matches the bundle's `CFBundleExecutable`.
+///
+/// App Store Connect's 90207 ("does not contain a bundle executable") fires
+/// whenever it can't find a valid executable *named by* `CFBundleExecutable` —
+/// not only when the file is missing. A name/file mismatch, a zero-byte
+/// placeholder, or a non-Mach-O file all trigger it, so we unpack the IPA and
+/// check the bundle the way ASC does, logging what we find for diagnosis.
 fn verify_ipa_has_executable(reporter: &Reporter, ipa: &Utf8Path, app: &str) -> Result<()> {
     if !ipa.as_std_path().is_file() {
         return Err(anyhow!("expected exported IPA at {ipa}, but it is missing"));
     }
-    // `unzip -l` lists "<size> <date> <time> <name>" so we can confirm the
-    // executable entry is present *and* non-trivial in size.
-    let listing = Runner::new(reporter, "unzip")
-        .arg("-l")
+
+    let unpack = tempfile::tempdir().context("creating temp dir to inspect IPA")?;
+    let unpack_root =
+        Utf8Path::from_path(unpack.path()).ok_or_else(|| anyhow!("non-UTF-8 tempdir path"))?;
+    Runner::new(reporter, "unzip")
+        .arg("-q")
         .arg(ipa.as_std_path())
+        .arg("-d")
+        .arg(unpack_root.as_std_path())
+        .run()
+        .with_context(|| format!("unpacking exported IPA {ipa}"))?;
+
+    let app_bundle = unpack_root.join(format!("Payload/{app}.app"));
+    if !app_bundle.as_std_path().is_dir() {
+        let listing = Runner::new(reporter, "find")
+            .arg(unpack_root.as_std_path())
+            .arg("-maxdepth")
+            .arg("3")
+            .capture_stdout()
+            .output()
+            .ok();
+        return Err(anyhow!(
+            "exported IPA {ipa} has no `Payload/{app}.app` bundle. Contents:\n{}",
+            listing
+                .and_then(|o| o.stdout_string().ok())
+                .unwrap_or_default()
+        ));
+    }
+
+    // ASC keys off CFBundleExecutable; read it the same way rather than
+    // assuming the executable is named after the app.
+    let info_plist = app_bundle.join("Info.plist");
+    let plutil = Runner::new(reporter, "plutil")
+        .args(["-extract", "CFBundleExecutable", "raw", "-o", "-"])
+        .arg(info_plist.as_std_path())
         .capture_stdout()
         .capture_stderr()
-        .output()?;
-    let entries = listing.stdout_string()?;
-    let exe_entry = format!("Payload/{app}.app/{app}");
-    let executable_ok = entries.lines().any(|line| {
-        let mut fields = line.split_whitespace();
-        let size: Option<u64> = fields.next().and_then(|s| s.parse().ok());
-        let name = line.split_whitespace().last();
-        name == Some(exe_entry.as_str()) && size.is_some_and(|s| s > 0)
-    });
-    if executable_ok {
-        return Ok(());
+        .output()
+        .with_context(|| format!("reading CFBundleExecutable from {info_plist}"))?;
+    let executable_name = plutil.stdout_string()?.trim().to_string();
+    if executable_name.is_empty() {
+        return Err(anyhow!(
+            "exported IPA {ipa}: {app}.app/Info.plist has no CFBundleExecutable"
+        ));
     }
-    Err(anyhow!(
-        "exported IPA {ipa} does not contain a non-empty bundle executable \
-         `{exe_entry}` (App Store Connect rejects this with error 90207). \
-         IPA contents:\n{entries}"
-    ))
+    reporter.info(&format!(
+        "Exported IPA declares CFBundleExecutable = {executable_name}"
+    ));
+
+    verify_app_has_executable(reporter, &app_bundle, &executable_name, "exported IPA app")
 }
 
 fn remove_path(path: &Utf8Path) -> Result<()> {
