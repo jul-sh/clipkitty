@@ -840,6 +840,13 @@ let project = Project(
                 "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved.",
                 "UIBackgroundModes": ["remote-notification"],
                 "UILaunchScreen": ["UIColorName": ""],
+                // Tuist's default iOS Info.plist declares UIRequiredDevice
+                // capabilities = [armv7]. This is an arm64-only iOS 26 app, so
+                // its Mach-O has no armv7 slice and App Store Connect rejects
+                // the upload as an invalid bundle (surfaced as the misleading
+                // 90207 "does not contain a bundle executable"). Override with
+                // the capability the binary actually satisfies.
+                "UIRequiredDeviceCapabilities": ["arm64"],
             ]),
             sources: ["Sources/iOSApp/**"],
             resources: [
