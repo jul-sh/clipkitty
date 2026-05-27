@@ -15,7 +15,12 @@
       "blur-material" : null,
       "layers" : [
         {
-          "hidden" : false,
+          "glass" : true,
+          "image-name" : "Generated Image May 27, 2026 - 6_44PM-2.png",
+          "name" : "Generated Image May 27, 2026 - 6_44PM-2"
+        },
+        {
+          "hidden" : true,
           "image-name" : "cat.png",
           "name" : "cat",
           "position" : {
@@ -44,7 +49,7 @@
       "layers" : [
         {
           "glass" : true,
-          "hidden" : false,
+          "hidden" : true,
           "image-name" : "clipboard-2.png",
           "name" : "clipboard-2",
           "position" : {
