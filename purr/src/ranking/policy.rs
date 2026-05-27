@@ -49,9 +49,9 @@ pub enum RecencyBucket {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub struct QualityDetail {
     pub prefix_preference: PrefixPreferenceBand,
-    pub match_class: MatchClassBand,
     pub coverage: CoverageBand,
     pub phrase_shape: PhraseShapeBand,
+    pub match_class: MatchClassBand,
 }
 
 /// Prefix preference state carried from the `^query` mode.
@@ -179,7 +179,8 @@ pub(super) fn compute_quality_tier(
     } else {
         ((words_matched_weight as u32) * 100 / total_query_weight as u32) as u8
     };
-    let dense_forward = stats.in_sequence && stats.span <= stats.matched_count + 1;
+    let dense_forward =
+        stats.matched_count >= 2 && stats.in_sequence && stats.span <= stats.matched_count + 1;
     let compact_full_match =
         stats.all_matched && stats.in_sequence && stats.span <= stats.matched_count * 2;
 
@@ -207,9 +208,9 @@ pub(super) fn compute_quality_detail(
 ) -> QualityDetail {
     QualityDetail {
         prefix_preference: compute_prefix_preference_band(prefix_preference_score),
-        match_class: compute_match_class_band(match_class_score),
         coverage: compute_coverage_band(total_query_weight, words_matched_weight),
         phrase_shape: compute_phrase_shape_band(exactness, span_stats),
+        match_class: compute_match_class_band(match_class_score),
     }
 }
 
@@ -258,14 +259,21 @@ fn compute_phrase_shape_band(
     exactness: ExactnessSignals,
     span_stats: Option<MatchSpanStats>,
 ) -> PhraseShapeBand {
+    let matched_count = span_stats.map_or(0, |stats| stats.matched_count);
     match exactness.band() {
         ExactnessBand::ContentPrefix => return PhraseShapeBand::ContentPrefix,
-        ExactnessBand::AnchoredSequence => return PhraseShapeBand::AnchoredSequence,
-        ExactnessBand::QuerySubstring => return PhraseShapeBand::QuerySubstring,
+        ExactnessBand::AnchoredSequence if matched_count >= 2 => {
+            return PhraseShapeBand::AnchoredSequence;
+        }
+        ExactnessBand::QuerySubstring if matched_count >= 2 => {
+            return PhraseShapeBand::QuerySubstring;
+        }
         ExactnessBand::FuzzyOnly
         | ExactnessBand::MixedZeroCost
         | ExactnessBand::AllZeroCost
-        | ExactnessBand::AllExact => {}
+        | ExactnessBand::AllExact
+        | ExactnessBand::AnchoredSequence
+        | ExactnessBand::QuerySubstring => {}
     }
 
     let Some(stats) = span_stats else {

@@ -2457,6 +2457,56 @@ mod tests {
     }
 
     #[test]
+    fn test_exact_query_phrase_beats_scattered_repeated_terms() {
+        let now = 1700000000i64;
+        let long_scattered = r###"#!/usr/bin/env python3
+"""Reproducible offline evaluation of strategy recovery.
+
+Measures how well a learned dictionary's atoms recover the ground-truth
+attack strategies. Two ground-truth definitions are supported:
+
+  centroid  (primary, fully offline, deterministic)
+      Each strategy is the L2-normalized mean of its labeled member-skill
+      embeddings. Labels come from the `strategy` field of the prepared
+      attacks, joined to skills via example_id. No API calls.
+
+  seed      (cross-check, needs Gemini API)
+      Each strategy is the embedding of its "<name>: <description>" text
+      from the 27-strategies JSON. Matches the original report methodology.
+
+Recovery for a strategy = max cosine similarity from its ground-truth vector
+to any learned atom. We report coverage at thresholds, mean/min similarity,
+how many distinct strategies are the best match for >=1 atom (unique mapped),
+and redundancy (atoms per uniquely-mapped strategy).
+
+    # Deflated (discriminative) space: project out the shared global mean
+    # direction, computed from the run's own skill embeddings.
+    mean_dir = X.mean(axis=0)
+    centroids_def = deflate(centroids, mean_dir)
+    atoms_def = deflate(atoms, mean_dir)
+
+    # sims[i, j] = cosine(strategy_i, atom_j)
+    best_per_strategy = sims.max(axis=1)  # recovery of each strategy
+    best_strategy_per_atom = sims.argmax(axis=0)  # which strategy each atom is closest to
+"""###;
+        let exact_phrase = r###"learning optimizes all the atoms freely. With k=50, you let the algorithm pick all 50 atoms to minimize
+  reconstruction error however it wants.
+
+  Your colleague instead"###;
+
+        let scattered_score = score(long_scattered, &["the", "atom"], true, None, now, now);
+        let exact_phrase_score = score(exact_phrase, &["the", "atom"], true, None, now, now);
+
+        assert_eq!(scattered_score.quality_tier, QualityTier::Basic);
+        assert_eq!(exact_phrase_score.quality_tier, QualityTier::Dense);
+        assert!(
+            exact_phrase_score > scattered_score,
+            "phrase-like 'the atom' match should beat scattered/repeated atom mentions; \
+             phrase={exact_phrase_score:?} scattered={scattered_score:?}"
+        );
+    }
+
+    #[test]
     fn test_proximity_inversion_penalty() {
         // Forward order: distance = 2 - 0 = 2
         let forward = vec![wm_exact("hello", 0), wm_exact("world", 2)];
