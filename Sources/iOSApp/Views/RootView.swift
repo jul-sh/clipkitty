@@ -12,67 +12,87 @@ struct RootView: View {
 
     var body: some View {
         HomeFeedView()
-            .overlay(alignment: .top) {
-                syncActivityOverlay
-                    .padding(.top, 12)
-                    .padding(.horizontal, 18)
-            }
             .overlay(alignment: .bottom) {
-                toastOverlay
+                statusOverlay
                     .padding(.bottom, 80)
             }
     }
 
+    // A single bottom slot shared by the transient toast and the sync
+    // activity capsule. A toast takes precedence while it's showing; when
+    // there's no toast, the sync activity capsule occupies the slot. Both
+    // ride the same `.move(edge: .bottom)` transition so they swap in place.
     @ViewBuilder
-    private var syncActivityOverlay: some View {
+    private var statusOverlay: some View {
+        if let message = appState.toast.message {
+            toastCapsule(message)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else {
+            syncActivityCapsule
+        }
+    }
+
+    @ViewBuilder
+    private func toastCapsule(_ message: ToastMessage) -> some View {
+        StatusCapsule {
+            Image(systemName: message.iconSystemName)
+                .font(.subheadline.weight(.medium))
+            Text(message.text)
+                .font(.subheadline.weight(.medium))
+
+            if let actionTitle = message.actionTitle, let action = appState.toast.action {
+                Button {
+                    action()
+                    withAnimation(.bouncy) {
+                        appState.toast = .init()
+                    }
+                } label: {
+                    Text(actionTitle)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.tint)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var syncActivityCapsule: some View {
         #if ENABLE_ICLOUD_SYNC
             Group {
                 switch syncCoordinator.status {
                 case let .syncing(activity):
                     ICloudSyncActivityOverlay(activity: activity)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 case .idle, .connecting, .synced, .error, .temporarilyUnavailable, .unavailable:
                     EmptyView()
                 }
             }
             // The status comes from an `@Observable` coordinator, so updates
             // aren't wrapped in `withAnimation` at the mutation site; drive the
-            // overlay's transition from the status value itself.
+            // capsule's transition from the status value itself.
             .animation(.bouncy, value: syncCoordinator.status)
         #else
             EmptyView()
         #endif
     }
+}
 
-    @ViewBuilder
-    private var toastOverlay: some View {
-        if let message = appState.toast.message {
-            GlassEffectContainer {
-                HStack(spacing: 10) {
-                    Image(systemName: message.iconSystemName)
-                        .font(.subheadline.weight(.medium))
-                    Text(message.text)
-                        .font(.subheadline.weight(.medium))
+// The shared bottom-slot capsule: a single-line glass capsule with a leading
+// icon, `.subheadline.weight(.medium)` content, and an optional trailing
+// affordance. Used by both the toast and the sync activity overlay so they
+// share one presentation.
+struct StatusCapsule<Content: View>: View {
+    @ViewBuilder let content: Content
 
-                    if let actionTitle = message.actionTitle, let action = appState.toast.action {
-                        Button {
-                            action()
-                            withAnimation(.bouncy) {
-                                appState.toast = .init()
-                            }
-                        } label: {
-                            Text(actionTitle)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.tint)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .frame(height: 44)
-                .glassEffect(.regular.interactive(), in: .capsule)
+    var body: some View {
+        GlassEffectContainer {
+            HStack(spacing: 10) {
+                content
             }
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .padding(.horizontal, 16)
+            .frame(height: 44)
+            .glassEffect(.regular.interactive(), in: .capsule)
         }
     }
 }
@@ -88,26 +108,18 @@ struct RootView: View {
             case .hidden:
                 EmptyView()
             case let .visible(icon, label):
-                // Mirror `toastOverlay`: a single-line glass capsule with a
-                // leading icon, `.subheadline.weight(.medium)` text, and a
-                // trailing affordance (here a spinner instead of an action).
-                GlassEffectContainer {
-                    HStack(spacing: 10) {
-                        Image(systemName: icon)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.tint)
+                StatusCapsule {
+                    Image(systemName: icon)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.tint)
 
-                        Text(label)
-                            .font(.subheadline.weight(.medium))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.85)
+                    Text(label)
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
 
-                        ProgressView()
-                            .controlSize(.small)
-                    }
-                    .padding(.horizontal, 16)
-                    .frame(height: 44)
-                    .glassEffect(.regular.interactive(), in: .capsule)
+                    ProgressView()
+                        .controlSize(.small)
                 }
             }
         }
