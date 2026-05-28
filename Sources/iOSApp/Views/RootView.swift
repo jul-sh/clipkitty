@@ -16,7 +16,7 @@ struct RootView: View {
             .overlay(alignment: .bottom) {
                 if let item = activeSnackbar {
                     SnackbarOverlay(item: item) {
-                        if case let .notification(.actionable) = item, let action = appState.toast.action {
+                        if case .notification(.actionable) = item, let action = appState.toast.action {
                             action()
                             withAnimation(.bouncy) {
                                 appState.toast = .init()
