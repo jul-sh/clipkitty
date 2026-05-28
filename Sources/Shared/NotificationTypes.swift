@@ -12,8 +12,6 @@ public enum InfoKind: Equatable {
     case rebuildingIndex
     case catchingUpWithCloud
     case syncingCloudChanges(count: Int)
-    case preparingSearch
-    case indexingCloudChanges(count: Int)
 
     public var message: String {
         switch self {
@@ -23,10 +21,6 @@ public enum InfoKind: Equatable {
             return String(localized: "Catching up with iCloud")
         case let .syncingCloudChanges(count):
             return String(localized: "Syncing \(count) changes from iCloud")
-        case .preparingSearch:
-            return String(localized: "Preparing search")
-        case let .indexingCloudChanges(count):
-            return String(localized: "Indexing \(count) changes")
         }
     }
 
@@ -39,8 +33,6 @@ public enum InfoKind: Equatable {
             return nil
         case .catchingUpWithCloud, .syncingCloudChanges:
             return "icloud.and.arrow.down"
-        case .preparingSearch, .indexingCloudChanges:
-            return "magnifyingglass"
         }
     }
 }

@@ -76,7 +76,9 @@ struct RootView: View {
                 case .localMaintenance:
                     return nil
                 case let .downloadedContent(download):
-                    return infoKindForIndex(download)
+                    // Indexing downloaded content reads to the user as the
+                    // tail end of the same iCloud sync; reuse the same copy.
+                    return infoKindForDownload(download)
                 }
             case .compacting, .uploading, .cleaningUp:
                 return nil
@@ -91,17 +93,6 @@ struct RootView: View {
                 let total = records.total
                 guard total >= largeDownloadThreshold else { return nil }
                 return .syncingCloudChanges(count: total)
-            }
-        }
-
-        private static func infoKindForIndex(_ download: SyncEngine.SyncDownloadActivity) -> InfoKind? {
-            switch download {
-            case .startingFullResync:
-                return .preparingSearch
-            case let .incremental(records), let .fullResync(records):
-                let total = records.total
-                guard total >= largeDownloadThreshold else { return nil }
-                return .indexingCloudChanges(count: total)
             }
         }
     #endif
