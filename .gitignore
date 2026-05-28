@@ -106,3 +106,6 @@ tasks/
 
 # Claude architect state
 .claude-architect/
+
+# Local image generation output
+generated/
