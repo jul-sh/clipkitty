@@ -545,7 +545,15 @@ impl ClipboardStoreApi for ClipboardStore {
     fn update_timestamp(&self, item_id: String) -> Result<(), ClipKittyError> {
         let row_id = self.require_row_id(&item_id)?;
         #[allow(unused_variables)]
-        let timestamp_unix = save_service::update_timestamp(&self.db, row_id)?;
+        let timestamp_unix = match save_service::update_timestamp(&self.db, &self.indexer, row_id)?
+        {
+            save_service::TouchOutcome::Indexed { timestamp_unix } => timestamp_unix,
+            save_service::TouchOutcome::IndexFailed { timestamp_unix } => {
+                #[cfg(feature = "sync")]
+                let _ = self.sync_emitter.set_index_dirty();
+                timestamp_unix
+            }
+        };
 
         #[cfg(feature = "sync")]
         self.sync_emitter
@@ -1337,6 +1345,23 @@ impl SearchOperation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::StoredItem;
+
+    fn insert_indexed_text_with_timestamp(
+        store: &ClipboardStore,
+        content: &str,
+        timestamp_unix: i64,
+    ) -> StoredItem {
+        let mut item = StoredItem::new_text(content.to_string(), None, None);
+        item.timestamp_unix = timestamp_unix;
+        let row_id = store.db.insert_item(&item).unwrap();
+        item.id = Some(row_id);
+        store
+            .indexer
+            .add_document(&item.item_id, item.content.text_content(), timestamp_unix)
+            .unwrap();
+        item
+    }
 
     #[test]
     fn test_round_trip_save_and_fetch() {
@@ -1356,5 +1381,34 @@ mod tests {
 
         let dup = store.save_text("hello world".into(), None, None).unwrap();
         assert!(dup.is_empty());
+    }
+
+    #[tokio::test]
+    async fn update_timestamp_refreshes_search_ranking_timestamp() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        let first = insert_indexed_text_with_timestamp(&store, "this is a test 1", now - 10);
+        let second = insert_indexed_text_with_timestamp(&store, "this is a test 2", now - 5);
+        store.indexer.commit().unwrap();
+
+        let initial = store
+            .search(
+                "this is a test".to_string(),
+                ListPresentationProfile::CompactRow,
+            )
+            .await
+            .unwrap();
+        assert_eq!(initial.matches[0].item_metadata.item_id, second.item_id);
+
+        store.update_timestamp(first.item_id.clone()).unwrap();
+
+        let after_touch = store
+            .search(
+                "this is a test".to_string(),
+                ListPresentationProfile::CompactRow,
+            )
+            .await
+            .unwrap();
+        assert_eq!(after_touch.matches[0].item_metadata.item_id, first.item_id);
     }
 }
