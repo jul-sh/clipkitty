@@ -144,9 +144,14 @@ pub(crate) fn run_pre_commit_command(
     reporter: &Reporter,
 ) -> Result<()> {
     if dry_run {
-        reporter.info("[dry-run] would run the pre-commit formatting/lint/localization checks");
+        reporter.info(
+            "[dry-run] would run the pre-commit copy-alignment/formatting/lint/localization checks",
+        );
         return Ok(());
     }
+
+    reporter.info("Checking staged README/App Store feature copy alignment...");
+    crate::cmd::copy::check_staged_synced(repo, reporter)?;
 
     let staged_swift_files = staged_swift_files(repo, reporter)?;
     if staged_swift_files.is_empty() {

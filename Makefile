@@ -26,7 +26,7 @@ guard-%:
 shell: ## Drop into the pinned Nix dev shell.
 	@$(NIX_DEVELOP) bash
 
-check: ## Verify repository invariants (pins + pinned actions).
+check: ## Verify repository invariants (pins, pinned actions, copy alignment).
 	@$(XTASK) check
 
 workspace: ## Materialize the generated Xcode workspace/project.
