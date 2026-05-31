@@ -45,6 +45,14 @@ pub(crate) enum ReindexOutcome {
     IndexFailed,
 }
 
+/// Outcome of touching an item timestamp.
+pub(crate) enum TouchOutcome {
+    /// The database timestamp and search index timestamp were both updated.
+    Indexed { timestamp_unix: i64 },
+    /// The database timestamp was updated, but the search index is now stale.
+    IndexFailed { timestamp_unix: i64 },
+}
+
 /// Resolved link metadata fields after normalization.
 #[allow(dead_code)]
 pub(crate) struct ResolvedLinkMetadata {
@@ -275,10 +283,25 @@ pub(crate) fn update_text_item(
     Ok(ReindexOutcome::Indexed)
 }
 
-pub(crate) fn update_timestamp(db: &Database, item_id: i64) -> Result<i64, ClipKittyError> {
+pub(crate) fn update_timestamp(
+    db: &Database,
+    indexer: &Indexer,
+    item_id: i64,
+) -> Result<TouchOutcome, ClipKittyError> {
     let now = Utc::now();
     db.update_timestamp(item_id, now)?;
-    Ok(now.timestamp())
+    let timestamp_unix = now.timestamp();
+
+    if let Some(item) = get_stored_item(db, item_id)? {
+        let index_result = indexer
+            .add_document(&item.item_id, &index_text(&item), timestamp_unix)
+            .and_then(|_| indexer.commit());
+        if index_result.is_err() {
+            return Ok(TouchOutcome::IndexFailed { timestamp_unix });
+        }
+    }
+
+    Ok(TouchOutcome::Indexed { timestamp_unix })
 }
 
 pub(crate) fn add_tag(db: &Database, item_id: i64, tag: ItemTag) -> Result<(), ClipKittyError> {
