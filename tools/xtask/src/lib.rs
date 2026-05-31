@@ -7,6 +7,7 @@
 pub mod apple;
 pub mod cli;
 pub mod cmd;
+pub mod icon;
 pub mod model;
 pub mod nix;
 pub mod output;

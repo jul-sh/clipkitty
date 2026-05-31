@@ -1,16 +1,16 @@
 //! `clipkitty site` — public-site asset generation.
 //!
-//! `icon` exports the AppIcon bundle to PNG via Xcode's `ictool`. `landing-page`
-//! renders README.md to HTML via `cmark-gfm`. Both are thin wrappers around
-//! host tools; the CLI exists to centralise pathing, dry-run, and env checks.
+//! `icon` exports the AppIcon bundle to PNG. `landing-page` renders README.md
+//! to HTML via `cmark-gfm`. Both are thin wrappers around host tools; the CLI
+//! exists to centralise pathing, dry-run, and env checks.
 
 use std::io::{self, Write};
-use std::path::Path;
 
 use anyhow::{anyhow, Result};
 use camino::Utf8PathBuf;
 
 use crate::cli::{SiteCmd, SiteRenderTarget};
+use crate::icon::{render_app_icon, AppIconRenderTarget};
 use crate::model::SideEffectLevel;
 use crate::output::Reporter;
 use crate::process::Runner;
@@ -27,47 +27,8 @@ pub fn run(cmd: &SiteCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
     }
 }
 
-const ICTOOL_PATH: &str =
-    "/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool";
-
 fn icon(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
-    let icon_bundle = repo.join("AppIcon.icon");
-    let output = repo.join("icon.png");
-
-    if dry_run {
-        reporter.info(&format!("[dry-run] would export {icon_bundle} → {output}"));
-        return Ok(());
-    }
-
-    if !Path::new(ICTOOL_PATH).is_file() {
-        return Err(anyhow!(
-            "ictool not found at {ICTOOL_PATH}; install Xcode with Icon Composer"
-        ));
-    }
-    if !icon_bundle.as_std_path().is_dir() {
-        return Err(anyhow!("icon bundle not found: {icon_bundle}"));
-    }
-
-    Runner::new(reporter, ICTOOL_PATH)
-        .arg(icon_bundle.as_std_path())
-        .args(["--export-image", "--output-file"])
-        .arg(output.as_std_path())
-        .args([
-            "--platform",
-            "macOS",
-            "--rendition",
-            "Default",
-            "--width",
-            "512",
-            "--height",
-            "512",
-            "--scale",
-            "1",
-        ])
-        .cwd(repo.as_path())
-        .run()?;
-    reporter.success(&format!("Exported icon → {output}"));
-    Ok(())
+    render_app_icon(repo, AppIconRenderTarget::PublicSite, dry_run, reporter)
 }
 
 fn landing_page(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {

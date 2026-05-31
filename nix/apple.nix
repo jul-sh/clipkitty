@@ -362,6 +362,23 @@ let
       # resolveDeveloperDirScript.
       export SDKROOT=$(/usr/bin/xcrun --sdk macosx --show-sdk-path)
 
+      # AppIcon.icon is the source of truth. The macOS target still consumes
+      # an appiconset PNG, so render that asset inside the generated source
+      # tree before Tuist snapshots resources into the Xcode project.
+      ICTOOL="/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool"
+      if [ ! -x "$ICTOOL" ]; then
+        echo "error: ictool not found at $ICTOOL; install Xcode with Icon Composer" >&2
+        exit 1
+      fi
+      "$ICTOOL" AppIcon.icon \
+        --export-image \
+        --output-file Sources/MacApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png \
+        --platform macOS \
+        --rendition Default \
+        --width 512 \
+        --height 512 \
+        --scale 2
+
       # SwiftPM's manifest compiler unconditionally calls
       # `sandbox_apply(3)` to sandbox the compiled Package.swift
       # manifest and any macro-plugin subprocesses. On Darwin inside a

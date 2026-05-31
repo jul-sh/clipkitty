@@ -11,6 +11,7 @@ use anyhow::{anyhow, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::apple;
+use crate::icon::{render_app_icon, AppIconRenderTarget};
 use crate::model::{MacVariant, SideEffectLevel};
 use crate::nix;
 use crate::output::Reporter;
@@ -54,9 +55,11 @@ pub(crate) fn generate(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> R
     reporter.info("Materialising generated Xcode project via nix...");
     if dry_run {
         reporter.info("[dry-run] would run `nix build .#clipkitty-generated` and stage outputs");
+        render_app_icon(repo, AppIconRenderTarget::MacAssetCatalog, true, reporter)?;
         return Ok(());
     }
 
+    render_app_icon(repo, AppIconRenderTarget::MacAssetCatalog, false, reporter)?;
     let out_link =
         nix::build_out_link(reporter, repo.as_path(), "clipkitty-generated", "generated")?;
 
@@ -136,6 +139,7 @@ pub(crate) fn stage_app(
     let dest_app = dest_dir.join(format!("{APP_NAME}.app"));
 
     if dry_run {
+        render_app_icon(repo, AppIconRenderTarget::MacAssetCatalog, true, reporter)?;
         reporter.info(&format!(
             "[dry-run] would `nix build .#{attr}` and stage it at {dest_app}"
         ));
@@ -145,6 +149,7 @@ pub(crate) fn stage_app(
         return Ok(());
     }
 
+    render_app_icon(repo, AppIconRenderTarget::MacAssetCatalog, false, reporter)?;
     let out_link = nix::build_out_link(reporter, repo.as_path(), attr, configuration_dir)?;
 
     fs::create_dir_all(dest_dir.as_std_path()).with_context(|| format!("creating {dest_dir}"))?;
