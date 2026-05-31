@@ -43,17 +43,17 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1774116738,
-        "narHash": "sha256-MyjXvbS1t1xCCwx896JcInj2yd3SQQd2KoIoIknTHcA=",
+        "lastModified": 1775145531,
+        "narHash": "sha256-QSHrsnYj9pfJ1o2JzpGo6hERdMdzrj2Dp6GHSsusyiE=",
         "owner": "jul-sh",
         "repo": "keytap",
-        "rev": "ecbfd924454f3db036aa15f466c84f871f7cb5b8",
+        "rev": "f5488b54d4d9c271a9e12ad5691208a6c0ffd3fc",
         "type": "github"
       },
       "original": {
         "owner": "jul-sh",
         "repo": "keytap",
-        "rev": "ecbfd924454f3db036aa15f466c84f871f7cb5b8",
+        "rev": "f5488b54d4d9c271a9e12ad5691208a6c0ffd3fc",
         "type": "github"
       }
     },

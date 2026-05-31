@@ -4,8 +4,37 @@ public enum NudgeKind: Equatable {
     case launchAtLogin
 }
 
+/// An ongoing status shown in the snackbar slot. Unlike `NotificationKind`,
+/// these don't auto-dismiss; they're driven by underlying state and stay until
+/// the state clears. Each platform maps its own state sources (index rebuild,
+/// sync activity, etc.) into one of these cases.
 public enum InfoKind: Equatable {
     case rebuildingIndex
+    case catchingUpWithCloud
+    case syncingCloudChanges(count: Int)
+
+    public var message: String {
+        switch self {
+        case .rebuildingIndex:
+            return String(localized: "Rebuilding index…")
+        case .catchingUpWithCloud:
+            return String(localized: "Catching up with iCloud")
+        case let .syncingCloudChanges(count):
+            return String(localized: "Syncing \(count) changes from iCloud")
+        }
+    }
+
+    /// SF Symbol for the leading icon, or `nil` when the snackbar should show a
+    /// progress spinner instead of an icon (matches the Mac "Rebuilding index"
+    /// presentation).
+    public var iconSystemName: String? {
+        switch self {
+        case .rebuildingIndex:
+            return nil
+        case .catchingUpWithCloud, .syncingCloudChanges:
+            return "icloud.and.arrow.down"
+        }
+    }
 }
 
 public enum NotificationKind: Equatable {

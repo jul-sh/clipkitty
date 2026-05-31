@@ -24,8 +24,11 @@ final class AppState {
     var toast: ToastState = .init()
     var contentRevision: Int = 0
 
+    /// A transient snackbar notification (with optional inline action). The
+    /// underlying value is a shared `NotificationKind` so iOS and Mac can use
+    /// the same snackbar model; see `SnackbarItem` in `ClipKittyShared`.
     struct ToastState {
-        var message: ToastMessage?
+        var kind: NotificationKind?
         var action: (() -> Void)?
     }
 
@@ -42,27 +45,27 @@ final class AppState {
             onSelect: { _, content in
                 clipboardService.copy(content: content)
                 haptics.fire(.copy)
-                toastBox.showToast?(.copied, nil)
+                toastBox.show?(ToastMessage.copied.notificationKind, nil)
             },
             onCopyOnly: { _, content in
                 clipboardService.copy(content: content)
                 haptics.fire(.copy)
-                toastBox.showToast?(.copied, nil)
+                toastBox.show?(ToastMessage.copied.notificationKind, nil)
             },
             onDismiss: {},
             showSnackbarNotification: { kind, action in
-                toastBox.showToast?(.notification(kind), action)
+                toastBox.show?(kind, action)
             },
             dismissSnackbarNotification: {
-                toastBox.dismissToast?()
+                toastBox.dismiss?()
             }
         )
 
         // Wire the box to self after all stored properties are initialized
-        toastBox.showToast = { [weak self] message, action in
-            self?.showToast(message, action: action)
+        toastBox.show = { [weak self] kind, action in
+            self?.showNotification(kind, action: action)
         }
-        toastBox.dismissToast = { [weak self] in
+        toastBox.dismiss = { [weak self] in
             withAnimation(.bouncy) {
                 self?.toast = .init()
             }
@@ -70,12 +73,19 @@ final class AppState {
     }
 
     func showToast(_ message: ToastMessage, action: (() -> Void)? = nil) {
+        showNotification(message.notificationKind, action: action)
+    }
+
+    /// Show a shared-model snackbar notification. The iOS overlay renders this
+    /// from the same `NotificationKind` cases the Mac uses (see Mac's
+    /// `SnackbarView`), keeping presentation aligned across platforms.
+    func showNotification(_ kind: NotificationKind, action: (() -> Void)? = nil) {
         withAnimation(.bouncy) {
-            toast = ToastState(message: message, action: action)
+            toast = ToastState(kind: kind, action: action)
         }
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(message.duration))
-            guard let self, self.toast.message == message else { return }
+            try? await Task.sleep(for: .seconds(kind.duration))
+            guard let self, self.toast.kind == kind else { return }
             withAnimation(.bouncy) {
                 self.toast = .init()
             }
@@ -179,6 +189,9 @@ final class AppState {
 
 // MARK: - Toast Message
 
+/// Sugar for the most common iOS-internal transient notifications. Each case
+/// builds a shared `NotificationKind` so the snackbar slot can be rendered
+/// from the same `SnackbarItem` model the Mac uses.
 enum ToastMessage: Equatable {
     case copied
     case bookmarked
@@ -187,63 +200,37 @@ enum ToastMessage: Equatable {
     case deleted
     case addSucceeded
     case addFailed(String)
-    case notification(NotificationKind)
 
-    var text: String {
+    var notificationKind: NotificationKind {
         switch self {
-        case .copied: return String(localized: "Copied to clipboard")
-        case .bookmarked: return String(localized: "Bookmarked")
-        case .unbookmarked: return String(localized: "Removed bookmark")
-        case .saved: return String(localized: "Saved")
-        case .deleted: return String(localized: "Deleted")
-        case .addSucceeded: return String(localized: "Added")
-        case let .addFailed(reason): return String(localized: "Failed: \(reason)")
-        case let .notification(kind): return kind.message
-        }
-    }
-
-    var iconSystemName: String {
-        switch self {
-        case .copied: return "doc.on.doc"
-        case .bookmarked: return "bookmark.fill"
-        case .unbookmarked: return "bookmark.slash"
-        case .saved: return "checkmark.circle"
-        case .deleted: return "trash"
-        case .addSucceeded: return "plus.circle"
-        case .addFailed: return "exclamationmark.triangle"
-        case let .notification(kind): return kind.iconSystemName
-        }
-    }
-
-    var actionTitle: String? {
-        switch self {
-        case let .notification(kind):
-            if case let .actionable(_, _, title) = kind { return title }
-            return nil
-        default:
-            return nil
-        }
-    }
-
-    var duration: TimeInterval {
-        switch self {
-        case .copied, .bookmarked, .unbookmarked, .saved, .deleted, .addSucceeded:
-            return 1.5
-        case .addFailed:
-            return 3.0
-        case let .notification(kind):
-            return kind.duration
+        case .copied:
+            return .passive(message: String(localized: "Copied to clipboard"), iconSystemName: "doc.on.doc")
+        case .bookmarked:
+            return .passive(message: String(localized: "Bookmarked"), iconSystemName: "bookmark.fill")
+        case .unbookmarked:
+            return .passive(message: String(localized: "Removed bookmark"), iconSystemName: "bookmark.slash")
+        case .saved:
+            return .passive(message: String(localized: "Saved"), iconSystemName: "checkmark.circle")
+        case .deleted:
+            return .passive(message: String(localized: "Deleted"), iconSystemName: "trash")
+        case .addSucceeded:
+            return .passive(message: String(localized: "Added"), iconSystemName: "plus.circle")
+        case let .addFailed(reason):
+            return .passive(
+                message: String(localized: "Failed: \(reason)"),
+                iconSystemName: "exclamationmark.triangle"
+            )
         }
     }
 }
 
-/// Captures toast callbacks for BrowserViewModel closures that are set during init,
+/// Captures snackbar callbacks for BrowserViewModel closures that are set during init,
 /// before `self` is available. BrowserViewModel stores callbacks as `private let`,
 /// so they must be provided at construction time — this box bridges that gap.
 @MainActor
 private final class ToastCallbackBox {
-    var showToast: ((ToastMessage, (() -> Void)?) -> Void)?
-    var dismissToast: (() -> Void)?
+    var show: ((NotificationKind, (() -> Void)?) -> Void)?
+    var dismiss: (() -> Void)?
 }
 
 // MARK: - App Entry Point

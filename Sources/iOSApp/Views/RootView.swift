@@ -1,3 +1,4 @@
+import ClipKittyShared
 import SwiftUI
 
 #if ENABLE_ICLOUD_SYNC
@@ -12,159 +13,182 @@ struct RootView: View {
 
     var body: some View {
         HomeFeedView()
-            .overlay(alignment: .top) {
-                syncActivityOverlay
-                    .padding(.top, 12)
-                    .padding(.horizontal, 18)
-            }
             .overlay(alignment: .bottom) {
-                toastOverlay
-                    .padding(.bottom, 80)
-            }
-    }
-
-    @ViewBuilder
-    private var syncActivityOverlay: some View {
-        #if ENABLE_ICLOUD_SYNC
-            Group {
-                switch syncCoordinator.status {
-                case let .syncing(activity):
-                    ICloudSyncActivityOverlay(activity: activity)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                case .idle, .connecting, .synced, .error, .temporarilyUnavailable, .unavailable:
-                    EmptyView()
-                }
-            }
-            // The status comes from an `@Observable` coordinator, so updates
-            // aren't wrapped in `withAnimation` at the mutation site; drive the
-            // overlay's transition from the status value itself.
-            .animation(.bouncy, value: syncCoordinator.status)
-        #else
-            EmptyView()
-        #endif
-    }
-
-    @ViewBuilder
-    private var toastOverlay: some View {
-        if let message = appState.toast.message {
-            GlassEffectContainer {
-                HStack(spacing: 10) {
-                    Image(systemName: message.iconSystemName)
-                        .font(.subheadline.weight(.medium))
-                    Text(message.text)
-                        .font(.subheadline.weight(.medium))
-
-                    if let actionTitle = message.actionTitle, let action = appState.toast.action {
-                        Button {
+                if let item = activeSnackbar {
+                    SnackbarOverlay(item: item) {
+                        if case .notification(.actionable) = item, let action = appState.toast.action {
                             action()
                             withAnimation(.bouncy) {
                                 appState.toast = .init()
                             }
-                        } label: {
-                            Text(actionTitle)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.tint)
                         }
-                        .buttonStyle(.plain)
                     }
+                    .padding(.bottom, 80)
                 }
-                .padding(.horizontal, 16)
-                .frame(height: 44)
-                .glassEffect(.regular.interactive(), in: .capsule)
             }
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            // Drive the slot's transition off the active value so info-state
+            // changes (sourced from `@Observable` coordinators that don't wrap
+            // mutations in `withAnimation`) still animate.
+            .animation(.bouncy, value: activeSnackbar)
+    }
+
+    // MARK: - Snackbar resolution
+    //
+    // Mirrors the Mac's `SnackbarScheduler.evaluateSnackbar`: a single bottom
+    // slot rendered from one `SnackbarItem`. Notifications (transient toasts)
+    // take precedence over info (ongoing status) so e.g. tapping "Copied"
+    // during a sync briefly replaces the sync capsule, exactly like the Mac.
+
+    private var activeSnackbar: SnackbarItem? {
+        if let kind = appState.toast.kind {
+            return .notification(kind)
+        }
+        if let info = ongoingInfo {
+            return .info(info)
+        }
+        return nil
+    }
+
+    private var ongoingInfo: InfoKind? {
+        #if ENABLE_ICLOUD_SYNC
+            switch syncCoordinator.status {
+            case let .syncing(activity):
+                return Self.infoKind(for: activity)
+            case .idle, .connecting, .synced, .error, .temporarilyUnavailable, .unavailable:
+                return nil
+            }
+        #else
+            return nil
+        #endif
+    }
+
+    #if ENABLE_ICLOUD_SYNC
+        /// Suppress overlay activity for batches smaller than this. Tiny syncs
+        /// would just flash the capsule in and out.
+        private static let largeDownloadThreshold = 25
+
+        static func infoKind(for activity: SyncEngine.SyncActivity) -> InfoKind? {
+            switch activity {
+            case let .downloading(download), let .applying(download):
+                return infoKindForDownload(download)
+            case let .rebuildingIndex(indexActivity):
+                switch indexActivity {
+                case .localMaintenance:
+                    return nil
+                case let .downloadedContent(download):
+                    // Indexing downloaded content reads to the user as the
+                    // tail end of the same iCloud sync; reuse the same copy.
+                    return infoKindForDownload(download)
+                }
+            case .compacting, .uploading, .cleaningUp:
+                return nil
+            }
+        }
+
+        private static func infoKindForDownload(_ download: SyncEngine.SyncDownloadActivity) -> InfoKind? {
+            switch download {
+            case .startingFullResync:
+                return .catchingUpWithCloud
+            case let .incremental(records), let .fullResync(records):
+                let total = records.total
+                guard total >= largeDownloadThreshold else { return nil }
+                return .syncingCloudChanges(count: total)
+            }
+        }
+    #endif
+}
+
+// MARK: - Snackbar rendering
+//
+// The iOS counterpart of Mac's `SnackbarView`: one switch over `SnackbarItem`
+// renders the bottom slot. iOS doesn't surface `.nudge` items (no launch-at-
+// login nudge), so that case falls through to an empty view.
+
+private struct SnackbarOverlay: View {
+    let item: SnackbarItem
+    let onAction: () -> Void
+
+    var body: some View {
+        Group {
+            switch item {
+            case let .notification(kind):
+                NotificationSnackbarCapsule(kind: kind, onAction: onAction)
+            case let .info(kind):
+                InfoSnackbarCapsule(kind: kind)
+            case .nudge:
+                EmptyView()
+            }
+        }
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+}
+
+private struct NotificationSnackbarCapsule: View {
+    let kind: NotificationKind
+    let onAction: () -> Void
+
+    var body: some View {
+        SnackbarCapsule {
+            Image(systemName: kind.iconSystemName)
+                .font(.subheadline.weight(.medium))
+
+            Text(kind.message)
+                .font(.subheadline.weight(.medium))
+
+            if case let .actionable(_, _, actionTitle) = kind {
+                Button(action: onAction) {
+                    Text(actionTitle)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.tint)
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 }
 
-#if ENABLE_ICLOUD_SYNC
-    private struct ICloudSyncActivityOverlay: View {
-        private static let largeDownloadThreshold = 25
+private struct InfoSnackbarCapsule: View {
+    let kind: InfoKind
 
-        let activity: SyncEngine.SyncActivity
-
-        var body: some View {
-            switch content {
-            case .hidden:
-                EmptyView()
-            case let .visible(icon, label):
-                // Mirror `toastOverlay`: a single-line glass capsule with a
-                // leading icon, `.subheadline.weight(.medium)` text, and a
-                // trailing affordance (here a spinner instead of an action).
-                GlassEffectContainer {
-                    HStack(spacing: 10) {
-                        Image(systemName: icon)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.tint)
-
-                        Text(label)
-                            .font(.subheadline.weight(.medium))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.85)
-
-                        ProgressView()
-                            .controlSize(.small)
-                    }
-                    .padding(.horizontal, 16)
-                    .frame(height: 44)
-                    .glassEffect(.regular.interactive(), in: .capsule)
-                }
+    var body: some View {
+        SnackbarCapsule {
+            if let icon = kind.iconSystemName {
+                Image(systemName: icon)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.tint)
+            } else {
+                ProgressView()
+                    .controlSize(.small)
             }
-        }
 
-        private enum Content {
-            case hidden
-            case visible(icon: String, label: String)
-        }
+            Text(kind.message)
+                .font(.subheadline.weight(.medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
 
-        private var content: Content {
-            switch activity {
-            case let .downloading(download), let .applying(download):
-                return downloadContent(download)
-            case let .rebuildingIndex(indexActivity):
-                switch indexActivity {
-                case .localMaintenance:
-                    return .hidden
-                case let .downloadedContent(download):
-                    return indexContent(download)
-                }
-            case .compacting, .uploading, .cleaningUp:
-                return .hidden
-            }
-        }
-
-        private func downloadContent(_ download: SyncEngine.SyncDownloadActivity) -> Content {
-            switch download {
-            case .startingFullResync:
-                return .visible(
-                    icon: "icloud.and.arrow.down",
-                    label: String(localized: "Catching up with iCloud")
-                )
-            case let .incremental(records), let .fullResync(records):
-                let total = records.total
-                guard total >= Self.largeDownloadThreshold else { return .hidden }
-                return .visible(
-                    icon: "icloud.and.arrow.down",
-                    label: String(localized: "Syncing \(total) changes from iCloud")
-                )
-            }
-        }
-
-        private func indexContent(_ download: SyncEngine.SyncDownloadActivity) -> Content {
-            switch download {
-            case .startingFullResync:
-                return .visible(
-                    icon: "magnifyingglass",
-                    label: String(localized: "Preparing search")
-                )
-            case let .incremental(records), let .fullResync(records):
-                let total = records.total
-                guard total >= Self.largeDownloadThreshold else { return .hidden }
-                return .visible(
-                    icon: "magnifyingglass",
-                    label: String(localized: "Indexing \(total) changes")
-                )
-            }
+            // Ongoing status always shows a trailing spinner so it reads as
+            // "still working", matching the Mac's rebuilding-index treatment.
+            ProgressView()
+                .controlSize(.small)
         }
     }
-#endif
+}
+
+/// Glass capsule shared by every snackbar variant. iOS-only styling; the Mac
+/// has its own equivalent in `Snackbar.swift` because the platform glass APIs
+/// differ enough that a single SwiftUI view would fork on `#if os(...)`
+/// throughout.
+private struct SnackbarCapsule<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        GlassEffectContainer {
+            HStack(spacing: 10) {
+                content
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 44)
+            .glassEffect(.regular.interactive(), in: .capsule)
+        }
+    }
+}

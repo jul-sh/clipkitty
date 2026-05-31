@@ -29,8 +29,8 @@ struct SnackbarView: View {
         switch item {
         case .nudge(.launchAtLogin):
             LaunchAtLoginNudgeView(onEnable: onAction, onDismiss: onDismiss)
-        case .info(.rebuildingIndex):
-            RebuildingIndexInfoView()
+        case let .info(kind):
+            InfoSnackbarView(kind: kind)
         case let .notification(kind):
             NotificationSnackbarView(kind: kind, onAction: onAction)
         }
@@ -105,13 +105,21 @@ private struct LaunchAtLoginNudgeView: View {
     }
 }
 
-private struct RebuildingIndexInfoView: View {
+private struct InfoSnackbarView: View {
+    let kind: InfoKind
+
     var body: some View {
         HStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
+            if let icon = kind.iconSystemName {
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(.secondary)
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+            }
 
-            Text("Rebuilding index…", comment: "Snackbar message shown during index rebuild")
+            Text(kind.message)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.primary)
         }
