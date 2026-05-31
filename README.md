@@ -14,8 +14,6 @@ Most clipboard managers work fine when your history is small. Then the thing you
 
 ClipKitty is built around a simple idea: your clipboard can remember more without asking more from you.
 
-Keep a deep history of text, links, images, files, code, and colors. Search what you remember. Preview before you paste. Stay in the same fast keyboard flow the whole time.
-
 ## Features
 
 - **Deep clipboard history**  
