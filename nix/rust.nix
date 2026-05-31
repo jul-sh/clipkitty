@@ -56,9 +56,54 @@ let
   # in env var names (e.g. CC_aarch64_apple_ios, CARGO_TARGET_AARCH64_APPLE_IOS_LINKER).
   underscored = target: builtins.replaceStrings [ "-" ] [ "_" ] target;
 
+  # crates.io intermittently 403s the `api.v1/crates/<n>/<v>/download` endpoint
+  # on CI (observed on macOS runners). Nix's default `fetchurl` only tries the
+  # single URL importCargoLock passes it and gives up after curl's 3 retries,
+  # turning a transient blip into a red main build. We override `fetchurl` for
+  # this one call site so every crate fetch:
+  #
+  #   * Falls back to the canonical static mirror at
+  #     https://static.crates.io/crates/<n>/<n>-<v>.crate when the API endpoint
+  #     fails. The static mirror is what the crates.io-index `dl` config points
+  #     at and is served from the same Cloudflare bucket the API redirects to,
+  #     so the bytes (and therefore the sha256) match.
+  #   * Retries 10 times with a 5s base delay using `--retry-all-errors` so
+  #     5xx/403 responses don't bail after the default 3 attempts.
+  #
+  # Anything other than a crate fetch (e.g. the `runCommand` invocations in
+  # import-cargo-lock.nix) doesn't go through this wrapper.
+  fetchurlWithCratesMirror = args:
+    let
+      hasCratesUrl = args ? url
+        && builtins.isString args.url
+        && lib.hasPrefix "https://crates.io/api/v1/crates/" args.url;
+      mirrorUrl =
+        let
+          # url: https://crates.io/api/v1/crates/<name>/<version>/download
+          parts = lib.splitString "/" args.url;
+          name = builtins.elemAt parts 6;
+          version = builtins.elemAt parts 7;
+        in
+        "https://static.crates.io/crates/${name}/${name}-${version}.crate";
+      retryArgs = [
+        "--retry" "10"
+        "--retry-delay" "5"
+        "--retry-all-errors"
+      ];
+    in
+    if hasCratesUrl then
+      pkgs.fetchurl (builtins.removeAttrs args [ "url" ] // {
+        urls = [ args.url mirrorUrl ];
+        curlOptsList = (args.curlOptsList or [ ]) ++ retryArgs;
+      })
+    else
+      pkgs.fetchurl args;
+
   # Vendored Cargo registry, hashed from Cargo.lock. Lets the Rust builds run
   # fully offline inside the Nix sandbox without hand-maintaining a cargoHash.
-  cargoVendorDir = pkgs.rustPlatform.importCargoLock {
+  cargoVendorDir = (pkgs.rustPlatform.importCargoLock.override {
+    fetchurl = fetchurlWithCratesMirror;
+  }) {
     lockFile = ../Cargo.lock;
   };
 
