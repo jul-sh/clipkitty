@@ -178,7 +178,7 @@ jobs:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (AppStore)
-        timeout-minutes: 45
+        timeout-minutes: 90
         run: make app-app-store
         env:
           AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
