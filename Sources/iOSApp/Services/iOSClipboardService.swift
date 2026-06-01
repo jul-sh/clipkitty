@@ -11,6 +11,12 @@ enum PasteboardContent {
     case text(String)
 }
 
+enum ClipboardAccessVerification: Equatable {
+    case granted
+    case needsClipboardItem
+    case needsSettingsChange
+}
+
 // MARK: - Clipboard Service
 
 @MainActor
@@ -41,15 +47,32 @@ final class iOSClipboardService {
 
     func readCurrentClipboard() -> PasteboardContent? {
         let pasteboard = UIPasteboard.general
-        if let image = pasteboard.image {
+        if pasteboard.hasImages, let image = pasteboard.image {
             return .image(image)
         }
-        if let url = pasteboard.url {
+        if pasteboard.hasURLs, let url = pasteboard.url {
             return .link(url)
         }
-        if let string = pasteboard.string, !string.isEmpty {
+        if pasteboard.hasStrings, let string = pasteboard.string, !string.isEmpty {
             return .text(string)
         }
         return nil
+    }
+
+    func verifyAutoAddClipboardAccess() -> ClipboardAccessVerification {
+        let pasteboard = UIPasteboard.general
+        let hasSupportedContent = pasteboard.hasImages || pasteboard.hasURLs || pasteboard.hasStrings
+        guard hasSupportedContent else { return .needsClipboardItem }
+
+        if pasteboard.hasImages, pasteboard.image != nil {
+            return .granted
+        }
+        if pasteboard.hasURLs, pasteboard.url != nil {
+            return .granted
+        }
+        if pasteboard.hasStrings, pasteboard.string != nil {
+            return .granted
+        }
+        return .needsSettingsChange
     }
 }

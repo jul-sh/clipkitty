@@ -21,6 +21,7 @@ final class iOSSettingsStoreTests: XCTestCase {
         let store = iOSSettingsStore(defaults: defaults)
         XCTAssertTrue(store.hapticsEnabled)
         XCTAssertTrue(store.generateLinkPreviews)
+        XCTAssertFalse(store.autoAddFromClipboard)
     }
 
     func testHapticsEnabledPersists() {
@@ -39,14 +40,24 @@ final class iOSSettingsStoreTests: XCTestCase {
         XCTAssertFalse(reloaded.generateLinkPreviews)
     }
 
+    func testAutoAddFromClipboardPersists() {
+        let store = iOSSettingsStore(defaults: defaults)
+        store.autoAddFromClipboard = true
+
+        let reloaded = iOSSettingsStore(defaults: defaults)
+        XCTAssertTrue(reloaded.autoAddFromClipboard)
+    }
+
     func testMultipleSettingsPersistIndependently() {
         let store = iOSSettingsStore(defaults: defaults)
         store.hapticsEnabled = false
         store.generateLinkPreviews = true
+        store.autoAddFromClipboard = true
 
         let reloaded = iOSSettingsStore(defaults: defaults)
         XCTAssertFalse(reloaded.hapticsEnabled)
         XCTAssertTrue(reloaded.generateLinkPreviews)
+        XCTAssertTrue(reloaded.autoAddFromClipboard)
     }
 
     func testToggleBackAndForth() {
