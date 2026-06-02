@@ -316,9 +316,9 @@ fn publish(
         upload_binary(
             repo,
             platform,
-            version,
             &asc_key_id,
             &asc_issuer_id,
+            &altool_key_path,
             reporter,
         )?;
         reporter.info("\n=== Uploading metadata ===");
@@ -446,52 +446,27 @@ fn publish_platform(name: &str) -> Result<PublishPlatform> {
 fn upload_binary(
     repo: &RepoRoot,
     platform: PublishPlatform,
-    version: &str,
     asc_key_id: &str,
     asc_issuer_id: &str,
+    asc_private_key_path: &Utf8Path,
     reporter: &Reporter,
 ) -> Result<()> {
-    let artifact = repo.join(platform.pkg_name);
-    let _ipa_upload_dir;
-    let upload_artifact = if platform.uses_ipa() {
-        clear_altool_upload_state(reporter)?;
+    if platform.uses_ipa() {
+        upload_ios_archive_with_xcodebuild(
+            repo,
+            asc_key_id,
+            asc_issuer_id,
+            asc_private_key_path,
+            reporter,
+        )?;
+        reporter.info("Binary uploaded.");
+        return Ok(());
+    }
 
-        let upload_dir = tempdir().context("creating temporary IPA upload directory")?;
-        let upload_filename = format!("ClipKittyiOS-{}.ipa", sanitize_filename_component(version));
-        let upload_path = Utf8PathBuf::from_path_buf(upload_dir.path().join(upload_filename))
-            .map_err(|path| anyhow!("non-UTF-8 temporary IPA upload path: {path:?}"))?;
-        fs::copy(artifact.as_std_path(), upload_path.as_std_path())
-            .with_context(|| format!("copying {artifact} to {upload_path} for upload"))?;
-        reporter.info(&format!(
-            "Uploading iOS IPA using temporary name {}",
-            upload_path
-                .file_name()
-                .ok_or_else(|| anyhow!("temporary IPA upload path has no file name"))?
-        ));
-        _ipa_upload_dir = Some(upload_dir);
-        upload_path
-    } else {
-        _ipa_upload_dir = None;
-        artifact.clone()
-    };
-    // `--upload-package` treats the file as an opaque archive and relies on
-    // metadata baked into a signed `productbuild` package — correct for the
-    // macOS `.pkg`. An `.ipa` carries no such manifest, so feeding it to
-    // `--upload-package` makes App Store Connect reject it with the misleading
-    // 90207 "does not contain a bundle executable" even though the bundle is
-    // valid. `--upload-app -f` introspects the bundle for its identifiers,
-    // which is the right path for an IPA.
-    let mut runner = Runner::new(reporter, "xcrun");
-    runner = if platform.uses_ipa() {
-        runner
-            .args(["altool", "--upload-app", "-f"])
-            .arg(upload_artifact.as_std_path())
-    } else {
-        runner
-            .args(["altool", "--upload-package"])
-            .arg(upload_artifact.as_std_path())
-    };
-    let output = runner
+    let artifact = repo.join(platform.pkg_name);
+    let output = Runner::new(reporter, "xcrun")
+        .args(["altool", "--upload-package"])
+        .arg(artifact.as_std_path())
         .arg("--type")
         .arg(platform.altool_type)
         .arg("--apiKey")
@@ -526,33 +501,69 @@ fn upload_binary(
     Ok(())
 }
 
-fn sanitize_filename_component(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
-                ch
-            } else {
-                '-'
-            }
-        })
-        .collect()
-}
-
-fn clear_altool_upload_state(reporter: &Reporter) -> Result<()> {
-    let home = Utf8PathBuf::from(env::var("HOME").context("HOME is not set")?);
-    let paths = [
-        home.join("Library/Caches/com.apple.cds"),
-        home.join("Library/Application Support/com.apple.itunes.altool/CDUploads"),
-    ];
-
-    for path in paths {
-        if path.as_std_path().exists() {
-            reporter.info(&format!("Clearing stale altool upload state at {path}"));
-            fs::remove_dir_all(path.as_std_path())
-                .with_context(|| format!("clearing stale altool upload state at {path}"))?;
-        }
+fn upload_ios_archive_with_xcodebuild(
+    repo: &RepoRoot,
+    asc_key_id: &str,
+    asc_issuer_id: &str,
+    asc_private_key_path: &Utf8Path,
+    reporter: &Reporter,
+) -> Result<()> {
+    let archive_path = repo.join("DerivedData/ClipKittyiOS.xcarchive");
+    if !archive_path.as_std_path().is_dir() {
+        return Err(anyhow!(
+            "iOS archive {archive_path} not found. Build the iOS release archive first."
+        ));
     }
+
+    let source_export_plist = repo.join("distribution/ExportOptions-iOS.plist");
+    if !source_export_plist.as_std_path().is_file() {
+        return Err(anyhow!(
+            "iOS export options plist not found at {source_export_plist}"
+        ));
+    }
+
+    let upload_dir = tempdir().context("creating temporary iOS upload directory")?;
+    let upload_export_path = Utf8PathBuf::from_path_buf(upload_dir.path().join("export"))
+        .map_err(|path| anyhow!("non-UTF-8 temporary iOS upload export path: {path:?}"))?;
+    fs::create_dir_all(upload_export_path.as_std_path())
+        .with_context(|| format!("creating {upload_export_path}"))?;
+
+    let upload_options =
+        Utf8PathBuf::from_path_buf(upload_dir.path().join("ExportOptions-iOS-Upload.plist"))
+            .map_err(|path| anyhow!("non-UTF-8 temporary iOS upload options path: {path:?}"))?;
+    fs::copy(
+        source_export_plist.as_std_path(),
+        upload_options.as_std_path(),
+    )
+    .with_context(|| format!("copying {source_export_plist} to {upload_options}"))?;
+    Runner::new(reporter, "/usr/libexec/PlistBuddy")
+        .args([
+            "-c",
+            "Set :destination upload",
+            "-c",
+            "Add :manageAppVersionAndBuildNumber bool false",
+        ])
+        .arg(upload_options.as_std_path())
+        .run()
+        .with_context(|| format!("configuring iOS upload export options at {upload_options}"))?;
+
+    reporter.info("Uploading iOS archive with xcodebuild destination=upload");
+    Runner::new(reporter, "xcodebuild")
+        .args(["-exportArchive", "-archivePath"])
+        .arg(archive_path.as_std_path())
+        .arg("-exportPath")
+        .arg(upload_export_path.as_std_path())
+        .arg("-exportOptionsPlist")
+        .arg(upload_options.as_std_path())
+        .arg("-authenticationKeyPath")
+        .arg(asc_private_key_path.as_std_path())
+        .arg("-authenticationKeyID")
+        .arg(asc_key_id)
+        .arg("-authenticationKeyIssuerID")
+        .arg(asc_issuer_id)
+        .cwd(repo.as_path())
+        .sanitize_for_xcode()
+        .run()?;
 
     Ok(())
 }
