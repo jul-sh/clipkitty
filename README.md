@@ -35,7 +35,7 @@ ClipKitty is built around a simple idea: your clipboard can remember more withou
   No accounts. No telemetry. No third-party servers. Your clipboard history stays on-device unless you enable iCloud Sync; even then, it uses Apple's private CloudKit database without developer access to your clips.
 
 - **Open source and attested:**
-  ClipKitty is open source and publishes build attestations so you can [verify](VERIFY.md) the app was built from the public source.
+  ClipKitty is open source, so anyone can verify its privacy and behavior claims against the public code. Build attestations [link each release](VERIFY.md) back to that source.
 
 ## Installation
 
