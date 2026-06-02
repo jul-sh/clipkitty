@@ -120,7 +120,7 @@ fn parse_readme_features(readme: &str) -> Result<Vec<Feature>> {
         let Some(title_end) = rest.find("**") else {
             return Err(anyhow!("{README_PATH}: malformed feature title `{block}`"));
         };
-        let title = rest[..title_end].to_string();
+        let title = rest[..title_end].trim_end_matches(':').to_string();
         let body = rest[title_end + 2..]
             .lines()
             .map(str::trim)
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn parses_readme_feature_bullets() {
-        let readme = "# App\n\n## Features\n\n- **Search**  \n  Find **things** quickly.\n\n- **Open source**  \n  You can [verify](VERIFY.md) builds.\n\n## Install\n";
+        let readme = "# App\n\n## Features\n\n- **Search:**\n  Find **things** quickly.\n\n- **Open source:**\n  You can [verify](VERIFY.md) builds.\n\n## Install\n";
 
         assert_eq!(
             parse_readme_features(readme).unwrap(),
