@@ -313,7 +313,14 @@ fn publish(
 
     let publish_result = (|| -> Result<()> {
         reporter.info("\n=== Uploading binary ===");
-        upload_binary(repo, platform, &asc_key_id, &asc_issuer_id, reporter)?;
+        upload_binary(
+            repo,
+            platform,
+            version,
+            &asc_key_id,
+            &asc_issuer_id,
+            reporter,
+        )?;
         reporter.info("\n=== Uploading metadata ===");
         let version_id = ensure_editable_version(repo, platform, version, &asc_env, reporter)?;
         attach_latest_valid_build(repo, platform, version, &version_id, &asc_env, reporter)?;
@@ -439,11 +446,34 @@ fn publish_platform(name: &str) -> Result<PublishPlatform> {
 fn upload_binary(
     repo: &RepoRoot,
     platform: PublishPlatform,
+    version: &str,
     asc_key_id: &str,
     asc_issuer_id: &str,
     reporter: &Reporter,
 ) -> Result<()> {
     let artifact = repo.join(platform.pkg_name);
+    let _ipa_upload_dir;
+    let upload_artifact = if platform.uses_ipa() {
+        clear_altool_upload_state(reporter)?;
+
+        let upload_dir = tempdir().context("creating temporary IPA upload directory")?;
+        let upload_filename = format!("ClipKittyiOS-{}.ipa", sanitize_filename_component(version));
+        let upload_path = Utf8PathBuf::from_path_buf(upload_dir.path().join(upload_filename))
+            .map_err(|path| anyhow!("non-UTF-8 temporary IPA upload path: {path:?}"))?;
+        fs::copy(artifact.as_std_path(), upload_path.as_std_path())
+            .with_context(|| format!("copying {artifact} to {upload_path} for upload"))?;
+        reporter.info(&format!(
+            "Uploading iOS IPA using temporary name {}",
+            upload_path
+                .file_name()
+                .ok_or_else(|| anyhow!("temporary IPA upload path has no file name"))?
+        ));
+        _ipa_upload_dir = Some(upload_dir);
+        upload_path
+    } else {
+        _ipa_upload_dir = None;
+        artifact.clone()
+    };
     // `--upload-package` treats the file as an opaque archive and relies on
     // metadata baked into a signed `productbuild` package — correct for the
     // macOS `.pkg`. An `.ipa` carries no such manifest, so feeding it to
@@ -455,11 +485,11 @@ fn upload_binary(
     runner = if platform.uses_ipa() {
         runner
             .args(["altool", "--upload-app", "-f"])
-            .arg(artifact.as_std_path())
+            .arg(upload_artifact.as_std_path())
     } else {
         runner
             .args(["altool", "--upload-package"])
-            .arg(artifact.as_std_path())
+            .arg(upload_artifact.as_std_path())
     };
     let output = runner
         .arg("--type")
@@ -493,6 +523,37 @@ fn upload_binary(
         ));
     }
     reporter.info("Binary uploaded.");
+    Ok(())
+}
+
+fn sanitize_filename_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn clear_altool_upload_state(reporter: &Reporter) -> Result<()> {
+    let home = Utf8PathBuf::from(env::var("HOME").context("HOME is not set")?);
+    let paths = [
+        home.join("Library/Caches/com.apple.cds"),
+        home.join("Library/Application Support/com.apple.itunes.altool/CDUploads"),
+    ];
+
+    for path in paths {
+        if path.as_std_path().exists() {
+            reporter.info(&format!("Clearing stale altool upload state at {path}"));
+            fs::remove_dir_all(path.as_std_path())
+                .with_context(|| format!("clearing stale altool upload state at {path}"))?;
+        }
+    }
+
     Ok(())
 }
 
