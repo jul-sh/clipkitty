@@ -16,26 +16,26 @@ ClipKitty is built around a simple idea: your clipboard can remember more withou
 
 ## Features
 
-- **Deep clipboard history**  
-  Keep far more than the last few things you copied.
+- **Everything stays within reach**
+  Keep a deep history of text, links, images, files, code, and colors without turning your clipboard into another thing to manage.
 
-- **Fast, forgiving search**  
-  Find clips by typing what you remember, even if your query is partial or misspelled.
+- **Search what you remember**
+  Type a few words, fragments, or even a typo. ClipKitty helps you find the right item fast, even when your search is incomplete or misspelled.
 
-- **Live previews**  
-  See full text, code, images, colors, links, and files before you paste.
+- **Preview before you paste**
+  See full text, code, images, colors, links, and files before using them. No guessing from tiny cut-off snippets.
 
-- **Natural keyboard flow**  
-  Press **⌥Space**, type to search, move with **↑ / ↓**, and press **Return** to paste.
+- **Move fast from the keyboard**
+  Press **⌥Space**, search by typing, move with **↑ / ↓**, and press **Return** to paste.
 
-- **Optional iCloud Sync**  
-  Sync your history across your Mac, iPhone, and iPad when you choose.
+- **Sync only when you want it**
+  Use optional iCloud Sync to keep your history in step across Mac, iPhone, and iPad. It is off by default and uses your private iCloud account, with no ClipKitty-run server in the path.
 
-- **Private by default**  
-  No accounts. No telemetry. No third-party servers. Your clipboard history stays on-device unless you enable iCloud Sync.
+- **Private by default**
+  No accounts. No telemetry. No third-party servers. Your clipboard history stays on-device unless you enable iCloud Sync; even then, it uses Apple's private CloudKit database without developer access to your clips.
 
-- **Open source and attested**  
-  ClipKitty publishes build attestations so you can [verify](VERIFY.md) that the app was built from the public source.
+- **Open source and attested**
+  ClipKitty is open source and publishes build attestations so you can [verify](VERIFY.md) the app was built from the public source.
 
 ## Installation
 

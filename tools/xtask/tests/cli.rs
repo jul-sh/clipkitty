@@ -170,6 +170,7 @@ fn verbose_and_dry_run_flags_propagate() {
 fn rejects_internalized_legacy_commands() {
     for argv in [
         ["clipkitty", "check", "pins"].as_slice(),
+        ["clipkitty", "copy", "sync"].as_slice(),
         ["clipkitty", "build", "generate"].as_slice(),
         ["clipkitty", "build", "app", "Release"].as_slice(),
         ["clipkitty", "sign", "app", "Hardened"].as_slice(),

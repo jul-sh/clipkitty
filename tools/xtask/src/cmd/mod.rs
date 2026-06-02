@@ -8,6 +8,7 @@ use crate::output::Reporter;
 pub mod app;
 pub mod build;
 pub mod check;
+pub mod copy;
 pub mod env;
 pub mod marketing;
 pub mod perf;

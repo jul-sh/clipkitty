@@ -19,11 +19,12 @@ pub fn run(dry_run: bool, reporter: &Reporter) -> Result<()> {
     let _ = SideEffectLevel::ReadOnly;
     let repo = RepoRoot::discover(reporter)?;
     if dry_run {
-        reporter.info("[dry-run] would verify pinned inputs and pinned GitHub Actions");
+        reporter.info("[dry-run] would verify pinned inputs, pinned GitHub Actions, and product copy alignment");
         return Ok(());
     }
     check_pinned_actions(&repo, false, reporter)?;
-    check_pins(&repo, false, reporter)
+    check_pins(&repo, false, reporter)?;
+    crate::cmd::copy::check_synced(&repo, reporter)
 }
 
 const PINNED_LOCKFILES: &[&str] = &["Cargo.lock", "flake.lock"];
