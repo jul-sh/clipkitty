@@ -399,7 +399,7 @@ const IOS_PLATFORM: PublishPlatform = PublishPlatform {
     pkg_name: "ClipKittyiOS.ipa",
     metadata_dir_name: "metadata",
     marketing_dir_name: "marketing-ios",
-    screenshot_device_types: &["IPHONE_65"],
+    screenshot_device_types: &["IPHONE_61"],
     preview_device_types: &[],
 };
 
@@ -2605,7 +2605,7 @@ fn xml_escape(value: &str) -> String {
 mod tests {
     use super::{
         app_preview_state, collect_ids, is_preview_upload_in_progress_error, looks_like_locale_dir,
-        media_ids_with_attribute, AppPreviewState,
+        media_ids_with_attribute, AppPreviewState, IOS_PLATFORM,
     };
     use serde_json::json;
 
@@ -2732,6 +2732,12 @@ mod tests {
             ),
             vec!["screenshot-1".to_string()]
         );
+    }
+
+    #[test]
+    fn ios_screenshots_upload_to_iphone_61_slot() {
+        assert_eq!(IOS_PLATFORM.marketing_dir_name, "marketing-ios");
+        assert_eq!(IOS_PLATFORM.screenshot_device_types, &["IPHONE_61"]);
     }
 
     #[test]
