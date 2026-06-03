@@ -676,6 +676,55 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertTrue(try store.pendingSnapshotRecords().isEmpty)
     }
 
+    func testCoordinatorClearsStaleSnapshotBlobBundleAssetWhenSnapshotHasNoBase64Fields() async throws {
+        let store = try makeStore()
+        let defaults = makeDefaults()
+        let transport = FakeCloudTransport()
+        let deviceId = "snapshot-clears-blob-bundle-device"
+        var sawSnapshotClearingBlobBundleAsset = false
+
+        store.setSyncDeviceId(deviceId: deviceId)
+        _ = try store.saveText(text: "plain snapshot", sourceApp: nil, sourceAppBundleId: nil)
+        _ = try store.runCompaction()
+        XCTAssertFalse(try store.pendingSnapshotRecords().isEmpty)
+
+        transport.saveRecordsHandler = { records, savePolicy in
+            switch savePolicy {
+            case .ifServerRecordUnchanged:
+                return SyncRecordSaveResult(savedRecordIDs: records.map(\.recordID))
+
+            case .changedKeys:
+                if let snapshotRecord = records.first(where: { $0.recordType == "ItemSnapshot" }) {
+                    XCTAssertNil(snapshotRecord["blobBundleAsset"])
+                    XCTAssertTrue(snapshotRecord.changedKeys().contains("blobBundleAsset"))
+                    sawSnapshotClearingBlobBundleAsset = true
+                }
+                return SyncRecordSaveResult(savedRecordIDs: records.map(\.recordID))
+
+            case .allKeys:
+                XCTFail("Unexpected save policy \(savePolicy)")
+                return SyncRecordSaveResult(savedRecordIDs: records.map(\.recordID))
+
+            @unknown default:
+                XCTFail("Unexpected save policy \(savePolicy)")
+                return SyncRecordSaveResult(savedRecordIDs: records.map(\.recordID))
+            }
+        }
+
+        let engine = makeEngine(
+            store: store,
+            transport: transport,
+            defaults: defaults,
+            deviceId: deviceId
+        )
+
+        await engine.runCoordinatorCycle()
+
+        XCTAssertTrue(sawSnapshotClearingBlobBundleAsset)
+        assertSynced(engine.status)
+        XCTAssertTrue(try store.pendingSnapshotRecords().isEmpty)
+    }
+
     func testFullResyncRehydratesSnapshotBlobBundleAssets() async throws {
         let sourceStore = try makeStore()
         let targetStore = try makeStore()
@@ -739,6 +788,66 @@ final class SyncEngineTests: XCTestCase {
         }
         XCTAssertEqual(files.count, 1)
         XCTAssertEqual(files[0].bookmarkData, largeBookmark)
+    }
+
+    func testFullResyncIgnoresStaleBlobBundleEntriesWhenJSONPathIsGone() async throws {
+        let sourceStore = try makeStore()
+        let targetStore = try makeStore()
+        let defaults = makeDefaults()
+        let transport = FakeCloudTransport()
+        let deviceId = "stale-blob-bundle-device"
+
+        sourceStore.setSyncDeviceId(deviceId: deviceId)
+        let itemId = try sourceStore.saveText(text: "deleted remote item", sourceApp: nil, sourceAppBundleId: nil)
+        try sourceStore.deleteItem(itemId: itemId)
+        _ = try sourceStore.runCompaction()
+
+        guard let sourceSnapshot = try sourceStore.pendingSnapshotRecords().first else {
+            return XCTFail("Expected a tombstone snapshot after compaction")
+        }
+        XCTAssertTrue(sourceSnapshot.aggregateData.contains("Tombstoned"))
+
+        let staleBundle = BlobBundle(
+            entries: [
+                BlobBundleEntry(
+                    path: [.key("Live"), .key("snapshot"), .key("thumbnail_base64")],
+                    base64Value: Data([0xAB]).base64EncodedString()
+                ),
+            ]
+        )
+        let staleBundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("stale-sync-blob-bundle-\(UUID().uuidString).json")
+        try JSONEncoder().encode(staleBundle).write(to: staleBundleURL)
+        defer { try? FileManager.default.removeItem(at: staleBundleURL) }
+
+        let zoneID = CKRecordZone(zoneName: "ClipKittySync").zoneID
+        let record = CKRecord(
+            recordType: "ItemSnapshot",
+            recordID: CKRecord.ID(recordName: sourceSnapshot.itemId, zoneID: zoneID)
+        )
+        record["snapshotRevision"] = Int64(sourceSnapshot.snapshotRevision) as CKRecordValue
+        record["schemaVersion"] = Int64(sourceSnapshot.schemaVersion) as CKRecordValue
+        record["coversThroughEvent"] = sourceSnapshot.coversThroughEvent as CKRecordValue?
+        record["aggregateData"] = sourceSnapshot.aggregateData as CKRecordValue
+        record["blobBundleAsset"] = CKAsset(fileURL: staleBundleURL)
+
+        var expiredResult = SyncZoneChangeResult()
+        expiredResult.tokenExpired = true
+        var fullResyncResult = SyncZoneChangeResult()
+        fullResyncResult.snapshots = [record]
+        transport.zoneChangeResults = [expiredResult, fullResyncResult]
+
+        let engine = makeEngine(
+            store: targetStore,
+            transport: transport,
+            defaults: defaults,
+            deviceId: deviceId
+        )
+
+        await engine.runCoordinatorCycle()
+
+        assertSynced(engine.status)
+        XCTAssertTrue(try targetStore.fetchByIds(itemIds: [itemId]).isEmpty)
     }
 
     func testCoordinatorRetriesTransientAccountStatusFailure() async throws {

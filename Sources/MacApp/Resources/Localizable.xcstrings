@@ -3565,6 +3565,62 @@
         }
       }
     },
+    "Applying iCloud history…": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "iCloud-Verlauf wird angewendet…" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Applying iCloud history…" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Aplicando historial de iCloud…" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Application de l’historique iCloud…" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "iCloud 履歴を適用中…" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "iCloud 기록 적용 중…" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Aplicando histórico do iCloud…" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Применение истории iCloud…" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在应用 iCloud 历史记录…" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在套用 iCloud 歷史記錄…" } }
+      }
+    },
+    "Compacting history…": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Verlauf wird komprimiert…" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Compacting history…" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Compactando historial…" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Compactage de l’historique…" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "履歴を圧縮中…" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "기록 압축 중…" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Compactando histórico…" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Сжатие истории…" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在压缩历史记录…" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在壓縮歷史記錄…" } }
+      }
+    },
+    "Downloading iCloud history…": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "iCloud-Verlauf wird geladen…" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Downloading iCloud history…" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Descargando historial de iCloud…" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Téléchargement de l’historique iCloud…" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "iCloud 履歴をダウンロード中…" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "iCloud 기록 다운로드 중…" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Baixando histórico do iCloud…" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Загрузка истории iCloud…" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在下载 iCloud 历史记录…" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在下載 iCloud 歷史記錄…" } }
+      }
+    },
+    "Indexing downloaded content…": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Geladene Inhalte werden indexiert…" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Indexing downloaded content…" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Indexando contenido descargado…" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Indexation du contenu téléchargé…" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ダウンロードしたコンテンツをインデックス中…" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "다운로드한 콘텐츠 색인 중…" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Indexando conteúdo baixado…" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Индексирование загруженного содержимого…" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在索引下载的内容…" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在索引下載的內容…" } }
+      }
+    },
     "Downloading update, as of": {
       "extractionState": "stale",
       "localizations": {

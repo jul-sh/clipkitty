@@ -4880,132 +4880,18 @@
               }
           }
       },
-      "Allow Paste from Other Apps in Settings so Auto-Add can read copied items." : {
+      "Applying iCloud history…" : {
           "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Erlaube \"Aus anderen Apps einfügen\" in den Einstellungen, damit Auto-Add kopierte Elemente lesen kann."
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Allow Paste from Other Apps in Settings so Auto-Add can read copied items."
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Permite \"Pegar desde otras apps\" en Ajustes para que Auto-Add pueda leer los elementos copiados."
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Autorisez \"Coller depuis d’autres apps\" dans Réglages pour qu’Auto-Add puisse lire les éléments copiés."
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "設定で「ほかのアプリからペースト」を許可すると、Auto-Add がコピーした項目を読み取れます。"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "설정에서 “다른 앱에서 붙여넣기”를 허용하면 Auto-Add가 복사한 항목을 읽을 수 있습니다."
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Permita \"Colar de Outros Apps\" nos Ajustes para que o Auto-Add leia itens copiados."
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Разрешите «Вставку из других приложений» в настройках, чтобы Auto-Add мог читать скопированные элементы."
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "在“设置”中允许“从其他 App 粘贴”，这样 Auto-Add 才能读取已拷贝的项目。"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "在「設定」中允許「從其他 App 貼上」，讓 Auto-Add 讀取已拷貝的項目。"
-                  }
-              }
-          }
-      },
-      "Auto-Add can read clipboard items when ClipKitty opens." : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Auto-Add kann Elemente aus der Zwischenablage lesen, wenn ClipKitty geöffnet wird."
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Auto-Add can read clipboard items when ClipKitty opens."
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Auto-Add puede leer elementos del portapapeles cuando se abre ClipKitty."
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Auto-Add peut lire les éléments du presse-papiers à l’ouverture de ClipKitty."
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty を開いたときに、Auto-Add がクリップボード項目を読み取れます。"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty가 열릴 때 Auto-Add가 클립보드 항목을 읽을 수 있습니다."
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "O Auto-Add pode ler itens da área de transferência quando o ClipKitty abre."
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Auto-Add может читать элементы буфера обмена при открытии ClipKitty."
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty 打开时，Auto-Add 可以读取剪贴板项目。"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty 開啟時，Auto-Add 可以讀取剪貼簿項目。"
-                  }
-              }
+              "de" : { "stringUnit" : { "state" : "translated", "value" : "iCloud-Verlauf wird angewendet…" } },
+              "en" : { "stringUnit" : { "state" : "translated", "value" : "Applying iCloud history…" } },
+              "es" : { "stringUnit" : { "state" : "translated", "value" : "Aplicando historial de iCloud…" } },
+              "fr" : { "stringUnit" : { "state" : "translated", "value" : "Application de l’historique iCloud…" } },
+              "ja" : { "stringUnit" : { "state" : "translated", "value" : "iCloud 履歴を適用中…" } },
+              "ko" : { "stringUnit" : { "state" : "translated", "value" : "iCloud 기록 적용 중…" } },
+              "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Aplicando histórico do iCloud…" } },
+              "ru" : { "stringUnit" : { "state" : "translated", "value" : "Применение истории iCloud…" } },
+              "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在应用 iCloud 历史记录…" } },
+              "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在套用 iCloud 歷史記錄…" } }
           }
       },
       "Auto-Add from Clipboard" : {
@@ -5072,1666 +4958,300 @@
               }
           }
       },
-      "Auto-Add from Clipboard is ready." : {
+      "Compacting history…" : {
+          "localizations" : {
+              "de" : { "stringUnit" : { "state" : "translated", "value" : "Verlauf wird komprimiert…" } },
+              "en" : { "stringUnit" : { "state" : "translated", "value" : "Compacting history…" } },
+              "es" : { "stringUnit" : { "state" : "translated", "value" : "Compactando historial…" } },
+              "fr" : { "stringUnit" : { "state" : "translated", "value" : "Compactage de l’historique…" } },
+              "ja" : { "stringUnit" : { "state" : "translated", "value" : "履歴を圧縮中…" } },
+              "ko" : { "stringUnit" : { "state" : "translated", "value" : "기록 압축 중…" } },
+              "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Compactando histórico…" } },
+              "ru" : { "stringUnit" : { "state" : "translated", "value" : "Сжатие истории…" } },
+              "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在压缩历史记录…" } },
+              "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在壓縮歷史記錄…" } }
+          }
+      },
+      "Downloading iCloud history…" : {
+          "localizations" : {
+              "de" : { "stringUnit" : { "state" : "translated", "value" : "iCloud-Verlauf wird geladen…" } },
+              "en" : { "stringUnit" : { "state" : "translated", "value" : "Downloading iCloud history…" } },
+              "es" : { "stringUnit" : { "state" : "translated", "value" : "Descargando historial de iCloud…" } },
+              "fr" : { "stringUnit" : { "state" : "translated", "value" : "Téléchargement de l’historique iCloud…" } },
+              "ja" : { "stringUnit" : { "state" : "translated", "value" : "iCloud 履歴をダウンロード中…" } },
+              "ko" : { "stringUnit" : { "state" : "translated", "value" : "iCloud 기록 다운로드 중…" } },
+              "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Baixando histórico do iCloud…" } },
+              "ru" : { "stringUnit" : { "state" : "translated", "value" : "Загрузка истории iCloud…" } },
+              "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在下载 iCloud 历史记录…" } },
+              "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在下載 iCloud 歷史記錄…" } }
+          }
+      },
+      "Indexing downloaded content…" : {
+          "localizations" : {
+              "de" : { "stringUnit" : { "state" : "translated", "value" : "Geladene Inhalte werden indexiert…" } },
+              "en" : { "stringUnit" : { "state" : "translated", "value" : "Indexing downloaded content…" } },
+              "es" : { "stringUnit" : { "state" : "translated", "value" : "Indexando contenido descargado…" } },
+              "fr" : { "stringUnit" : { "state" : "translated", "value" : "Indexation du contenu téléchargé…" } },
+              "ja" : { "stringUnit" : { "state" : "translated", "value" : "ダウンロードしたコンテンツをインデックス中…" } },
+              "ko" : { "stringUnit" : { "state" : "translated", "value" : "다운로드한 콘텐츠 색인 중…" } },
+              "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Indexando conteúdo baixado…" } },
+              "ru" : { "stringUnit" : { "state" : "translated", "value" : "Индексирование загруженного содержимого…" } },
+              "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在索引下载的内容…" } },
+              "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在索引下載的內容…" } }
+          }
+      },
+      "Permissions" : {
           "localizations" : {
               "de" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Automatisch aus Zwischenablage hinzufügen ist bereit."
+                      "value" : "Berechtigungen"
                   }
               },
               "en" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Auto-Add from Clipboard is ready."
+                      "value" : "Permissions"
                   }
               },
               "es" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Añadir automáticamente desde el portapapeles está listo."
+                      "value" : "Permisos"
                   }
               },
               "fr" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "L’ajout automatique depuis le presse-papiers est prêt."
+                      "value" : "Autorisations"
                   }
               },
               "ja" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "クリップボードから自動追加を使用できます。"
+                      "value" : "権限"
                   }
               },
               "ko" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "클립보드에서 자동 추가를 사용할 준비가 되었습니다."
+                      "value" : "권한"
                   }
               },
               "pt-BR" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Adicionar automaticamente da área de transferência está pronto."
+                      "value" : "Permissões"
                   }
               },
               "ru" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Автодобавление из буфера обмена готово."
+                      "value" : "Разрешения"
                   }
               },
               "zh-Hans" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "从剪贴板自动添加已就绪。"
+                      "value" : "权限"
                   }
               },
               "zh-Hant" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "從剪貼簿自動新增已準備就緒。"
+                      "value" : "權限"
                   }
               }
           }
       },
-      "Check Again" : {
+      "To streamline operations, you can allow ClipKitty to always read the clipboard." : {
           "localizations" : {
               "de" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Erneut prüfen"
+                      "value" : "Damit Abläufe schneller gehen, kannst du ClipKitty erlauben, die Zwischenablage immer zu lesen."
                   }
               },
               "en" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Check Again"
+                      "value" : "To streamline operations, you can allow ClipKitty to always read the clipboard."
                   }
               },
               "es" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Comprobar de nuevo"
+                      "value" : "Para agilizar las operaciones, puedes permitir que ClipKitty lea siempre el portapapeles."
                   }
               },
               "fr" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Vérifier à nouveau"
+                      "value" : "Pour simplifier les opérations, vous pouvez autoriser ClipKitty à toujours lire le presse-papiers."
                   }
               },
               "ja" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "もう一度確認"
+                      "value" : "操作をスムーズにするため、ClipKitty が常にクリップボードを読み取れるように許可できます。"
                   }
               },
               "ko" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "다시 확인"
+                      "value" : "작업을 더 원활하게 하려면 ClipKitty가 항상 클립보드를 읽도록 허용할 수 있습니다."
                   }
               },
               "pt-BR" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Verificar novamente"
+                      "value" : "Para agilizar as operações, você pode permitir que o ClipKitty leia sempre a área de transferência."
                   }
               },
               "ru" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Проверить снова"
+                      "value" : "Чтобы упростить работу, можно разрешить ClipKitty всегда читать буфер обмена."
                   }
               },
               "zh-Hans" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "再次检查"
+                      "value" : "为简化操作，你可以允许 ClipKitty 始终读取剪贴板。"
                   }
               },
               "zh-Hant" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "再次檢查"
+                      "value" : "為簡化操作，你可以允許 ClipKitty 一律讀取剪貼簿。"
                   }
               }
           }
       },
-      "Checking Clipboard Access" : {
+      "Open ClipKitty in the Settings app, tap \"Paste from Other Apps\", then choose \"Allow\"." : {
           "localizations" : {
               "de" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Zugriff auf Zwischenablage wird geprüft"
+                      "value" : "Öffne ClipKitty in der Einstellungen-App, tippe auf „Aus anderen Apps einfügen“ und wähle „Erlauben“."
                   }
               },
               "en" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Checking Clipboard Access"
+                      "value" : "Open ClipKitty in the Settings app, tap \"Paste from Other Apps\", then choose \"Allow\"."
                   }
               },
               "es" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Comprobando acceso al portapapeles"
+                      "value" : "Abre ClipKitty en la app Ajustes, toca \"Pegar desde otras apps\" y elige \"Permitir\"."
                   }
               },
               "fr" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Vérification de l’accès au presse-papiers"
+                      "value" : "Ouvrez ClipKitty dans l’app Réglages, touchez « Coller depuis d’autres apps », puis choisissez « Autoriser »."
                   }
               },
               "ja" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "クリップボードアクセスを確認中"
+                      "value" : "設定アプリで ClipKitty を開き、「ほかのアプリからペースト」をタップしてから「許可」を選択します。"
                   }
               },
               "ko" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "클립보드 접근 확인 중"
+                      "value" : "설정 앱에서 ClipKitty를 열고 “다른 앱에서 붙여넣기”를 탭한 다음 “허용”을 선택합니다."
                   }
               },
               "pt-BR" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Verificando acesso à área de transferência"
+                      "value" : "Abra o ClipKitty no app Ajustes, toque em \"Colar de Outros Apps\" e escolha \"Permitir\"."
                   }
               },
               "ru" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Проверка доступа к буферу обмена"
+                      "value" : "Откройте ClipKitty в приложении «Настройки», коснитесь «Вставка из других приложений», затем выберите «Разрешить»."
                   }
               },
               "zh-Hans" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "正在检查剪贴板访问权限"
+                      "value" : "在“设置” App 中打开 ClipKitty，轻点“从其他 App 粘贴”，然后选择“允许”。"
                   }
               },
               "zh-Hant" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "正在檢查剪貼簿存取權限"
+                      "value" : "在「設定」App 中開啟 ClipKitty，點一下「從其他 App 貼上」，然後選擇「允許」。"
                   }
               }
           }
       },
-      "Checking access" : {
+      "Open ClipKitty Settings" : {
           "localizations" : {
               "de" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Zugriff wird geprüft"
+                      "value" : "ClipKitty-Einstellungen öffnen"
                   }
               },
               "en" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Checking access"
+                      "value" : "Open ClipKitty Settings"
                   }
               },
               "es" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Comprobando acceso"
+                      "value" : "Abrir ajustes de ClipKitty"
                   }
               },
               "fr" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Vérification de l’accès"
+                      "value" : "Ouvrir les réglages de ClipKitty"
                   }
               },
               "ja" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "アクセスを確認中"
+                      "value" : "ClipKitty の設定を開く"
                   }
               },
               "ko" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "접근 확인 중"
+                      "value" : "ClipKitty 설정 열기"
                   }
               },
               "pt-BR" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Verificando acesso"
+                      "value" : "Abrir ajustes do ClipKitty"
                   }
               },
               "ru" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "Проверка доступа"
+                      "value" : "Открыть настройки ClipKitty"
                   }
               },
               "zh-Hans" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "正在检查访问权限"
+                      "value" : "打开 ClipKitty 设置"
                   }
               },
               "zh-Hant" : {
                   "stringUnit" : {
                       "state" : "translated",
-                      "value" : "正在檢查存取權限"
-                  }
-              }
-          }
-      },
-      "Choose \"Allow\"" : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Wähle \"Erlauben\""
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Choose \"Allow\""
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Elige \"Permitir\""
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Choisissez \"Autoriser\""
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "「許可」を選択"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "“허용”을 선택하세요"
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Escolha \"Permitir\""
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Выберите «Разрешить»"
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "选择“允许”"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "選擇「允許」"
-                  }
-              }
-          }
-      },
-      "ClipKitty is checking whether iOS allows clipboard reads." : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty prüft, ob iOS das Lesen der Zwischenablage erlaubt."
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty is checking whether iOS allows clipboard reads."
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty está comprobando si iOS permite leer el portapapeles."
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty vérifie si iOS autorise la lecture du presse-papiers."
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty は iOS がクリップボードの読み取りを許可しているか確認しています。"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty가 iOS에서 클립보드 읽기를 허용하는지 확인하고 있습니다."
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "O ClipKitty está verificando se o iOS permite ler a área de transferência."
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty проверяет, разрешает ли iOS чтение буфера обмена."
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty 正在检查 iOS 是否允许读取剪贴板。"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty 正在檢查 iOS 是否允許讀取剪貼簿。"
-                  }
-              }
-          }
-      },
-      "ClipKitty needs permission to paste from other apps so it can automatically save the current clipboard when you open the app." : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty benötigt die Berechtigung zum Einfügen aus anderen Apps, damit die aktuelle Zwischenablage beim Öffnen der App automatisch gespeichert werden kann."
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty needs permission to paste from other apps so it can automatically save the current clipboard when you open the app."
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty necesita permiso para pegar desde otras apps para poder guardar automáticamente el portapapeles actual cuando abras la app."
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty a besoin de l’autorisation de coller depuis d’autres apps afin d’enregistrer automatiquement le presse-papiers actuel à l’ouverture de l’app."
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty がアプリを開いたときに現在のクリップボードを自動保存するには、ほかのアプリからのペースト権限が必要です。"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty가 앱을 열 때 현재 클립보드를 자동으로 저장하려면 다른 앱에서 붙여넣기 권한이 필요합니다."
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "O ClipKitty precisa de permissão para colar de outros apps para salvar automaticamente a área de transferência atual quando você abrir o app."
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty требуется разрешение на вставку из других приложений, чтобы автоматически сохранять текущий буфер обмена при открытии приложения."
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty 需要从其他 App 粘贴的权限，才能在你打开 App 时自动保存当前剪贴板。"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty 需要從其他 App 貼上的權限，才能在你開啟 App 時自動儲存目前的剪貼簿。"
-                  }
-              }
-          }
-      },
-      "ClipKitty will verify clipboard access before Auto-Add reads copied items." : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty prüft den Zugriff auf die Zwischenablage, bevor Auto-Add kopierte Elemente liest."
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty will verify clipboard access before Auto-Add reads copied items."
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty verificará el acceso al portapapeles antes de que Auto-Add lea elementos copiados."
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty vérifiera l’accès au presse-papiers avant qu’Auto-Add lise les éléments copiés."
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Auto-Add がコピーした項目を読み取る前に、ClipKitty がクリップボードアクセスを確認します。"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Auto-Add가 복사한 항목을 읽기 전에 ClipKitty가 클립보드 접근을 확인합니다."
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "O ClipKitty verificará o acesso à área de transferência antes que o Auto-Add leia itens copiados."
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty проверит доступ к буферу обмена перед тем, как Auto-Add прочитает скопированные элементы."
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "在 Auto-Add 读取已拷贝的项目之前，ClipKitty 会验证剪贴板访问权限。"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "在 Auto-Add 讀取已拷貝的項目之前，ClipKitty 會驗證剪貼簿存取權限。"
-                  }
-              }
-          }
-      },
-      "Clipboard Access Verified" : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Zugriff auf Zwischenablage bestätigt"
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Clipboard Access Verified"
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Acceso al portapapeles verificado"
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Accès au presse-papiers vérifié"
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "クリップボードアクセスを確認済み"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "클립보드 접근 확인됨"
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Acesso à área de transferência verificado"
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Доступ к буферу обмена подтвержден"
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "剪贴板访问权限已验证"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "剪貼簿存取權限已驗證"
-                  }
-              }
-          }
-      },
-      "Clipboard Permission Needed" : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Berechtigung für Zwischenablage erforderlich"
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Clipboard Permission Needed"
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Se necesita permiso del portapapeles"
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Autorisation du presse-papiers requise"
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "クリップボード権限が必要です"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "클립보드 권한 필요"
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Permissão da área de transferência necessária"
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Требуется разрешение буфера обмена"
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "需要剪贴板权限"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "需要剪貼簿權限"
-                  }
-              }
-          }
-      },
-      "Clipboard access is enabled" : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Zugriff auf Zwischenablage ist aktiviert"
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Clipboard access is enabled"
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "El acceso al portapapeles está activado"
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "L’accès au presse-papiers est activé"
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "クリップボードアクセスが有効です"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "클립보드 접근이 활성화되었습니다"
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "O acesso à área de transferência está ativado"
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Доступ к буферу обмена включен"
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "剪贴板访问权限已启用"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "剪貼簿存取權限已啟用"
-                  }
-              }
-          }
-      },
-      "Clipboard item needed" : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Element in Zwischenablage erforderlich"
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Clipboard item needed"
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Se necesita un elemento en el portapapeles"
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Élément du presse-papiers requis"
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "クリップボード項目が必要です"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "클립보드 항목 필요"
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Item da área de transferência necessário"
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Нужен элемент в буфере обмена"
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "需要剪贴板项目"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "需要剪貼簿項目"
-                  }
-              }
-          }
-      },
-      "Copy an Item to Verify" : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Zum Prüfen ein Element kopieren"
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Copy an Item to Verify"
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Copia un elemento para verificar"
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Copiez un élément pour vérifier"
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "確認する項目をコピー"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "확인할 항목 복사"
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Copie um item para verificar"
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Скопируйте элемент для проверки"
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "拷贝一个项目以验证"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "拷貝一個項目以驗證"
-                  }
-              }
-          }
-      },
-      "Copy text, a link, or an image from another app, then check again." : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Kopiere Text, einen Link oder ein Bild aus einer anderen App und prüfe erneut."
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Copy text, a link, or an image from another app, then check again."
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Copia texto, un enlace o una imagen desde otra app y comprueba de nuevo."
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Copiez du texte, un lien ou une image depuis une autre app, puis vérifiez à nouveau."
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "別のアプリからテキスト、リンク、または画像をコピーしてから、もう一度確認してください。"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "다른 앱에서 텍스트, 링크 또는 이미지를 복사한 다음 다시 확인하세요."
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Copie texto, um link ou uma imagem de outro app e verifique novamente."
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Скопируйте текст, ссылку или изображение из другого приложения, затем проверьте снова."
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "从其他 App 拷贝文本、链接或图片，然后再次检查。"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "從其他 App 拷貝文字、連結或圖片，然後再次檢查。"
-                  }
-              }
-          }
-      },
-      "Copy text, a link, or an image from another app, then return to ClipKitty and check again." : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Kopiere Text, einen Link oder ein Bild aus einer anderen App, kehre dann zu ClipKitty zurück und prüfe erneut."
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Copy text, a link, or an image from another app, then return to ClipKitty and check again."
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Copia texto, un enlace o una imagen desde otra app, vuelve a ClipKitty y comprueba de nuevo."
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Copiez du texte, un lien ou une image depuis une autre app, puis revenez dans ClipKitty et vérifiez à nouveau."
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "別のアプリからテキスト、リンク、または画像をコピーし、ClipKitty に戻ってもう一度確認してください。"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "다른 앱에서 텍스트, 링크 또는 이미지를 복사한 다음 ClipKitty로 돌아와 다시 확인하세요."
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Copie texto, um link ou uma imagem de outro app, volte ao ClipKitty e verifique novamente."
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Скопируйте текст, ссылку или изображение из другого приложения, затем вернитесь в ClipKitty и проверьте снова."
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "从其他 App 拷贝文本、链接或图片，然后返回 ClipKitty 并再次检查。"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "從其他 App 拷貝文字、連結或圖片，然後返回 ClipKitty 並再次檢查。"
-                  }
-              }
-          }
-      },
-      "Enable Clipboard Access" : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Zugriff auf Zwischenablage aktivieren"
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Enable Clipboard Access"
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Activar acceso al portapapeles"
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Activer l’accès au presse-papiers"
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "クリップボードアクセスを有効にする"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "클립보드 접근 활성화"
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Ativar acesso à área de transferência"
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Включить доступ к буферу обмена"
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "启用剪贴板访问权限"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "啟用剪貼簿存取權限"
-                  }
-              }
-          }
-      },
-      "If iOS asks for paste permission, choose Allow Paste." : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Wenn iOS nach der Einfügeberechtigung fragt, wähle \"Einfügen erlauben\"."
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "If iOS asks for paste permission, choose Allow Paste."
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Si iOS solicita permiso para pegar, elige Permitir pegar."
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Si iOS demande l’autorisation de coller, choisissez Autoriser le collage."
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "iOS がペースト権限を求めた場合は、「ペーストを許可」を選択してください。"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "iOS에서 붙여넣기 권한을 요청하면 붙여넣기 허용을 선택하세요."
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Se o iOS pedir permissão para colar, escolha Permitir Colar."
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Если iOS запросит разрешение на вставку, выберите «Разрешить вставку»."
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "如果 iOS 请求粘贴权限，请选择“允许粘贴”。"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "如果 iOS 要求貼上權限，請選擇「允許貼上」。"
-                  }
-              }
-          }
-      },
-      "Open \"Paste from Other Apps\"" : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Öffne \"Aus anderen Apps einfügen\""
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Open \"Paste from Other Apps\""
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Abre \"Pegar desde otras apps\""
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Ouvrez \"Coller depuis d’autres apps\""
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "「ほかのアプリからペースト」を開く"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "“다른 앱에서 붙여넣기” 열기"
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Abra \"Colar de Outros Apps\""
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Откройте «Вставка из других приложений»"
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "打开“从其他 App 粘贴”"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "開啟「從其他 App 貼上」"
-                  }
-              }
-          }
-      },
-      "Open App Settings" : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "App-Einstellungen öffnen"
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Open App Settings"
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Abrir ajustes de la app"
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Ouvrir les réglages de l’app"
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "アプリ設定を開く"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "앱 설정 열기"
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Abrir Ajustes do app"
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Открыть настройки приложения"
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "打开 App 设置"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "開啟 App 設定"
-                  }
-              }
-          }
-      },
-      "Open app settings and set Paste from Other Apps to Allow." : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Öffne die App-Einstellungen und setze \"Aus anderen Apps einfügen\" auf \"Erlauben\"."
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Open app settings and set Paste from Other Apps to Allow."
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Abre los ajustes de la app y cambia Pegar desde otras apps a Permitir."
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Ouvrez les réglages de l’app et définissez Coller depuis d’autres apps sur Autoriser."
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "アプリ設定を開き、「ほかのアプリからペースト」を「許可」に設定してください。"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "앱 설정을 열고 다른 앱에서 붙여넣기를 허용으로 설정하세요."
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Abra os Ajustes do app e defina Colar de Outros Apps como Permitir."
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Откройте настройки приложения и установите «Вставка из других приложений» на «Разрешить»."
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "打开 App 设置，并将“从其他 App 粘贴”设为“允许”。"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "開啟 App 設定，並將「從其他 App 貼上」設為「允許」。"
-                  }
-              }
-          }
-      },
-      "Permission is not granted yet" : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Berechtigung wurde noch nicht erteilt"
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Permission is not granted yet"
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "El permiso aún no se concedió"
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "L’autorisation n’est pas encore accordée"
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "権限がまだ許可されていません"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "아직 권한이 허용되지 않았습니다"
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "A permissão ainda não foi concedida"
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Разрешение еще не предоставлено"
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "尚未授予权限"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "尚未授予權限"
-                  }
-              }
-          }
-      },
-      "Ready to check" : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Bereit zur Prüfung"
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Ready to check"
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Listo para comprobar"
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Prêt à vérifier"
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "確認の準備ができました"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "확인할 준비가 되었습니다"
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Pronto para verificar"
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Готово к проверке"
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "已准备好检查"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "已準備好檢查"
-                  }
-              }
-          }
-      },
-      "Return to ClipKitty to verify access" : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Kehre zu ClipKitty zurück, um den Zugriff zu prüfen"
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Return to ClipKitty to verify access"
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Vuelve a ClipKitty para verificar el acceso"
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Revenez dans ClipKitty pour vérifier l’accès"
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty に戻ってアクセスを確認"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "ClipKitty로 돌아와 접근을 확인하세요"
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Volte ao ClipKitty para verificar o acesso"
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Вернитесь в ClipKitty, чтобы проверить доступ"
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "返回 ClipKitty 以验证访问权限"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "返回 ClipKitty 以驗證存取權限"
-                  }
-              }
-          }
-      },
-      "Set Paste from Other Apps to Allow in the iOS Settings app." : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Setze \"Aus anderen Apps einfügen\" in der iOS-Einstellungen-App auf \"Erlauben\"."
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Set Paste from Other Apps to Allow in the iOS Settings app."
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Cambia Pegar desde otras apps a Permitir en la app Ajustes de iOS."
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Définissez Coller depuis d’autres apps sur Autoriser dans l’app Réglages d’iOS."
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "iOS の設定アプリで「ほかのアプリからペースト」を「許可」に設定してください。"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "iOS 설정 앱에서 다른 앱에서 붙여넣기를 허용으로 설정하세요."
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Defina Colar de Outros Apps como Permitir no app Ajustes do iOS."
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Установите «Вставка из других приложений» на «Разрешить» в приложении «Настройки» iOS."
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "在 iOS“设置”App 中将“从其他 App 粘贴”设为“允许”。"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "在 iOS「設定」App 中將「從其他 App 貼上」設為「允許」。"
-                  }
-              }
-          }
-      },
-      "Tap \"Open App Settings\" below" : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Tippe unten auf \"App-Einstellungen öffnen\""
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Tap \"Open App Settings\" below"
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Toca \"Abrir ajustes de la app\" abajo"
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Touchez \"Ouvrir les réglages de l’app\" ci-dessous"
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "下の「アプリ設定を開く」をタップ"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "아래의 “앱 설정 열기”를 탭하세요"
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Toque em \"Abrir Ajustes do app\" abaixo"
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Нажмите «Открыть настройки приложения» ниже"
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "轻点下方的“打开 App 设置”"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "點一下下方的「開啟 App 設定」"
-                  }
-              }
-          }
-      },
-      "Verify Clipboard Access" : {
-          "localizations" : {
-              "de" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Zugriff auf Zwischenablage prüfen"
-                  }
-              },
-              "en" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Verify Clipboard Access"
-                  }
-              },
-              "es" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Verificar acceso al portapapeles"
-                  }
-              },
-              "fr" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Vérifier l’accès au presse-papiers"
-                  }
-              },
-              "ja" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "クリップボードアクセスを確認"
-                  }
-              },
-              "ko" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "클립보드 접근 확인"
-                  }
-              },
-              "pt-BR" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Verificar acesso à área de transferência"
-                  }
-              },
-              "ru" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "Проверить доступ к буферу обмена"
-                  }
-              },
-              "zh-Hans" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "验证剪贴板访问权限"
-                  }
-              },
-              "zh-Hant" : {
-                  "stringUnit" : {
-                      "state" : "translated",
-                      "value" : "驗證剪貼簿存取權限"
+                      "value" : "開啟 ClipKitty 設定"
                   }
               }
           }

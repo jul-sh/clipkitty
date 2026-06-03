@@ -190,7 +190,9 @@
                 self.snapshots = snapshots
             }
 
-            public var total: Int { events + snapshots }
+            public var total: Int {
+                events + snapshots
+            }
         }
 
         public enum SyncDownloadActivity: Equatable, Sendable {
@@ -853,7 +855,7 @@
             }.value
         }
 
-        nonisolated private static func convertCloudKitRecords(
+        private nonisolated static func convertCloudKitRecords(
             events: [CKRecord],
             snapshots: [CKRecord]
         ) throws -> ([SyncEventRecord], [SyncSnapshotRecord]) {
@@ -1110,7 +1112,6 @@
             case assetReadFailed(recordID: String, underlying: Error)
             case invalidBlobBundle(recordID: String, underlying: Error)
             case jsonRehydrationFailed(recordID: String, underlying: Error)
-            case blobInjectionFailed(recordID: String, path: String)
 
             var errorDescription: String? {
                 switch self {
@@ -1122,15 +1123,13 @@
                     return "Failed to decode CloudKit blob bundle for record \(recordID): \(underlying.localizedDescription)"
                 case let .jsonRehydrationFailed(recordID, underlying):
                     return "Failed to rehydrate CloudKit JSON for record \(recordID): \(underlying.localizedDescription)"
-                case let .blobInjectionFailed(recordID, path):
-                    return "CloudKit blob bundle for record \(recordID) could not be injected at path \(path)"
                 }
             }
         }
 
         // MARK: - CKAsset Helpers
 
-        nonisolated private static func configureJSONField(
+        private nonisolated static func configureJSONField(
             _ jsonString: String,
             on record: CKRecord,
             field: CloudRecordJSONField
@@ -1143,10 +1142,11 @@
             }
 
             record[field.recordFieldName] = jsonString as CKRecordValue
+            record[blobBundleFieldName] = nil
             return nil
         }
 
-        nonisolated private static func rehydratedJSONString(
+        private nonisolated static func rehydratedJSONString(
             for record: CKRecord,
             field: CloudRecordJSONField
         ) throws -> String {
@@ -1181,7 +1181,7 @@
             )
         }
 
-        nonisolated private static func writeBlobBundle(_ bundle: BlobBundle) throws -> URL {
+        private nonisolated static func writeBlobBundle(_ bundle: BlobBundle) throws -> URL {
             let tempURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent(UUID().uuidString + ".json")
             let data = try JSONEncoder().encode(bundle)
@@ -1189,14 +1189,14 @@
             return tempURL
         }
 
-        nonisolated private static func cleanupTemporaryFiles(_ urls: [URL]) {
+        private nonisolated static func cleanupTemporaryFiles(_ urls: [URL]) {
             for url in urls {
                 try? FileManager.default.removeItem(at: url)
             }
         }
 
         /// Recursively extract any non-empty base64 values from `_base64` JSON fields.
-        nonisolated private static func extractBase64Bundle(from jsonString: String) -> (String, BlobBundle)? {
+        private nonisolated static func extractBase64Bundle(from jsonString: String) -> (String, BlobBundle)? {
             guard let jsonData = jsonString.data(using: .utf8),
                   var root = try? JSONSerialization.jsonObject(with: jsonData)
             else { return nil }
@@ -1250,7 +1250,7 @@
             return (strippedString, BlobBundle(entries: entries))
         }
 
-        nonisolated private static func inject(
+        private nonisolated static func inject(
             blobBundle: BlobBundle,
             into jsonString: String,
             recordID: String
@@ -1269,15 +1269,14 @@
             do {
                 var root = try JSONSerialization.jsonObject(with: jsonData)
                 for entry in blobBundle.entries {
+                    // Snapshot uploads use changed keys, so older CloudKit records can retain
+                    // a blob asset after the JSON no longer contains that base64 field.
                     guard setJSONValue(
                         entry.base64Value,
                         at: entry.path,
                         in: &root
                     ) else {
-                        throw SyncEngineDataError.blobInjectionFailed(
-                            recordID: recordID,
-                            path: pathDescription(entry.path)
-                        )
+                        continue
                     }
                 }
 
@@ -1300,7 +1299,7 @@
             }
         }
 
-        nonisolated private static func setJSONValue(
+        private nonisolated static func setJSONValue(
             _ value: String,
             at path: [BlobPathComponent],
             in node: inout Any
@@ -1311,6 +1310,7 @@
             case let .key(key):
                 guard var dict = node as? [String: Any] else { return false }
                 if path.count == 1 {
+                    guard let existing = dict[key] as? String, existing.isEmpty else { return false }
                     dict[key] = value
                     node = dict
                     return true
@@ -1328,6 +1328,7 @@
                     return false
                 }
                 if path.count == 1 {
+                    guard let existing = array[index] as? String, existing.isEmpty else { return false }
                     array[index] = value
                     node = array
                     return true
@@ -1340,21 +1341,6 @@
                 node = array
                 return true
             }
-        }
-
-        nonisolated private static func pathDescription(_ path: [BlobPathComponent]) -> String {
-            if path.isEmpty {
-                return "$"
-            }
-
-            return "$" + path.map { component in
-                switch component {
-                case let .key(key):
-                    return ".\(key)"
-                case let .index(index):
-                    return "[\(index)]"
-                }
-            }.joined()
         }
 
         // MARK: - Compaction
@@ -1590,7 +1576,7 @@
             )
         }
 
-        nonisolated private static func archivedZoneChangeToken(_ changeToken: CKServerChangeToken?) throws -> Data? {
+        private nonisolated static func archivedZoneChangeToken(_ changeToken: CKServerChangeToken?) throws -> Data? {
             if let changeToken {
                 return try NSKeyedArchiver.archivedData(
                     withRootObject: changeToken,

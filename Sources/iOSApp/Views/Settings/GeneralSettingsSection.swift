@@ -1,11 +1,9 @@
 import SwiftUI
+import UIKit
 
 struct GeneralSettingsSection: View {
     @Environment(iOSSettingsStore.self) private var settings
-    @Environment(AppContainer.self) private var container
-
-    @State private var showingClipboardPermissionSheet = false
-    @State private var clipboardPermissionStatus: ClipboardPermissionStatus = .unknown
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         @Bindable var settings = settings
@@ -13,41 +11,30 @@ struct GeneralSettingsSection: View {
         Section(String(localized: "General")) {
             Toggle(String(localized: "Haptic Feedback"), isOn: $settings.hapticsEnabled)
             Toggle(String(localized: "Generate Link Previews"), isOn: $settings.generateLinkPreviews)
-            Toggle(String(localized: "Auto-Add from Clipboard"), isOn: autoAddFromClipboardBinding)
-
-            if settings.autoAddFromClipboard {
-                switch clipboardPermissionStatus {
-                case .checked(.granted):
-                    ClipboardPermissionVerifiedRow()
-                case .unknown, .verifying, .checked(.needsClipboardItem), .checked(.needsSettingsChange):
-                    ClipboardPermissionPromptRow(status: clipboardPermissionStatus) {
-                        showingClipboardPermissionSheet = true
-                    }
-                }
-            }
+            Toggle(String(localized: "Auto-Add from Clipboard"), isOn: $settings.autoAddFromClipboard)
         }
-        .sheet(isPresented: $showingClipboardPermissionSheet) {
-            ClipboardPermissionSheet(
-                isPresented: $showingClipboardPermissionSheet,
-                status: $clipboardPermissionStatus,
-                clipboardService: container.clipboardService
-            )
+
+        Section(String(localized: "Permissions")) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(String(localized: "To streamline operations, you can allow ClipKitty to always read the clipboard."))
+                    .foregroundStyle(.primary)
+
+                Text(String(localized: "Open ClipKitty in the Settings app, tap \"Paste from Other Apps\", then choose \"Allow\"."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+
+            Button {
+                openAppSettings()
+            } label: {
+                Label(String(localized: "Open ClipKitty Settings"), systemImage: "gearshape")
+            }
         }
     }
 
-    private var autoAddFromClipboardBinding: Binding<Bool> {
-        Binding(
-            get: { settings.autoAddFromClipboard },
-            set: { enabled in
-                settings.autoAddFromClipboard = enabled
-                switch enabled {
-                case true:
-                    clipboardPermissionStatus = .unknown
-                    showingClipboardPermissionSheet = true
-                case false:
-                    clipboardPermissionStatus = .unknown
-                }
-            }
-        )
+    private func openAppSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        openURL(url)
     }
 }
