@@ -33,7 +33,7 @@ const CHUNK_TARGET_BYTES: usize = 16 * 1024;
 const CHUNK_OVERLAP_BYTES: usize = 2 * 1024;
 const CHUNK_BOUNDARY_SLACK_BYTES: usize = 1024;
 const RAW_RECALL_BATCHES: [usize; 5] = [256, 512, 1024, 2048, 4096];
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -739,7 +739,8 @@ fn run_phase_two_head(
 /// Tantivy-based indexer with trigram tokenization
 pub struct Indexer {
     index: Index,
-    writer: RwLock<IndexWriter>,
+    writer: Mutex<Option<IndexWriter>>,
+    writer_memory_budget: usize,
     reader: RwLock<IndexReader>,
     item_id_field: Field,
     content_field: Field,
@@ -842,13 +843,12 @@ impl Indexer {
         let index = Index::open_or_create(dir, schema.clone())?;
         Self::register_tokenizer(&index);
 
-        let writer = index.writer(50_000_000)?;
         let reader = index
             .reader_builder()
             .reload_policy(ReloadPolicy::Manual)
             .try_into()?;
 
-        Ok(Self::from_parts(index, writer, reader, schema))
+        Ok(Self::from_parts(index, reader, schema, 50_000_000))
     }
 
     /// Create an in-memory indexer (for testing)
@@ -858,16 +858,20 @@ impl Indexer {
         let index = Index::create_in_ram(schema.clone());
         Self::register_tokenizer(&index);
 
-        let writer = index.writer(15_000_000)?;
         let reader = index
             .reader_builder()
             .reload_policy(ReloadPolicy::Manual)
             .try_into()?;
 
-        Ok(Self::from_parts(index, writer, reader, schema))
+        Ok(Self::from_parts(index, reader, schema, 15_000_000))
     }
 
-    fn from_parts(index: Index, writer: IndexWriter, reader: IndexReader, schema: Schema) -> Self {
+    fn from_parts(
+        index: Index,
+        reader: IndexReader,
+        schema: Schema,
+        writer_memory_budget: usize,
+    ) -> Self {
         Self {
             item_id_field: schema.get_field("item_id").unwrap(),
             content_field: schema.get_field("content").unwrap(),
@@ -878,9 +882,41 @@ impl Indexer {
             chunk_start_field: schema.get_field("chunk_start").unwrap(),
             chunk_end_field: schema.get_field("chunk_end").unwrap(),
             index,
-            writer: RwLock::new(writer),
+            writer: Mutex::new(None),
+            writer_memory_budget,
             reader: RwLock::new(reader),
         }
+    }
+
+    fn with_writer<T>(
+        &self,
+        operation: impl FnOnce(&mut IndexWriter) -> IndexerResult<T>,
+    ) -> IndexerResult<T> {
+        let mut writer_slot = self.writer.lock();
+        if writer_slot.is_none() {
+            *writer_slot = Some(self.index.writer(self.writer_memory_budget)?);
+        }
+        operation(writer_slot.as_mut().expect("writer initialized above"))
+    }
+
+    fn close_writer(&self, wait_for_merges: bool) -> IndexerResult<()> {
+        let writer = self.writer.lock().take();
+        let Some(mut writer) = writer else {
+            return Ok(());
+        };
+
+        let commit_result = writer.commit();
+        let close_result = if wait_for_merges {
+            writer.wait_merging_threads()
+        } else {
+            drop(writer);
+            Ok(())
+        };
+
+        commit_result?;
+        close_result?;
+        self.reader.write().reload()?;
+        Ok(())
     }
 
     fn build_schema() -> Schema {
@@ -968,42 +1004,46 @@ impl Indexer {
 
     /// Add or update a document in the index
     pub fn add_document(&self, id: &str, content: &str, timestamp: i64) -> IndexerResult<()> {
-        let writer = self.writer.read();
-        let parent_len = content.len();
+        self.with_writer(|writer| {
+            let parent_len = content.len();
 
-        // Delete existing document with same ID (upsert semantics)
-        let id_term = tantivy::Term::from_field_text(self.item_id_field, id);
-        writer.delete_term(id_term);
+            // Delete existing document with same ID (upsert semantics)
+            let id_term = tantivy::Term::from_field_text(self.item_id_field, id);
+            writer.delete_term(id_term);
 
-        if parent_len > CHUNK_PARENT_THRESHOLD_BYTES {
-            for chunk in chunk_slices(content) {
-                self.add_search_unit_document(
-                    &writer,
-                    id,
-                    &content[chunk.start..chunk.end],
-                    timestamp,
-                    parent_len,
-                    Some(chunk),
-                )?;
+            if parent_len > CHUNK_PARENT_THRESHOLD_BYTES {
+                for chunk in chunk_slices(content) {
+                    self.add_search_unit_document(
+                        writer,
+                        id,
+                        &content[chunk.start..chunk.end],
+                        timestamp,
+                        parent_len,
+                        Some(chunk),
+                    )?;
+                }
+            } else {
+                self.add_search_unit_document(writer, id, content, timestamp, parent_len, None)?;
             }
-        } else {
-            self.add_search_unit_document(&writer, id, content, timestamp, parent_len, None)?;
-        }
 
-        Ok(())
+            Ok(())
+        })
     }
 
     pub fn commit(&self) -> IndexerResult<()> {
-        self.writer.write().commit()?;
-        self.reader.write().reload()?;
-        Ok(())
+        self.close_writer(false)
+    }
+
+    pub fn prepare_for_suspend(&self) -> IndexerResult<()> {
+        self.close_writer(true)
     }
 
     pub fn delete_document(&self, id: &str) -> IndexerResult<()> {
-        let writer = self.writer.read();
-        let id_term = tantivy::Term::from_field_text(self.item_id_field, id);
-        writer.delete_term(id_term);
-        Ok(())
+        self.with_writer(|writer| {
+            let id_term = tantivy::Term::from_field_text(self.item_id_field, id);
+            writer.delete_term(id_term);
+            Ok(())
+        })
     }
 
     /// Tokenize text using the trigram tokenizer and return terms for the content field.
@@ -1709,12 +1749,11 @@ impl Indexer {
     }
 
     pub fn clear(&self) -> IndexerResult<()> {
-        let mut writer = self.writer.write();
-        writer.delete_all_documents()?;
-        writer.commit()?;
-        drop(writer);
-        self.reader.write().reload()?;
-        Ok(())
+        self.with_writer(|writer| {
+            writer.delete_all_documents()?;
+            Ok(())
+        })?;
+        self.commit()
     }
 
     /// Get the number of documents in the index
@@ -1791,6 +1830,32 @@ mod tests {
         indexer.delete_document("1").unwrap();
         indexer.commit().unwrap();
         assert_eq!(indexer.num_docs(), 0);
+    }
+
+    #[test]
+    fn test_prepare_for_suspend_releases_writer_lock_and_reopens() {
+        let temp = tempfile::tempdir().unwrap();
+        let indexer = Indexer::new(temp.path()).unwrap();
+
+        indexer.add_document("1", "hello world", 1000).unwrap();
+        assert!(indexer
+            .index
+            .writer::<tantivy::TantivyDocument>(15_000_000)
+            .is_err());
+
+        indexer.prepare_for_suspend().unwrap();
+        let external_writer = indexer
+            .index
+            .writer::<tantivy::TantivyDocument>(15_000_000)
+            .unwrap();
+        drop(external_writer);
+
+        indexer.add_document("2", "shell output log", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("shell", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "2");
     }
 
     #[test]

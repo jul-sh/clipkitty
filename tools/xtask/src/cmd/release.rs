@@ -1457,7 +1457,7 @@ fn list_screenshot_set(
             .and_then(|s| s.get("attributes"))
             .and_then(|a| a.get("screenshotDisplayType"))
             .and_then(Value::as_str);
-        if entry_device_type == Some(device_type) {
+        if screenshot_display_type_matches(entry_device_type, device_type) {
             return Ok(entry
                 .get("screenshots")
                 .and_then(Value::as_array)
@@ -1466,6 +1466,18 @@ fn list_screenshot_set(
         }
     }
     Ok(Vec::new())
+}
+
+fn screenshot_display_type_matches(actual: Option<&str>, expected: &str) -> bool {
+    actual.is_some_and(|actual| {
+        normalize_screenshot_display_type(actual) == normalize_screenshot_display_type(expected)
+    })
+}
+
+fn normalize_screenshot_display_type(display_type: &str) -> &str {
+    display_type
+        .strip_prefix("APP_")
+        .unwrap_or(display_type)
 }
 
 fn screenshot_state(screenshot: &Value) -> Option<&str> {
@@ -2605,7 +2617,7 @@ fn xml_escape(value: &str) -> String {
 mod tests {
     use super::{
         app_preview_state, collect_ids, is_preview_upload_in_progress_error, looks_like_locale_dir,
-        media_ids_with_attribute, AppPreviewState, IOS_PLATFORM,
+        media_ids_with_attribute, screenshot_display_type_matches, AppPreviewState, IOS_PLATFORM,
     };
     use serde_json::json;
 
@@ -2738,6 +2750,26 @@ mod tests {
     fn ios_screenshots_upload_to_iphone_61_slot() {
         assert_eq!(IOS_PLATFORM.marketing_dir_name, "marketing-ios");
         assert_eq!(IOS_PLATFORM.screenshot_device_types, &["IPHONE_61"]);
+    }
+
+    #[test]
+    fn screenshot_display_type_matches_app_store_prefix_variants() {
+        assert!(screenshot_display_type_matches(
+            Some("APP_IPHONE_61"),
+            "IPHONE_61"
+        ));
+        assert!(screenshot_display_type_matches(
+            Some("IPHONE_61"),
+            "APP_IPHONE_61"
+        ));
+        assert!(screenshot_display_type_matches(
+            Some("APP_DESKTOP"),
+            "DESKTOP"
+        ));
+        assert!(!screenshot_display_type_matches(
+            Some("APP_IPHONE_61"),
+            "IPAD_PRO_3GEN_129"
+        ));
     }
 
     #[test]

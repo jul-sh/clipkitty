@@ -255,7 +255,7 @@ impl ClipboardStore {
         if let Some(token) = self.active_search_token.lock().take() {
             token.cancel();
         }
-        let _ = self.indexer.commit();
+        let _ = self.indexer.prepare_for_suspend();
         let _ = self.db.checkpoint_for_suspend();
     }
 
