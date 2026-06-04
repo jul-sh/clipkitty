@@ -178,7 +178,6 @@ final class AppState {
 
         switch result {
         case .success:
-            container.haptics.fire(.success)
             refreshFeed()
         case .failure:
             break
