@@ -11,14 +11,14 @@ Type a few words, fragments, or even a typo. ClipKitty helps you find the right 
 Preview before you paste
 See full text, code, images, colors, links, and files before using them. No guessing from tiny cut-off snippets.
 
-Move fast from the keyboard
-Press ⌥Space, search by typing, move with ↑ / ↓, and press Return to paste.
-
-Sync only when you want it
-Use optional iCloud Sync to keep your history in step across Mac, iPhone, and iPad. It is off by default and uses your private iCloud account, with no ClipKitty-run server in the path.
+Pick up from any device
+Turn on iCloud Sync and your clipboard history follows you across Mac, iPhone, and iPad. Copy on one device, search on another, and keep the clips you rely on wherever you work.
 
 Private by default
-No accounts. No telemetry. No third-party servers. Your clipboard history stays on-device unless you enable iCloud Sync; even then, it uses Apple's private CloudKit database without developer access to your clips.
+No accounts. No telemetry. No third-party servers. Your clipboard history stays on-device unless you enable iCloud Sync; synced clips use Apple's private CloudKit database, with no developer access.
+
+Move fast from the keyboard
+Press ⌥Space, search by typing, move with ↑ / ↓, and press Return to paste.
 
 Open source and attested
 ClipKitty is open source, so anyone can verify its privacy and behavior claims against the public code. Build attestations link each release back to that source.
