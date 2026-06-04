@@ -1,0 +1,153 @@
+name: Promote App Store Release
+
+on:
+  schedule:
+    # Apple does not emit a GitHub webhook when a version is manually released.
+    # Poll the public App Store listing and mirror the live version into GitHub.
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      app_store_version:
+        description: "Optional App Store version override, e.g. 1.13.1299"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote-appstore-release
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    env:
+      APP_STORE_ID: "6759137247"
+      APP_STORE_COUNTRY: us
+      GH_TOKEN: ${{ github.token }}
+      OVERRIDE_VERSION: ${{ inputs.app_store_version }}
+
+    steps:
+      - name: Resolve live App Store version
+        id: app-store
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -n "$OVERRIDE_VERSION" ]; then
+            VERSION="$OVERRIDE_VERSION"
+            RELEASE_DATE="manual override"
+            STORE_URL="https://apps.apple.com/app/id${APP_STORE_ID}"
+          else
+            LOOKUP_JSON="$(curl -fsSL --retry 3 --retry-delay 5 \
+              "https://itunes.apple.com/lookup?id=${APP_STORE_ID}&country=${APP_STORE_COUNTRY}")"
+
+            VERSION="$(python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["results"][0]["version"])' <<<"$LOOKUP_JSON")"
+            RELEASE_DATE="$(python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["results"][0].get("currentVersionReleaseDate", ""))' <<<"$LOOKUP_JSON")"
+            STORE_URL="$(python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["results"][0].get("trackViewUrl", ""))' <<<"$LOOKUP_JSON")"
+          fi
+
+          if ! [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+            echo "::error::Unexpected App Store version: $VERSION"
+            exit 1
+          fi
+
+          echo "Live App Store version: $VERSION"
+          echo "App Store release date: $RELEASE_DATE"
+          echo "App Store URL: $STORE_URL"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "release_date=$RELEASE_DATE" >> "$GITHUB_OUTPUT"
+          echo "store_url=$STORE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Promote matching GitHub release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ steps.app-store.outputs.version }}"
+          STABLE_TAG="v${VERSION}"
+          BETA_TAG="v${VERSION}-beta"
+          REPO="${GITHUB_REPOSITORY}"
+          REQUIRED_ASSETS=("ClipKitty.dmg" "ClipKitty-Hardened.zip")
+
+          echo "Ensuring stable GitHub release ${STABLE_TAG} matches App Store ${VERSION}..."
+
+          LATEST_STABLE_TAG="$(gh api "repos/${REPO}/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          if gh release view "$STABLE_TAG" --repo "$REPO" >/dev/null 2>&1; then
+            IS_DRAFT="$(gh release view "$STABLE_TAG" --repo "$REPO" --json isDraft --jq .isDraft)"
+            IS_PRERELEASE="$(gh release view "$STABLE_TAG" --repo "$REPO" --json isPrerelease --jq .isPrerelease)"
+
+            if [ "$IS_DRAFT" = "false" ] && [ "$IS_PRERELEASE" = "false" ] && [ "$LATEST_STABLE_TAG" = "$STABLE_TAG" ]; then
+              echo "Stable release ${STABLE_TAG} already exists and is the latest GitHub release."
+              exit 0
+            fi
+
+            echo "Stable release ${STABLE_TAG} exists; publishing it as the latest stable release."
+            gh release edit "$STABLE_TAG" \
+              --repo "$REPO" \
+              --draft=false \
+              --prerelease=false \
+              --latest \
+              --title "ClipKitty v${VERSION}"
+            exit 0
+          fi
+
+          if ! gh release view "$BETA_TAG" --repo "$REPO" >/dev/null 2>&1; then
+            echo "::error::App Store version ${VERSION} is live, but matching GitHub prerelease ${BETA_TAG} does not exist."
+            exit 1
+          fi
+
+          BETA_DRAFT="$(gh release view "$BETA_TAG" --repo "$REPO" --json isDraft --jq .isDraft)"
+          BETA_TARGET="$(gh release view "$BETA_TAG" --repo "$REPO" --json targetCommitish --jq .targetCommitish)"
+          if [ "$BETA_DRAFT" != "false" ]; then
+            echo "::error::Matching GitHub prerelease ${BETA_TAG} is still a draft."
+            exit 1
+          fi
+
+          BETA_ASSETS="$(gh release view "$BETA_TAG" --repo "$REPO" --json assets --jq '.assets[].name')"
+          for asset in "${REQUIRED_ASSETS[@]}"; do
+            if ! grep -Fxq "$asset" <<<"$BETA_ASSETS"; then
+              echo "::error::Matching GitHub prerelease ${BETA_TAG} is missing required asset ${asset}."
+              exit 1
+            fi
+          done
+
+          ASSET_DIR="$(mktemp -d)"
+          BODY_FILE="$(mktemp)"
+          trap 'rm -rf "$ASSET_DIR" "$BODY_FILE"' EXIT
+
+          gh release view "$BETA_TAG" --repo "$REPO" --json body --jq .body > "$BODY_FILE"
+          {
+            echo
+            echo "---"
+            echo
+            echo "Promoted automatically after App Store version ${VERSION} became live."
+            echo "App Store release date: ${{ steps.app-store.outputs.release_date }}"
+            echo "App Store URL: ${{ steps.app-store.outputs.store_url }}"
+          } >> "$BODY_FILE"
+
+          gh release download "$BETA_TAG" \
+            --repo "$REPO" \
+            --dir "$ASSET_DIR" \
+            --clobber \
+            --pattern "ClipKitty.dmg" \
+            --pattern "ClipKitty-Hardened.zip"
+
+          for asset in "${REQUIRED_ASSETS[@]}"; do
+            if [ ! -f "${ASSET_DIR}/${asset}" ]; then
+              echo "::error::Failed to download ${asset} from ${BETA_TAG}."
+              exit 1
+            fi
+          done
+
+          gh release create "$STABLE_TAG" \
+            --repo "$REPO" \
+            --target "$BETA_TARGET" \
+            --title "ClipKitty v${VERSION}" \
+            --notes-file "$BODY_FILE" \
+            --latest \
+            "${ASSET_DIR}/ClipKitty.dmg" \
+            "${ASSET_DIR}/ClipKitty-Hardened.zip"
+
+          echo "Promoted ${BETA_TAG} to stable release ${STABLE_TAG}."
