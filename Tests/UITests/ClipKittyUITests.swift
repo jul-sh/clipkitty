@@ -900,25 +900,53 @@ final class ClipKittyUITests: XCTestCase {
         var typingSamples: [(scene: String, query: String, latenciesMs: [Double])] = []
 
         /// Helper to type with natural delays. Skips the post-delay on the
-        /// first character when the search field is currently empty, so the
-        /// first match appears without artificial latency. When `scene` is
-        /// provided, per-char `typeText` latencies are recorded for later
-        /// export.
+        /// first input unit when the search field is currently empty, so the
+        /// first match appears without artificial latency. Localized videos
+        /// type in small chunks to avoid XCUITest per-character overhead from
+        /// pushing raw recordings past the App Store preview ceiling.
         func typeSlowly(_ text: String, scene: String? = nil, delay: TimeInterval = 0.0055) {
             let startedEmpty = (searchField.value as? String)?.isEmpty ?? true
+            let units = typingUnits(for: text)
             var latenciesMs: [Double] = []
             latenciesMs.reserveCapacity(text.count)
-            for (index, char) in text.enumerated() {
+            for (index, unit) in units.enumerated() {
                 let start = CFAbsoluteTimeGetCurrent()
-                searchField.typeText(String(char))
+                searchField.typeText(unit)
                 let elapsedMs = (CFAbsoluteTimeGetCurrent() - start) * 1000.0
-                latenciesMs.append(elapsedMs)
+                let unitLength = max(unit.count, 1)
+                let perCharacterElapsedMs = elapsedMs / Double(unitLength)
+                latenciesMs.append(contentsOf: Array(repeating: perCharacterElapsedMs, count: unitLength))
                 if startedEmpty, index == 0 { continue }
                 Thread.sleep(forTimeInterval: delay)
             }
             if let scene {
                 typingSamples.append((scene: scene, query: text, latenciesMs: latenciesMs))
             }
+        }
+
+        func typingUnits(for text: String) -> [String] {
+            guard screenshotLocale != nil else {
+                return text.map(String.init)
+            }
+
+            let chunkSize = 4
+            var units: [String] = []
+            var current = ""
+            current.reserveCapacity(chunkSize)
+
+            for character in text {
+                current.append(character)
+                if current.count == chunkSize {
+                    units.append(current)
+                    current = ""
+                }
+            }
+
+            if !current.isEmpty {
+                units.append(current)
+            }
+
+            return units
         }
 
         /// Helper to clear search field. No trailing delay — the next typed char
