@@ -1009,14 +1009,16 @@ jobs:
       - name: Verify iOS screenshots present
         run: |
           for locale in en es zh-Hans zh-Hant ja ko fr de pt-BR ru; do
-            if [ ! -f "marketing-ios/$locale/screenshot_1.png" ]; then
-              echo "::error::Missing marketing-ios/$locale/screenshot_1.png; cannot publish to ASC"
-              exit 1
-            fi
-            if [ ! -f "marketing-ipad/$locale/screenshot_1.png" ]; then
-              echo "::error::Missing marketing-ipad/$locale/screenshot_1.png; cannot publish to ASC"
-              exit 1
-            fi
+            for screenshot in screenshot_1.png screenshot_2.png screenshot_3.png; do
+              if [ ! -f "marketing-ios/$locale/$screenshot" ]; then
+                echo "::error::Missing marketing-ios/$locale/$screenshot; cannot publish to ASC"
+                exit 1
+              fi
+              if [ ! -f "marketing-ipad/$locale/$screenshot" ]; then
+                echo "::error::Missing marketing-ipad/$locale/$screenshot; cannot publish to ASC"
+                exit 1
+              fi
+            done
           done
 
       - name: Prepare API Key

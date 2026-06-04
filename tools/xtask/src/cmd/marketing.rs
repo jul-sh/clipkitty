@@ -40,6 +40,8 @@ const VIDEO_BOUNDS_FILE: &str = "/tmp/clipkitty_window_bounds.txt";
 const VIDEO_OFFSET_FILE: &str = "/tmp/clipkitty_video_start_offset.txt";
 const VIDEO_TYPING_LATENCY_FILE: &str = "/tmp/clipkitty_video_typing_latency.json";
 const SILVER_BACKGROUND: &str = "/System/Library/Desktop Pictures/Solid Colors/Silver.png";
+const SCREENSHOT_CAPTURE_SPECS: [(usize, &str); 3] =
+    [(1, "history"), (2, "search"), (3, "filter")];
 
 pub fn run(cmd: &MarketingCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
     let _ = SideEffectLevel::LocalMutation;
@@ -182,6 +184,23 @@ enum ScreenshotDbMode {
 enum MissingScreenshotPolicy {
     Fail,
     Warn,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScreenshotCopy {
+    Complete { count: usize },
+    Incomplete { copied: usize, expected: usize },
+}
+
+impl ScreenshotCopy {
+    fn from_copied(copied: usize) -> Self {
+        let expected = expected_screenshot_count();
+        if copied == expected {
+            Self::Complete { count: copied }
+        } else {
+            Self::Incomplete { copied, expected }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -352,42 +371,63 @@ fn run_screenshot_plan(
         } else {
             1
         };
+        clear_screenshot_sources(plan.platform, locale)?;
         let mut status = run_screenshot_xcodebuild(repo, plan, &log_path, reporter)?;
-        let mut copied = copy_screenshots(repo, plan, locale, reporter)?;
+        let mut copy_result = copy_screenshots(repo, plan, locale, reporter)?;
         let mut attempt = 1;
-        while !copied && attempt < max_attempts {
-            attempt += 1;
-            reporter.info(&format!(
-                "No {:?} screenshots for {locale_code} on attempt {}; resetting simulators and retrying ({attempt}/{max_attempts}).",
-                plan.platform,
-                attempt - 1
-            ));
-            reset_ios_simulators(reporter);
-            status = run_screenshot_xcodebuild(repo, plan, &log_path, reporter)?;
-            copied = copy_screenshots(repo, plan, locale, reporter)?;
-        }
-        if !copied {
-            let log_tail = fs::read_to_string(log_path.as_std_path())
-                .unwrap_or_else(|err| format!("(failed to read {log_path}: {err})"));
-            reporter.info(&format!(
-                "--- xcodebuild log for {locale_code} (exit {status}) ---\n{log_tail}\n--- end log ---"
-            ));
-            match plan.missing_policy {
-                MissingScreenshotPolicy::Fail => {
-                    return Err(anyhow!(
-                        "no screenshots produced for {locale_code}; inspect {log_path}"
-                    ));
+        loop {
+            match copy_result {
+                ScreenshotCopy::Complete { .. } => break,
+                ScreenshotCopy::Incomplete { copied, expected } if attempt < max_attempts => {
+                    attempt += 1;
+                    if copied == 0 {
+                        reporter.info(&format!(
+                            "No {:?} screenshots for {locale_code} on attempt {}; resetting simulators and retrying ({attempt}/{max_attempts}).",
+                            plan.platform,
+                            attempt - 1
+                        ));
+                    } else {
+                        reporter.info(&format!(
+                            "Only copied {copied}/{expected} {:?} screenshots for {locale_code} on attempt {}; resetting simulators and retrying ({attempt}/{max_attempts}).",
+                            plan.platform,
+                            attempt - 1
+                        ));
+                    }
+                    reset_ios_simulators(reporter);
+                    clear_screenshot_sources(plan.platform, locale)?;
+                    status = run_screenshot_xcodebuild(repo, plan, &log_path, reporter)?;
+                    copy_result = copy_screenshots(repo, plan, locale, reporter)?;
                 }
-                MissingScreenshotPolicy::Warn => {
+                ScreenshotCopy::Incomplete { copied, expected } => {
+                    let log_tail = fs::read_to_string(log_path.as_std_path())
+                        .unwrap_or_else(|err| format!("(failed to read {log_path}: {err})"));
                     reporter.info(&format!(
-                        "Warning: no screenshots produced for {locale_code}; inspect {log_path}"
+                        "--- xcodebuild log for {locale_code} (exit {status}) ---\n{log_tail}\n--- end log ---"
                     ));
+                    match plan.missing_policy {
+                        MissingScreenshotPolicy::Fail => {
+                            return Err(anyhow!(
+                                "{:?} screenshot capture produced {copied}/{expected} screenshots for {locale_code}; inspect {log_path}",
+                                plan.platform
+                            ));
+                        }
+                        MissingScreenshotPolicy::Warn => {
+                            reporter.info(&format!(
+                                "Warning: {:?} screenshot capture produced {copied}/{expected} screenshots for {locale_code}; inspect {log_path}",
+                                plan.platform
+                            ));
+                        }
+                    }
+                    break;
                 }
             }
-        } else if !status.success() {
-            reporter.info(&format!(
-                "Warning: xcodebuild exited with {status} for {locale_code}, but screenshots were captured"
-            ));
+        }
+        if let ScreenshotCopy::Complete { .. } = copy_result {
+            if !status.success() {
+                reporter.info(&format!(
+                    "Warning: xcodebuild exited with {status} for {locale_code}, but screenshots were captured"
+                ));
+            }
         }
     }
 
@@ -498,14 +538,13 @@ fn run_screenshot_xcodebuild(
     Ok(output.status)
 }
 
-fn copy_screenshots(
-    repo: &RepoRoot,
-    plan: ScreenshotPlan,
-    locale: MarketingLocale,
-    reporter: &Reporter,
-) -> Result<bool> {
+fn expected_screenshot_count() -> usize {
+    SCREENSHOT_CAPTURE_SPECS.len()
+}
+
+fn screenshot_source_prefix(platform: CapturePlatform, locale: MarketingLocale) -> String {
     let locale_code = locale.as_code();
-    let prefix = match (plan.platform, locale) {
+    match (platform, locale) {
         (CapturePlatform::MacOs, MarketingLocale::En) => "/tmp/clipkitty_marketing".to_string(),
         (CapturePlatform::MacOs, _) => format!("/tmp/clipkitty_{locale_code}_marketing"),
         (CapturePlatform::Ios(kind), MarketingLocale::En) => {
@@ -515,12 +554,38 @@ fn copy_screenshots(
             "/tmp/clipkitty_{}_{locale_code}_marketing",
             kind.tmp_prefix_stem()
         ),
-    };
+    }
+}
+
+fn screenshot_source_path(prefix: &str, index: usize, suffix: &str) -> Utf8PathBuf {
+    Utf8PathBuf::from(format!("{prefix}_{index}_{suffix}.png"))
+}
+
+fn clear_screenshot_sources(platform: CapturePlatform, locale: MarketingLocale) -> Result<()> {
+    let prefix = screenshot_source_prefix(platform, locale);
+    for &(index, suffix) in &SCREENSHOT_CAPTURE_SPECS {
+        remove_if_exists(&screenshot_source_path(&prefix, index, suffix))?;
+    }
+    Ok(())
+}
+
+fn copy_screenshots(
+    repo: &RepoRoot,
+    plan: ScreenshotPlan,
+    locale: MarketingLocale,
+    reporter: &Reporter,
+) -> Result<ScreenshotCopy> {
+    let locale_code = locale.as_code();
+    let prefix = screenshot_source_prefix(plan.platform, locale);
     let target_dir = repo.join(format!("{}/{}", plan.marketing_root, locale_code));
     let mut copied = 0usize;
 
-    for (index, suffix) in [(1, "history"), (2, "search"), (3, "filter")] {
-        let source = Utf8PathBuf::from(format!("{prefix}_{index}_{suffix}.png"));
+    for &(index, _) in &SCREENSHOT_CAPTURE_SPECS {
+        remove_if_exists(&target_dir.join(format!("screenshot_{index}.png")))?;
+    }
+
+    for &(index, suffix) in &SCREENSHOT_CAPTURE_SPECS {
+        let source = screenshot_source_path(&prefix, index, suffix);
         let target = target_dir.join(format!("screenshot_{index}.png"));
         if source.as_std_path().is_file() {
             fs::copy(source.as_std_path(), target.as_std_path())
@@ -532,7 +597,7 @@ fn copy_screenshots(
     if copied > 0 {
         reporter.info(&format!("  saved screenshots to {target_dir}"));
     }
-    Ok(copied > 0)
+    Ok(ScreenshotCopy::from_copied(copied))
 }
 
 fn intro_video(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
@@ -1334,8 +1399,9 @@ fn tool_exists(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        copy_base_database_without_images, LocaleAsset, ManifestItem, MarketingLocale,
-        SCREENSHOT_LOCALES_ENV,
+        copy_base_database_without_images, expected_screenshot_count, screenshot_source_prefix,
+        CapturePlatform, IosDeviceKind, LocaleAsset, ManifestItem, MarketingLocale,
+        ScreenshotCopy, SCREENSHOT_LOCALES_ENV,
     };
     use camino::Utf8PathBuf;
     use rusqlite::{params, Connection};
@@ -1384,6 +1450,63 @@ mod tests {
             .to_string()
             .contains("CLIPKITTY_SCREENSHOT_LOCALES contains unsupported locale `it`"));
         std::env::remove_var(SCREENSHOT_LOCALES_ENV);
+    }
+
+    #[test]
+    fn screenshot_copy_requires_complete_capture_set() {
+        let expected = expected_screenshot_count();
+
+        assert_eq!(expected, 3);
+        assert_eq!(
+            ScreenshotCopy::from_copied(0),
+            ScreenshotCopy::Incomplete {
+                copied: 0,
+                expected
+            }
+        );
+        assert_eq!(
+            ScreenshotCopy::from_copied(expected - 1),
+            ScreenshotCopy::Incomplete {
+                copied: expected - 1,
+                expected
+            }
+        );
+        assert_eq!(
+            ScreenshotCopy::from_copied(expected),
+            ScreenshotCopy::Complete { count: expected }
+        );
+    }
+
+    #[test]
+    fn ios_screenshot_source_prefix_matches_swift_output_names() {
+        assert_eq!(
+            screenshot_source_prefix(
+                CapturePlatform::Ios(IosDeviceKind::IPhone),
+                MarketingLocale::En
+            ),
+            "/tmp/clipkitty_ios_marketing"
+        );
+        assert_eq!(
+            screenshot_source_prefix(
+                CapturePlatform::Ios(IosDeviceKind::IPhone),
+                MarketingLocale::Es
+            ),
+            "/tmp/clipkitty_ios_es_marketing"
+        );
+        assert_eq!(
+            screenshot_source_prefix(
+                CapturePlatform::Ios(IosDeviceKind::IPad),
+                MarketingLocale::En
+            ),
+            "/tmp/clipkitty_ipad_marketing"
+        );
+        assert_eq!(
+            screenshot_source_prefix(
+                CapturePlatform::Ios(IosDeviceKind::IPad),
+                MarketingLocale::Es
+            ),
+            "/tmp/clipkitty_ipad_es_marketing"
+        );
     }
 
     #[test]
