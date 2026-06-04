@@ -33,6 +33,9 @@ use crate::process::Runner;
 use crate::repo::RepoRoot;
 use crate::version;
 
+const ASC_BUILD_PROCESSING_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const ASC_BUILD_PROCESSING_POLL_INTERVAL: Duration = Duration::from_secs(15);
+
 pub fn run(cmd: &ReleaseCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
     let _ = SideEffectLevel::Credentialed;
     let repo = RepoRoot::discover(reporter)?;
@@ -882,14 +885,13 @@ fn attach_latest_valid_build(
 ) -> Result<()> {
     // Best build for the version is the most recently uploaded one whose
     // processing state is VALID. ASC's binary upload happens just before this
-    // step but the build still needs a few seconds to be processed; poll for
-    // up to ~5 minutes.
+    // step, but Apple's processing can take longer than the upload itself.
     //
     // ClipKitty's macOS and iOS apps share one app_id, so we MUST filter by
     // platform server-side — otherwise an iOS build with the same version
     // string will be returned and `versions attach-build` rejects it with
     // "The specified build has a different platform than the version."
-    let deadline = Instant::now() + Duration::from_secs(300);
+    let deadline = Instant::now() + ASC_BUILD_PROCESSING_TIMEOUT;
     let mut last_seen_state: Option<String> = None;
     let build_id = loop {
         let builds = asc_json(
@@ -953,17 +955,18 @@ fn attach_latest_valid_build(
         }
         if Instant::now() >= deadline {
             return Err(anyhow!(
-                "no VALID {} build found within 5 minutes (latest seen: {})",
+                "no VALID {} build found within {} minutes (latest seen: {})",
                 platform.label,
-                last_seen_state.as_deref().unwrap_or("none")
+                ASC_BUILD_PROCESSING_TIMEOUT.as_secs() / 60,
+                last_seen_state.as_deref().unwrap_or("not listed yet")
             ));
         }
         reporter.info(&format!(
             "Waiting for {} build to finish processing (last seen: {})...",
             platform.label,
-            last_seen_state.as_deref().unwrap_or("PROCESSING")
+            last_seen_state.as_deref().unwrap_or("not listed yet")
         ));
-        thread::sleep(Duration::from_secs(15));
+        thread::sleep(ASC_BUILD_PROCESSING_POLL_INTERVAL);
     };
 
     reporter.info(&format!(
