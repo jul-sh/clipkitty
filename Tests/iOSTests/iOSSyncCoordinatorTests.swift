@@ -15,13 +15,19 @@
         private(set) var startCallCount = 0
         private(set) var stopCallCount = 0
         private(set) var handleRemoteNotificationCallCount = 0
+        private(set) var runBackgroundSyncCycleCallCount = 0
 
         var stubbedStatus: SyncEngine.SyncStatus = .idle
+        var stubbedBackgroundSyncResult: SyncEngine.BackgroundSyncResult = .completed
         var status: SyncEngine.SyncStatus { stubbedStatus }
 
         func start() { startCallCount += 1 }
         func stop() { stopCallCount += 1 }
         func handleRemoteNotification() { handleRemoteNotificationCallCount += 1 }
+        func runBackgroundSyncCycle() async -> SyncEngine.BackgroundSyncResult {
+            runBackgroundSyncCycleCallCount += 1
+            return stubbedBackgroundSyncResult
+        }
     }
 
     private let sampleSyncingStatus = SyncEngine.SyncStatus.syncing(
@@ -336,6 +342,34 @@
 
             coordinator.handleRemoteNotification()
 
+            XCTAssertTrue(createdEngines.isEmpty)
+        }
+
+        func testPerformRemoteNotificationSyncRunsBackgroundCycleWhenEnabled() async {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory()
+            )
+
+            let result = await coordinator.performRemoteNotificationSync()
+
+            XCTAssertEqual(result, .completed)
+            XCTAssertEqual(latestEngine?.runBackgroundSyncCycleCallCount, 1)
+        }
+
+        func testPerformRemoteNotificationSyncReturnsUnavailableWhenDisabled() async {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: false,
+                onContentChanged: {},
+                engineFactory: spyFactory()
+            )
+
+            let result = await coordinator.performRemoteNotificationSync()
+
+            XCTAssertEqual(result, .unavailable)
             XCTAssertTrue(createdEngines.isEmpty)
         }
     }

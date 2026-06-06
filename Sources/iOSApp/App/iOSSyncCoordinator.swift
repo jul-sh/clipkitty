@@ -2,6 +2,7 @@
 
     import ClipKittyAppleServices
     import ClipKittyRust
+    import ClipKittyShared
     import os
     import SwiftUI
     import UIKit
@@ -16,6 +17,7 @@
         func start()
         func stop()
         func handleRemoteNotification()
+        func runBackgroundSyncCycle() async -> SyncEngine.BackgroundSyncResult
     }
 
     extension SyncEngine: SyncEngineProtocol {}
@@ -129,6 +131,122 @@
                 engine.handleRemoteNotification()
             }
         }
+
+        func performRemoteNotificationSync() async -> SyncEngine.BackgroundSyncResult {
+            switch runtime {
+            case .disabled:
+                return .unavailable
+            case let .enabled(_, engine):
+                return await engine.runBackgroundSyncCycle()
+            }
+        }
+    }
+
+    // MARK: - Background Sync
+
+    @MainActor
+    final class iOSBackgroundSyncRunner {
+        static let shared = iOSBackgroundSyncRunner()
+
+        private let logger = Logger(subsystem: "com.clipkitty", category: "SyncBackground")
+        private let timeout: TimeInterval = 25
+        private var inFlightSync: Task<UIBackgroundFetchResult, Never>?
+
+        private init() {}
+
+        func performRemoteNotificationSync() async -> UIBackgroundFetchResult {
+            if let inFlightSync {
+                return await inFlightSync.value
+            }
+
+            let task = Task { @MainActor in
+                await self.withTimeout {
+                    await self.runHeadlessSyncIfEnabled()
+                }
+            }
+            inFlightSync = task
+            let result = await task.value
+            inFlightSync = nil
+            return result
+        }
+
+        private func runHeadlessSyncIfEnabled() async -> UIBackgroundFetchResult {
+            guard iOSSettingsStore().syncEnabled else {
+                logger.debug("Skipping background sync because iCloud sync is disabled")
+                return .noData
+            }
+
+            do {
+                DatabasePath.migrateIfNeeded()
+                let dbPath = try DatabasePath.resolve()
+                let plan = try inspectStoreBootstrap(dbPath: dbPath)
+                let store = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
+                defer { store.prepareForSuspend() }
+
+                if plan == .rebuildIndex {
+                    logger.info("Rebuilding index before background sync")
+                    try store.rebuildIndex()
+                }
+
+                var contentChanged = false
+                let engine = SyncEngine(store: store)
+                engine.onContentChanged = {
+                    contentChanged = true
+                }
+
+                let result = await engine.runBackgroundSyncCycle()
+                switch result {
+                case .completed:
+                    logger.info("Background sync completed")
+                    return contentChanged ? .newData : .noData
+                case .unavailable:
+                    logger.info("Background sync skipped because iCloud is unavailable")
+                    return .noData
+                case let .failed(reason):
+                    logger.error("Background sync failed: \(reason)")
+                    return .failed
+                }
+            } catch {
+                logger.error("Background sync bootstrap failed: \(error.localizedDescription)")
+                return .failed
+            }
+        }
+
+        private func withTimeout(
+            operation: @escaping @MainActor () async -> UIBackgroundFetchResult
+        ) async -> UIBackgroundFetchResult {
+            await withCheckedContinuation { continuation in
+                let completion = BackgroundFetchCompletion(continuation)
+                let timeout = self.timeout
+                let operationTask = Task { @MainActor in
+                    let result = await operation()
+                    completion.resume(returning: result)
+                }
+                Task {
+                    try? await Task.sleep(for: .seconds(timeout))
+                    operationTask.cancel()
+                    completion.resume(returning: .failed)
+                }
+            }
+        }
+    }
+
+    private final class BackgroundFetchCompletion: @unchecked Sendable {
+        private let lock = NSLock()
+        private var didResume = false
+        private let continuation: CheckedContinuation<UIBackgroundFetchResult, Never>
+
+        init(_ continuation: CheckedContinuation<UIBackgroundFetchResult, Never>) {
+            self.continuation = continuation
+        }
+
+        func resume(returning result: UIBackgroundFetchResult) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !didResume else { return }
+            didResume = true
+            continuation.resume(returning: result)
+        }
     }
 
     @MainActor
@@ -145,21 +263,27 @@
             self.coordinator = coordinator
             guard pendingRemoteNotification else { return }
             pendingRemoteNotification = false
-            coordinator.handleRemoteNotification()
+            Task {
+                _ = await coordinator.performRemoteNotificationSync()
+            }
         }
 
         func registerForRemoteNotifications() {
             UIApplication.shared.registerForRemoteNotifications()
         }
 
-        func handleRemoteNotification() -> Bool {
-            guard let coordinator else {
-                pendingRemoteNotification = true
-                logger.info("Queued remote sync notification until bootstrap completes")
-                return false
+        func handleRemoteNotification() async -> UIBackgroundFetchResult {
+            if let coordinator {
+                let result = await coordinator.performRemoteNotificationSync()
+                return result.backgroundFetchResult
             }
-            coordinator.handleRemoteNotification()
-            return true
+
+            logger.info("Handling remote sync notification with headless background sync")
+            let result = await iOSBackgroundSyncRunner.shared.performRemoteNotificationSync()
+            if result == .failed {
+                pendingRemoteNotification = true
+            }
+            return result
         }
 
         func didRegisterForRemoteNotifications() {
@@ -196,8 +320,21 @@
             fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
         ) {
             Task { @MainActor in
-                let handled = iOSRemoteNotificationBridge.shared.handleRemoteNotification()
-                completionHandler(handled ? .newData : .noData)
+                let result = await iOSRemoteNotificationBridge.shared.handleRemoteNotification()
+                completionHandler(result)
+            }
+        }
+    }
+
+    private extension SyncEngine.BackgroundSyncResult {
+        var backgroundFetchResult: UIBackgroundFetchResult {
+            switch self {
+            case .completed:
+                return .newData
+            case .unavailable:
+                return .noData
+            case .failed:
+                return .failed
             }
         }
     }

@@ -375,6 +375,35 @@
             signalWake()
         }
 
+        /// Run a single sync cycle for an iOS background wake.
+        ///
+        /// When the normal coordinator loop is already active, a background wake
+        /// only needs to collapse the sleep interval. Otherwise this performs
+        /// the same coordinator cycle headlessly so a silent CloudKit push can
+        /// catch up before the user opens the app.
+        public func runBackgroundSyncCycle() async -> BackgroundSyncResult {
+            guard coordinatorTask == nil else {
+                signalWake()
+                return .completed
+            }
+
+            store.setSyncDeviceId(deviceId: deviceId)
+            await runCoordinatorCycle()
+
+            switch status {
+            case .synced, .syncing:
+                return .completed
+            case .unavailable:
+                return .unavailable
+            case let .error(message):
+                return .failed(message)
+            case .temporarilyUnavailable:
+                return .failed("iCloud temporarily unavailable")
+            case .idle, .connecting:
+                return .failed("iCloud sync did not complete")
+            }
+        }
+
         /// Mark a wake as pending and resume any waiting sleeper.
         private func signalWake() {
             pendingWake = true
@@ -394,6 +423,12 @@
             case error(String)
             case temporarilyUnavailable
             case unavailable
+        }
+
+        public enum BackgroundSyncResult: Equatable, Sendable {
+            case completed
+            case unavailable
+            case failed(String)
         }
 
         public var status: SyncStatus {

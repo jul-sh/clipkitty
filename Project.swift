@@ -838,7 +838,7 @@ let project = Project(
                 "ITSAppUsesNonExemptEncryption": false,
                 "LSApplicationCategoryType": "public.app-category.utilities",
                 "NSHumanReadableCopyright": "Copyright © 2025 ClipKitty. All rights reserved.",
-                "UIBackgroundModes": ["remote-notification"],
+                "UIBackgroundModes": ["fetch", "remote-notification"],
                 "UILaunchScreen": ["UIColorName": ""],
                 // Tuist's default iOS Info.plist declares UIRequiredDevice
                 // capabilities = [armv7]. This is an arm64-only iOS 26 app, so
