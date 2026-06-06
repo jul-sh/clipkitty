@@ -84,16 +84,54 @@
 </head>
 <body>
 <h1>ClipKitty</h1>
-<img src="icon.png" alt="ClipKitty icon" width="60">
-<p><strong>Never lose what you copied.</strong></p>
-<p>Unlimited history • Instant fuzzy search • Live preview • iCloud Sync • Private by default</p>
+<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/main/Sources/MacApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png" alt="ClipKitty icon" width="60">
+<p><strong>Copy it once. Find it forever.</strong></p>
+<p>A fast, private clipboard manager for macOS with deep history, forgiving search, live previews, and optional iCloud sync.</p>
 <img src="marketing_1.png" alt="ClipKitty clipboard history" width="820">
-<img src="marketing_2.png" alt="ClipKitty fuzzy search" width="820">
-<img src="marketing_3.png" alt="ClipKitty content filter" width="820">
-<h2>Why it exists</h2>
-<p>You copied that command last week. That code snippet yesterday. That address six months ago. Your clipboard manager either forgot it, couldn't find it, or cut off half the content.</p>
-<p>ClipKitty stores everything. Finds it in milliseconds; whether you have 100 items or 100,000. Built for people who copy lots of things and need to find them again.</p>
-<h2>Why ClipKitty?</h2>
+<h2>Why ClipKitty</h2>
+<p>Most clipboard managers work fine when your history is small. Then the thing you need is from last week, last month, or buried under a hundred other clips.</p>
+<p>ClipKitty is built around a simple idea: your clipboard can remember more without asking more from you.</p>
+<h2>Features</h2>
+<ul>
+<li>
+<p><strong>Everything stays within reach:</strong>
+Keep a deep history of text, links, images, files, code, and colors without turning your clipboard into another thing to manage.</p>
+</li>
+<li>
+<p><strong>Search what you remember:</strong>
+Type a few words, fragments, or even a typo. ClipKitty helps you find the right item fast, even when your search is incomplete or misspelled.</p>
+</li>
+<li>
+<p><strong>Preview before you paste:</strong>
+See full text, code, images, colors, links, and files before using them. No guessing from tiny cut-off snippets.</p>
+</li>
+<li>
+<p><strong>Pick up from any device:</strong>
+Turn on iCloud Sync and your clipboard history follows you across Mac, iPhone, and iPad. Copy on one device, search on another, and keep the clips you rely on wherever you work.</p>
+</li>
+<li>
+<p><strong>Private by default:</strong>
+No accounts. No telemetry. No third-party servers. Your clipboard history stays on-device unless you enable iCloud Sync; synced clips use Apple's private CloudKit database, with no developer access.</p>
+</li>
+<li>
+<p><strong>Move fast from the keyboard:</strong>
+Press <strong>⌥Space</strong>, search by typing, move with <strong>↑ / ↓</strong>, and press <strong>Return</strong> to paste.</p>
+</li>
+<li>
+<p><strong>Open source and attested:</strong>
+ClipKitty is open source, so anyone can verify its privacy and behavior claims against the public code. Build attestations <a href="VERIFY.md">link each release</a> back to that source.</p>
+</li>
+</ul>
+<h2>Installation</h2>
+<h3>Mac App Store</h3>
+<p><a href="https://apps.apple.com/us/app/clipkitty-clipboard-manager/id6759137247?mt=12"><img src="https://github.com/jul-sh/clipkitty/raw/main/distribution/MacAppStore.png" alt="Download on the Mac App Store" width="200"></a></p>
+<h3>Manual download</h3>
+<ol>
+<li>Download the latest DMG from <a href="https://github.com/jul-sh/clipkitty/releases">GitHub Releases</a>.</li>
+<li>Drag ClipKitty to your Applications folder.</li>
+<li>Open ClipKitty and grant clipboard/accessibility permissions if prompted.</li>
+</ol>
+<h2>Alternatives</h2>
 <table>
 <thead>
 <tr>
@@ -116,78 +154,26 @@
 </tr>
 </tbody>
 </table>
-<h2>Features</h2>
+<h1>Behind the Scenes</h1>
+<h3>How Search Works</h3>
+<p>Clipboard search sounds simple until you ask for the version people actually want:</p>
 <ul>
-<li><strong>Unlimited History</strong>: No caps, no expiration. Text, images, files, colors; everything preserved in full, forever.</li>
-<li><strong>Fuzzy Search That Scales</strong>: Type &quot;improt&quot; and find &quot;import&quot;. Type &quot;dockr prodction&quot; and find &quot;docker push production&quot;. All in milliseconds; even with millions of items.</li>
-<li><strong>Live Preview Pane</strong>: See full content instantly as you navigate. Multi-line text, code blocks, images; no truncation, no waiting on tooltips.</li>
-<li><strong>OCR &amp; Smart Search</strong>: Search text inside images and screenshots. AI-powered descriptions make visual content searchable.</li>
-<li><strong>Keyboard-First</strong>: <code>⌥Space</code> to open, arrow keys to navigate, <code>Return</code> to paste. <code>⌘1-9</code> for quick access.</li>
-<li><strong>iCloud Sync</strong>: Optionally sync your clipboard history across all your Macs via iCloud. Enable it in settings when you want your history everywhere.</li>
-<li><strong>Privacy-First</strong>: 100% on-device by default. No telemetry, no accounts. Optional iCloud Sync uses only your private iCloud container.</li>
-<li><strong>Secure &amp; Attested</strong>: Don't take my word for it. Source code is fully open source and auditable. Builds are attested: you can <a href="VERIFY.md">verify</a> the app was built from the public source code.</li>
+<li>history can grow for months or years</li>
+<li>typos still work, because memory is fuzzy and fingers are worse</li>
+<li>highlighting that reflects which words matched</li>
+<li>search updates on every keystroke</li>
+<li>huge clips, logs, stack traces, and source files stay searchable in full</li>
 </ul>
-<h2>Installation</h2>
-<h3>Quick Install</h3>
-<p><a href="https://apps.apple.com/us/app/clipkitty-clipboard-manager/id6759137247?mt=12"><img src="https://github.com/jul-sh/clipkitty/raw/main/distribution/MacAppStore.png" alt="Download on the Mac App Store" width="200"></a></p>
-<h3>Manual Download</h3>
-<ol>
-<li>Download the latest DMG from <a href="https://github.com/jul-sh/clipkitty/releases">GitHub Releases</a>.</li>
-<li>Drag ClipKitty to your Applications folder.</li>
-</ol>
-<h3>Hardened Build</h3>
-<p>The default build include a few convinience features, that you may want to disable in security sensitive settings:</p>
-<ul>
-<li><strong>Link previews</strong>; fetches metadata over the network to show a nice preview</li>
-<li><strong>iCloud sync</strong>; sends clipboard data to Apple's CloudKit</li>
-<li><strong>Auto-updates</strong>; phones home to check for new versions, and auto installs them</li>
-<li><strong>File clipboard capture</strong>; requires files system access</li>
-</ul>
-<p>You can already disable most of these in settings. The <strong>Hardened</strong> variant goes further. It compiles the code out entirely, then removes the network and filesystem entitlements from the macOS App Sandbox so the OS enforces those constraints at the kernel level. The app cannot open a socket or touch a file outside its container, even if a bug or exploit tried to. You can <a href="VERIFY.md">verify</a> both layers yourself.</p>
-<p>Because auto-updates are gone, you can audit a specific version and stick to it. Everything else works identically: text, images, colors, search, keyboard shortcuts.</p>
-<p>The hardened build uses a separate bundle ID (<code>com.eviljuliette.clipkitty.hardened</code>), which means macOS gives it its own sandbox container. Your clipboard history does not carry over between hardened and non-hardened installs, in either direction. This is intentional; the two builds are isolated from each other.</p>
-<p>Download <code>ClipKitty-Hardened.zip</code> from <a href="https://github.com/jul-sh/clipkitty/releases">GitHub Releases</a>.</p>
-<h2>Getting Started</h2>
-<ol>
-<li>Press <strong>⌥Space</strong> to open your clipboard history.</li>
-<li>Type to fuzzy search.</li>
-<li>Use <strong>Arrow Keys</strong> to navigate and <strong>Return</strong> to paste.</li>
-</ol>
-<h2>Keyboard Shortcuts</h2>
-<table>
-<thead>
-<tr>
-<th>Shortcut</th>
-<th>Action</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>⌥Space</strong></td>
-<td>Open clipboard history</td>
-</tr>
-<tr>
-<td><strong>↑ / ↓</strong></td>
-<td>Navigate</td>
-</tr>
-<tr>
-<td><strong>Return</strong></td>
-<td>Paste selected item</td>
-</tr>
-<tr>
-<td><strong>⌘1–9</strong></td>
-<td>Jump to item 1–9</td>
-</tr>
-<tr>
-<td><strong>Tab</strong></td>
-<td>Cycle content type filter</td>
-</tr>
-<tr>
-<td><strong>Escape</strong></td>
-<td>Close</td>
-</tr>
-</tbody>
-</table>
+<p>The obvious baseline is to iterate over every item, for every query. This stops working with thousands of items, and it really stops working when some items are hundreds of kilobytes or megabytes long. Maccy does this, and the limitations are why its history is capped at 200 items, and why it freezes if you copy a long item.</p>
+<p>The smarter move is indexing. Instead of doing all the work when the user types, do some of it earlier, when an item is saved. Build a structure that says &quot;this word appears over here&quot;, so a query can jump to likely matches instead of rereading the whole clipboard.</p>
+<p>The simplest index is a prefix tree over the words at the start of each item. This is what Raycast uses for clipboard history. It is fast, and it supports much longer histories than scanning. But the tradeoff shows up in the UX: it only finds exact matches at the exact start of an item. If you copied <code>docker compose exec api rails console</code>, searching <code>rails console</code> should find it. A start-only index misses it. It also breaks typo tolerance: Raycast finds nothing for <code>improt</code> when the item says <code>import</code>.</p>
+<p>ClipKitty uses a trigram-based index for candidate recall. A trigram is a three-character slice of text: <code>import</code> contains <code>imp</code>, <code>mpo</code>, <code>por</code>, and <code>ort</code>. At query time, it uses those precomputed slices to follow posting lists to likely matches. This is fast, but it is still an approximation: shared trigrams are not the same as a good human match.</p>
+<p>To mitigate those weaknesses, ClipKitty takes the best trigram matches and then reranks them separately. Because this is already a much smaller set, ClipKitty can afford to spend more compute approximating what a human would call &quot;the good match&quot;, not just what shares characters with the query.</p>
+<p>The reranker first tokenizes the query and the candidate clip into words, then tries to align each query word to one real word in the clip.</p>
+<p>Each possible word match is graded by how trustworthy it is. Exact matches are best. Prefix matches are very good, because the user may still be typing. camelCase and digit-boundary matches count as subword prefixes, so <code>loader</code> can match <code>PreviewLoader</code> and <code>address</code> can match <code>IPv6Address</code>. Ordinary substrings count for less, because they are often accidental. Typos are not all treated the same either: adjacent transpositions and repeated-key mistakes are common finger errors, so they beat generic substitutions, and multi-edit guesses are weaker still. Short words get less forgiveness because a one-letter change in <code>cat</code> can easily become a different word, while a one-letter change in <code>postgres</code> is probably just a typo.</p>
+<p>Then it asks whether the whole alignment looks like something a person would have picked. Did most of the important query words match? Are they in the same order? Are they close together, or scattered across a giant log? A compact phrase match usually feels intentional. A distant match across thousands of characters usually feels suspicious, even if every word technically appears.</p>
+<p>Those signals get turned into a small ordered score: coarse match quality first, then human-scale recency buckets like last hour, day, week, month, and quarter, then the finer match quality differences. Clipboard history is temporal, so recency should matter a lot, but not so much that a weak recent match beats the obvious phrase from yesterday. The result is that <code>rails console</code> inside <code>docker compose exec api rails console</code> beats a random clip with <code>rails</code> near the top and <code>console</code> far away, while <code>improt</code> can still find <code>import</code> without letting every vaguely similar word jump the line.</p>
+<p>The important idea is that search quality does not come from doing expensive work on everything. It comes from doing cheap work to find plausible candidates, then doing expensive work only where it can change what the user sees.</p>
 <h2>Building from Source</h2>
 <pre><code class="language-bash">git clone https://github.com/jul-sh/clipkitty
 cd clipkitty
@@ -199,45 +185,6 @@ make all CONFIGURATION=Hardened        # Hardened (no network/files/sync)
 make -C distribution hardened          # Hardened signed DMG
 </code></pre>
 <p>Requires macOS 15+ and Swift 6.2+.</p>
-<h3>How Search Works</h3>
-<p>Search is a latency problem disguised as a text problem.</p>
-<p>The search system has a few hard requirements:</p>
-<ul>
-<li>it has to search as the user types, so every keystroke is on the hot path</li>
-<li>it has to stay fast on large histories, not just toy databases</li>
-<li>it has to keep full long documents searchable, not silently truncate them away</li>
-<li>it has to handle fuzzy matching and typo tolerance, because exact-match search is too brittle for clipboard recall</li>
-<li>it has to return one clipboard item per result, even if the internal search representation is more granular</li>
-<li>it has to show useful snippets, previews, and highlights, not just IDs and scores</li>
-</ul>
-<p>Those requirements pull against each other. The naive approach is: every time the user types, scan every clipboard item, compute a fuzzy score against the full text, and sort the results. That works for 100 items. It stops working with thousands of items, and it really stops working when some items are hundreds of kilobytes or megabytes long.</p>
-<p>ClipKitty solves that by splitting search into cheap recall and expensive judgment:</p>
-<ol>
-<li><strong>Store everything in full.</strong>
-The source of truth lives in SQLite. Nothing is truncated out of storage. If you copied a huge log, code file, or stack trace, the whole thing is still there.</li>
-<li><strong>Index searchable units, not just rows.</strong>
-Small items are indexed as one unit. Large items are indexed as overlapping chunks. This matters because relevance is usually local. If one 16 KB region is a great match, we want to reason about that region, not pay to analyze the entire 1 MB document on every query.</li>
-<li><strong>Use Tantivy for fast broad recall.</strong>
-For normal queries, Tantivy indexes trigrams and word positions. That gives a cheap first pass that is typo-tolerant and can still reward phrase-like matches. For very short queries, ClipKitty uses a simpler prefix/contains path because trigrams are not a good fit below 3 characters.</li>
-<li><strong>Collapse chunks back to one parent item immediately.</strong>
-Large items are chunked internally, but the product is still item-based. During Phase 1 collection, ClipKitty keeps only the best hit per parent item. If 20 chunks from one giant document match, that still becomes one candidate, not 20.</li>
-<li><strong>Make large documents earn their way in.</strong>
-A huge document almost always contains common words like <code>the</code>, <code>error</code>, or <code>function</code>. Without adjustment, those documents float upward on weak evidence and flood the expensive path. Phase 1 therefore blends Tantivy relevance with recency and a size-aware penalty for weak large-document matches. Strong local evidence still wins. Weak “it matched somewhere” evidence does not.</li>
-<li><strong>Only rerank the head.</strong>
-Phase 2 is the high-quality, expensive reranker. It does more detailed matching and prepares the signals used for final ordering. But there is no reason to spend that cost on the entire tail. ClipKitty reranks only a bounded top slice, then appends the rest in Phase 1 order.</li>
-<li><strong>Use the matched region for snippets, highlights, and preview bootstrapping.</strong>
-For large items, the row snippet and highlight analysis come from the best matching chunk, not from the top of the document. That makes results more legible and avoids wasting time analyzing irrelevant parts of large content on the hot path. When a full preview is opened, those chunk-local highlights are mapped back into full-document offsets.</li>
-</ol>
-<p>The important idea is that search quality does not come from doing expensive work on everything. It comes from doing cheap work to find plausible candidates, then doing expensive work only where it can change what the user sees.</p>
-<h3>Problems This Solves</h3>
-<ul>
-<li><strong>Typos without brute force:</strong> trigram recall finds <code>improt</code> when the stored text says <code>import</code>.</li>
-<li><strong>Scale without truncation:</strong> large items stay fully searchable without forcing every query to scan their full text.</li>
-<li><strong>Large documents stop polluting common queries:</strong> a 1 MB document no longer ranks highly just because it contains <code>error</code> 300 times.</li>
-<li><strong>Relevant previews:</strong> snippets come from the matched region instead of the first lines of a huge paste.</li>
-<li><strong>Useful highlighting:</strong> highlighted regions reflect where the match actually happened, including inside large documents.</li>
-<li><strong>Stable latency:</strong> the hot path is bounded by chunk size and head size, not by total bytes in the worst matching documents.</li>
-</ul>
 
 <footer>
   <p>&copy; 2025–2026 Juliette Pluto</p>

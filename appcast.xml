@@ -1,25 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
     <title>ClipKitty Updates</title>
     <link>https://jul-sh.github.io/clipkitty/appcast.xml</link>
     <language>en</language>
     <item>
-      <title>ClipKitty 1.12.1182 Beta</title>
-      <sparkle:version>1.12.1182</sparkle:version>
-      <sparkle:shortVersionString>1.12.1182</sparkle:shortVersionString>
+      <title>ClipKitty 1.13.1344 Beta</title>
+      <sparkle:version>1344</sparkle:version>
+      <sparkle:shortVersionString>1.13.1344</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:channel>beta</sparkle:channel>
-      <pubDate>Wed, 15 Apr 2026 03:44:58 +0000</pubDate>
-      <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.12.1182-beta/ClipKitty.dmg" type="application/octet-stream" sparkle:edSignature="IDpu2omOe5x8WeIkFGGyEjwTfoMKE9U19J2ADSq/ORol2FX4e7+7TKnx05nbiOyDe8goaRXYvyq5PfXeEf8GBA==" length="15129444"/>
+      <pubDate>Sat, 06 Jun 2026 21:22:10 GMT</pubDate>
+      <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.13.1344-beta/ClipKitty.dmg" type="application/octet-stream" sparkle:edSignature="o9ZJ1HngmZLCuPTlyYBJ6jtDZTKITq7qyq04PM4X9c9s3cVlbH2rhVf8UtXx/jIxRZ6dNO1qvzaIinODGTXWDg==" length="18937161" />
     </item>
     <item>
       <title>ClipKitty 1.12.2317</title>
-      <sparkle:version>1.12.2317</sparkle:version>
+      <sparkle:version>2317</sparkle:version>
       <sparkle:shortVersionString>1.12.2317</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <pubDate>Fri, 10 Apr 2026 15:18:17 +0000</pubDate>
-      <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.12.2317/ClipKitty.dmg" type="application/octet-stream" sparkle:edSignature="eHoBmdHvNtsiCDIRzpJp893Tq9K+bm8cG8Rfpo8uqRxqAdyjUU+nzv0vZ6jqsJVkkYMg4tsSI8PpqAq+5/bxDw==" length="15101351"/>
+      <pubDate>Fri, 10 Apr 2026 15:18:17 GMT</pubDate>
+      <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.12.2317/ClipKitty.dmg" type="application/octet-stream" sparkle:edSignature="eHoBmdHvNtsiCDIRzpJp893Tq9K+bm8cG8Rfpo8uqRxqAdyjUU+nzv0vZ6jqsJVkkYMg4tsSI8PpqAq+5/bxDw==" length="15101351" />
     </item>
   </channel>
 </rss>
