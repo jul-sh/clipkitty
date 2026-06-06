@@ -233,6 +233,8 @@ struct FilePreviewView: View {
     let files: [FileEntry]
     var searchQuery: String = ""
 
+    @ObservedObject private var settings = AppSettings.shared
+
     /// Query words for highlighting (lowercased, non-empty)
     private var queryWords: [String] {
         searchQuery.lowercased()
@@ -325,7 +327,7 @@ struct FilePreviewView: View {
             Divider()
             TextPreviewView(
                 itemId: previewId,
-                fontName: FontManager.mono,
+                fontName: settings.previewFontName,
                 fontSize: 12,
                 highlights: highlights,
                 scrollBehavior: .autoScroll,
@@ -337,7 +339,7 @@ struct FilePreviewView: View {
             case .truncated:
                 Divider()
                 Text("Preview truncated")
-                    .font(.custom(FontManager.sansSerif, size: 11))
+                    .font(settings.appFont(size: 11))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16)
@@ -1554,12 +1556,16 @@ struct ItemRow: View {
     let onContextMenuShow: () -> Void
     let onContextMenuHide: () -> Void
 
+    @ObservedObject private var settings = AppSettings.shared
+
     private var accentSelected: Bool {
         isSelected && hasUserNavigated && !hasPendingEdit
     }
 
     /// Height for exactly 1 line of text, scaled with text size setting
-    private var rowHeight: CGFloat { AppSettings.shared.scaled(32) }
+    private var rowHeight: CGFloat {
+        settings.scaled(32)
+    }
 
     // MARK: - Display Text (Simplified - SwiftUI handles truncation)
 
@@ -1590,6 +1596,15 @@ struct ItemRow: View {
         }
     }
 
+    private var lineNumberFont: Font {
+        switch settings.fontPreference {
+        case .iosevkaCharon:
+            return settings.previewFont(size: 13)
+        case .system:
+            return settings.appFont(size: 13)
+        }
+    }
+
     var body: some View {
         // 1. Wrap the content inside a Button
         Button(action: onTap) {
@@ -1599,8 +1614,8 @@ struct ItemRow: View {
                     if hasPendingEdit {
                         // Show pencil emoji when item has pending edit
                         Text("✏️")
-                            .font(.system(size: AppSettings.shared.scaled(24)))
-                            .frame(width: AppSettings.shared.scaled(32), height: AppSettings.shared.scaled(32))
+                            .font(.system(size: settings.scaled(24)))
+                            .frame(width: settings.scaled(32), height: settings.scaled(32))
                     } else {
                         ZStack(alignment: .bottomTrailing) {
                             // Main icon: image thumbnail, browser icon for links, color swatch, or SF symbol
@@ -1625,7 +1640,7 @@ struct ItemRow: View {
                                         .resizable()
                                 }
                             }
-                            .frame(width: AppSettings.shared.scaled(32), height: AppSettings.shared.scaled(32))
+                            .frame(width: settings.scaled(32), height: settings.scaled(32))
                             .clipShape(RoundedRectangle(cornerRadius: 4))
 
                             // Badge: Bookmark icon for bookmarked items, otherwise source app icon
@@ -1650,13 +1665,13 @@ struct ItemRow: View {
                         }
                     }
                 }
-                .frame(width: AppSettings.shared.scaled(38), height: AppSettings.shared.scaled(38))
+                .frame(width: settings.scaled(38), height: settings.scaled(38))
                 .allowsHitTesting(false)
 
                 // Line number (shown in search mode when line > 1)
                 if let lineNumber = displayExcerpt.lineNumber, lineNumber > 1 {
                     Text("L\(lineNumber):")
-                        .font(.custom(FontManager.mono, size: 13))
+                        .font(lineNumberFont)
                         .foregroundColor(accentSelected ? .white.opacity(0.7) : .secondary)
                         .lineLimit(1)
                         .fixedSize()
@@ -1669,7 +1684,8 @@ struct ItemRow: View {
                         text: displayExcerpt.text,
                         highlights: displayExcerpt.highlights,
                         accentSelected: accentSelected,
-                        textScale: AppSettings.shared.textScale
+                        textScale: settings.textScale,
+                        fontPreference: settings.fontPreference
                     )
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .allowsHitTesting(false)
@@ -1883,13 +1899,19 @@ struct HighlightedTextView: View, Equatable {
     let highlights: [Utf16HighlightRange]
     let accentSelected: Bool
     let textScale: CGFloat
+    let fontPreference: AppFontPreference
 
     private var textColor: Color {
         accentSelected ? .white : .primary
     }
 
     private var font: Font {
-        .custom(FontManager.sansSerif, size: 15 * textScale)
+        switch fontPreference {
+        case .iosevkaCharon:
+            return .custom(FontManager.sansSerifName(for: .iosevkaCharon), size: 15 * textScale)
+        case .system:
+            return .system(size: 15 * textScale)
+        }
     }
 
     var body: some View {

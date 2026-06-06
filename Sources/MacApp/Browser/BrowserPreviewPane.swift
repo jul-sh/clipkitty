@@ -10,6 +10,7 @@ struct BrowserPreviewPane: View {
     let focusSearchField: () -> Void
     let focusTarget: FocusState<BrowserView.FocusTarget?>.Binding
 
+    @ObservedObject private var settings = AppSettings.shared
     private let isUITestPreviewDebugEnabled = CommandLine.arguments.contains("--use-simulated-db")
 
     var body: some View {
@@ -42,7 +43,7 @@ struct BrowserPreviewPane: View {
                     emptyState
                 } else {
                     Text("No item selected")
-                        .font(.custom(FontManager.sansSerif, size: 16))
+                        .font(settings.appFont(size: 16))
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -56,9 +57,7 @@ struct BrowserPreviewPane: View {
             Image(systemName: "exclamationmark.triangle")
                 .font(.largeTitle)
                 .foregroundStyle(.secondary)
-            Text(message)
-                .font(.custom(FontManager.sansSerif, size: 15))
-                .foregroundStyle(.secondary)
+            BrowserPreviewErrorText(message: message)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -87,8 +86,8 @@ struct BrowserPreviewPane: View {
             let _ = { TextPreviewView.textCache[item.itemMetadata.itemId] = previewText }()
             TextPreviewView(
                 itemId: item.itemMetadata.itemId,
-                fontName: FontManager.mono,
-                fontSize: AppSettings.shared.scaled(15),
+                fontName: settings.previewFontName,
+                fontSize: settings.scaled(15),
                 highlights: decoration?.highlights ?? [],
                 initialScrollHighlightIndex: decoration?.initialScrollHighlightIndex,
                 scrollBehavior: {
@@ -161,13 +160,13 @@ struct BrowserPreviewPane: View {
 
                     if highlights.isEmpty {
                         Text(url)
-                            .font(.custom(FontManager.mono, size: 12))
+                            .font(settings.previewFont(size: 12))
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         Text(HighlightStyler.attributedText(url, highlights: highlights))
-                            .font(.custom(FontManager.mono, size: 12))
+                            .font(settings.previewFont(size: 12))
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -346,7 +345,7 @@ struct BrowserPreviewPane: View {
                 .font(.largeTitle)
                 .foregroundStyle(.tertiary)
             Text(emptyStateMessage)
-                .font(.custom(FontManager.sansSerif, size: 15))
+                .font(settings.appFont(size: 15))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -360,6 +359,17 @@ struct BrowserPreviewPane: View {
             return String(localized: "No clipboard history")
         }
         return String(localized: "No results")
+    }
+}
+
+private struct BrowserPreviewErrorText: View {
+    @ObservedObject private var settings = AppSettings.shared
+    let message: String
+
+    var body: some View {
+        Text(message)
+            .font(settings.appFont(size: 15))
+            .foregroundStyle(.secondary)
     }
 }
 

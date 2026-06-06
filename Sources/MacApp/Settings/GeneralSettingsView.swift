@@ -5,8 +5,8 @@ import ClipKittyShared
 #if ENABLE_ICLOUD_SYNC
     import CloudKit
 #endif
-import SwiftUI
 import OSLog
+import SwiftUI
 
 struct GeneralSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
@@ -80,12 +80,21 @@ struct GeneralSettingsView: View {
                 }
             }
 
-
             #if ENABLE_SYNTHETIC_PASTE
                 Section(String(localized: "Paste Items")) {
                     PasteItemsSettingView()
                 }
             #endif
+
+            Section(String(localized: "Appearance")) {
+                Picker(String(localized: "Font"), selection: $settings.fontPreference) {
+                    ForEach(AppFontPreference.allCases) { preference in
+                        Text(fontPreferenceLabel(preference))
+                            .tag(preference)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
 
             #if ENABLE_ICLOUD_SYNC
                 Section(String(localized: "iCloud Sync")) {
@@ -183,7 +192,7 @@ struct GeneralSettingsView: View {
                                 }
                                 .buttonStyle(.borderedProminent)
                             }
-                        case .checkFailed(let errorMessage):
+                        case let .checkFailed(errorMessage):
                             VStack(alignment: .trailing, spacing: 6) {
                                 Label(
                                     String(localized: "Update check failed"),
@@ -354,6 +363,15 @@ struct GeneralSettingsView: View {
         String(localized: "\(settings.maxDatabaseSizeGB, specifier: "%.1f") GB")
     }
 
+    private func fontPreferenceLabel(_ preference: AppFontPreference) -> String {
+        switch preference {
+        case .iosevkaCharon:
+            return String(localized: "Iosevka Charon")
+        case .system:
+            return String(localized: "System")
+        }
+    }
+
     private func sliderValue(for gb: Double) -> Double {
         let clamped = min(max(gb, minDatabaseSizeGB), maxDatabaseSizeGB)
         let ratio = maxDatabaseSizeGB / minDatabaseSizeGB
@@ -381,7 +399,7 @@ struct GeneralSettingsView: View {
                     Image(systemName: "icloud").foregroundStyle(.secondary)
                 case .connecting:
                     ProgressView().controlSize(.small)
-                case .syncing(_):
+                case .syncing:
                     ProgressView().controlSize(.small)
                 case .synced:
                     Image(systemName: "checkmark.icloud").foregroundStyle(.green)
@@ -500,27 +518,27 @@ struct GeneralSettingsView: View {
     }
 
     #if ENABLE_BUILD_ATTESTATION_LINK
-    private func checkAttestation() async {
-        guard let hash = binaryHash else { return }
-        let rekorURL = URL(string: "https://rekor.sigstore.dev/api/v1/index/retrieve")!
+        private func checkAttestation() async {
+            guard let hash = binaryHash else { return }
+            let rekorURL = URL(string: "https://rekor.sigstore.dev/api/v1/index/retrieve")!
 
-        var request = URLRequest(url: rekorURL)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = "{\"hash\":\"sha256:\(hash)\"}".data(using: .utf8)
+            var request = URLRequest(url: rekorURL)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = "{\"hash\":\"sha256:\(hash)\"}".data(using: .utf8)
 
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200
-            else { return }
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200
+                else { return }
 
-            let entries = try JSONDecoder().decode([String].self, from: data)
-            if !entries.isEmpty {
-                attestationURL = URL(string: "https://search.sigstore.dev/?hash=sha256:\(hash)")
+                let entries = try JSONDecoder().decode([String].self, from: data)
+                if !entries.isEmpty {
+                    attestationURL = URL(string: "https://search.sigstore.dev/?hash=sha256:\(hash)")
+                }
+            } catch {
+                // No attestation available
             }
-        } catch {
-            // No attestation available
         }
-    }
     #endif
 }
