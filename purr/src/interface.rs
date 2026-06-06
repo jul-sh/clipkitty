@@ -511,7 +511,8 @@ pub struct BaselineExcerpt {
 ///
 /// ## What Rust does (first pass):
 /// - **CompactRow**: Newlines/tabs/returns → single spaces; consecutive spaces collapsed (up to 400 chars)
-/// - **Card**: Preserves meaningful line breaks; collapses pathological whitespace (up to 800 chars)
+/// - **Card**: Preserves meaningful line breaks; collapses pathological whitespace (up to 800 chars);
+///   biases the excerpt start close to the selected match so line-clamped rows show the hit
 /// - **Truncation ellipsis**: Prefixes "…" if truncated from start, suffixes "…" if truncated from end
 /// - **Highlight adjustment**: Indices account for normalization AND leading ellipsis prefix (+1 if present)
 ///

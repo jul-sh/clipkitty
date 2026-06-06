@@ -5,12 +5,13 @@ import SwiftUI
 
 struct BottomControlBar: View {
     @Binding var isSearchActive: Bool
+    let searchFocusRequestID: Int
+
     @Environment(AppContainer.self) private var container
     @Environment(AppState.self) private var appState
     @Environment(BrowserViewModel.self) private var viewModel
     @Environment(HapticsClient.self) private var haptics
 
-    @State private var searchText: String = ""
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var createFlow: CreateFlow = .none
     @State private var isFilterExpanded = false
@@ -26,6 +27,7 @@ struct BottomControlBar: View {
     private var isAddExpanded: Bool {
         createFlow == .menuExpanded
     }
+
     @FocusState private var isSearchFocused: Bool
     @Namespace private var barNamespace
 
@@ -50,6 +52,7 @@ struct BottomControlBar: View {
                     // Left: search circle morphs into search field
                     if isSearchActive {
                         searchField
+                            .id(searchFocusRequestID)
                             .glassEffect(.regular.interactive(), in: .capsule)
                             .glassEffectID("search", in: barNamespace)
                     } else {
@@ -94,6 +97,9 @@ struct BottomControlBar: View {
             guard let newItem else { return }
             Task { await importPhoto(from: newItem) }
         }
+        .onChange(of: searchFocusRequestID) { _, _ in
+            restoreSearchFocusIfNeeded()
+        }
     }
 
     // MARK: - Search button (collapsed)
@@ -123,18 +129,14 @@ struct BottomControlBar: View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-            TextField(String(localized: "Search"), text: $searchText)
+            TextField(String(localized: "Search"), text: searchTextBinding)
                 .focused($isSearchFocused)
                 .accessibilityIdentifier("bottomBar.searchField")
                 .textFieldStyle(.plain)
                 .autocorrectionDisabled()
                 .submitLabel(.search)
-                .onChange(of: searchText) { _, newValue in
-                    viewModel.updateSearchText(newValue)
-                }
-            if !searchText.isEmpty {
+            if !viewModel.searchText.isEmpty {
                 Button {
-                    searchText = ""
                     viewModel.updateSearchText("")
                 } label: {
                     Image(systemName: "xmark.circle.fill")
@@ -280,7 +282,6 @@ struct BottomControlBar: View {
     private var dismissButton: some View {
         Button {
             isSearchFocused = false
-            searchText = ""
             viewModel.updateSearchText("")
             withAnimation(.bouncy) {
                 isSearchActive = false
@@ -361,6 +362,22 @@ struct BottomControlBar: View {
         case .links: return "link"
         case .colors: return "paintpalette"
         case .files: return "folder"
+        }
+    }
+
+    private var searchTextBinding: Binding<String> {
+        Binding(
+            get: { viewModel.searchText },
+            set: { viewModel.updateSearchText($0) }
+        )
+    }
+
+    private func restoreSearchFocusIfNeeded() {
+        guard isSearchActive else { return }
+        Task { @MainActor in
+            await Task.yield()
+            guard isSearchActive else { return }
+            isSearchFocused = true
         }
     }
 

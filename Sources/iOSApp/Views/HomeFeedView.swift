@@ -10,6 +10,7 @@ struct HomeFeedView: View {
     @State private var previewItemId: String?
     @State private var hasAppeared = false
     @State private var showSettings = false
+    @State private var searchFocusRequestID = 0
 
     var body: some View {
         NavigationStack {
@@ -20,7 +21,8 @@ struct HomeFeedView: View {
                     }
 
                 BottomControlBar(
-                    isSearchActive: $isSearchActive
+                    isSearchActive: $isSearchActive,
+                    searchFocusRequestID: searchFocusRequestID
                 )
             }
             .navigationTitle("ClipKitty")
@@ -50,6 +52,10 @@ struct HomeFeedView: View {
             }
             .onChange(of: appState.contentRevision) { _, newValue in
                 viewModel.handlePanelVisibilityChange(true, contentRevision: newValue)
+            }
+            .onChange(of: previewItemId) { oldValue, newValue in
+                guard oldValue != nil, newValue == nil, isSearchActive else { return }
+                searchFocusRequestID += 1
             }
         }
     }

@@ -44,7 +44,14 @@ pub(crate) enum WhitespaceMode {
 pub(crate) struct ExcerptPolicy {
     pub(crate) whitespace_mode: WhitespaceMode,
     pub(crate) max_chars: usize,
+    /// Window used to choose the best highlight cluster.
     pub(crate) context_chars: usize,
+    /// Maximum normalized source characters to keep before the selected match.
+    ///
+    /// Multiline card rows are line-clamped by SwiftUI, so they need the match
+    /// biased toward the top of the excerpt instead of centered in a large
+    /// balanced character window.
+    pub(crate) leading_context_chars: usize,
 }
 
 impl ExcerptPolicy {
@@ -54,11 +61,13 @@ impl ExcerptPolicy {
                 whitespace_mode: WhitespaceMode::CollapseAll,
                 max_chars: SNIPPET_CONTEXT_CHARS * 2, // 400
                 context_chars: SNIPPET_CONTEXT_CHARS, // 200
+                leading_context_chars: SNIPPET_CONTEXT_CHARS,
             },
             ListPresentationProfile::Card => Self {
                 whitespace_mode: WhitespaceMode::PreserveLineBreaks,
                 max_chars: SNIPPET_CONTEXT_CHARS * 4,     // 800
                 context_chars: SNIPPET_CONTEXT_CHARS * 2, // 400
+                leading_context_chars: 120,
             },
         }
     }
@@ -568,6 +577,7 @@ pub(crate) fn generate_snippet(
         whitespace_mode: WhitespaceMode::CollapseAll,
         max_chars: max_len,
         context_chars: SNIPPET_CONTEXT_CHARS,
+        leading_context_chars: SNIPPET_CONTEXT_CHARS,
     };
     generate_snippet_with_policy(content, highlights, &policy)
 }
@@ -609,7 +619,7 @@ pub(crate) fn generate_snippet_with_policy(
     let remaining_space = max_len.saturating_sub(match_char_len);
 
     let context_before = (remaining_space / 2)
-        .min(policy.context_chars)
+        .min(policy.leading_context_chars)
         .min(match_start_char);
     let context_after =
         (remaining_space - context_before).min(content_char_len.saturating_sub(match_end_char));

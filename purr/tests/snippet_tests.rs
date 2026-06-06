@@ -211,6 +211,46 @@ async fn card_matched_excerpt_highlight_is_correct() {
 }
 
 #[tokio::test]
+async fn card_matched_excerpt_keeps_match_in_visible_row_prefix() {
+    let content = "\
+# Nice to meet you!
+
+My name's Juliette Pluto. I'm a Staff Software
+Engineer at Google DeepMind in New York City,
+working on adversarial robustness for frontier
+AI systems.
+
+I tend to move quickly through unfamiliar
+technical terrain; recently, that has meant
+turning messy AI safety risks into evals,
+evidence, and practical defenses. You can [see
+my CV](./CV.md) for more details.
+
+Feel free to reach out via email at [j@jul.sh]
+(mailto:j@jul.sh). You can also find me on
+[GitHub](https://github.com/jul-sh) and
+[Twitter](https://twitter.com/foundjuliette).";
+
+    let row = matched_excerpt_for_profile(content, "git", ListPresentationProfile::Card).await;
+
+    assert!(!row.highlights.is_empty());
+    let visible_prefix = row.text.lines().take(8).collect::<Vec<_>>().join("\n");
+    assert!(
+        visible_prefix.contains("GitHub"),
+        "card row prefix should include the actual match, got: {:?}",
+        row.text
+    );
+    assert_eq!(
+        utf16_slice(
+            &row.text,
+            row.highlights[0].utf16_start,
+            row.highlights[0].utf16_end,
+        ),
+        "Git"
+    );
+}
+
+#[tokio::test]
 async fn compact_row_collapses_newlines() {
     let content = "Line one\nLine two\nLine three with MATCH";
     let row =
