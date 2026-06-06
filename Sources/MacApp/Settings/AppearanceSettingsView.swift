@@ -268,7 +268,7 @@ private struct PreviewStylePreview: View {
 
     /// The wide preview pane, with text rendered in the chosen style so the font is visible.
     private var previewPane: some View {
-        Text(verbatim: "Aa Gg\n0123 il")
+        Text(verbatim: "Aa  Gg\n012 il")
             .font(AppFontSpecimen.previewFont(typeface: typeface, style: style, size: 12, weight: .medium))
             .foregroundStyle(.primary.opacity(0.85))
             .lineLimit(2)
