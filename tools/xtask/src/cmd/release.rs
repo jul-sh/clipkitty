@@ -2476,10 +2476,11 @@ fn appcast_update_state(
 ) -> Result<()> {
     if dry_run {
         reporter.info(&format!(
-            "[dry-run] would update {} ({}) → v{} @ {} ({} bytes)",
+            "[dry-run] would update {} ({}) → v{} ({}) @ {} ({} bytes)",
             args.state_path,
             args.channel.as_str(),
             args.version,
+            args.build_number,
             args.url,
             args.length
         ));
@@ -2489,6 +2490,7 @@ fn appcast_update_state(
     let mut state = read_appcast_state(&args.state_path)?;
     let entry = AppcastRelease {
         version: args.version.clone(),
+        build_number: Some(args.build_number.clone()),
         url: args.url.clone(),
         signature: args.signature.clone(),
         length: args.length,
@@ -2516,6 +2518,8 @@ struct AppcastState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AppcastRelease {
     version: String,
+    #[serde(default)]
+    build_number: Option<String>,
     url: String,
     signature: String,
     length: u64,
@@ -2554,6 +2558,7 @@ fn render_appcast_xml(state: &AppcastState) -> Result<String> {
 
 fn push_appcast_item(xml: &mut String, channel: &str, release: &AppcastRelease) -> Result<()> {
     let pub_date = format_pub_date(Some(&release.published_at))?;
+    let build_number = appcast_build_number(release)?;
     let title = if channel == "beta" {
         format!("ClipKitty {} Beta", release.version)
     } else {
@@ -2564,7 +2569,7 @@ fn push_appcast_item(xml: &mut String, channel: &str, release: &AppcastRelease) 
     writeln!(
         xml,
         "      <sparkle:version>{}</sparkle:version>",
-        xml_escape(&release.version)
+        xml_escape(&build_number)
     )
     .unwrap();
     writeln!(
@@ -2594,6 +2599,30 @@ fn push_appcast_item(xml: &mut String, channel: &str, release: &AppcastRelease) 
     Ok(())
 }
 
+fn appcast_build_number(release: &AppcastRelease) -> Result<String> {
+    if let Some(build_number) = release
+        .build_number
+        .as_deref()
+        .filter(|build_number| !build_number.is_empty())
+    {
+        return Ok(build_number.to_string());
+    }
+
+    release
+        .version
+        .rsplit('.')
+        .next()
+        .filter(|candidate| !candidate.is_empty())
+        .filter(|candidate| candidate.chars().all(|c| c.is_ascii_digit()))
+        .map(ToString::to_string)
+        .ok_or_else(|| {
+            anyhow!(
+                "appcast release version `{}` does not contain an inferable build number",
+                release.version
+            )
+        })
+}
+
 fn format_pub_date(value: Option<&str>) -> Result<String> {
     if let Some(value) = value.filter(|value| !value.is_empty()) {
         let normalized = value.replace('Z', "+00:00");
@@ -2619,10 +2648,42 @@ fn xml_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        app_preview_state, collect_ids, is_preview_upload_in_progress_error, looks_like_locale_dir,
-        media_ids_with_attribute, screenshot_display_type_matches, AppPreviewState, IOS_PLATFORM,
+        app_preview_state, appcast_build_number, collect_ids, is_preview_upload_in_progress_error,
+        looks_like_locale_dir, media_ids_with_attribute, render_appcast_xml,
+        screenshot_display_type_matches, AppPreviewState, AppcastRelease, AppcastState,
+        IOS_PLATFORM,
     };
     use serde_json::json;
+
+    fn appcast_release(version: &str, build_number: Option<&str>) -> AppcastRelease {
+        AppcastRelease {
+            version: version.to_string(),
+            build_number: build_number.map(ToString::to_string),
+            url: "https://example.com/ClipKitty.dmg".to_string(),
+            signature: "signature".to_string(),
+            length: 1234,
+            published_at: "2026-06-06T00:00:00Z".to_string(),
+        }
+    }
+
+    #[test]
+    fn appcast_uses_build_number_for_sparkle_version() {
+        let xml = render_appcast_xml(&AppcastState {
+            beta: None,
+            stable: Some(appcast_release("1.13.1342", Some("1342"))),
+        })
+        .expect("render appcast");
+
+        assert!(xml.contains("<sparkle:version>1342</sparkle:version>"));
+        assert!(xml.contains("<sparkle:shortVersionString>1.13.1342</sparkle:shortVersionString>"));
+    }
+
+    #[test]
+    fn appcast_infers_build_number_for_legacy_state() {
+        let release = appcast_release("1.12.2317", None);
+
+        assert_eq!(appcast_build_number(&release).unwrap(), "2317");
+    }
 
     #[test]
     fn looks_like_locale_dir_accepts_apple_locale_codes() {

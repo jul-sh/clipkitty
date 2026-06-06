@@ -78,6 +78,8 @@ fn parses_release_appcast_update_state() {
         "beta",
         "--version",
         "1.0",
+        "--build-number",
+        "42",
         "--url",
         "https://example.com/app.dmg",
         "--signature",
@@ -89,6 +91,7 @@ fn parses_release_appcast_update_state() {
         panic!("expected release appcast update-state");
     };
     assert_eq!(args.channel, ReleaseChannel::Beta);
+    assert_eq!(args.build_number, "42");
     assert_eq!(args.length, 1234);
 }
 

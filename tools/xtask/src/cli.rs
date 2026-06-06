@@ -174,6 +174,8 @@ pub struct AppcastUpdateStateArgs {
     #[arg(long)]
     pub version: String,
     #[arg(long)]
+    pub build_number: String,
+    #[arg(long)]
     pub url: String,
     #[arg(long)]
     pub signature: String,

@@ -59,8 +59,8 @@ release-version: guard-FIELD ## Resolve release version. Use FIELD=version|build
 release-appcast-generate: guard-STATE_PATH guard-OUTPUT_PATH ## Render appcast XML. Use STATE_PATH=... OUTPUT_PATH=...
 	@$(XTASK) release appcast generate --state-path "$(STATE_PATH)" --output-path "$(OUTPUT_PATH)"
 
-release-appcast-update: guard-STATE_PATH guard-CHANNEL guard-VERSION guard-URL guard-SIGNATURE guard-LENGTH ## Update appcast state. Use STATE_PATH=... CHANNEL=stable|beta VERSION=... URL=... SIGNATURE=... LENGTH=...
-	@$(XTASK) release appcast update-state --state-path "$(STATE_PATH)" --channel "$(CHANNEL)" --version "$(VERSION)" --url "$(URL)" --signature "$(SIGNATURE)" --length "$(LENGTH)"
+release-appcast-update: guard-STATE_PATH guard-CHANNEL guard-VERSION guard-BUILD_NUMBER guard-URL guard-SIGNATURE guard-LENGTH ## Update appcast state. Use STATE_PATH=... CHANNEL=stable|beta VERSION=... BUILD_NUMBER=... URL=... SIGNATURE=... LENGTH=...
+	@$(XTASK) release appcast update-state --state-path "$(STATE_PATH)" --channel "$(CHANNEL)" --version "$(VERSION)" --build-number "$(BUILD_NUMBER)" --url "$(URL)" --signature "$(SIGNATURE)" --length "$(LENGTH)"
 
 screenshots-macos: ## Capture localized macOS screenshots.
 	@$(XTASK) marketing screenshots macos

@@ -669,6 +669,7 @@ jobs:
               STATE_PATH="$(pwd)/appcast-state.json" \
               CHANNEL="${{ steps.resolve-version.outputs.channel }}" \
               VERSION="${{ steps.resolve-version.outputs.version }}" \
+              BUILD_NUMBER="${{ steps.resolve-version.outputs.build_number }}" \
               URL="${{ steps.resolve-version.outputs.release_url }}" \
               SIGNATURE="${{ steps.eddsa-sign.outputs.ed_signature }}" \
               LENGTH="${{ steps.eddsa-sign.outputs.file_length }}"
@@ -687,7 +688,11 @@ jobs:
 
           git add icon.png privacy.html marketing_1.png marketing_2.png marketing_3.png index.html
           git add appcast.xml appcast-state.json 2>/dev/null || true
-          git commit -m "Update site, screenshots and icon [skip ci]" || echo "No changes to commit"
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit --no-verify -m "Update site, screenshots and icon [skip ci]"
+          fi
           git push origin gh-pages
 
           git tag "screenshots/${GITHUB_SHA::7}"
