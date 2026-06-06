@@ -86,24 +86,6 @@ struct GeneralSettingsView: View {
                 }
             #endif
 
-            Section(String(localized: "Appearance")) {
-                Picker(String(localized: "Font"), selection: $settings.fontPreference) {
-                    ForEach(AppFontPreference.allCases) { preference in
-                        Text(fontPreferenceLabel(preference))
-                            .tag(preference)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                Picker(String(localized: "Preview Font"), selection: $settings.previewFontPreference) {
-                    ForEach(PreviewFontPreference.allCases) { preference in
-                        Text(previewFontPreferenceLabel(preference))
-                            .tag(preference)
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
-
             #if ENABLE_ICLOUD_SYNC
                 Section(String(localized: "iCloud Sync")) {
                     Toggle(String(localized: "Sync clipboard history across devices"), isOn: $settings.syncEnabled)
@@ -125,6 +107,14 @@ struct GeneralSettingsView: View {
                     }
                 }
             #endif
+
+            Section(String(localized: "App Typeface")) {
+                AppTypefaceSettingView()
+            }
+
+            Section(String(localized: "Preview Character Spacing")) {
+                PreviewSpacingSettingView()
+            }
 
             Section(String(localized: "History")) {
                 LabeledContent(String(localized: "Storage Limit")) {
@@ -369,24 +359,6 @@ struct GeneralSettingsView: View {
 
     private var databaseSizeLabel: String {
         String(localized: "\(settings.maxDatabaseSizeGB, specifier: "%.1f") GB")
-    }
-
-    private func fontPreferenceLabel(_ preference: AppFontPreference) -> String {
-        switch preference {
-        case .iosevkaCharon:
-            return String(localized: "Iosevka Charon")
-        case .system:
-            return String(localized: "System")
-        }
-    }
-
-    private func previewFontPreferenceLabel(_ preference: PreviewFontPreference) -> String {
-        switch preference {
-        case .coding:
-            return String(localized: "Coding")
-        case .proportional:
-            return String(localized: "Proportional")
-        }
     }
 
     private func sliderValue(for gb: Double) -> Double {

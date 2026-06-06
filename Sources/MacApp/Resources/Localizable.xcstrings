@@ -354,33 +354,116 @@
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "外觀" } }
       }
     },
-    "Font": {
+    "App Typeface": {
       "localizations": {
-        "de": { "stringUnit": { "state": "translated", "value": "Schrift" } },
-        "en": { "stringUnit": { "state": "translated", "value": "Font" } },
-        "es": { "stringUnit": { "state": "translated", "value": "Fuente" } },
-        "fr": { "stringUnit": { "state": "translated", "value": "Police" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "フォント" } },
-        "ko": { "stringUnit": { "state": "translated", "value": "글꼴" } },
-        "pt-BR": { "stringUnit": { "state": "translated", "value": "Fonte" } },
-        "ru": { "stringUnit": { "state": "translated", "value": "Шрифт" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "字体" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "字體" } }
+        "de": { "stringUnit": { "state": "translated", "value": "App-Schrift" } },
+        "en": { "stringUnit": { "state": "translated", "value": "App Typeface" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Tipografía de la app" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Police de l’app" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "アプリのフォント" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "앱 글꼴" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Fonte do app" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Шрифт приложения" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "应用字体" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "應用程式字體" } }
       }
     },
-    "Preview Font": {
+    "Preview Character Spacing": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Preview Font" } }
+        "de": { "stringUnit": { "state": "translated", "value": "Zeichenabstand der Vorschau" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Preview Character Spacing" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Espaciado de caracteres de la vista previa" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Espacement des caractères de l’aperçu" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "プレビューの文字間隔" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "미리보기 문자 간격" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Espaçamento de caracteres da visualização" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Интервал символов в превью" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "预览字符间距" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "預覽字元間距" } }
       }
     },
-    "Coding": {
+    "ClipKitty's dense, distinctive typeface.": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Coding" } }
+        "de": { "stringUnit": { "state": "translated", "value": "Die dichte, unverwechselbare Schrift von ClipKitty." } },
+        "en": { "stringUnit": { "state": "translated", "value": "ClipKitty's dense, distinctive typeface." } },
+        "es": { "stringUnit": { "state": "translated", "value": "La tipografía densa y distintiva de ClipKitty." } },
+        "fr": { "stringUnit": { "state": "translated", "value": "La police dense et caractéristique de ClipKitty." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ClipKitty の緻密で個性的なフォント。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "ClipKitty의 조밀하고 독특한 글꼴." } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "A fonte densa e distinta do ClipKitty." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Плотный, узнаваемый шрифт ClipKitty." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "ClipKitty 紧凑而独特的字体。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "ClipKitty 緊湊而獨特的字體。" } }
+      }
+    },
+    "The native macOS system font.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Die native macOS-Systemschrift." } },
+        "en": { "stringUnit": { "state": "translated", "value": "The native macOS system font." } },
+        "es": { "stringUnit": { "state": "translated", "value": "La fuente del sistema nativa de macOS." } },
+        "fr": { "stringUnit": { "state": "translated", "value": "La police système native de macOS." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "macOS ネイティブのシステムフォント。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "macOS 기본 시스템 글꼴." } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "A fonte nativa do sistema macOS." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Системный шрифт macOS." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "macOS 原生系统字体。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "macOS 原生系統字體。" } }
+      }
+    },
+    "Monospace": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Monospace" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Monospace" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Monoespaciada" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Monospace" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "等幅" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "고정폭" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Monoespaçada" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Моноширинный" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "等宽" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "等寬" } }
+      }
+    },
+    "Even-width characters; columns line up. Great for code.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Gleich breite Zeichen; Spalten richten sich aus. Ideal für Code." } },
+        "en": { "stringUnit": { "state": "translated", "value": "Even-width characters; columns line up. Great for code." } },
+        "es": { "stringUnit": { "state": "translated", "value": "Caracteres de igual ancho; las columnas se alinean. Ideal para código." } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Caractères de largeur égale ; les colonnes s’alignent. Idéal pour le code." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "文字幅が均等で桁がそろう。コードに最適。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "글자 너비가 일정해 열이 맞춰집니다. 코드에 적합." } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Caracteres de largura igual; as colunas se alinham. Ótima para código." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Одинаковая ширина символов; столбцы выравниваются. Отлично для кода." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "字符等宽，列对齐。适合代码。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "字元等寬，欄位對齊。適合程式碼。" } }
       }
     },
     "Proportional": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Proportional" } }
+        "de": { "stringUnit": { "state": "translated", "value": "Proportional" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Proportional" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Proporcional" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Proportionnelle" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "プロポーショナル" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "가변폭" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Proporcional" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Пропорциональный" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "比例" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "比例" } }
+      }
+    },
+    "Natural spacing; easier to read. Good for prose.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Natürliche Abstände; besser lesbar. Gut für Fließtext." } },
+        "en": { "stringUnit": { "state": "translated", "value": "Natural spacing; easier to read. Good for prose." } },
+        "es": { "stringUnit": { "state": "translated", "value": "Espaciado natural; más fácil de leer. Buena para texto." } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Espacement naturel ; plus lisible. Idéale pour le texte." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "自然な字間で読みやすい。文章に最適。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "자연스러운 간격으로 읽기 쉽습니다. 글에 적합." } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Espaçamento natural; mais fácil de ler. Boa para textos." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Естественные интервалы; легче читать. Хорошо для текста." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "间距自然，更易阅读。适合文章。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "間距自然，更易閱讀。適合文章。" } }
       }
     },
     "Iosevka Charon": {
