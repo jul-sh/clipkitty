@@ -28,11 +28,11 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-                .font(.custom(FontManager.sansSerif, size: settings.scaled(17)).weight(.medium))
+                .font(settings.appFont(size: settings.scaled(17), weight: .medium))
 
             TextField("Clipboard History Search", text: $searchText)
                 .textFieldStyle(.plain)
-                .font(.custom(FontManager.sansSerif, size: settings.scaled(17)))
+                .font(settings.appFont(size: settings.scaled(17)))
                 .tint(.primary)
                 .focused(focusTarget, equals: .search)
                 .id(colorScheme)

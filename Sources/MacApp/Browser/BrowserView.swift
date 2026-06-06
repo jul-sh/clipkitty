@@ -9,6 +9,7 @@ struct BrowserView: View {
     @Bindable var viewModel: BrowserViewModel
     let displayVersion: Int
 
+    @ObservedObject private var settings = AppSettings.shared
     @State private var commandKeyEventMonitor: Any?
     @FocusState private var focusTarget: FocusTarget?
 
@@ -129,7 +130,7 @@ struct BrowserView: View {
                     displayVersion: displayVersion,
                     focusSearchField: focusSearchField
                 )
-                .frame(width: AppSettings.shared.scaled(324))
+                .frame(width: settings.scaled(324))
 
                 Divider()
 
@@ -276,14 +277,14 @@ struct BrowserView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.yellow)
             Text(message)
-                .font(.custom(FontManager.sansSerif, size: 13))
+                .font(settings.appFont(size: 13))
                 .lineLimit(2)
                 .foregroundStyle(.primary)
             Button(String(localized: "Dismiss")) {
                 viewModel.dismissMutationFailure()
             }
             .buttonStyle(.plain)
-            .font(.custom(FontManager.sansSerif, size: 13).weight(.semibold))
+            .font(settings.appFont(size: 13, weight: .semibold))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)

@@ -73,7 +73,7 @@ enum PasteMode {
             case .downloading: try container.encode(Tag.downloading, forKey: .tag)
             case .installing: try container.encode(Tag.installing, forKey: .tag)
             case .available: try container.encode(Tag.available, forKey: .tag)
-            case .checkFailed(let message):
+            case let .checkFailed(message):
                 try container.encode(Tag.checkFailed, forKey: .tag)
                 try container.encode(message, forKey: .errorMessage)
             }
@@ -149,9 +149,11 @@ final class AppSettings: ObservableObject {
         @Published var lastUpdateCheckDate: Date? {
             didSet { save() }
         }
+
         @Published var lastUpdateCheckResult: UpdateCheckState = .idle {
             didSet { save() }
         }
+
         @Published var autoInstallUpdates: Bool {
             didSet { save() }
         }
@@ -165,6 +167,10 @@ final class AppSettings: ObservableObject {
     let imageCompressionQuality: Double
 
     @Published var launchAtLoginEnabled: Bool {
+        didSet { save() }
+    }
+
+    @Published var fontPreference: AppFontPreference {
         didSet { save() }
     }
 
@@ -231,6 +237,7 @@ final class AppSettings: ObservableObject {
     private let deleteHotKeyKey = "deleteHotKey"
     private let maxDbSizeKey = "maxDatabaseSizeGB"
     private let launchAtLoginKey = "launchAtLogin"
+    private let fontPreferenceKey = "fontPreference"
     #if ENABLE_SYNTHETIC_PASTE
         private let autoPasteKey = "autoPasteEnabled"
     #endif
@@ -284,6 +291,8 @@ final class AppSettings: ObservableObject {
         }
 
         launchAtLoginEnabled = defaults.bool(forKey: launchAtLoginKey)
+        fontPreference = defaults.string(forKey: fontPreferenceKey)
+            .flatMap(AppFontPreference.init(rawValue:)) ?? .iosevkaCharon
         #if ENABLE_SYNTHETIC_PASTE
             autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? false
         #endif
@@ -366,13 +375,13 @@ final class AppSettings: ObservableObject {
              "UICTContentSizeCategoryM", "UICTContentSizeCategoryL":
             1.0
         case "UICTContentSizeCategoryXL":
-            1.12  // 19/17
+            1.12 // 19/17
         case "UICTContentSizeCategoryXXL":
-            1.24  // 21/17
+            1.24 // 21/17
         case "UICTContentSizeCategoryXXXL":
-            1.35  // 23/17
+            1.35 // 23/17
         default:
-            1.5   // a11y M and above
+            1.5 // a11y M and above
         }
         return min(scale, 1.5)
     }
@@ -388,6 +397,7 @@ final class AppSettings: ObservableObject {
         }
         defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
         defaults.set(launchAtLoginEnabled, forKey: launchAtLoginKey)
+        defaults.set(fontPreference.rawValue, forKey: fontPreferenceKey)
         #if ENABLE_SYNTHETIC_PASTE
             defaults.set(autoPasteEnabled, forKey: autoPasteKey)
         #endif

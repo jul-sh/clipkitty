@@ -340,6 +340,62 @@
         }
       }
     },
+    "Appearance": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Erscheinungsbild" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Appearance" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Apariencia" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Apparence" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "外観" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "모양" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Aparência" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Внешний вид" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "外观" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "外觀" } }
+      }
+    },
+    "Font": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Schrift" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Font" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Fuente" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Police" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "フォント" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "글꼴" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Fonte" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Шрифт" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "字体" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "字體" } }
+      }
+    },
+    "Iosevka Charon": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Iosevka Charon" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Iosevka Charon" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Iosevka Charon" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Iosevka Charon" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "Iosevka Charon" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Iosevka Charon" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Iosevka Charon" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Iosevka Charon" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "Iosevka Charon" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "Iosevka Charon" } }
+      }
+    },
+    "System": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "System" } },
+        "en": { "stringUnit": { "state": "translated", "value": "System" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Sistema" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Système" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "システム" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "시스템" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Sistema" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Системный" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "系统" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "系統" } }
+      }
+    },
     "Are you sure you want to delete all clipboard history? This cannot be undone.": {
       "extractionState": "stale",
       "localizations": {
