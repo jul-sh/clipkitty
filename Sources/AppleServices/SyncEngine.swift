@@ -226,23 +226,23 @@
                 case let .downloading(download):
                     switch download {
                     case .startingFullResync:
-                        return String(localized: "Downloading iCloud history…")
+                        return String(localized: "Waiting on iCloud…")
                     case let .incremental(records), let .fullResync(records):
-                        return String(localized: "Downloading \(records.total) changes…")
+                        return String(localized: "iCloud: \(records.total) changes…")
                     }
                 case let .applying(download):
                     switch download {
                     case .startingFullResync:
-                        return String(localized: "Applying iCloud history…")
+                        return String(localized: "iCloud catch-up…")
                     case let .incremental(records), let .fullResync(records):
-                        return String(localized: "Applying \(records.total) changes…")
+                        return String(localized: "iCloud catch-up: \(records.total) changes…")
                     }
                 case let .rebuildingIndex(indexActivity):
                     switch indexActivity {
                     case .localMaintenance:
                         return String(localized: "Rebuilding index…")
                     case .downloadedContent:
-                        return String(localized: "Indexing downloaded content…")
+                        return String(localized: "Indexing iCloud…")
                     }
                 case .compacting:
                     return String(localized: "Compacting history…")

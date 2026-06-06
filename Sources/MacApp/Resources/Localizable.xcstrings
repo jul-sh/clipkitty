@@ -3775,6 +3775,31 @@
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在索引下載的內容…" } }
       }
     },
+    "Indexing iCloud…": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Indexing iCloud…" } }
+      }
+    },
+    "iCloud catch-up…": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "iCloud catch-up…" } }
+      }
+    },
+    "iCloud catch-up: %lld changes…": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "iCloud catch-up: %lld changes…" } }
+      }
+    },
+    "iCloud: %lld changes…": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "iCloud: %lld changes…" } }
+      }
+    },
+    "Waiting on iCloud…": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Waiting on iCloud…" } }
+      }
+    },
     "Downloading update, as of": {
       "extractionState": "stale",
       "localizations": {
