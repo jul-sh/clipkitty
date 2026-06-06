@@ -94,6 +94,14 @@ struct GeneralSettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+
+                Picker(String(localized: "Preview Font"), selection: $settings.previewFontPreference) {
+                    ForEach(PreviewFontPreference.allCases) { preference in
+                        Text(previewFontPreferenceLabel(preference))
+                            .tag(preference)
+                    }
+                }
+                .pickerStyle(.segmented)
             }
 
             #if ENABLE_ICLOUD_SYNC
@@ -369,6 +377,15 @@ struct GeneralSettingsView: View {
             return String(localized: "Iosevka Charon")
         case .system:
             return String(localized: "System")
+        }
+    }
+
+    private func previewFontPreferenceLabel(_ preference: PreviewFontPreference) -> String {
+        switch preference {
+        case .coding:
+            return String(localized: "Coding")
+        case .proportional:
+            return String(localized: "Proportional")
         }
     }
 

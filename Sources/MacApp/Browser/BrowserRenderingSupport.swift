@@ -328,7 +328,7 @@ struct FilePreviewView: View {
             TextPreviewView(
                 itemId: previewId,
                 fontName: settings.previewFontName,
-                fontSize: 12,
+                fontSize: settings.previewFontSize(12),
                 highlights: highlights,
                 scrollBehavior: .autoScroll,
                 interaction: .readOnly
@@ -823,16 +823,22 @@ struct TextPreviewView: NSViewRepresentable {
         let textChanged = itemChanged ? true : textView.string != (TextPreviewView.textCache[itemId] ?? "")
         let highlightsChanged = coordinator.lastHighlights != highlights
         let contentWidthChanged = abs(coordinator.lastContentWidth - containerWidth) > 0.5
+        let fontChanged = coordinator.lastFontName != fontName
+        let fontSizeChanged = abs(coordinator.lastFontSize - fontSize) > 0.01
         let gainedHighlights = !highlights.isEmpty && coordinator.lastHighlights.isEmpty
 
-        guard itemChanged || textChanged || highlightsChanged || contentWidthChanged else { return }
+        guard itemChanged || textChanged || highlightsChanged || contentWidthChanged || fontChanged || fontSizeChanged else {
+            return
+        }
         coordinator.lastContentWidth = containerWidth
-        if itemChanged || textChanged || contentWidthChanged || gainedHighlights {
+        coordinator.lastFontName = fontName
+        coordinator.lastFontSize = fontSize
+        if itemChanged || textChanged || contentWidthChanged || fontChanged || fontSizeChanged || gainedHighlights {
             coordinator.needsGeometrySync = true
         }
 
         let scaledSize: CGFloat
-        if itemChanged || textChanged || contentWidthChanged {
+        if itemChanged || textChanged || contentWidthChanged || fontChanged || fontSizeChanged {
             scaledSize = scaledFontSize(containerWidth: containerWidth)
             coordinator.lastScaledFontSize = scaledSize
         } else {
@@ -863,14 +869,18 @@ struct TextPreviewView: NSViewRepresentable {
 
         let previousMatchRanges = coordinator.currentMatchRanges
         let tlm = textView.textLayoutManager
-        if let tlm, itemChanged || textChanged || highlightsChanged, !previousMatchRanges.isEmpty {
+        if let tlm,
+           itemChanged || textChanged || highlightsChanged || fontChanged || fontSizeChanged,
+           !previousMatchRanges.isEmpty
+        {
             clearHighlightRenderingAttributes(matchRanges: previousMatchRanges, from: tlm)
         }
 
         // Reset the text view's attributed content when the highlight set changes for the
         // same item. This reuses the same preview view but gives TextKit a clean baseline
         // for the new overlay, which is much lighter than a full item reset.
-        let shouldUpdateText = itemChanged || (!coordinator.isEditing && (textChanged || highlightsChanged))
+        let shouldUpdateText = itemChanged ||
+            (!coordinator.isEditing && (textChanged || highlightsChanged || fontChanged || fontSizeChanged))
         if shouldUpdateText {
             let text = TextPreviewView.textCache[itemId] ?? ""
             // Text content changed — replace storage attributes (font, color, paragraph style only).
@@ -894,7 +904,7 @@ struct TextPreviewView: NSViewRepresentable {
             }
         }
 
-        if itemChanged || textChanged || highlightsChanged {
+        if itemChanged || textChanged || highlightsChanged || fontChanged || fontSizeChanged {
             // Convert highlights to NSTextRanges for the layout manager
             let newMatchRanges = resolveTextRanges(highlights: highlights, text: text, layoutManager: tlm)
 
@@ -1264,6 +1274,8 @@ struct TextPreviewView: NSViewRepresentable {
         var currentMatchRanges: [MatchRange] = []
         var scrollGeneration: Int = 0
         var lastContentWidth: CGFloat = 0
+        var lastFontName: String?
+        var lastFontSize: CGFloat = 0
         var lastScaledFontSize: CGFloat?
         var lastUsageBounds: CGRect = .zero
         var needsGeometrySync: Bool = false
@@ -1906,11 +1918,12 @@ struct HighlightedTextView: View, Equatable {
     }
 
     private var font: Font {
+        let size = AppFontMetrics.size(15 * textScale, for: fontPreference)
         switch fontPreference {
         case .iosevkaCharon:
-            return .custom(FontManager.sansSerifName(for: .iosevkaCharon), size: 15 * textScale)
+            return .custom(FontManager.sansSerifName(for: .iosevkaCharon), size: size)
         case .system:
-            return .system(size: 15 * textScale)
+            return .system(size: size)
         }
     }
 

@@ -11,6 +11,15 @@ public enum AppFontPreference: String, CaseIterable, Identifiable {
     }
 }
 
+public enum PreviewFontPreference: String, CaseIterable, Identifiable {
+    case coding
+    case proportional
+
+    public var id: String {
+        rawValue
+    }
+}
+
 public enum FontManager {
     /// Preferred custom fonts with system fallbacks.
     /// Use PostScript names so registered fonts resolve reliably.
