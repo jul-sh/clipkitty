@@ -368,6 +368,21 @@
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "字體" } }
       }
     },
+    "Preview Font": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Preview Font" } }
+      }
+    },
+    "Coding": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Coding" } }
+      }
+    },
+    "Proportional": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Proportional" } }
+      }
+    },
     "Iosevka Charon": {
       "localizations": {
         "de": { "stringUnit": { "state": "translated", "value": "Iosevka Charon" } },

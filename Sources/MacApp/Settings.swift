@@ -174,6 +174,10 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
+    @Published var previewFontPreference: PreviewFontPreference {
+        didSet { save() }
+    }
+
     // MARK: - Privacy Settings
 
     /// Whether to ignore confidential/sensitive content (passwords from password managers)
@@ -238,6 +242,7 @@ final class AppSettings: ObservableObject {
     private let maxDbSizeKey = "maxDatabaseSizeGB"
     private let launchAtLoginKey = "launchAtLogin"
     private let fontPreferenceKey = "fontPreference"
+    private let previewFontPreferenceKey = "previewFontPreference"
     #if ENABLE_SYNTHETIC_PASTE
         private let autoPasteKey = "autoPasteEnabled"
     #endif
@@ -293,6 +298,8 @@ final class AppSettings: ObservableObject {
         launchAtLoginEnabled = defaults.bool(forKey: launchAtLoginKey)
         fontPreference = defaults.string(forKey: fontPreferenceKey)
             .flatMap(AppFontPreference.init(rawValue:)) ?? .iosevkaCharon
+        previewFontPreference = defaults.string(forKey: previewFontPreferenceKey)
+            .flatMap(PreviewFontPreference.init(rawValue:)) ?? .coding
         #if ENABLE_SYNTHETIC_PASTE
             autoPasteEnabled = defaults.object(forKey: autoPasteKey) as? Bool ?? false
         #endif
@@ -398,6 +405,7 @@ final class AppSettings: ObservableObject {
         defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
         defaults.set(launchAtLoginEnabled, forKey: launchAtLoginKey)
         defaults.set(fontPreference.rawValue, forKey: fontPreferenceKey)
+        defaults.set(previewFontPreference.rawValue, forKey: previewFontPreferenceKey)
         #if ENABLE_SYNTHETIC_PASTE
             defaults.set(autoPasteEnabled, forKey: autoPasteKey)
         #endif
