@@ -169,6 +169,7 @@ impl ClipboardStore {
 
     fn rebuild_index_contents(&self) -> Result<(), ClipKittyError> {
         let items = self.db.fetch_all_items()?;
+        self.indexer.delete_all_documents()?;
         use rayon::prelude::*;
         let prepared: Vec<_> = items
             .par_iter()
@@ -248,7 +249,17 @@ impl ClipboardStore {
     }
 
     pub fn rebuild_index(&self) -> Result<(), ClipKittyError> {
-        self.rebuild_index_contents()
+        self.rebuild_index_contents()?;
+        #[cfg(feature = "sync")]
+        {
+            use purr_sync::store::SyncStore;
+            use purr_sync::types::FLAG_INDEX_DIRTY;
+
+            let sync = SyncStore::new(self.db.pool());
+            sync.clear_index_queue()?;
+            sync.set_dirty_flag(FLAG_INDEX_DIRTY, false)?;
+        }
+        Ok(())
     }
 
     pub fn prepare_for_suspend(&self) {
@@ -614,44 +625,6 @@ impl ClipboardStoreApi for ClipboardStore {
 
 #[cfg(feature = "sync")]
 impl ClipboardStore {
-    fn materialize_search_document(
-        &self,
-        item: &crate::models::StoredItem,
-    ) -> Result<(), ClipKittyError> {
-        use purr_sync::store::SyncStore;
-        use purr_sync::types::FLAG_INDEX_DIRTY;
-
-        let text = item
-            .file_index_text()
-            .unwrap_or_else(|| item.text_content().to_string());
-        if self
-            .indexer
-            .add_document(&item.item_id, &text, item.timestamp_unix)
-            .and_then(|_| self.indexer.commit())
-            .is_err()
-        {
-            let sync = SyncStore::new(self.db.pool());
-            let _ = sync.set_dirty_flag(FLAG_INDEX_DIRTY, true);
-        }
-        Ok(())
-    }
-
-    fn remove_search_document(&self, item_id: &str) -> Result<(), ClipKittyError> {
-        use purr_sync::store::SyncStore;
-        use purr_sync::types::FLAG_INDEX_DIRTY;
-
-        if self
-            .indexer
-            .delete_document(item_id)
-            .and_then(|_| self.indexer.commit())
-            .is_err()
-        {
-            let sync = SyncStore::new(self.db.pool());
-            let _ = sync.set_dirty_flag(FLAG_INDEX_DIRTY, true);
-        }
-        Ok(())
-    }
-
     fn materialize_forked_snapshot(
         &self,
         snapshot: &purr_sync::types::ItemSnapshotData,
@@ -661,8 +634,8 @@ impl ClipboardStore {
         let fork_item_id = uuid::Uuid::new_v4().to_string();
         let item = stored_item_from_snapshot(fork_item_id.clone(), snapshot)
             .map_err(ClipKittyError::InvalidInput)?;
+        self.queue_search_upsert(&fork_item_id)?;
         let row_id = self.db.insert_item(&item)?;
-        self.materialize_search_document(&item)?;
         if snapshot.is_bookmarked {
             self.db
                 .add_tag(row_id, crate::interface::ItemTag::Bookmark)?;
@@ -670,6 +643,26 @@ impl ClipboardStore {
         self.sync_emitter
             .emit_item_created(&fork_item_id, snapshot.clone())?;
         Ok(fork_item_id)
+    }
+
+    fn queue_search_upsert(&self, item_id: &str) -> Result<(), ClipKittyError> {
+        use purr_sync::store::SyncStore;
+        use purr_sync::types::FLAG_INDEX_DIRTY;
+
+        let sync = SyncStore::new(self.db.pool());
+        sync.enqueue_index_upsert(item_id)?;
+        sync.set_dirty_flag(FLAG_INDEX_DIRTY, true)?;
+        Ok(())
+    }
+
+    fn queue_search_delete(&self, item_id: &str) -> Result<(), ClipKittyError> {
+        use purr_sync::store::SyncStore;
+        use purr_sync::types::FLAG_INDEX_DIRTY;
+
+        let sync = SyncStore::new(self.db.pool());
+        sync.enqueue_index_delete(item_id)?;
+        sync.set_dirty_flag(FLAG_INDEX_DIRTY, true)?;
+        Ok(())
     }
 
     /// Materialize a sync aggregate into the local items table.
@@ -702,11 +695,12 @@ impl ClipboardStore {
                 let item = stored_item_from_snapshot(item_id.to_string(), &live.snapshot)
                     .map_err(ClipKittyError::InvalidInput)?;
 
+                if index_dirty {
+                    self.queue_search_upsert(item_id)?;
+                }
+
                 if let Some(local_id) = local_item_id {
                     self.db.replace_item_preserving_id(local_id, &item)?;
-                    if index_dirty {
-                        self.materialize_search_document(&item)?;
-                    }
                     if live.snapshot.is_bookmarked {
                         self.db
                             .add_tag(local_id, crate::interface::ItemTag::Bookmark)?;
@@ -725,9 +719,6 @@ impl ClipboardStore {
 
                 // No existing local item — insert fresh.
                 let new_id = self.db.insert_item(&item)?;
-                if index_dirty {
-                    self.materialize_search_document(&item)?;
-                }
                 if live.snapshot.is_bookmarked {
                     self.db
                         .add_tag(new_id, crate::interface::ItemTag::Bookmark)?;
@@ -741,8 +732,10 @@ impl ClipboardStore {
                 Ok(Some(new_id))
             }
             ItemAggregate::Tombstoned(tomb) => {
+                if index_dirty {
+                    self.queue_search_delete(item_id)?;
+                }
                 if let Some(local_id) = local_item_id {
-                    self.remove_search_document(item_id)?;
                     self.db.delete_item(local_id)?;
                 }
                 sync.upsert_projection(
@@ -1250,7 +1243,6 @@ impl ClipboardStore {
         for (_original_item_id, plan) in &result.fork_plans {
             let _ = self.materialize_forked_snapshot(&plan.forked_snapshot)?;
         }
-        let _ = self.indexer.commit();
 
         Ok(SyncFullResyncResult {
             checkpoints_applied: result.checkpoints_applied as u64,
@@ -1273,7 +1265,8 @@ impl ClipboardStore {
         let sync = SyncStore::new(self.db.pool());
         let token = sync.fetch_zone_change_token(&device_id)?;
         let needs_resync = sync.get_dirty_flag(FLAG_NEEDS_FULL_RESYNC)?;
-        let index_dirty = sync.get_dirty_flag(FLAG_INDEX_DIRTY)?;
+        let index_dirty =
+            sync.get_dirty_flag(FLAG_INDEX_DIRTY)? || sync.count_index_queue_entries()? > 0;
 
         Ok(SyncDeviceState {
             device_id,
@@ -1326,8 +1319,100 @@ impl ClipboardStore {
         use purr_sync::types::FLAG_INDEX_DIRTY;
 
         let sync = SyncStore::new(self.db.pool());
-        sync.set_dirty_flag(FLAG_INDEX_DIRTY, false)?;
+        if sync.count_index_queue_entries()? == 0 {
+            sync.set_dirty_flag(FLAG_INDEX_DIRTY, false)?;
+        }
         Ok(())
+    }
+
+    /// Enqueue every live item for derived search-index catch-up.
+    pub fn enqueue_full_index_rebuild(&self) -> Result<u64, ClipKittyError> {
+        use purr_sync::store::SyncStore;
+        use purr_sync::types::FLAG_INDEX_DIRTY;
+
+        let sync = SyncStore::new(self.db.pool());
+        sync.clear_index_queue()?;
+        sync.enqueue_index_reset()?;
+        let items = self.db.fetch_all_items()?;
+        for item in &items {
+            sync.enqueue_index_upsert(&item.item_id)?;
+        }
+        sync.set_dirty_flag(FLAG_INDEX_DIRTY, true)?;
+        Ok(items.len() as u64)
+    }
+
+    /// Process a bounded number of queued search-index updates.
+    pub fn process_index_queue(
+        &self,
+        max_items: u32,
+    ) -> Result<crate::interface::IndexMaintenanceOutcome, ClipKittyError> {
+        use crate::interface::IndexMaintenanceOutcome;
+        use purr_sync::store::SyncStore;
+        use purr_sync::types::{IndexQueueEntry, FLAG_INDEX_DIRTY};
+
+        let sync = SyncStore::new(self.db.pool());
+        if max_items == 0 {
+            let remaining = sync.count_index_queue_entries()?;
+            sync.set_dirty_flag(FLAG_INDEX_DIRTY, remaining > 0)?;
+            if remaining == 0 {
+                return Ok(IndexMaintenanceOutcome::Completed { processed: 0 });
+            }
+            return Ok(IndexMaintenanceOutcome::MoreRemaining {
+                processed: 0,
+                remaining: remaining as u64,
+            });
+        }
+
+        let entries = sync.fetch_index_queue(max_items as usize)?;
+        if entries.is_empty() {
+            sync.set_dirty_flag(FLAG_INDEX_DIRTY, false)?;
+            return Ok(IndexMaintenanceOutcome::Completed { processed: 0 });
+        }
+
+        let mut processed_queue_keys = Vec::with_capacity(entries.len());
+        for entry in &entries {
+            match entry {
+                IndexQueueEntry::Reset => {
+                    self.indexer.delete_all_documents()?;
+                }
+                IndexQueueEntry::Upsert { item_id } => {
+                    let item = self
+                        .db
+                        .fetch_items_by_item_ids(&[item_id.clone()])?
+                        .into_iter()
+                        .next();
+                    if let Some(item) = item {
+                        let text = item
+                            .file_index_text()
+                            .unwrap_or_else(|| item.text_content().to_string());
+                        self.indexer
+                            .add_document(&item.item_id, &text, item.timestamp_unix)?;
+                    } else {
+                        self.indexer.delete_document(item_id)?;
+                    }
+                }
+                IndexQueueEntry::Delete { item_id } => {
+                    self.indexer.delete_document(item_id)?;
+                }
+            }
+            processed_queue_keys.push(entry.queue_key());
+        }
+
+        self.indexer.commit()?;
+        sync.remove_index_queue_entries(&processed_queue_keys)?;
+        let remaining = sync.count_index_queue_entries()?;
+        if remaining == 0 {
+            sync.set_dirty_flag(FLAG_INDEX_DIRTY, false)?;
+            return Ok(IndexMaintenanceOutcome::Completed {
+                processed: processed_queue_keys.len() as u64,
+            });
+        }
+
+        sync.set_dirty_flag(FLAG_INDEX_DIRTY, true)?;
+        Ok(IndexMaintenanceOutcome::MoreRemaining {
+            processed: processed_queue_keys.len() as u64,
+            remaining: remaining as u64,
+        })
     }
 }
 
@@ -1381,6 +1466,52 @@ mod tests {
 
         let dup = store.save_text("hello world".into(), None, None).unwrap();
         assert!(dup.is_empty());
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn queued_full_index_rebuild_resets_stale_index_documents() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let stale = insert_indexed_text_with_timestamp(&store, "stale search unit", 1000);
+        store.indexer.commit().unwrap();
+        assert_eq!(store.indexer.num_docs(), 1);
+
+        store.db.delete_item(stale.id.unwrap()).unwrap();
+
+        assert_eq!(store.enqueue_full_index_rebuild().unwrap(), 0);
+        let outcome = store.process_index_queue(64).unwrap();
+        assert!(matches!(
+            outcome,
+            crate::interface::IndexMaintenanceOutcome::Completed { processed: 1 }
+        ));
+        assert_eq!(store.indexer.num_docs(), 0);
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn queued_full_index_rebuild_processes_reset_before_live_upserts() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        insert_indexed_text_with_timestamp(&store, "live search unit", 1000);
+        store.indexer.commit().unwrap();
+        assert_eq!(store.indexer.num_docs(), 1);
+
+        assert_eq!(store.enqueue_full_index_rebuild().unwrap(), 1);
+        let reset_pass = store.process_index_queue(1).unwrap();
+        assert!(matches!(
+            reset_pass,
+            crate::interface::IndexMaintenanceOutcome::MoreRemaining {
+                processed: 1,
+                remaining: 1
+            }
+        ));
+        assert_eq!(store.indexer.num_docs(), 0);
+
+        let upsert_pass = store.process_index_queue(1).unwrap();
+        assert!(matches!(
+            upsert_pass,
+            crate::interface::IndexMaintenanceOutcome::Completed { processed: 1 }
+        ));
+        assert_eq!(store.indexer.num_docs(), 1);
     }
 
     #[tokio::test]

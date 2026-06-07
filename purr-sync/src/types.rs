@@ -288,6 +288,54 @@ pub const FLAG_INDEX_DIRTY: &str = "index_dirty";
 pub const FLAG_NEEDS_FULL_RESYNC: &str = "needs_full_resync";
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Search Index Maintenance Queue
+// ─────────────────────────────────────────────────────────────────────────────
+
+pub const INDEX_QUEUE_RESET_KEY: &str = "__clipkitty_index_reset__";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexQueueOperation {
+    Reset,
+    Upsert,
+    Delete,
+}
+
+impl IndexQueueOperation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            IndexQueueOperation::Reset => "reset",
+            IndexQueueOperation::Upsert => "upsert",
+            IndexQueueOperation::Delete => "delete",
+        }
+    }
+
+    pub fn from_str(raw: &str) -> Option<Self> {
+        match raw {
+            "reset" => Some(IndexQueueOperation::Reset),
+            "upsert" => Some(IndexQueueOperation::Upsert),
+            "delete" => Some(IndexQueueOperation::Delete),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IndexQueueEntry {
+    Reset,
+    Upsert { item_id: String },
+    Delete { item_id: String },
+}
+
+impl IndexQueueEntry {
+    pub fn queue_key(&self) -> &str {
+        match self {
+            IndexQueueEntry::Reset => INDEX_QUEUE_RESET_KEY,
+            IndexQueueEntry::Upsert { item_id } | IndexQueueEntry::Delete { item_id } => item_id,
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Compaction Constants
 // ─────────────────────────────────────────────────────────────────────────────
 

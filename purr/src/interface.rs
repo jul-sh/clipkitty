@@ -719,6 +719,14 @@ pub struct SyncDeviceState {
     pub index_dirty: bool,
 }
 
+/// Outcome of one bounded derived search-index maintenance pass.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum IndexMaintenanceOutcome {
+    Completed { processed: u64 },
+    MoreRemaining { processed: u64, remaining: u64 },
+}
+
 /// Outcome of a compaction run.
 #[cfg(feature = "sync")]
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]

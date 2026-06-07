@@ -14,14 +14,22 @@
 
         private(set) var startCallCount = 0
         private(set) var stopCallCount = 0
+        private(set) var prepareForSuspendCallCount = 0
         private(set) var handleRemoteNotificationCallCount = 0
+        private(set) var runBackgroundSyncCycleCallCount = 0
 
         var stubbedStatus: SyncEngine.SyncStatus = .idle
+        var stubbedBackgroundSyncResult: SyncEngine.BackgroundSyncResult = .completed
         var status: SyncEngine.SyncStatus { stubbedStatus }
 
         func start() { startCallCount += 1 }
         func stop() { stopCallCount += 1 }
+        func prepareForSuspend() async { prepareForSuspendCallCount += 1 }
         func handleRemoteNotification() { handleRemoteNotificationCallCount += 1 }
+        func runBackgroundSyncCycle() async -> SyncEngine.BackgroundSyncResult {
+            runBackgroundSyncCycleCallCount += 1
+            return stubbedBackgroundSyncResult
+        }
     }
 
     private let sampleSyncingStatus = SyncEngine.SyncStatus.syncing(
@@ -35,6 +43,7 @@
         private var tempDir: URL!
         private var store: ClipKittyRust.ClipboardStore!
         private var createdEngines: [SpySyncEngine]!
+        private var scheduleBackgroundSyncCallCount: Int!
 
         override func setUp() {
             super.setUp()
@@ -44,11 +53,13 @@
             let dbPath = tempDir.appendingPathComponent("test.db").path
             store = try! ClipKittyRust.ClipboardStore(dbPath: dbPath)
             createdEngines = []
+            scheduleBackgroundSyncCallCount = 0
         }
 
         override func tearDown() {
             store = nil
             createdEngines = nil
+            scheduleBackgroundSyncCallCount = nil
             if let tempDir {
                 try? FileManager.default.removeItem(at: tempDir)
             }
@@ -66,6 +77,10 @@
 
         private var latestEngine: SpySyncEngine? {
             createdEngines.last
+        }
+
+        private func countBackgroundSchedule() {
+            scheduleBackgroundSyncCallCount += 1
         }
 
         // MARK: - Initialization
@@ -112,6 +127,18 @@
             XCTAssertEqual(latestEngine?.startCallCount, 0)
         }
 
+        func testInitEnabledSchedulesBackgroundSync() {
+            _ = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory(),
+                scheduleBackgroundSync: countBackgroundSchedule
+            )
+
+            XCTAssertEqual(scheduleBackgroundSyncCallCount, 1)
+        }
+
         // MARK: - Status
 
         func testStatusIdleWhenDisabled() {
@@ -150,6 +177,20 @@
 
             XCTAssertEqual(createdEngines.count, 1)
             XCTAssertEqual(latestEngine?.startCallCount, 1)
+        }
+
+        func testEnableFromDisabledSchedulesBackgroundSync() {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: false,
+                onContentChanged: {},
+                engineFactory: spyFactory(),
+                scheduleBackgroundSync: countBackgroundSchedule
+            )
+
+            coordinator.setSyncEnabled(true)
+
+            XCTAssertEqual(scheduleBackgroundSyncCallCount, 1)
         }
 
         func testEnableFromDisabledWiresOnContentChanged() {
@@ -266,7 +307,22 @@
             XCTAssertEqual(latestEngine?.stopCallCount, 1)
         }
 
-        func testInactivePhaseStopsEngineWhenEnabled() {
+        func testBackgroundPhaseSchedulesBackgroundSyncWhenEnabled() {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory(),
+                scheduleBackgroundSync: countBackgroundSchedule
+            )
+            scheduleBackgroundSyncCallCount = 0
+
+            coordinator.handleScenePhaseChange(.background)
+
+            XCTAssertEqual(scheduleBackgroundSyncCallCount, 1)
+        }
+
+        func testInactivePhaseLeavesEngineRunningWhenEnabled() {
             let coordinator = iOSSyncCoordinator(
                 store: store,
                 enabled: true,
@@ -276,7 +332,7 @@
 
             coordinator.handleScenePhaseChange(.inactive)
 
-            XCTAssertEqual(latestEngine?.stopCallCount, 1)
+            XCTAssertEqual(latestEngine?.stopCallCount, 0)
         }
 
         func testScenePhaseChangesAreNoOpWhenDisabled() {
@@ -310,6 +366,35 @@
             XCTAssertEqual(latestEngine?.stopCallCount, 1)
         }
 
+        func testPrepareForSuspensionAwaitsEngineWhenEnabled() async {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory(),
+                scheduleBackgroundSync: countBackgroundSchedule
+            )
+            scheduleBackgroundSyncCallCount = 0
+
+            await coordinator.prepareForSuspension()
+
+            XCTAssertEqual(latestEngine?.prepareForSuspendCallCount, 1)
+            XCTAssertEqual(scheduleBackgroundSyncCallCount, 1)
+        }
+
+        func testPrepareForSuspensionIsNoOpWhenDisabled() async {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: false,
+                onContentChanged: {},
+                engineFactory: spyFactory()
+            )
+
+            await coordinator.prepareForSuspension()
+
+            XCTAssertTrue(createdEngines.isEmpty)
+        }
+
         // MARK: - Remote notification
 
         func testRemoteNotificationForwardsWhenEnabled() {
@@ -326,6 +411,21 @@
             XCTAssertEqual(latestEngine?.handleRemoteNotificationCallCount, 1)
         }
 
+        func testRemoteNotificationSchedulesBackgroundSyncWhenEnabled() {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory(),
+                scheduleBackgroundSync: countBackgroundSchedule
+            )
+            scheduleBackgroundSyncCallCount = 0
+
+            coordinator.handleRemoteNotification()
+
+            XCTAssertEqual(scheduleBackgroundSyncCallCount, 1)
+        }
+
         func testRemoteNotificationIsNoOpWhenDisabled() {
             let coordinator = iOSSyncCoordinator(
                 store: store,
@@ -336,6 +436,34 @@
 
             coordinator.handleRemoteNotification()
 
+            XCTAssertTrue(createdEngines.isEmpty)
+        }
+
+        func testPerformRemoteNotificationSyncRunsBackgroundCycleWhenEnabled() async {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory()
+            )
+
+            let result = await coordinator.performRemoteNotificationSync()
+
+            XCTAssertEqual(result, .completed)
+            XCTAssertEqual(latestEngine?.runBackgroundSyncCycleCallCount, 1)
+        }
+
+        func testPerformRemoteNotificationSyncReturnsUnavailableWhenDisabled() async {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: false,
+                onContentChanged: {},
+                engineFactory: spyFactory()
+            )
+
+            let result = await coordinator.performRemoteNotificationSync()
+
+            XCTAssertEqual(result, .unavailable)
             XCTAssertTrue(createdEngines.isEmpty)
         }
     }

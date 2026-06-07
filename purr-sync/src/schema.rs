@@ -40,9 +40,65 @@ fn reset_pre_release_sync_schema_if_needed(conn: &rusqlite::Connection) -> SyncR
         DROP TABLE IF EXISTS sync_dedup;
         DROP TABLE IF EXISTS sync_device_state;
         DROP TABLE IF EXISTS sync_dirty_flags;
+        DROP TABLE IF EXISTS sync_index_queue;
         "#,
     )?;
 
+    Ok(())
+}
+
+fn sync_index_queue_has_current_shape(conn: &rusqlite::Connection) -> SyncResult<bool> {
+    Ok(table_has_column(conn, "sync_index_queue", "queue_key")?
+        && table_has_column(conn, "sync_index_queue", "item_id")?)
+}
+
+fn create_sync_index_queue(conn: &rusqlite::Connection) -> SyncResult<()> {
+    conn.execute_batch(
+        r#"
+        -- Idempotent derived search-index maintenance queue. The SQLite sync
+        -- read model is authoritative; Tantivy catches up from this queue.
+        CREATE TABLE IF NOT EXISTS sync_index_queue (
+            queue_key TEXT PRIMARY KEY,
+            operation TEXT NOT NULL CHECK(operation IN ('reset', 'upsert', 'delete')),
+            item_id TEXT,
+            updated_at INTEGER NOT NULL,
+            CHECK (
+                (operation = 'reset' AND item_id IS NULL) OR
+                (operation IN ('upsert', 'delete') AND item_id IS NOT NULL)
+            )
+        );
+        CREATE INDEX IF NOT EXISTS idx_sync_index_queue_updated
+            ON sync_index_queue(updated_at, queue_key);
+        "#,
+    )?;
+    Ok(())
+}
+
+fn migrate_sync_index_queue_if_needed(conn: &rusqlite::Connection) -> SyncResult<()> {
+    if sync_index_queue_has_current_shape(conn)? {
+        return Ok(());
+    }
+
+    if !table_has_column(conn, "sync_index_queue", "operation")? {
+        return Ok(());
+    }
+
+    conn.execute_batch(
+        r#"
+        ALTER TABLE sync_index_queue RENAME TO sync_index_queue_legacy;
+        DROP INDEX IF EXISTS idx_sync_index_queue_updated;
+        "#,
+    )?;
+    create_sync_index_queue(conn)?;
+    conn.execute_batch(
+        r#"
+        INSERT INTO sync_index_queue (queue_key, operation, item_id, updated_at)
+        SELECT item_id, operation, item_id, updated_at
+        FROM sync_index_queue_legacy
+        WHERE operation IN ('upsert', 'delete');
+        DROP TABLE sync_index_queue_legacy;
+        "#,
+    )?;
     Ok(())
 }
 
@@ -50,6 +106,7 @@ fn reset_pre_release_sync_schema_if_needed(conn: &rusqlite::Connection) -> SyncR
 /// Called by the host crate during database initialization.
 pub fn setup_sync_schema(conn: &rusqlite::Connection) -> SyncResult<()> {
     reset_pre_release_sync_schema_if_needed(conn)?;
+    migrate_sync_index_queue_if_needed(conn)?;
 
     conn.execute_batch(
         r#"
@@ -134,6 +191,7 @@ pub fn setup_sync_schema(conn: &rusqlite::Connection) -> SyncResult<()> {
         );
         "#,
     )?;
+    create_sync_index_queue(conn)?;
 
     // Idempotent migration for existing databases: add checkpoint upload columns.
     let _ = conn.execute(

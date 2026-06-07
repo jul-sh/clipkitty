@@ -18,7 +18,7 @@ use purr_sync::types::{
 };
 
 use purr::database::Database;
-use purr::interface::{FilePreviewSnapshot, ItemTag};
+use purr::interface::{FilePreviewSnapshot, ItemTag, ListPresentationProfile};
 use purr::ClipboardStore;
 use purr::ClipboardStoreApi;
 use tempfile::TempDir;
@@ -2642,6 +2642,184 @@ mod replay_audit_tests {
         assert_eq!(after_items.len(), 1);
         assert_eq!(after_items[0].id.unwrap(), before_id);
         assert_eq!(after_items[0].text_content(), "after edit");
+    }
+
+    #[tokio::test]
+    async fn remote_apply_enqueues_index_work_until_bounded_maintenance_runs() {
+        let (store, dir) = test_store();
+
+        let created = ItemEvent::new_local(
+            "remote-index-queue".to_string(),
+            "device-A",
+            ItemEventPayload::ItemCreated {
+                snapshot: text_snapshot("queued search text"),
+            },
+        );
+
+        store.apply_remote_event(event_record(&created)).unwrap();
+
+        let db = store_db(&dir);
+        assert_eq!(db.fetch_all_items().unwrap().len(), 1);
+        let sync = SyncStore::new(db.pool());
+        assert_eq!(sync.count_index_queue_entries().unwrap(), 1);
+        assert!(
+            store
+                .get_sync_device_state("device-A".to_string())
+                .unwrap()
+                .index_dirty
+        );
+
+        let before = store
+            .search(
+                "queued search text".to_string(),
+                ListPresentationProfile::CompactRow,
+            )
+            .await
+            .unwrap();
+        assert_eq!(before.total_count, 0);
+
+        let zero_batch = store.process_index_queue(0).unwrap();
+        assert!(matches!(
+            zero_batch,
+            purr::interface::IndexMaintenanceOutcome::MoreRemaining {
+                processed: 0,
+                remaining: 1
+            }
+        ));
+        assert_eq!(sync.count_index_queue_entries().unwrap(), 1);
+        assert!(
+            store
+                .get_sync_device_state("device-A".to_string())
+                .unwrap()
+                .index_dirty
+        );
+
+        let outcome = store.process_index_queue(1).unwrap();
+        assert!(matches!(
+            outcome,
+            purr::interface::IndexMaintenanceOutcome::Completed { processed: 1 }
+        ));
+        assert_eq!(sync.count_index_queue_entries().unwrap(), 0);
+        assert!(
+            !store
+                .get_sync_device_state("device-A".to_string())
+                .unwrap()
+                .index_dirty
+        );
+
+        let after = store
+            .search(
+                "queued search text".to_string(),
+                ListPresentationProfile::CompactRow,
+            )
+            .await
+            .unwrap();
+        assert_eq!(after.total_count, 1);
+    }
+
+    #[tokio::test]
+    async fn remote_delete_enqueues_index_delete_until_maintenance_runs() {
+        let (store, dir) = test_store();
+
+        let created = ItemEvent::new_local(
+            "remote-index-delete".to_string(),
+            "device-A",
+            ItemEventPayload::ItemCreated {
+                snapshot: text_snapshot("delete from search"),
+            },
+        );
+        store.apply_remote_event(event_record(&created)).unwrap();
+        store.process_index_queue(1).unwrap();
+
+        let before = store
+            .search(
+                "delete from search".to_string(),
+                ListPresentationProfile::CompactRow,
+            )
+            .await
+            .unwrap();
+        assert_eq!(before.total_count, 1);
+
+        let deleted = ItemEvent::new_local(
+            "remote-index-delete".to_string(),
+            "device-A",
+            ItemEventPayload::ItemDeleted {
+                base_existence_version: 1,
+            },
+        );
+        store.apply_remote_event(event_record(&deleted)).unwrap();
+
+        let db = store_db(&dir);
+        assert!(db.fetch_all_items().unwrap().is_empty());
+        let sync = SyncStore::new(db.pool());
+        assert_eq!(sync.count_index_queue_entries().unwrap(), 1);
+
+        store.process_index_queue(1).unwrap();
+        let after = store
+            .search(
+                "delete from search".to_string(),
+                ListPresentationProfile::CompactRow,
+            )
+            .await
+            .unwrap();
+        assert_eq!(after.total_count, 0);
+        assert_eq!(sync.count_index_queue_entries().unwrap(), 0);
+    }
+
+    #[test]
+    fn index_queue_processing_is_bounded_and_resumable() {
+        let (store, dir) = test_store();
+
+        let first = ItemEvent::new_local(
+            "remote-index-one".to_string(),
+            "device-A",
+            ItemEventPayload::ItemCreated {
+                snapshot: text_snapshot("first queued item"),
+            },
+        );
+        let second = ItemEvent::new_local(
+            "remote-index-two".to_string(),
+            "device-A",
+            ItemEventPayload::ItemCreated {
+                snapshot: text_snapshot("second queued item"),
+            },
+        );
+        store
+            .apply_remote_batch(vec![event_record(&first), event_record(&second)], vec![])
+            .unwrap();
+
+        let db = store_db(&dir);
+        let sync = SyncStore::new(db.pool());
+        assert_eq!(sync.count_index_queue_entries().unwrap(), 2);
+
+        let first_pass = store.process_index_queue(1).unwrap();
+        assert!(matches!(
+            first_pass,
+            purr::interface::IndexMaintenanceOutcome::MoreRemaining {
+                processed: 1,
+                remaining: 1
+            }
+        ));
+        assert_eq!(sync.count_index_queue_entries().unwrap(), 1);
+        assert!(
+            store
+                .get_sync_device_state("device-A".to_string())
+                .unwrap()
+                .index_dirty
+        );
+
+        let second_pass = store.process_index_queue(1).unwrap();
+        assert!(matches!(
+            second_pass,
+            purr::interface::IndexMaintenanceOutcome::Completed { processed: 1 }
+        ));
+        assert_eq!(sync.count_index_queue_entries().unwrap(), 0);
+        assert!(
+            !store
+                .get_sync_device_state("device-A".to_string())
+                .unwrap()
+                .index_dirty
+        );
     }
 
     #[test]

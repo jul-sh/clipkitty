@@ -78,6 +78,52 @@
         func deleteRecords(_ recordIDs: [CKRecord.ID]) async -> SyncRecordDeleteResult
     }
 
+    private final class StoreOperationTracker: @unchecked Sendable {
+        private let lock = NSLock()
+        private var activeOperationCount = 0
+        private var drainWaiters: [CheckedContinuation<Void, Never>] = []
+
+        func begin() {
+            lock.lock()
+            activeOperationCount += 1
+            lock.unlock()
+        }
+
+        func finish() {
+            let waiters: [CheckedContinuation<Void, Never>]
+            lock.lock()
+            activeOperationCount -= 1
+            if activeOperationCount == 0 {
+                waiters = drainWaiters
+                drainWaiters.removeAll()
+            } else {
+                waiters = []
+            }
+            lock.unlock()
+
+            for waiter in waiters {
+                waiter.resume()
+            }
+        }
+
+        func waitForDrain() async {
+            await withCheckedContinuation { continuation in
+                var shouldResumeImmediately = false
+                lock.lock()
+                if activeOperationCount == 0 {
+                    shouldResumeImmediately = true
+                } else {
+                    drainWaiters.append(continuation)
+                }
+                lock.unlock()
+
+                if shouldResumeImmediately {
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
     /// Orchestrates iCloud sync via CloudKit using the Rust event-sourced core.
     ///
     /// Architecture:
@@ -102,6 +148,7 @@
         private nonisolated static let blobBundleFieldName = "blobBundleAsset"
         /// Age threshold for CloudKit event cleanup (30 days).
         private nonisolated static let cloudCleanupAgeDays: UInt32 = 30
+        private nonisolated static let indexMaintenanceBatchLimit: UInt32 = 64
 
         @ObservationIgnored
         private let logger = Logger(subsystem: "com.clipkitty", category: "SyncEngine")
@@ -128,6 +175,8 @@
         @ObservationIgnored
         private var coordinatorTask: Task<Void, Never>?
         @ObservationIgnored
+        private let storeOperationTracker = StoreOperationTracker()
+        @ObservationIgnored
         private var accountChangeObserver: NSObjectProtocol?
         @ObservationIgnored
         private var backoff = SyncBackoff()
@@ -153,6 +202,11 @@
             case nothingToUpload
             case retryableFailure(reason: String)
             case permanentFailure(reason: String)
+        }
+
+        private enum IndexMaintenancePass {
+            case notNeeded
+            case needed(SyncIndexActivity)
         }
 
         /// Structured outcome of uploading snapshots to CloudKit.
@@ -240,7 +294,7 @@
                 case let .rebuildingIndex(indexActivity):
                     switch indexActivity {
                     case .localMaintenance:
-                        return String(localized: "Rebuilding index…")
+                        return String(localized: "Indexing…")
                     case .downloadedContent:
                         return String(localized: "Indexing iCloud…")
                     }
@@ -369,10 +423,64 @@
             logger.info("SyncEngine stopped")
         }
 
+        /// Stop the coordinator and wait until any synchronous Rust store work
+        /// has fully drained before allowing iOS to suspend the process.
+        public func prepareForSuspend() async {
+            let task = coordinatorTask
+            coordinatorTask = nil
+            task?.cancel()
+            signalWake()
+            removeAccountChangeObserver()
+            engineState = .idle(maintenanceState())
+
+            await task?.value
+            await storeOperationTracker.waitForDrain()
+
+            guard !Task.isCancelled else {
+                logger.info("SyncEngine suspend preparation cancelled before store flush")
+                return
+            }
+
+            let store = self.store
+            await Task.detached(priority: .utility) {
+                store.prepareForSuspend()
+            }.value
+            logger.info("SyncEngine prepared for suspend")
+        }
+
         /// Signal the coordinator to wake up immediately (e.g. from push notification).
         public func handleRemoteNotification() {
             guard coordinatorTask != nil else { return }
             signalWake()
+        }
+
+        /// Run a single sync cycle for an iOS background wake.
+        ///
+        /// When the normal coordinator loop is already active, a background wake
+        /// only needs to collapse the sleep interval. Otherwise this performs
+        /// the same coordinator cycle headlessly so a silent CloudKit push can
+        /// catch up before the user opens the app.
+        public func runBackgroundSyncCycle() async -> BackgroundSyncResult {
+            guard coordinatorTask == nil else {
+                signalWake()
+                return .completed
+            }
+
+            store.setSyncDeviceId(deviceId: deviceId)
+            await runCoordinatorCycle()
+
+            switch status {
+            case .synced, .syncing:
+                return .completed
+            case .unavailable:
+                return .unavailable
+            case let .error(message):
+                return .failed(message)
+            case .temporarilyUnavailable:
+                return .failed("iCloud temporarily unavailable")
+            case .idle, .connecting:
+                return .failed("iCloud sync did not complete")
+            }
         }
 
         /// Mark a wake as pending and resume any waiting sleeper.
@@ -394,6 +502,12 @@
             case error(String)
             case temporarilyUnavailable
             case unavailable
+        }
+
+        public enum BackgroundSyncResult: Equatable, Sendable {
+            case completed
+            case unavailable
+            case failed(String)
         }
 
         public var status: SyncStatus {
@@ -605,9 +719,35 @@
             _ body: @escaping @Sendable (ClipKittyRust.ClipboardStore) throws -> T
         ) async throws -> T {
             let store = self.store
+            let tracker = storeOperationTracker
+            tracker.begin()
             return try await Task.detached(priority: priority) {
-                try body(store)
+                defer { tracker.finish() }
+                return try body(store)
             }.value
+        }
+
+        private func processQueuedIndexWork(activity: SyncIndexActivity) async {
+            markSyncing(.rebuildingIndex(activity))
+            do {
+                let outcome = try await performStoreOperation { store in
+                    try store.processIndexQueue(maxItems: Self.indexMaintenanceBatchLimit)
+                }
+                logIndexMaintenanceOutcome(outcome)
+            } catch {
+                logger.error("Queued index maintenance failed: \(error.localizedDescription)")
+            }
+        }
+
+        private func logIndexMaintenanceOutcome(_ outcome: IndexMaintenanceOutcome) {
+            switch outcome {
+            case let .completed(processed):
+                logger.info("Queued index maintenance completed after \(processed) items")
+            case let .moreRemaining(processed, remaining):
+                logger.info(
+                    "Queued index maintenance processed \(processed) items; \(remaining) remain"
+                )
+            }
         }
 
         /// Single serial coordinator cycle: fetch → apply → compact → upload → cleanup.
@@ -650,12 +790,8 @@
                 }
 
                 if deviceState.indexDirty {
-                    logger.info("Index dirty, rebuilding")
-                    markSyncing(.rebuildingIndex(.localMaintenance))
-                    try await performStoreOperation { store in
-                        try store.rebuildIndex()
-                        try store.clearIndexDirtyFlag()
-                    }
+                    logger.info("Index dirty, processing queued index work")
+                    await processQueuedIndexWork(activity: .localMaintenance)
                 }
 
                 // ── Phase 1: Fetch remote changes ──
@@ -696,6 +832,7 @@
                 }
 
                 // ── Phase 4: Token advancement (conditional on success) ──
+                let indexMaintenancePass: IndexMaintenancePass
                 switch batchOutcome {
                 case let .applied(eventsApplied, snapshotsApplied):
                     if let newToken = changes.newToken {
@@ -709,12 +846,18 @@
                     }
                     if eventsApplied > 0 || snapshotsApplied > 0 {
                         onContentChanged?()
+                        indexMaintenancePass = .needed(.downloadedContent(incrementalDownload))
+                    } else {
+                        indexMaintenancePass = .notNeeded
                     }
 
                 case let .partialFailure(appliedCount, _, _):
                     // Do NOT advance token — retry on next cycle.
                     if appliedCount > 0 {
                         onContentChanged?()
+                        indexMaintenancePass = .needed(.downloadedContent(incrementalDownload))
+                    } else {
+                        indexMaintenancePass = .notNeeded
                     }
                     logger.warning("Partial batch failure, not advancing token")
 
@@ -726,6 +869,13 @@
                         state.activity = .synced(lastSync: now())
                     }
                     return
+                }
+
+                switch indexMaintenancePass {
+                case .notNeeded:
+                    break
+                case let .needed(activity):
+                    await processQueuedIndexWork(activity: activity)
                 }
 
                 // ── Phase 5: Periodic compaction ──
@@ -1625,20 +1775,23 @@
                 )
             }
 
-            // 3. Rebuild Tantivy index and save the fresh zone token from the
-            // full feed so the next cycle resumes incrementally instead of
-            // replaying the whole zone again.
-            markSyncing(.rebuildingIndex(.downloadedContent(downloadActivity)))
+            // 3. Queue derived search-index repair and save the fresh zone token
+            // from the full feed so the next cycle resumes incrementally instead
+            // of replaying the whole zone again. Search indexing is durable,
+            // bounded, and resumable; it must not gate token advancement.
             let finalChangeToken = cloudRecords.finalChangeToken
             let deviceId = self.deviceId
-            try await performStoreOperation { store in
-                try store.rebuildIndex()
-                try store.clearIndexDirtyFlag()
+            let finalTokenData = try Self.archivedZoneChangeToken(finalChangeToken)
+            let queuedItems = try await performStoreOperation { store in
+                let queuedItems = try store.enqueueFullIndexRebuild()
                 try store.updateZoneChangeToken(
                     deviceId: deviceId,
-                    token: Self.archivedZoneChangeToken(finalChangeToken)
+                    token: finalTokenData
                 )
+                return queuedItems
             }
+            logger.info("Queued full-resync index maintenance for \(queuedItems) items")
+            await processQueuedIndexWork(activity: .downloadedContent(downloadActivity))
 
             // 4. Notify UI.
             onContentChanged?()

@@ -6,9 +6,20 @@ import SwiftUI
 
 // MARK: - App Launch State
 
+struct AppSession {
+    let container: AppContainer
+    let appState: AppState
+}
+
+struct AppSuspensionContext {
+    let id: UUID
+    let session: AppSession
+}
+
 enum AppLaunchState {
     case launching
-    case ready(AppContainer, AppState)
+    case ready(AppSession)
+    case suspending(AppSuspensionContext)
     case suspended
     case failed(String)
 }
@@ -264,8 +275,11 @@ struct ClipKittyiOSApp: App {
             ProgressView("Loading ClipKitty...")
                 .onAppear { performBootstrap() }
 
-        case let .ready(container, appState):
-            rootView(container: container, appState: appState)
+        case let .ready(session):
+            rootView(container: session.container, appState: session.appState)
+
+        case let .suspending(context):
+            rootView(container: context.session.container, appState: context.session.appState)
 
         case .suspended:
             ProgressView("Loading ClipKitty...")
@@ -313,6 +327,7 @@ struct ClipKittyiOSApp: App {
                 return container.shortcutRepositoryAvailability()
             }
             let appState = AppState(container: container)
+            let session = AppSession(container: container, appState: appState)
             #if ENABLE_ICLOUD_SYNC
                 let coordinator = iOSSyncCoordinator(
                     store: container.store,
@@ -328,7 +343,7 @@ struct ClipKittyiOSApp: App {
                 }
             #endif
 
-            launchState = .ready(container, appState)
+            launchState = .ready(session)
         case let .failure(error):
             launchState = .failed(error.localizedDescription)
         }
@@ -353,34 +368,63 @@ struct ClipKittyiOSApp: App {
         switch launchState {
         case .suspended:
             performBootstrap()
-        case let .ready(_, appState):
+        case let .ready(session):
             #if ENABLE_ICLOUD_SYNC
                 syncCoordinator?.handleScenePhaseChange(.active)
             #endif
             Task {
-                await appState.ingestPendingAndClipboard()
+                await session.appState.ingestPendingAndClipboard()
             }
+        case .suspending:
+            break
         case .launching, .failed:
             break
         }
     }
 
     private func prepareForSuspension() {
-        #if ENABLE_ICLOUD_SYNC
-            syncCoordinator?.handleScenePhaseChange(.background)
-            syncCoordinator = nil
-        #endif
-
-        guard case let .ready(container, appState) = launchState else {
+        guard case let .ready(session) = launchState else {
             if case .launching = launchState {
                 launchState = .suspended
             }
             return
         }
 
-        appState.prepareForSuspension()
-        container.prepareForSuspension()
+        let suspensionID = UUID()
+        Task { @MainActor in
+            await finishPreparingForSuspension(session: session, suspensionID: suspensionID)
+        }
+        launchState = .suspending(
+            AppSuspensionContext(id: suspensionID, session: session)
+        )
+    }
+
+    private func finishPreparingForSuspension(
+        session: AppSession,
+        suspensionID: UUID
+    ) async {
+        #if ENABLE_ICLOUD_SYNC
+            await iOSBackgroundTaskRunner.run(named: "ClipKitty Suspend") {
+                await syncCoordinator?.prepareForSuspension()
+                session.appState.prepareForSuspension()
+                session.container.prepareForSuspension()
+            }
+            syncCoordinator = nil
+        #else
+            session.appState.prepareForSuspension()
+            session.container.prepareForSuspension()
+        #endif
+
+        guard case let .suspending(context) = launchState,
+              context.id == suspensionID
+        else {
+            return
+        }
+
         launchState = .suspended
+        if scenePhase == .active {
+            handleForegroundActivation()
+        }
     }
 
     private func bootstrapFailureView(message: String) -> some View {
