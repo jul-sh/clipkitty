@@ -1328,17 +1328,12 @@ impl ClipboardStore {
     /// Enqueue every live item for derived search-index catch-up.
     pub fn enqueue_full_index_rebuild(&self) -> Result<u64, ClipKittyError> {
         use purr_sync::store::SyncStore;
-        use purr_sync::types::FLAG_INDEX_DIRTY;
 
-        let sync = SyncStore::new(self.db.pool());
-        sync.clear_index_queue()?;
-        sync.enqueue_index_reset()?;
         let items = self.db.fetch_all_items()?;
-        for item in &items {
-            sync.enqueue_index_upsert(&item.item_id)?;
-        }
-        sync.set_dirty_flag(FLAG_INDEX_DIRTY, true)?;
-        Ok(items.len() as u64)
+        let item_ids: Vec<String> = items.into_iter().map(|item| item.item_id).collect();
+        let sync = SyncStore::new(self.db.pool());
+        sync.replace_index_queue_with_full_rebuild(&item_ids)?;
+        Ok(item_ids.len() as u64)
     }
 
     /// Process a bounded number of queued search-index updates.

@@ -189,6 +189,10 @@
         private var pendingWake: Bool = false
         @ObservationIgnored
         private var wakeContinuation: CheckedContinuation<Void, Never>?
+        @ObservationIgnored
+        private var coordinatorCycleProgress: CoordinatorCycleProgress = .idle(completedGeneration: 0)
+        @ObservationIgnored
+        private var coordinatorCycleWaiters: [CoordinatorCycleWaiter] = []
 
         /// Callback invoked after a sync batch changes local content.
         @ObservationIgnored
@@ -215,6 +219,16 @@
             case nothingToUpload
             case retryableFailure(reason: String)
             case permanentFailure(reason: String)
+        }
+
+        private enum CoordinatorCycleProgress {
+            case idle(completedGeneration: UInt64)
+            case running(completedGeneration: UInt64)
+        }
+
+        private struct CoordinatorCycleWaiter {
+            let targetGeneration: UInt64
+            let continuation: CheckedContinuation<BackgroundSyncResult, Never>
         }
 
         private enum EngineState {
@@ -418,6 +432,7 @@
             coordinatorTask?.cancel()
             coordinatorTask = nil
             signalWake()
+            completeCoordinatorCycleWaiters(result: .failed("iCloud sync stopped"))
             removeAccountChangeObserver()
             engineState = .idle(maintenanceState())
             logger.info("SyncEngine stopped")
@@ -430,6 +445,7 @@
             coordinatorTask = nil
             task?.cancel()
             signalWake()
+            completeCoordinatorCycleWaiters(result: .failed("iCloud sync stopped"))
             removeAccountChangeObserver()
             engineState = .idle(maintenanceState())
 
@@ -462,25 +478,11 @@
         /// catch up before the user opens the app.
         public func runBackgroundSyncCycle() async -> BackgroundSyncResult {
             guard coordinatorTask == nil else {
-                signalWake()
-                return .completed
+                return await waitForCoordinatorCycleAfterBackgroundWake()
             }
 
             store.setSyncDeviceId(deviceId: deviceId)
-            await runCoordinatorCycle()
-
-            switch status {
-            case .synced, .syncing:
-                return .completed
-            case .unavailable:
-                return .unavailable
-            case let .error(message):
-                return .failed(message)
-            case .temporarilyUnavailable:
-                return .failed("iCloud temporarily unavailable")
-            case .idle, .connecting:
-                return .failed("iCloud sync did not complete")
-            }
+            return await runCoordinatorCycle()
         }
 
         /// Mark a wake as pending and resume any waiting sleeper.
@@ -489,6 +491,65 @@
             if let continuation = wakeContinuation {
                 wakeContinuation = nil
                 continuation.resume()
+            }
+        }
+
+        private func waitForCoordinatorCycleAfterBackgroundWake() async -> BackgroundSyncResult {
+            let targetGeneration: UInt64
+            switch coordinatorCycleProgress {
+            case let .idle(completedGeneration):
+                targetGeneration = completedGeneration + 1
+            case let .running(completedGeneration):
+                targetGeneration = completedGeneration + 2
+            }
+
+            return await withCheckedContinuation { continuation in
+                coordinatorCycleWaiters.append(
+                    CoordinatorCycleWaiter(
+                        targetGeneration: targetGeneration,
+                        continuation: continuation
+                    )
+                )
+                signalWake()
+            }
+        }
+
+        private func beginCoordinatorCycle() {
+            switch coordinatorCycleProgress {
+            case let .idle(completedGeneration):
+                coordinatorCycleProgress = .running(completedGeneration: completedGeneration)
+            case .running:
+                break
+            }
+        }
+
+        private func finishCoordinatorCycle(result: BackgroundSyncResult) {
+            let completedGeneration: UInt64
+            switch coordinatorCycleProgress {
+            case let .idle(generation):
+                completedGeneration = generation
+            case let .running(generation):
+                completedGeneration = generation + 1
+            }
+
+            coordinatorCycleProgress = .idle(completedGeneration: completedGeneration)
+            let readyWaiters = coordinatorCycleWaiters.filter {
+                $0.targetGeneration <= completedGeneration
+            }
+            coordinatorCycleWaiters.removeAll {
+                $0.targetGeneration <= completedGeneration
+            }
+
+            for waiter in readyWaiters {
+                waiter.continuation.resume(returning: result)
+            }
+        }
+
+        private func completeCoordinatorCycleWaiters(result: BackgroundSyncResult) {
+            let waiters = coordinatorCycleWaiters
+            coordinatorCycleWaiters.removeAll()
+            for waiter in waiters {
+                waiter.continuation.resume(returning: result)
             }
         }
 
@@ -536,6 +597,7 @@
         private func setUnavailable() {
             coordinatorTask?.cancel()
             coordinatorTask = nil
+            completeCoordinatorCycleWaiters(result: .unavailable)
             engineState = .unavailable(maintenanceState())
         }
 
@@ -750,8 +812,16 @@
             }
         }
 
-        /// Single serial coordinator cycle: fetch → apply → compact → upload → cleanup.
-        public func runCoordinatorCycle() async {
+        /// Single serial coordinator cycle: fetch -> apply -> compact -> upload -> cleanup.
+        @discardableResult
+        public func runCoordinatorCycle() async -> BackgroundSyncResult {
+            beginCoordinatorCycle()
+            let result = await performCoordinatorCycle()
+            finishCoordinatorCycle(result: result)
+            return result
+        }
+
+        private func performCoordinatorCycle() async -> BackgroundSyncResult {
             do {
                 switch try await accountAvailability() {
                 case .available:
@@ -762,11 +832,11 @@
                     updateActiveState { state in
                         state.activity = .temporarilyUnavailable
                     }
-                    return
+                    return .failed("iCloud temporarily unavailable")
                 case .unavailable:
                     logger.warning("iCloud account unavailable, sync disabled")
                     setUnavailable()
-                    return
+                    return .unavailable
                 }
 
                 prepareForAvailableCycle()
@@ -786,7 +856,7 @@
                     updateActiveState { state in
                         state.activity = .synced(lastSync: now())
                     }
-                    return
+                    return .completed
                 }
 
                 if deviceState.indexDirty {
@@ -806,7 +876,7 @@
                     updateActiveState { state in
                         state.activity = .synced(lastSync: now())
                     }
-                    return
+                    return .completed
                 }
                 if let fetchError = changes.fetchError {
                     throw fetchError
@@ -868,7 +938,7 @@
                     updateActiveState { state in
                         state.activity = .synced(lastSync: now())
                     }
-                    return
+                    return .completed
                 }
 
                 switch indexMaintenancePass {
@@ -903,6 +973,7 @@
                     updateActiveState { state in
                         state.activity = .synced(lastSync: now())
                     }
+                    return .completed
                 case let .retryableFailure(reason):
                     let delay = backoff.registerFailure(
                         error: NSError(
@@ -914,11 +985,13 @@
                     updateActiveState { state in
                         state.activity = .error("Upload failed, retrying")
                     }
+                    return .failed(reason)
                 case let .permanentFailure(reason):
                     logger.error("Upload permanent failure: \(reason)")
                     updateActiveState { state in
                         state.activity = .error(reason)
                     }
+                    return .failed(reason)
                 }
 
             } catch {
@@ -927,6 +1000,7 @@
                 updateActiveState { state in
                     state.activity = .error(error.localizedDescription)
                 }
+                return .failed(error.localizedDescription)
             }
         }
 

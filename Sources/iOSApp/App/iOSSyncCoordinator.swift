@@ -178,15 +178,26 @@
             let operationTask = Task { @MainActor in
                 await operation()
             }
-            let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: name) {
+            return await run(named: name, operationTask: operationTask)
+        }
+
+        static func run<Result>(
+            named name: String,
+            operationTask: Task<Result, Never>
+        ) async -> Result {
+            await withTaskCancellationHandler {
+                let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: name) {
+                    operationTask.cancel()
+                }
+
+                let result = await operationTask.value
+                if backgroundTask != .invalid {
+                    UIApplication.shared.endBackgroundTask(backgroundTask)
+                }
+                return result
+            } onCancel: {
                 operationTask.cancel()
             }
-
-            let result = await operationTask.value
-            if backgroundTask != .invalid {
-                UIApplication.shared.endBackgroundTask(backgroundTask)
-            }
-            return result
         }
     }
 
@@ -195,14 +206,24 @@
         static let shared = iOSBackgroundSyncRunner()
 
         private let logger = Logger(subsystem: "com.clipkitty", category: "SyncBackground")
+        private let headlessSyncOperation: (@MainActor () async -> UIBackgroundFetchResult)?
+
+        private struct InFlightRun {
+            let id: UUID
+            let resultTask: Task<UIBackgroundFetchResult, Never>
+            let operationTask: Task<UIBackgroundFetchResult, Never>
+        }
+
         private enum InFlightSync {
             case none
-            case running(id: UUID, task: Task<UIBackgroundFetchResult, Never>)
+            case running(InFlightRun)
         }
 
         private var inFlightSync: InFlightSync = .none
 
-        private init() {}
+        init(headlessSyncOperation: (@MainActor () async -> UIBackgroundFetchResult)? = nil) {
+            self.headlessSyncOperation = headlessSyncOperation
+        }
 
         func performRemoteNotificationSync() async -> UIBackgroundFetchResult {
             await performSync(named: "ClipKitty iCloud Sync")
@@ -216,9 +237,9 @@
             switch inFlightSync {
             case .none:
                 break
-            case let .running(_, task):
-                task.cancel()
-                inFlightSync = .none
+            case let .running(run):
+                run.operationTask.cancel()
+                run.resultTask.cancel()
             }
         }
 
@@ -226,22 +247,30 @@
             switch inFlightSync {
             case .none:
                 break
-            case let .running(_, task):
-                return await task.value
+            case let .running(run):
+                return await run.resultTask.value
             }
 
             let syncID = UUID()
-            let task = Task { @MainActor in
-                await iOSBackgroundTaskRunner.run(named: name) {
-                    await self.runHeadlessSyncIfEnabled()
-                }
+            let operationTask = Task { @MainActor in
+                await self.runHeadlessSyncIfEnabled()
             }
-            inFlightSync = .running(id: syncID, task: task)
-            let result = await task.value
+            let resultTask = Task { @MainActor in
+                await iOSBackgroundTaskRunner.run(named: name, operationTask: operationTask)
+            }
+            inFlightSync = .running(
+                InFlightRun(
+                    id: syncID,
+                    resultTask: resultTask,
+                    operationTask: operationTask
+                )
+            )
+
+            let result = await resultTask.value
             switch inFlightSync {
             case .none:
                 break
-            case let .running(id, _) where id == syncID:
+            case let .running(run) where run.id == syncID:
                 inFlightSync = .none
             case .running:
                 break
@@ -250,6 +279,10 @@
         }
 
         private func runHeadlessSyncIfEnabled() async -> UIBackgroundFetchResult {
+            if let headlessSyncOperation {
+                return await headlessSyncOperation()
+            }
+
             if Task.isCancelled {
                 return .failed
             }

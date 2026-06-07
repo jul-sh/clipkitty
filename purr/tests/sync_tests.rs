@@ -10,10 +10,10 @@ use purr_sync::replay;
 use purr_sync::snapshot::ItemSnapshot;
 use purr_sync::store::{ProjectionEntry, ProjectionState, SyncStore};
 use purr_sync::types::{
-    ApplyResult, DeferredReason, FileSnapshotEntry, ForkPlan, IgnoreReason, ItemAggregate,
-    ItemEventPayload, ItemSnapshotData, LinkMetadataSnapshot, LiveItemState, ProjectionDelta,
-    TombstoneState, TypeSpecificData, VersionDomain, VersionVector, COMPACTION_EVENT_THRESHOLD,
-    FLAG_INDEX_DIRTY, FLAG_NEEDS_FULL_RESYNC, SYNC_SCHEMA_VERSION,
+    ApplyResult, DeferredReason, FileSnapshotEntry, ForkPlan, IgnoreReason, IndexQueueEntry,
+    ItemAggregate, ItemEventPayload, ItemSnapshotData, LinkMetadataSnapshot, LiveItemState,
+    ProjectionDelta, TombstoneState, TypeSpecificData, VersionDomain, VersionVector,
+    COMPACTION_EVENT_THRESHOLD, FLAG_INDEX_DIRTY, FLAG_NEEDS_FULL_RESYNC, SYNC_SCHEMA_VERSION,
     TOMBSTONE_SNAPSHOT_RETENTION_SECS,
 };
 
@@ -2820,6 +2820,87 @@ mod replay_audit_tests {
                 .unwrap()
                 .index_dirty
         );
+    }
+
+    #[test]
+    fn full_index_rebuild_queue_replacement_installs_reset_upserts_and_dirty_flag() {
+        let (store, dir) = test_store();
+        store
+            .save_text("full rebuild live one".to_string(), None, None)
+            .unwrap();
+        store
+            .save_text("full rebuild live two".to_string(), None, None)
+            .unwrap();
+
+        let db = store_db(&dir);
+        let sync = SyncStore::new(db.pool());
+        sync.enqueue_index_delete("stale-index-repair").unwrap();
+        sync.set_dirty_flag(FLAG_INDEX_DIRTY, false).unwrap();
+
+        assert_eq!(store.enqueue_full_index_rebuild().unwrap(), 2);
+
+        let entries = sync.fetch_index_queue(8).unwrap();
+        assert_eq!(entries.first(), Some(&IndexQueueEntry::Reset));
+
+        let mut queued_item_ids: Vec<String> = entries
+            .into_iter()
+            .filter_map(|entry| match entry {
+                IndexQueueEntry::Upsert { item_id } => Some(item_id),
+                IndexQueueEntry::Reset | IndexQueueEntry::Delete { .. } => None,
+            })
+            .collect();
+        queued_item_ids.sort();
+
+        let mut live_item_ids: Vec<String> = db
+            .fetch_all_items()
+            .unwrap()
+            .into_iter()
+            .map(|item| item.item_id)
+            .collect();
+        live_item_ids.sort();
+
+        assert_eq!(queued_item_ids, live_item_ids);
+        assert!(sync.get_dirty_flag(FLAG_INDEX_DIRTY).unwrap());
+    }
+
+    #[test]
+    fn full_index_rebuild_queue_replacement_rolls_back_on_insert_failure() {
+        let db = test_db();
+        let sync = SyncStore::new(db.pool());
+        sync.enqueue_index_delete("stale-index-repair").unwrap();
+        sync.set_dirty_flag(FLAG_INDEX_DIRTY, true).unwrap();
+
+        {
+            let conn = db.pool().get().unwrap();
+            conn.execute_batch(
+                r#"
+                CREATE TRIGGER abort_full_rebuild_upsert
+                BEFORE INSERT ON sync_index_queue
+                WHEN NEW.operation = 'upsert'
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced full rebuild upsert failure');
+                END;
+                "#,
+            )
+            .unwrap();
+        }
+
+        let err = sync
+            .replace_index_queue_with_full_rebuild(&["fresh-index-repair".to_string()])
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("forced full rebuild upsert failure"),
+            "unexpected error: {err}"
+        );
+
+        assert_eq!(
+            sync.fetch_index_queue(8).unwrap(),
+            vec![IndexQueueEntry::Delete {
+                item_id: "stale-index-repair".to_string(),
+            }]
+        );
+        assert!(sync.get_dirty_flag(FLAG_INDEX_DIRTY).unwrap());
     }
 
     #[test]

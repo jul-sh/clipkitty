@@ -7,7 +7,7 @@ use crate::event::ItemEvent;
 use crate::snapshot::ItemSnapshot;
 use crate::types::{
     CheckpointState, DeferredReason, IndexQueueEntry, IndexQueueOperation, VersionVector,
-    INDEX_QUEUE_RESET_KEY,
+    FLAG_INDEX_DIRTY, INDEX_QUEUE_RESET_KEY,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -814,6 +814,50 @@ impl<'a> SyncStore<'a> {
 
     pub fn enqueue_index_delete(&self, item_id: &str) -> SyncResult<()> {
         self.enqueue_index_operation(item_id, IndexQueueOperation::Delete)
+    }
+
+    pub fn replace_index_queue_with_full_rebuild(&self, item_ids: &[String]) -> SyncResult<()> {
+        let now = Utc::now().timestamp();
+        let conn = self.get_conn()?;
+        let tx = conn.unchecked_transaction()?;
+
+        tx.execute("DELETE FROM sync_index_queue", [])?;
+        tx.execute(
+            r#"INSERT INTO sync_index_queue (queue_key, operation, item_id, updated_at)
+               VALUES (?1, ?2, NULL, ?3)
+               ON CONFLICT(queue_key) DO UPDATE SET
+                 operation = excluded.operation,
+                 item_id = excluded.item_id,
+                 updated_at = excluded.updated_at"#,
+            params![
+                INDEX_QUEUE_RESET_KEY,
+                IndexQueueOperation::Reset.as_str(),
+                now
+            ],
+        )?;
+
+        for item_id in item_ids {
+            tx.execute(
+                r#"INSERT INTO sync_index_queue (queue_key, operation, item_id, updated_at)
+                   VALUES (?1, ?2, ?1, ?3)
+                   ON CONFLICT(queue_key) DO UPDATE SET
+                     operation = excluded.operation,
+                     item_id = excluded.item_id,
+                     updated_at = excluded.updated_at"#,
+                params![item_id, IndexQueueOperation::Upsert.as_str(), now],
+            )?;
+        }
+
+        tx.execute(
+            r#"INSERT INTO sync_dirty_flags (flag_name, flag_value, updated_at)
+               VALUES (?1, ?2, ?3)
+               ON CONFLICT(flag_name) DO UPDATE SET
+                 flag_value = excluded.flag_value,
+                 updated_at = excluded.updated_at"#,
+            params![FLAG_INDEX_DIRTY, 1_i64, now],
+        )?;
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn fetch_index_queue(&self, limit: usize) -> SyncResult<Vec<IndexQueueEntry>> {

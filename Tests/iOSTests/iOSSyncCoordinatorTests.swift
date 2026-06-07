@@ -4,6 +4,7 @@
     import ClipKittyRust
     @testable import ClipKittyiOS
     import SwiftUI
+    import UIKit
     import XCTest
 
     // MARK: - Spy Engine
@@ -81,6 +82,23 @@
 
         private func countBackgroundSchedule() {
             scheduleBackgroundSyncCallCount += 1
+        }
+
+        private func waitUntil(
+            timeout: TimeInterval = 1.0,
+            pollIntervalNanoseconds: UInt64 = 10_000_000,
+            file: StaticString = #filePath,
+            line: UInt = #line,
+            condition: @escaping @MainActor () -> Bool
+        ) async {
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline {
+                if condition() {
+                    return
+                }
+                try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)
+            }
+            XCTFail("Timed out waiting for condition", file: file, line: line)
         }
 
         // MARK: - Initialization
@@ -465,6 +483,42 @@
 
             XCTAssertEqual(result, .unavailable)
             XCTAssertTrue(createdEngines.isEmpty)
+        }
+
+        // MARK: - Background runner cancellation
+
+        func testCancelInFlightSyncKeepsLaterWakeJoinedUntilOperationFinishes() async {
+            var startCount = 0
+            var allowFinish = false
+            let runner = iOSBackgroundSyncRunner {
+                startCount += 1
+                while !allowFinish {
+                    try? await Task.sleep(nanoseconds: 5_000_000)
+                }
+                return Task.isCancelled ? .failed : .newData
+            }
+
+            let firstWake = Task { @MainActor in
+                await runner.performScheduledSync()
+            }
+            await waitUntil {
+                startCount == 1
+            }
+
+            runner.cancelInFlightSync()
+            let secondWake = Task { @MainActor in
+                await runner.performRemoteNotificationSync()
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+
+            XCTAssertEqual(startCount, 1)
+            allowFinish = true
+
+            let firstResult = await firstWake.value
+            let secondResult = await secondWake.value
+            XCTAssertEqual(firstResult, .failed)
+            XCTAssertEqual(secondResult, .failed)
+            XCTAssertEqual(startCount, 1)
         }
     }
 

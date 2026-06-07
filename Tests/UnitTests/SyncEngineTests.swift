@@ -42,6 +42,7 @@ final class SyncEngineTests: XCTestCase {
 
     private final class FakeCloudTransport: SyncCloudTransport {
         var accountStatusResult: Result<CKAccountStatus, Error> = .success(.available)
+        var accountStatusHandler: (() async throws -> CKAccountStatus)?
         var zoneChangeResults: [SyncZoneChangeResult] = []
         var ensureZoneHandler: ((CKRecordZone) throws -> Void)?
         var saveSubscriptionHandler: ((CKDatabaseSubscription) throws -> Void)?
@@ -57,7 +58,10 @@ final class SyncEngineTests: XCTestCase {
         private(set) var zoneChangeRequestHadToken: [Bool] = []
 
         func accountStatus() async throws -> CKAccountStatus {
-            try accountStatusResult.get()
+            if let accountStatusHandler {
+                return try await accountStatusHandler()
+            }
+            return try accountStatusResult.get()
         }
 
         func ensureZoneExists(_ zone: CKRecordZone) async throws {
@@ -1094,6 +1098,33 @@ final class SyncEngineTests: XCTestCase {
             return false
         }
         assertSynced(engine.status)
+    }
+
+    func testBackgroundSyncCycleWhileCoordinatorActiveAwaitsActualWakeFailure() async throws {
+        let store = try makeStore()
+        let defaults = makeDefaults()
+        let transport = FakeCloudTransport()
+        let engine = makeEngine(
+            store: store,
+            transport: transport,
+            defaults: defaults
+        )
+        defer { engine.stop() }
+
+        engine.start()
+        await waitUntil {
+            if case .synced = engine.status {
+                return true
+            }
+            return false
+        }
+
+        transport.accountStatusResult = .success(.temporarilyUnavailable)
+
+        let result = await engine.runBackgroundSyncCycle()
+
+        XCTAssertEqual(result, .failed("iCloud temporarily unavailable"))
+        assertTemporarilyUnavailable(engine.status)
     }
 
     func testStatusChangesInvalidateObservation() async throws {
