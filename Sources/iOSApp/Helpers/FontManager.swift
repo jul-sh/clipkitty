@@ -4,14 +4,11 @@ import UIKit
 
 enum FontManager {
     static var sansSerif: String {
-        let name = "IosevkaCharon-Regular"
-        return UIFont(name: name, size: 12) != nil ? name : UIFont.systemFont(ofSize: 12).fontName
+        UIFont.systemFont(ofSize: 12).fontName
     }
 
     static var mono: String {
-        let name = "IosevkaCharonMono-Regular"
-        return UIFont(name: name, size: 12) != nil
-            ? name : UIFont.monospacedSystemFont(ofSize: 12, weight: .regular).fontName
+        UIFont.monospacedSystemFont(ofSize: 12, weight: .regular).fontName
     }
 
     static func registerFonts() {
