@@ -72,6 +72,48 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(client.startedSearchRequests.count, 1)
     }
 
+    func testVisiblePanelAfterSuspensionRestartsCancelledInitialSearch() async {
+        let client = MockBrowserStoreClient()
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        XCTAssertEqual(client.startedSearchRequests.count, 1)
+
+        viewModel.prepareForSuspension()
+        await flushMainActor()
+
+        viewModel.handlePanelVisibilityChange(true, contentRevision: 0)
+        await flushMainActor()
+
+        XCTAssertEqual(client.startedSearchRequests.count, 2)
+
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "stale", excerpt: "stale")],
+            firstPreviewPayload: nil,
+            totalCount: 1
+        ))
+        await flushMainActor()
+        XCTAssertTrue(viewModel.itemIds.isEmpty)
+
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "fresh", excerpt: "fresh")],
+            firstPreviewPayload: nil,
+            totalCount: 1
+        ))
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.itemIds, ["fresh"])
+        XCTAssertEqual(viewModel.selectedItemId, "fresh")
+    }
+
     func testStalePreviewCompletionDoesNotOverwriteNewerSelection() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(

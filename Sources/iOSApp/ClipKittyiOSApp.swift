@@ -14,6 +14,7 @@ struct AppSession {
 struct AppSuspensionContext {
     let id: UUID
     let session: AppSession
+    let task: Task<Void, Never>
 }
 
 enum AppLaunchState {
@@ -105,6 +106,10 @@ final class AppState {
 
     func refreshFeed() {
         contentRevision += 1
+        viewModel.handlePanelVisibilityChange(true, contentRevision: contentRevision)
+    }
+
+    func restoreVisibleFeedAfterForegroundActivation() {
         viewModel.handlePanelVisibilityChange(true, contentRevision: contentRevision)
     }
 
@@ -369,16 +374,23 @@ struct ClipKittyiOSApp: App {
         case .suspended:
             performBootstrap()
         case let .ready(session):
-            #if ENABLE_ICLOUD_SYNC
-                syncCoordinator?.handleScenePhaseChange(.active)
-            #endif
-            Task {
-                await session.appState.ingestPendingAndClipboard()
-            }
-        case .suspending:
-            break
+            resumeReadySession(session)
+        case let .suspending(context):
+            context.task.cancel()
+            launchState = .ready(context.session)
+            resumeReadySession(context.session)
         case .launching, .failed:
             break
+        }
+    }
+
+    private func resumeReadySession(_ session: AppSession) {
+        session.appState.restoreVisibleFeedAfterForegroundActivation()
+        #if ENABLE_ICLOUD_SYNC
+            syncCoordinator?.handleScenePhaseChange(.active)
+        #endif
+        Task {
+            await session.appState.ingestPendingAndClipboard()
         }
     }
 
@@ -391,11 +403,11 @@ struct ClipKittyiOSApp: App {
         }
 
         let suspensionID = UUID()
-        Task { @MainActor in
+        let task = Task { @MainActor in
             await finishPreparingForSuspension(session: session, suspensionID: suspensionID)
         }
         launchState = .suspending(
-            AppSuspensionContext(id: suspensionID, session: session)
+            AppSuspensionContext(id: suspensionID, session: session, task: task)
         )
     }
 
@@ -403,23 +415,40 @@ struct ClipKittyiOSApp: App {
         session: AppSession,
         suspensionID: UUID
     ) async {
+        guard !Task.isCancelled else { return }
+
         #if ENABLE_ICLOUD_SYNC
             await iOSBackgroundTaskRunner.run(named: "ClipKitty Suspend") {
                 await syncCoordinator?.prepareForSuspension()
+                guard !Task.isCancelled,
+                      case let .suspending(context) = launchState,
+                      context.id == suspensionID
+                else {
+                    return
+                }
                 session.appState.prepareForSuspension()
                 session.container.prepareForSuspension()
             }
-            syncCoordinator = nil
         #else
+            guard case let .suspending(context) = launchState,
+                  context.id == suspensionID
+            else {
+                return
+            }
             session.appState.prepareForSuspension()
             session.container.prepareForSuspension()
         #endif
 
-        guard case let .suspending(context) = launchState,
+        guard !Task.isCancelled,
+              case let .suspending(context) = launchState,
               context.id == suspensionID
         else {
             return
         }
+
+        #if ENABLE_ICLOUD_SYNC
+            syncCoordinator = nil
+        #endif
 
         launchState = .suspended
         if scenePhase == .active {
