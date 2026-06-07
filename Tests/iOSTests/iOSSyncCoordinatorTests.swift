@@ -43,6 +43,7 @@
         private var tempDir: URL!
         private var store: ClipKittyRust.ClipboardStore!
         private var createdEngines: [SpySyncEngine]!
+        private var scheduleBackgroundSyncCallCount: Int!
 
         override func setUp() {
             super.setUp()
@@ -52,11 +53,13 @@
             let dbPath = tempDir.appendingPathComponent("test.db").path
             store = try! ClipKittyRust.ClipboardStore(dbPath: dbPath)
             createdEngines = []
+            scheduleBackgroundSyncCallCount = 0
         }
 
         override func tearDown() {
             store = nil
             createdEngines = nil
+            scheduleBackgroundSyncCallCount = nil
             if let tempDir {
                 try? FileManager.default.removeItem(at: tempDir)
             }
@@ -74,6 +77,10 @@
 
         private var latestEngine: SpySyncEngine? {
             createdEngines.last
+        }
+
+        private func countBackgroundSchedule() {
+            scheduleBackgroundSyncCallCount += 1
         }
 
         // MARK: - Initialization
@@ -120,6 +127,18 @@
             XCTAssertEqual(latestEngine?.startCallCount, 0)
         }
 
+        func testInitEnabledSchedulesBackgroundSync() {
+            _ = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory(),
+                scheduleBackgroundSync: countBackgroundSchedule
+            )
+
+            XCTAssertEqual(scheduleBackgroundSyncCallCount, 1)
+        }
+
         // MARK: - Status
 
         func testStatusIdleWhenDisabled() {
@@ -158,6 +177,20 @@
 
             XCTAssertEqual(createdEngines.count, 1)
             XCTAssertEqual(latestEngine?.startCallCount, 1)
+        }
+
+        func testEnableFromDisabledSchedulesBackgroundSync() {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: false,
+                onContentChanged: {},
+                engineFactory: spyFactory(),
+                scheduleBackgroundSync: countBackgroundSchedule
+            )
+
+            coordinator.setSyncEnabled(true)
+
+            XCTAssertEqual(scheduleBackgroundSyncCallCount, 1)
         }
 
         func testEnableFromDisabledWiresOnContentChanged() {
@@ -274,6 +307,21 @@
             XCTAssertEqual(latestEngine?.stopCallCount, 1)
         }
 
+        func testBackgroundPhaseSchedulesBackgroundSyncWhenEnabled() {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory(),
+                scheduleBackgroundSync: countBackgroundSchedule
+            )
+            scheduleBackgroundSyncCallCount = 0
+
+            coordinator.handleScenePhaseChange(.background)
+
+            XCTAssertEqual(scheduleBackgroundSyncCallCount, 1)
+        }
+
         func testInactivePhaseLeavesEngineRunningWhenEnabled() {
             let coordinator = iOSSyncCoordinator(
                 store: store,
@@ -323,12 +371,15 @@
                 store: store,
                 enabled: true,
                 onContentChanged: {},
-                engineFactory: spyFactory()
+                engineFactory: spyFactory(),
+                scheduleBackgroundSync: countBackgroundSchedule
             )
+            scheduleBackgroundSyncCallCount = 0
 
             await coordinator.prepareForSuspension()
 
             XCTAssertEqual(latestEngine?.prepareForSuspendCallCount, 1)
+            XCTAssertEqual(scheduleBackgroundSyncCallCount, 1)
         }
 
         func testPrepareForSuspensionIsNoOpWhenDisabled() async {
@@ -358,6 +409,21 @@
 
             XCTAssertEqual(latestEngine?.startCallCount, 1)
             XCTAssertEqual(latestEngine?.handleRemoteNotificationCallCount, 1)
+        }
+
+        func testRemoteNotificationSchedulesBackgroundSyncWhenEnabled() {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory(),
+                scheduleBackgroundSync: countBackgroundSchedule
+            )
+            scheduleBackgroundSyncCallCount = 0
+
+            coordinator.handleRemoteNotification()
+
+            XCTAssertEqual(scheduleBackgroundSyncCallCount, 1)
         }
 
         func testRemoteNotificationIsNoOpWhenDisabled() {

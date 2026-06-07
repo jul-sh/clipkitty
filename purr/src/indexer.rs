@@ -1046,6 +1046,13 @@ impl Indexer {
         })
     }
 
+    pub fn delete_all_documents(&self) -> IndexerResult<()> {
+        self.with_writer(|writer| {
+            writer.delete_all_documents()?;
+            Ok(())
+        })
+    }
+
     /// Tokenize text using the trigram tokenizer and return terms for the content field.
     fn trigram_terms(&self, text: &str) -> Vec<Term> {
         let mut tokenizer = self.index.tokenizers().get("trigram").unwrap();

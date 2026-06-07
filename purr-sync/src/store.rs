@@ -5,7 +5,10 @@
 use crate::error::{SyncError, SyncResult};
 use crate::event::ItemEvent;
 use crate::snapshot::ItemSnapshot;
-use crate::types::{CheckpointState, DeferredReason, VersionVector};
+use crate::types::{
+    CheckpointState, DeferredReason, IndexQueueEntry, IndexQueueOperation, VersionVector,
+    INDEX_QUEUE_RESET_KEY,
+};
 use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -764,6 +767,147 @@ impl<'a> SyncStore<'a> {
         Ok(())
     }
 
+    // ── Search Index Queue ───────────────────────────────────────────────
+
+    fn enqueue_index_operation(
+        &self,
+        item_id: &str,
+        operation: IndexQueueOperation,
+    ) -> SyncResult<()> {
+        debug_assert_ne!(operation, IndexQueueOperation::Reset);
+        let now = Utc::now().timestamp();
+        let conn = self.get_conn()?;
+        conn.execute(
+            r#"INSERT INTO sync_index_queue (queue_key, operation, item_id, updated_at)
+               VALUES (?1, ?2, ?1, ?3)
+               ON CONFLICT(queue_key) DO UPDATE SET
+                 operation = excluded.operation,
+                 item_id = excluded.item_id,
+                 updated_at = excluded.updated_at"#,
+            params![item_id, operation.as_str(), now],
+        )?;
+        Ok(())
+    }
+
+    pub fn enqueue_index_reset(&self) -> SyncResult<()> {
+        let now = Utc::now().timestamp();
+        let conn = self.get_conn()?;
+        conn.execute(
+            r#"INSERT INTO sync_index_queue (queue_key, operation, item_id, updated_at)
+               VALUES (?1, ?2, NULL, ?3)
+               ON CONFLICT(queue_key) DO UPDATE SET
+                 operation = excluded.operation,
+                 item_id = excluded.item_id,
+                 updated_at = excluded.updated_at"#,
+            params![
+                INDEX_QUEUE_RESET_KEY,
+                IndexQueueOperation::Reset.as_str(),
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn enqueue_index_upsert(&self, item_id: &str) -> SyncResult<()> {
+        self.enqueue_index_operation(item_id, IndexQueueOperation::Upsert)
+    }
+
+    pub fn enqueue_index_delete(&self, item_id: &str) -> SyncResult<()> {
+        self.enqueue_index_operation(item_id, IndexQueueOperation::Delete)
+    }
+
+    pub fn fetch_index_queue(&self, limit: usize) -> SyncResult<Vec<IndexQueueEntry>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare(
+            r#"SELECT queue_key, operation, item_id
+               FROM sync_index_queue
+               ORDER BY
+                 CASE operation WHEN 'reset' THEN 0 ELSE 1 END,
+                 updated_at ASC,
+                 queue_key ASC
+               LIMIT ?1"#,
+        )?;
+        let entries = stmt
+            .query_map(params![limit as i64], |row| {
+                let queue_key: String = row.get(0)?;
+                let operation_raw: String = row.get(1)?;
+                let item_id: Option<String> = row.get(2)?;
+                Ok((queue_key, operation_raw, item_id))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        entries
+            .into_iter()
+            .map(|(queue_key, operation_raw, item_id)| {
+                let operation = IndexQueueOperation::from_str(&operation_raw).ok_or_else(|| {
+                    SyncError::InconsistentData(format!(
+                        "unknown index queue operation `{operation_raw}`"
+                    ))
+                })?;
+                match operation {
+                    IndexQueueOperation::Reset => {
+                        if queue_key == INDEX_QUEUE_RESET_KEY && item_id.is_none() {
+                            Ok(IndexQueueEntry::Reset)
+                        } else {
+                            Err(SyncError::InconsistentData(
+                                "index queue reset row has item data".to_string(),
+                            ))
+                        }
+                    }
+                    IndexQueueOperation::Upsert => item_id
+                        .map(|item_id| IndexQueueEntry::Upsert { item_id })
+                        .ok_or_else(|| {
+                            SyncError::InconsistentData(
+                                "index queue upsert row is missing item_id".to_string(),
+                            )
+                        }),
+                    IndexQueueOperation::Delete => item_id
+                        .map(|item_id| IndexQueueEntry::Delete { item_id })
+                        .ok_or_else(|| {
+                            SyncError::InconsistentData(
+                                "index queue delete row is missing item_id".to_string(),
+                            )
+                        }),
+                }
+            })
+            .collect()
+    }
+
+    pub fn remove_index_queue_entries(&self, queue_keys: &[&str]) -> SyncResult<usize> {
+        if queue_keys.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.get_conn()?;
+        let placeholders: Vec<String> = (1..=queue_keys.len()).map(|i| format!("?{i}")).collect();
+        let sql = format!(
+            "DELETE FROM sync_index_queue WHERE queue_key IN ({})",
+            placeholders.join(", ")
+        );
+        let params: Vec<&dyn rusqlite::ToSql> = queue_keys
+            .iter()
+            .map(|id| id as &dyn rusqlite::ToSql)
+            .collect();
+        Ok(conn.execute(&sql, params.as_slice())?)
+    }
+
+    pub fn count_index_queue_entries(&self) -> SyncResult<usize> {
+        let conn = self.get_conn()?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM sync_index_queue", [], |row| {
+            row.get(0)
+        })?;
+        Ok(count as usize)
+    }
+
+    pub fn clear_index_queue(&self) -> SyncResult<()> {
+        let conn = self.get_conn()?;
+        conn.execute("DELETE FROM sync_index_queue", [])?;
+        Ok(())
+    }
+
     // ── Bulk Operations (for full resync) ────────────────────────────────
 
     /// Fetch event IDs that are compacted, uploaded, and older than the given threshold.
@@ -838,6 +982,7 @@ impl<'a> SyncStore<'a> {
             DELETE FROM sync_deferred_events;
             DELETE FROM sync_dedup;
             DELETE FROM sync_dirty_flags;
+            DELETE FROM sync_index_queue;
             "#,
         )?;
         Ok(())

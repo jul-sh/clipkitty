@@ -3,11 +3,14 @@ import ClipKittyRust
 import ClipKittyShared
 import ClipKittyShortcuts
 import Foundation
+import os
 
 /// Owns all app-scoped services for the current foreground session.
 @MainActor
 @Observable
 final class AppContainer {
+    private static let logger = Logger(subsystem: "com.clipkitty", category: "iOSBootstrap")
+
     let store: ClipKittyRust.ClipboardStore
     let repository: ClipboardRepository
     let previewLoader: PreviewLoader
@@ -70,12 +73,38 @@ final class AppContainer {
             return .failure(.databaseOpenFailed(error.localizedDescription))
         }
 
-        if plan == .rebuildIndex {
-            do {
-                try store.rebuildIndex()
-            } catch {
-                return .failure(.databaseOpenFailed("Index rebuild failed: \(error.localizedDescription)"))
-            }
+        switch plan {
+        case .ready:
+            break
+        case .rebuildIndex:
+            #if ENABLE_ICLOUD_SYNC
+                do {
+                    switch try iOSIndexMaintenance.queueBootstrapRepairIfNeeded(
+                        plan: plan,
+                        store: store
+                    ) {
+                    case .notNeeded:
+                        break
+                    case let .queued(itemCount):
+                        logger.info("Queued bootstrap index repair for \(itemCount) items")
+                    }
+
+                    do {
+                        let outcome = try iOSIndexMaintenance.processQueuedBatch(store: store)
+                        logIndexMaintenanceOutcome(outcome, context: "bootstrap")
+                    } catch {
+                        logger.error("Bootstrap index maintenance failed: \(error.localizedDescription)")
+                    }
+                } catch {
+                    return .failure(.databaseOpenFailed("Index repair queue failed: \(error.localizedDescription)"))
+                }
+            #else
+                do {
+                    try store.rebuildIndex()
+                } catch {
+                    return .failure(.databaseOpenFailed("Index rebuild failed: \(error.localizedDescription)"))
+                }
+            #endif
         }
 
         let repository = ClipboardRepository(store: store)
@@ -120,5 +149,21 @@ final class AppContainer {
     func prepareForSuspension() {
         store.prepareForSuspend()
     }
+
+    #if ENABLE_ICLOUD_SYNC
+        private static func logIndexMaintenanceOutcome(
+            _ outcome: IndexMaintenanceOutcome,
+            context: String
+        ) {
+            switch outcome {
+            case let .completed(processed):
+                logger.info("\(context) index maintenance completed after \(processed) items")
+            case let .moreRemaining(processed, remaining):
+                logger.info(
+                    "\(context) index maintenance processed \(processed) items; \(remaining) remain"
+                )
+            }
+        }
+    #endif
 
 }

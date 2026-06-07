@@ -148,6 +148,7 @@
         private nonisolated static let blobBundleFieldName = "blobBundleAsset"
         /// Age threshold for CloudKit event cleanup (30 days).
         private nonisolated static let cloudCleanupAgeDays: UInt32 = 30
+        private nonisolated static let indexMaintenanceBatchLimit: UInt32 = 64
 
         @ObservationIgnored
         private let logger = Logger(subsystem: "com.clipkitty", category: "SyncEngine")
@@ -201,6 +202,11 @@
             case nothingToUpload
             case retryableFailure(reason: String)
             case permanentFailure(reason: String)
+        }
+
+        private enum IndexMaintenancePass {
+            case notNeeded
+            case needed(SyncIndexActivity)
         }
 
         /// Structured outcome of uploading snapshots to CloudKit.
@@ -288,7 +294,7 @@
                 case let .rebuildingIndex(indexActivity):
                     switch indexActivity {
                     case .localMaintenance:
-                        return String(localized: "Rebuilding index…")
+                        return String(localized: "Indexing…")
                     case .downloadedContent:
                         return String(localized: "Indexing iCloud…")
                     }
@@ -721,6 +727,29 @@
             }.value
         }
 
+        private func processQueuedIndexWork(activity: SyncIndexActivity) async {
+            markSyncing(.rebuildingIndex(activity))
+            do {
+                let outcome = try await performStoreOperation { store in
+                    try store.processIndexQueue(maxItems: Self.indexMaintenanceBatchLimit)
+                }
+                logIndexMaintenanceOutcome(outcome)
+            } catch {
+                logger.error("Queued index maintenance failed: \(error.localizedDescription)")
+            }
+        }
+
+        private func logIndexMaintenanceOutcome(_ outcome: IndexMaintenanceOutcome) {
+            switch outcome {
+            case let .completed(processed):
+                logger.info("Queued index maintenance completed after \(processed) items")
+            case let .moreRemaining(processed, remaining):
+                logger.info(
+                    "Queued index maintenance processed \(processed) items; \(remaining) remain"
+                )
+            }
+        }
+
         /// Single serial coordinator cycle: fetch → apply → compact → upload → cleanup.
         public func runCoordinatorCycle() async {
             do {
@@ -761,12 +790,8 @@
                 }
 
                 if deviceState.indexDirty {
-                    logger.info("Index dirty, rebuilding")
-                    markSyncing(.rebuildingIndex(.localMaintenance))
-                    try await performStoreOperation { store in
-                        try store.rebuildIndex()
-                        try store.clearIndexDirtyFlag()
-                    }
+                    logger.info("Index dirty, processing queued index work")
+                    await processQueuedIndexWork(activity: .localMaintenance)
                 }
 
                 // ── Phase 1: Fetch remote changes ──
@@ -807,6 +832,7 @@
                 }
 
                 // ── Phase 4: Token advancement (conditional on success) ──
+                let indexMaintenancePass: IndexMaintenancePass
                 switch batchOutcome {
                 case let .applied(eventsApplied, snapshotsApplied):
                     if let newToken = changes.newToken {
@@ -820,12 +846,18 @@
                     }
                     if eventsApplied > 0 || snapshotsApplied > 0 {
                         onContentChanged?()
+                        indexMaintenancePass = .needed(.downloadedContent(incrementalDownload))
+                    } else {
+                        indexMaintenancePass = .notNeeded
                     }
 
                 case let .partialFailure(appliedCount, _, _):
                     // Do NOT advance token — retry on next cycle.
                     if appliedCount > 0 {
                         onContentChanged?()
+                        indexMaintenancePass = .needed(.downloadedContent(incrementalDownload))
+                    } else {
+                        indexMaintenancePass = .notNeeded
                     }
                     logger.warning("Partial batch failure, not advancing token")
 
@@ -837,6 +869,13 @@
                         state.activity = .synced(lastSync: now())
                     }
                     return
+                }
+
+                switch indexMaintenancePass {
+                case .notNeeded:
+                    break
+                case let .needed(activity):
+                    await processQueuedIndexWork(activity: activity)
                 }
 
                 // ── Phase 5: Periodic compaction ──
@@ -1736,20 +1775,23 @@
                 )
             }
 
-            // 3. Rebuild Tantivy index and save the fresh zone token from the
-            // full feed so the next cycle resumes incrementally instead of
-            // replaying the whole zone again.
-            markSyncing(.rebuildingIndex(.downloadedContent(downloadActivity)))
+            // 3. Queue derived search-index repair and save the fresh zone token
+            // from the full feed so the next cycle resumes incrementally instead
+            // of replaying the whole zone again. Search indexing is durable,
+            // bounded, and resumable; it must not gate token advancement.
             let finalChangeToken = cloudRecords.finalChangeToken
             let deviceId = self.deviceId
-            try await performStoreOperation { store in
-                try store.rebuildIndex()
-                try store.clearIndexDirtyFlag()
+            let finalTokenData = try Self.archivedZoneChangeToken(finalChangeToken)
+            let queuedItems = try await performStoreOperation { store in
+                let queuedItems = try store.enqueueFullIndexRebuild()
                 try store.updateZoneChangeToken(
                     deviceId: deviceId,
-                    token: Self.archivedZoneChangeToken(finalChangeToken)
+                    token: finalTokenData
                 )
+                return queuedItems
             }
+            logger.info("Queued full-resync index maintenance for \(queuedItems) items")
+            await processQueuedIndexWork(activity: .downloadedContent(downloadActivity))
 
             // 4. Notify UI.
             onContentChanged?()

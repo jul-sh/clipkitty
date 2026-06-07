@@ -1,5 +1,6 @@
 #if ENABLE_ICLOUD_SYNC
 
+    import BackgroundTasks
     import ClipKittyAppleServices
     import ClipKittyRust
     import ClipKittyShared
@@ -44,6 +45,8 @@
         private let engineFactory: (ClipKittyRust.ClipboardStore) -> any SyncEngineProtocol
         @ObservationIgnored
         private let registerForRemoteNotifications: () -> Void
+        @ObservationIgnored
+        private let scheduleBackgroundSync: () -> Void
 
         var status: SyncEngine.SyncStatus {
             switch runtime {
@@ -66,6 +69,9 @@
                 engineFactory: { SyncEngine(store: $0) },
                 registerForRemoteNotifications: {
                     iOSRemoteNotificationBridge.shared.registerForRemoteNotifications()
+                },
+                scheduleBackgroundSync: {
+                    iOSBackgroundSyncScheduler.shared.scheduleAll()
                 }
             )
         }
@@ -75,16 +81,19 @@
             enabled: Bool,
             onContentChanged: @escaping () -> Void,
             engineFactory: @escaping (ClipKittyRust.ClipboardStore) -> any SyncEngineProtocol,
-            registerForRemoteNotifications: @escaping () -> Void = {}
+            registerForRemoteNotifications: @escaping () -> Void = {},
+            scheduleBackgroundSync: @escaping () -> Void = {}
         ) {
             self.onContentChanged = onContentChanged
             self.engineFactory = engineFactory
             self.registerForRemoteNotifications = registerForRemoteNotifications
+            self.scheduleBackgroundSync = scheduleBackgroundSync
             if enabled {
                 let engine = engineFactory(store)
                 engine.onContentChanged = onContentChanged
                 runtime = .enabled(store: store, engine: engine)
                 registerForRemoteNotifications()
+                scheduleBackgroundSync()
             } else {
                 runtime = .disabled(store: store)
             }
@@ -98,6 +107,7 @@
                 engine.onContentChanged = onContentChanged
                 runtime = .enabled(store: store, engine: engine)
                 registerForRemoteNotifications()
+                scheduleBackgroundSync()
                 engine.start()
 
             case let .enabled(store, engine):
@@ -116,6 +126,7 @@
                 case .active:
                     engine.start()
                 case .background:
+                    scheduleBackgroundSync()
                     engine.stop()
                 case .inactive:
                     break
@@ -130,6 +141,7 @@
             case .disabled:
                 break
             case let .enabled(_, engine):
+                scheduleBackgroundSync()
                 engine.start()
                 engine.handleRemoteNotification()
             }
@@ -140,6 +152,7 @@
             case .disabled:
                 break
             case let .enabled(_, engine):
+                scheduleBackgroundSync()
                 await engine.prepareForSuspend()
             }
         }
@@ -182,27 +195,65 @@
         static let shared = iOSBackgroundSyncRunner()
 
         private let logger = Logger(subsystem: "com.clipkitty", category: "SyncBackground")
-        private var inFlightSync: Task<UIBackgroundFetchResult, Never>?
+        private enum InFlightSync {
+            case none
+            case running(id: UUID, task: Task<UIBackgroundFetchResult, Never>)
+        }
+
+        private var inFlightSync: InFlightSync = .none
 
         private init() {}
 
         func performRemoteNotificationSync() async -> UIBackgroundFetchResult {
-            if let inFlightSync {
-                return await inFlightSync.value
+            await performSync(named: "ClipKitty iCloud Sync")
+        }
+
+        func performScheduledSync() async -> UIBackgroundFetchResult {
+            await performSync(named: "ClipKitty Scheduled iCloud Sync")
+        }
+
+        func cancelInFlightSync() {
+            switch inFlightSync {
+            case .none:
+                break
+            case let .running(_, task):
+                task.cancel()
+                inFlightSync = .none
+            }
+        }
+
+        private func performSync(named name: String) async -> UIBackgroundFetchResult {
+            switch inFlightSync {
+            case .none:
+                break
+            case let .running(_, task):
+                return await task.value
             }
 
+            let syncID = UUID()
             let task = Task { @MainActor in
-                await iOSBackgroundTaskRunner.run(named: "ClipKitty iCloud Sync") {
+                await iOSBackgroundTaskRunner.run(named: name) {
                     await self.runHeadlessSyncIfEnabled()
                 }
             }
-            inFlightSync = task
+            inFlightSync = .running(id: syncID, task: task)
             let result = await task.value
-            inFlightSync = nil
+            switch inFlightSync {
+            case .none:
+                break
+            case let .running(id, _) where id == syncID:
+                inFlightSync = .none
+            case .running:
+                break
+            }
             return result
         }
 
         private func runHeadlessSyncIfEnabled() async -> UIBackgroundFetchResult {
+            if Task.isCancelled {
+                return .failed
+            }
+
             guard iOSSettingsStore().syncEnabled else {
                 logger.debug("Skipping background sync because iCloud sync is disabled")
                 return .noData
@@ -215,9 +266,24 @@
                 let store = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
                 defer { store.prepareForSuspend() }
 
-                if plan == .rebuildIndex {
-                    logger.info("Rebuilding index before background sync")
-                    try store.rebuildIndex()
+                switch try iOSIndexMaintenance.queueBootstrapRepairIfNeeded(
+                    plan: plan,
+                    store: store
+                ) {
+                case .notNeeded:
+                    break
+                case let .queued(itemCount):
+                    logger.info("Queued background index repair for \(itemCount) items")
+                    do {
+                        let outcome = try iOSIndexMaintenance.processQueuedBatch(store: store)
+                        logIndexMaintenanceOutcome(outcome)
+                    } catch {
+                        logger.error("Background index maintenance failed: \(error.localizedDescription)")
+                    }
+                }
+
+                if Task.isCancelled {
+                    return .failed
                 }
 
                 var contentChanged = false
@@ -241,6 +307,119 @@
             } catch {
                 logger.error("Background sync bootstrap failed: \(error.localizedDescription)")
                 return .failed
+            }
+        }
+
+        private func logIndexMaintenanceOutcome(_ outcome: IndexMaintenanceOutcome) {
+            switch outcome {
+            case let .completed(processed):
+                logger.info("Background index maintenance completed after \(processed) items")
+            case let .moreRemaining(processed, remaining):
+                logger.info(
+                    "Background index maintenance processed \(processed) items; \(remaining) remain"
+                )
+            }
+        }
+    }
+
+    enum iOSBackgroundSyncTaskKind: CaseIterable {
+        case appRefresh
+        case processing
+
+        var identifier: String {
+            switch self {
+            case .appRefresh:
+                return "com.eviljuliette.clipkitty.sync.refresh"
+            case .processing:
+                return "com.eviljuliette.clipkitty.sync.processing"
+            }
+        }
+    }
+
+    @MainActor
+    final class iOSBackgroundSyncScheduler {
+        static let shared = iOSBackgroundSyncScheduler()
+
+        private let logger = Logger(subsystem: "com.clipkitty", category: "SyncBackground")
+        private var registeredKinds: Set<iOSBackgroundSyncTaskKind> = []
+
+        private init() {}
+
+        func register() {
+            for kind in iOSBackgroundSyncTaskKind.allCases {
+                register(kind: kind)
+            }
+        }
+
+        func scheduleAll() {
+            for kind in iOSBackgroundSyncTaskKind.allCases {
+                schedule(kind: kind)
+            }
+        }
+
+        func schedule(kind: iOSBackgroundSyncTaskKind) {
+            let request: BGTaskRequest
+            switch kind {
+            case .appRefresh:
+                let refresh = BGAppRefreshTaskRequest(identifier: kind.identifier)
+                refresh.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+                request = refresh
+            case .processing:
+                let processing = BGProcessingTaskRequest(identifier: kind.identifier)
+                processing.requiresNetworkConnectivity = true
+                processing.requiresExternalPower = false
+                processing.earliestBeginDate = Date(timeIntervalSinceNow: 5 * 60)
+                request = processing
+            }
+
+            do {
+                try BGTaskScheduler.shared.submit(request)
+                logger.debug("Scheduled background sync task \(kind.identifier)")
+            } catch {
+                logger.error("Failed to schedule background sync task \(kind.identifier): \(error.localizedDescription)")
+            }
+        }
+
+        private func register(kind: iOSBackgroundSyncTaskKind) {
+            guard !registeredKinds.contains(kind) else { return }
+
+            let accepted = BGTaskScheduler.shared.register(
+                forTaskWithIdentifier: kind.identifier,
+                using: nil
+            ) { task in
+                Task { @MainActor in
+                    self.handle(task: task, kind: kind)
+                }
+            }
+
+            if accepted {
+                registeredKinds.insert(kind)
+                logger.debug("Registered background sync task \(kind.identifier)")
+            } else {
+                logger.error("Failed to register background sync task \(kind.identifier)")
+            }
+        }
+
+        private func handle(task: BGTask, kind: iOSBackgroundSyncTaskKind) {
+            schedule(kind: kind)
+
+            let operation = Task { @MainActor in
+                let result = await iOSBackgroundSyncRunner.shared.performScheduledSync()
+                switch result {
+                case .newData, .noData:
+                    task.setTaskCompleted(success: true)
+                case .failed:
+                    task.setTaskCompleted(success: false)
+                @unknown default:
+                    task.setTaskCompleted(success: false)
+                }
+            }
+
+            task.expirationHandler = {
+                operation.cancel()
+                Task { @MainActor in
+                    iOSBackgroundSyncRunner.shared.cancelInFlightSync()
+                }
             }
         }
     }
@@ -269,15 +448,35 @@
         }
 
         func handleRemoteNotification() async -> UIBackgroundFetchResult {
+            iOSBackgroundSyncScheduler.shared.schedule(kind: .processing)
+
             if let coordinator {
                 let result = await coordinator.performRemoteNotificationSync()
-                return result.backgroundFetchResult
+                let fetchResult = result.backgroundFetchResult
+                switch fetchResult {
+                case .newData, .noData:
+                    iOSBackgroundSyncScheduler.shared.schedule(kind: .appRefresh)
+                case .failed:
+                    pendingRemoteNotification = true
+                    iOSBackgroundSyncScheduler.shared.schedule(kind: .processing)
+                @unknown default:
+                    pendingRemoteNotification = true
+                    iOSBackgroundSyncScheduler.shared.schedule(kind: .processing)
+                }
+                return fetchResult
             }
 
             logger.info("Handling remote sync notification with headless background sync")
             let result = await iOSBackgroundSyncRunner.shared.performRemoteNotificationSync()
-            if result == .failed {
+            switch result {
+            case .newData, .noData:
+                iOSBackgroundSyncScheduler.shared.schedule(kind: .appRefresh)
+            case .failed:
                 pendingRemoteNotification = true
+                iOSBackgroundSyncScheduler.shared.schedule(kind: .processing)
+            @unknown default:
+                pendingRemoteNotification = true
+                iOSBackgroundSyncScheduler.shared.schedule(kind: .processing)
             }
             return result
         }
@@ -291,7 +490,16 @@
         }
     }
 
+    @MainActor
     final class iOSAppDelegate: NSObject, UIApplicationDelegate {
+        func application(
+            _: UIApplication,
+            didFinishLaunchingWithOptions _: [UIApplication.LaunchOptionsKey: Any]? = nil
+        ) -> Bool {
+            iOSBackgroundSyncScheduler.shared.register()
+            return true
+        }
+
         func application(
             _: UIApplication,
             didRegisterForRemoteNotificationsWithDeviceToken _: Data
