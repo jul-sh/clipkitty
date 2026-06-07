@@ -16,4 +16,4 @@ Sincronize só quando quiser
 Use a sincronização opcional pelo iCloud pra manter seu histórico em dia entre Mac, iPhone e iPad. Vem desligada por padrão.
 
 Privado por padrão
-O ClipKitty funciona no seu aparelho, sem telemetria, sem contas e sem servidores de terceiros. A sincronização opcional fica no seu contêiner privado do iCloud. O app é de código aberto e pode ser auditado por qualquer pessoa. Tudo isso faz do ClipKitty um app em que você pode confiar com segurança.
+O ClipKitty funciona no seu aparelho, sem telemetria, sem contas e sem servidores de terceiros. A sincronização opcional fica no seu contêiner privado do iCloud. O app é de código aberto e pode ser auditado por qualquer pessoa.

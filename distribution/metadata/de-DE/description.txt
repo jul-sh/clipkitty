@@ -16,4 +16,4 @@ Sync nur, wenn du willst
 Nutze die optionale iCloud-Synchronisierung, um deinen Verlauf auf Mac, iPhone und iPad im Gleichschritt zu halten. Standardmäßig ist sie aus.
 
 Privatsphäre als Standard
-ClipKitty arbeitet lokal auf deinem Gerät; ohne Telemetrie, ohne Konten, ohne Drittanbieter-Server. Die optionale Synchronisierung bleibt in deinem privaten iCloud-Container. Die App ist Open Source und öffentlich überprüfbar. All das macht ClipKitty zu einer App, der du sicher vertrauen kannst.
+ClipKitty arbeitet lokal auf deinem Gerät; ohne Telemetrie, ohne Konten, ohne Drittanbieter-Server. Die optionale Synchronisierung bleibt in deinem privaten iCloud-Container. Die App ist Open Source und öffentlich überprüfbar.

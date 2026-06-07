@@ -35,7 +35,7 @@ ClipKitty is built around a simple idea: your clipboard can remember more withou
   Press **⌥Space**, search by typing, move with **↑ / ↓**, and press **Return** to paste.
 
 - **Don’t take our word for it:**
-  ClipKitty is open source, so anyone can verify its privacy and behavior claims against the public code. Build attestations [link each release](VERIFY.md) back to that source. Together, that makes ClipKitty an app you can safely trust.
+  ClipKitty is open source, empowering anyone to verify its privacy and behavior claims against the public code. Build attestations [link each release](VERIFY.md) back to that source.
 
 ## Installation
 

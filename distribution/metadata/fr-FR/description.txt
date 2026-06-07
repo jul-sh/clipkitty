@@ -16,4 +16,4 @@ La synchronisation, à votre rythme
 Activez la synchronisation iCloud quand vous le souhaitez pour retrouver votre historique sur Mac, iPhone et iPad. Elle est désactivée par défaut.
 
 Confidentiel par nature
-ClipKitty fonctionne en local, sans télémétrie, sans compte et sans serveur tiers. Si vous activez la synchronisation, elle reste dans votre conteneur iCloud privé. L'application est open source et vérifiable par tous. Tout cela fait de ClipKitty une app à laquelle vous pouvez faire confiance en toute sécurité.
+ClipKitty fonctionne en local, sans télémétrie, sans compte et sans serveur tiers. Si vous activez la synchronisation, elle reste dans votre conteneur iCloud privé. L'application est open source et vérifiable par tous.

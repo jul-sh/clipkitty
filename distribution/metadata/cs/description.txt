@@ -16,4 +16,4 @@ Synchronizace, jen když ji chcete
 Volitelná synchronizace přes iCloud udrží vaši historii v souladu mezi Macem, iPhonem a iPadem. Standardně je vypnutá.
 
 Soukromí na prvním místě
-ClipKitty pracuje jen ve vašem zařízení, bez telemetrie, bez účtů a bez serverů třetích stran. Volitelná synchronizace zůstává ve vašem soukromém kontejneru iCloud. Aplikace má otevřený zdrojový kód a kdokoli si ji může prověřit. To vše z ClipKitty dělá aplikaci, které můžete bezpečně důvěřovat.
+ClipKitty pracuje jen ve vašem zařízení, bez telemetrie, bez účtů a bez serverů třetích stran. Volitelná synchronizace zůstává ve vašem soukromém kontejneru iCloud. Aplikace má otevřený zdrojový kód a kdokoli si ji může prověřit.

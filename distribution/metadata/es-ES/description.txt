@@ -16,4 +16,4 @@ Sincroniza solo si quieres
 Activa la sincronización con iCloud cuando te interese y mantén tu historial al día entre Mac, iPhone y iPad. Viene desactivada de serie.
 
 Privado de serie
-ClipKitty funciona en tu dispositivo, sin telemetría, sin cuentas y sin servidores de terceros. La sincronización opcional se queda en tu contenedor privado de iCloud. Es de código abierto y cualquiera puede auditarlo. Todo ello convierte a ClipKitty en una app en la que puedes confiar con seguridad.
+ClipKitty funciona en tu dispositivo, sin telemetría, sin cuentas y sin servidores de terceros. La sincronización opcional se queda en tu contenedor privado de iCloud. Es de código abierto y cualquiera puede auditarlo.
