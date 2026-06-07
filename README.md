@@ -16,7 +16,7 @@ ClipKitty is built around a simple idea: your clipboard can remember more withou
 
 ## Features
 
-- **Everything stays within reach:**
+- **Copy it once; find it forever.**
   Keep a deep history of text, links, images, files, code, and colors without turning your clipboard into another thing to manage.
 
 - **Search what you remember:**
@@ -34,8 +34,8 @@ ClipKitty is built around a simple idea: your clipboard can remember more withou
 - **Move fast from the keyboard:**
   Press **⌥Space**, search by typing, move with **↑ / ↓**, and press **Return** to paste.
 
-- **Open source and attested:**
-  ClipKitty is open source, so anyone can verify its privacy and behavior claims against the public code. Build attestations [link each release](VERIFY.md) back to that source.
+- **Don’t take our word for it:**
+  ClipKitty is open source, so anyone can verify its privacy and behavior claims against the public code. Build attestations [link each release](VERIFY.md) back to that source. Together, that makes ClipKitty an app you can safely trust.
 
 ## Installation
 

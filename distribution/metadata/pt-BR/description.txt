@@ -1,10 +1,6 @@
-O ClipKitty é um gerenciador de área de transferência tranquilo e poderoso para tudo que você copia.
+O ClipKitty parte de uma ideia simples: sua área de transferência pode lembrar mais sem exigir mais de você.
 
-Copie textos, links, imagens e cores sem se preocupar com o que vai ser sobrescrito. O ClipKitty deixa seu histórico sempre por perto, fácil de pesquisar e de usar, pra você manter o ritmo e achar o que precisa na hora.
-
-Copie uma vez. Encontre para sempre.
-
-Tudo sempre ao seu alcance
+Copie uma vez; encontre para sempre.
 Mantenha um histórico bem fundo de tudo que você já copiou, sem virar mais uma coisa pra você gerenciar.
 
 Pesquise pelo que lembrar
@@ -20,4 +16,4 @@ Sincronize só quando quiser
 Use a sincronização opcional pelo iCloud pra manter seu histórico em dia entre Mac, iPhone e iPad. Vem desligada por padrão.
 
 Privado por padrão
-O ClipKitty funciona no seu aparelho, sem telemetria, sem contas e sem servidores de terceiros. A sincronização opcional fica no seu contêiner privado do iCloud. O app é de código aberto e pode ser auditado por qualquer pessoa.
+O ClipKitty funciona no seu aparelho, sem telemetria, sem contas e sem servidores de terceiros. A sincronização opcional fica no seu contêiner privado do iCloud. O app é de código aberto e pode ser auditado por qualquer pessoa. Tudo isso faz do ClipKitty um app em que você pode confiar com segurança.
