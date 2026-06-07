@@ -14,6 +14,7 @@
 
         private(set) var startCallCount = 0
         private(set) var stopCallCount = 0
+        private(set) var prepareForSuspendCallCount = 0
         private(set) var handleRemoteNotificationCallCount = 0
         private(set) var runBackgroundSyncCycleCallCount = 0
 
@@ -23,6 +24,7 @@
 
         func start() { startCallCount += 1 }
         func stop() { stopCallCount += 1 }
+        func prepareForSuspend() async { prepareForSuspendCallCount += 1 }
         func handleRemoteNotification() { handleRemoteNotificationCallCount += 1 }
         func runBackgroundSyncCycle() async -> SyncEngine.BackgroundSyncResult {
             runBackgroundSyncCycleCallCount += 1
@@ -272,7 +274,7 @@
             XCTAssertEqual(latestEngine?.stopCallCount, 1)
         }
 
-        func testInactivePhaseStopsEngineWhenEnabled() {
+        func testInactivePhaseLeavesEngineRunningWhenEnabled() {
             let coordinator = iOSSyncCoordinator(
                 store: store,
                 enabled: true,
@@ -282,7 +284,7 @@
 
             coordinator.handleScenePhaseChange(.inactive)
 
-            XCTAssertEqual(latestEngine?.stopCallCount, 1)
+            XCTAssertEqual(latestEngine?.stopCallCount, 0)
         }
 
         func testScenePhaseChangesAreNoOpWhenDisabled() {
@@ -314,6 +316,32 @@
 
             XCTAssertEqual(latestEngine?.startCallCount, 2)
             XCTAssertEqual(latestEngine?.stopCallCount, 1)
+        }
+
+        func testPrepareForSuspensionAwaitsEngineWhenEnabled() async {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory()
+            )
+
+            await coordinator.prepareForSuspension()
+
+            XCTAssertEqual(latestEngine?.prepareForSuspendCallCount, 1)
+        }
+
+        func testPrepareForSuspensionIsNoOpWhenDisabled() async {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: false,
+                onContentChanged: {},
+                engineFactory: spyFactory()
+            )
+
+            await coordinator.prepareForSuspension()
+
+            XCTAssertTrue(createdEngines.isEmpty)
         }
 
         // MARK: - Remote notification

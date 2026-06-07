@@ -16,6 +16,7 @@
         var status: SyncEngine.SyncStatus { get }
         func start()
         func stop()
+        func prepareForSuspend() async
         func handleRemoteNotification()
         func runBackgroundSyncCycle() async -> SyncEngine.BackgroundSyncResult
     }
@@ -114,8 +115,10 @@
                 switch phase {
                 case .active:
                     engine.start()
-                case .background, .inactive:
+                case .background:
                     engine.stop()
+                case .inactive:
+                    break
                 @unknown default:
                     break
                 }
@@ -132,6 +135,15 @@
             }
         }
 
+        func prepareForSuspension() async {
+            switch runtime {
+            case .disabled:
+                break
+            case let .enabled(_, engine):
+                await engine.prepareForSuspend()
+            }
+        }
+
         func performRemoteNotificationSync() async -> SyncEngine.BackgroundSyncResult {
             switch runtime {
             case .disabled:
@@ -145,11 +157,31 @@
     // MARK: - Background Sync
 
     @MainActor
+    enum iOSBackgroundTaskRunner {
+        static func run<Result>(
+            named name: String,
+            operation: @escaping @MainActor () async -> Result
+        ) async -> Result {
+            let operationTask = Task { @MainActor in
+                await operation()
+            }
+            let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: name) {
+                operationTask.cancel()
+            }
+
+            let result = await operationTask.value
+            if backgroundTask != .invalid {
+                UIApplication.shared.endBackgroundTask(backgroundTask)
+            }
+            return result
+        }
+    }
+
+    @MainActor
     final class iOSBackgroundSyncRunner {
         static let shared = iOSBackgroundSyncRunner()
 
         private let logger = Logger(subsystem: "com.clipkitty", category: "SyncBackground")
-        private let timeout: TimeInterval = 25
         private var inFlightSync: Task<UIBackgroundFetchResult, Never>?
 
         private init() {}
@@ -160,7 +192,7 @@
             }
 
             let task = Task { @MainActor in
-                await self.withTimeout {
+                await iOSBackgroundTaskRunner.run(named: "ClipKitty iCloud Sync") {
                     await self.runHeadlessSyncIfEnabled()
                 }
             }
@@ -210,42 +242,6 @@
                 logger.error("Background sync bootstrap failed: \(error.localizedDescription)")
                 return .failed
             }
-        }
-
-        private func withTimeout(
-            operation: @escaping @MainActor () async -> UIBackgroundFetchResult
-        ) async -> UIBackgroundFetchResult {
-            await withCheckedContinuation { continuation in
-                let completion = BackgroundFetchCompletion(continuation)
-                let timeout = self.timeout
-                let operationTask = Task { @MainActor in
-                    let result = await operation()
-                    completion.resume(returning: result)
-                }
-                Task {
-                    try? await Task.sleep(for: .seconds(timeout))
-                    operationTask.cancel()
-                    completion.resume(returning: .failed)
-                }
-            }
-        }
-    }
-
-    private final class BackgroundFetchCompletion: @unchecked Sendable {
-        private let lock = NSLock()
-        private var didResume = false
-        private let continuation: CheckedContinuation<UIBackgroundFetchResult, Never>
-
-        init(_ continuation: CheckedContinuation<UIBackgroundFetchResult, Never>) {
-            self.continuation = continuation
-        }
-
-        func resume(returning result: UIBackgroundFetchResult) {
-            lock.lock()
-            defer { lock.unlock() }
-            guard !didResume else { return }
-            didResume = true
-            continuation.resume(returning: result)
         }
     }
 

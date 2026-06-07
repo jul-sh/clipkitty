@@ -78,6 +78,52 @@
         func deleteRecords(_ recordIDs: [CKRecord.ID]) async -> SyncRecordDeleteResult
     }
 
+    private final class StoreOperationTracker: @unchecked Sendable {
+        private let lock = NSLock()
+        private var activeOperationCount = 0
+        private var drainWaiters: [CheckedContinuation<Void, Never>] = []
+
+        func begin() {
+            lock.lock()
+            activeOperationCount += 1
+            lock.unlock()
+        }
+
+        func finish() {
+            let waiters: [CheckedContinuation<Void, Never>]
+            lock.lock()
+            activeOperationCount -= 1
+            if activeOperationCount == 0 {
+                waiters = drainWaiters
+                drainWaiters.removeAll()
+            } else {
+                waiters = []
+            }
+            lock.unlock()
+
+            for waiter in waiters {
+                waiter.resume()
+            }
+        }
+
+        func waitForDrain() async {
+            await withCheckedContinuation { continuation in
+                var shouldResumeImmediately = false
+                lock.lock()
+                if activeOperationCount == 0 {
+                    shouldResumeImmediately = true
+                } else {
+                    drainWaiters.append(continuation)
+                }
+                lock.unlock()
+
+                if shouldResumeImmediately {
+                    continuation.resume()
+                }
+            }
+        }
+    }
+
     /// Orchestrates iCloud sync via CloudKit using the Rust event-sourced core.
     ///
     /// Architecture:
@@ -127,6 +173,8 @@
 
         @ObservationIgnored
         private var coordinatorTask: Task<Void, Never>?
+        @ObservationIgnored
+        private let storeOperationTracker = StoreOperationTracker()
         @ObservationIgnored
         private var accountChangeObserver: NSObjectProtocol?
         @ObservationIgnored
@@ -367,6 +415,31 @@
             removeAccountChangeObserver()
             engineState = .idle(maintenanceState())
             logger.info("SyncEngine stopped")
+        }
+
+        /// Stop the coordinator and wait until any synchronous Rust store work
+        /// has fully drained before allowing iOS to suspend the process.
+        public func prepareForSuspend() async {
+            let task = coordinatorTask
+            coordinatorTask = nil
+            task?.cancel()
+            signalWake()
+            removeAccountChangeObserver()
+            engineState = .idle(maintenanceState())
+
+            await task?.value
+            await storeOperationTracker.waitForDrain()
+
+            guard !Task.isCancelled else {
+                logger.info("SyncEngine suspend preparation cancelled before store flush")
+                return
+            }
+
+            let store = self.store
+            await Task.detached(priority: .utility) {
+                store.prepareForSuspend()
+            }.value
+            logger.info("SyncEngine prepared for suspend")
         }
 
         /// Signal the coordinator to wake up immediately (e.g. from push notification).
@@ -640,8 +713,11 @@
             _ body: @escaping @Sendable (ClipKittyRust.ClipboardStore) throws -> T
         ) async throws -> T {
             let store = self.store
+            let tracker = storeOperationTracker
+            tracker.begin()
             return try await Task.detached(priority: priority) {
-                try body(store)
+                defer { tracker.finish() }
+                return try body(store)
             }.value
         }
 
