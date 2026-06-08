@@ -2,8 +2,6 @@
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/main/Sources/MacApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png" alt="ClipKitty icon" width="60">
 
-**Copy it once. Find it forever.**
-
 A fast, private clipboard manager for macOS with deep history, forgiving search, live previews, and optional iCloud sync.
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty clipboard history" width="820">
@@ -16,7 +14,7 @@ ClipKitty is built around a simple idea: your clipboard can remember more withou
 
 ## Features
 
-- **Everything stays within reach:**
+- **Copy it once; find it forever.**
   Keep a deep history of text, links, images, files, code, and colors without turning your clipboard into another thing to manage.
 
 - **Search what you remember:**
@@ -34,8 +32,8 @@ ClipKitty is built around a simple idea: your clipboard can remember more withou
 - **Move fast from the keyboard:**
   Press **⌥Space**, search by typing, move with **↑ / ↓**, and press **Return** to paste.
 
-- **Open source and attested:**
-  ClipKitty is open source, so anyone can verify its privacy and behavior claims against the public code. Build attestations [link each release](VERIFY.md) back to that source.
+- **Don’t take our word for it:**
+  ClipKitty is open source, empowering anyone to verify its privacy and behavior claims against the public code. Build attestations [link each release](VERIFY.md) back to that source.
 
 ## Installation
 
