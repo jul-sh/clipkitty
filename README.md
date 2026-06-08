@@ -2,13 +2,11 @@
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/main/Sources/MacApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png" alt="ClipKitty icon" width="60">
 
-A fast, private clipboard manager for macOS with deep history, forgiving search, live previews, and optional iCloud sync.
-
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty clipboard history" width="820">
 
 ## Why ClipKitty
 
-Most clipboard managers work fine when your history is small. Then the thing you need is from last week, last month, or buried under a hundred other clips.
+Most clipboard managers work fine when your history is small. Then the thing you need is from last week, from another device, or buried under a hundred other clips.
 
 ClipKitty is built around a simple idea: your clipboard can remember more without asking more from you.
 
