@@ -2,8 +2,6 @@
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/main/Sources/MacApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png" alt="ClipKitty icon" width="60">
 
-**Copy it once. Find it forever.**
-
 A fast, private clipboard manager for macOS with deep history, forgiving search, live previews, and optional iCloud sync.
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty clipboard history" width="820">
