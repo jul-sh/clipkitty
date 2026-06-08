@@ -9,9 +9,6 @@ Tippe ein paar Wörter, Bruchstücke oder sogar einen Tippfehler ein. ClipKitty 
 Vorschau, bevor du einfügst
 Sieh dir vollständige Texte, Code, Bilder und Farben an, bevor du sie verwendest. Kein Rätselraten mehr bei winzigen, abgeschnittenen Ausschnitten.
 
-Schnell per Tastatur
-Öffne ClipKitty mit Option-Space, suche durch Tippen, navigiere mit den Pfeiltasten und drücke Return zum Einfügen.
-
 Sync nur, wenn du willst
 Nutze die optionale iCloud-Synchronisierung, um deinen Verlauf auf Mac, iPhone und iPad im Gleichschritt zu halten. Standardmäßig ist sie aus.
 

@@ -9,9 +9,6 @@ Digite algumas palavras, pedaços soltos ou até com erro de digitação. O Clip
 Veja antes de colar
 Visualize o texto inteiro, código, imagens e cores antes de usar. Sem ter que adivinhar a partir de um trechinho cortado.
 
-Vá rápido pelo teclado
-Abra o ClipKitty com Option-Espaço, pesquise digitando, navegue com as setas e aperte Return pra colar.
-
 Sincronize só quando quiser
 Use a sincronização opcional pelo iCloud pra manter seu histórico em dia entre Mac, iPhone e iPad. Vem desligada por padrão.
 

@@ -27,11 +27,8 @@ ClipKitty is built around a simple idea: your clipboard can remember more withou
 - **Private by default:**
   No accounts. No telemetry. No third-party servers. Your clipboard history stays on-device unless you enable iCloud Sync; synced clips use Apple's private CloudKit database, with no developer access.
 
-- **Move fast from the keyboard:**
-  Press **⌥Space**, search by typing, move with **↑ / ↓**, and press **Return** to paste.
-
 - **Don’t take our word for it:**
-  ClipKitty is open source, empowering anyone to verify its privacy and behavior claims against the public code. Build attestations [link each release](VERIFY.md) back to that source.
+  ClipKitty is open source, empowering anyone to verify its privacy and behavior claims against the public code. Build attestations cryptographically [link each release](VERIFY.md) back to the public source code.
 
 ## Installation
 

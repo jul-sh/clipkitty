@@ -9,9 +9,6 @@ Tapez quelques mots, un fragment, ou même une faute de frappe. ClipKitty retrou
 Un aperçu avant de coller
 Visualisez le texte, le code, les images et les couleurs en entier avant de les utiliser. Plus besoin de deviner ce que cache un extrait tronqué.
 
-Le clavier comme terrain de jeu
-Ouvrez ClipKitty avec Option-Espace, cherchez en tapant, naviguez avec les flèches et appuyez sur Entrée pour coller.
-
 La synchronisation, à votre rythme
 Activez la synchronisation iCloud quand vous le souhaitez pour retrouver votre historique sur Mac, iPhone et iPad. Elle est désactivée par défaut.
 
