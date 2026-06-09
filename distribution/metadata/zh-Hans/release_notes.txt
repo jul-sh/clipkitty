@@ -1,1 +1,1 @@
-错误修复和性能改进。感谢你使用 ClipKitty！
+ClipKitty 变得更加顺滑、更加精致。感谢你使用 ClipKitty！
