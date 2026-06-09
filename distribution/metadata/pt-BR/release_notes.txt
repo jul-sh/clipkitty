@@ -1,1 +1,1 @@
-Correções de bugs e melhorias de desempenho. Obrigado por usar o ClipKitty!
+O ClipKitty está cada vez mais fluido e caprichado. Obrigado por usar o ClipKitty!
