@@ -1,10 +1,6 @@
-ClipKitty ist ein ruhiger, leistungsstarker Zwischenablage-Manager für alles, was du kopierst.
+ClipKitty basiert auf einer einfachen Idee: Deine Zwischenablage kann sich mehr merken, ohne dir mehr abzuverlangen.
 
-Kopiere Texte, Links, Bilder und Farben, ohne dir Sorgen zu machen, was dabei überschrieben wird. ClipKitty hält deinen Verlauf griffbereit, durchsuchbar und übersichtlich; damit du im Flow bleibst und Dinge wiederfindest, wenn du sie brauchst.
-
-Einmal kopieren. Für immer da.
-
-Alles in Reichweite
+Einmal kopieren; für immer wiederfinden.
 Behalte einen tiefen Verlauf von allem, was du jemals kopiert hast; ohne dass daraus eine weitere lästige Aufgabe wird.
 
 Suche nach dem, woran du dich erinnerst
@@ -12,9 +8,6 @@ Tippe ein paar Wörter, Bruchstücke oder sogar einen Tippfehler ein. ClipKitty 
 
 Vorschau, bevor du einfügst
 Sieh dir vollständige Texte, Code, Bilder und Farben an, bevor du sie verwendest. Kein Rätselraten mehr bei winzigen, abgeschnittenen Ausschnitten.
-
-Schnell per Tastatur
-Öffne ClipKitty mit Option-Space, suche durch Tippen, navigiere mit den Pfeiltasten und drücke Return zum Einfügen.
 
 Sync nur, wenn du willst
 Nutze die optionale iCloud-Synchronisierung, um deinen Verlauf auf Mac, iPhone und iPad im Gleichschritt zu halten. Standardmäßig ist sie aus.
