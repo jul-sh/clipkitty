@@ -1,10 +1,6 @@
-ClipKitty est un gestionnaire de presse-papiers discret et puissant pour tout ce que vous copiez.
+ClipKitty repose sur une idée simple : votre presse-papiers peut se souvenir de davantage de choses sans vous en demander davantage.
 
-Copiez du texte, des liens, des images ou des couleurs sans craindre d'écraser ce qui se trouvait déjà dans votre presse-papiers. ClipKitty garde votre historique à portée de main, facile à parcourir et à fouiller, pour que vous restiez concentré et que vous remettiez la main sur ce dont vous avez besoin, au moment où vous en avez besoin.
-
-Copiez une fois, gardez à vie.
-
-Tout reste à portée de main
+Copiez une fois ; retrouvez-le pour toujours.
 Conservez un historique complet de ce que vous avez copié, sans en faire une corvée de plus à gérer.
 
 Une recherche qui suit votre mémoire
@@ -12,9 +8,6 @@ Tapez quelques mots, un fragment, ou même une faute de frappe. ClipKitty retrou
 
 Un aperçu avant de coller
 Visualisez le texte, le code, les images et les couleurs en entier avant de les utiliser. Plus besoin de deviner ce que cache un extrait tronqué.
-
-Le clavier comme terrain de jeu
-Ouvrez ClipKitty avec Option-Espace, cherchez en tapant, naviguez avec les flèches et appuyez sur Entrée pour coller.
 
 La synchronisation, à votre rythme
 Activez la synchronisation iCloud quand vous le souhaitez pour retrouver votre historique sur Mac, iPhone et iPad. Elle est désactivée par défaut.

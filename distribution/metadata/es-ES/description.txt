@@ -1,10 +1,6 @@
-ClipKitty es un gestor de portapapeles tranquilo y potente para todo lo que copias.
+ClipKitty parte de una idea sencilla: tu portapapeles puede recordar más sin pedirte más.
 
-Copia textos, enlaces, imágenes y colores sin preocuparte por lo que pisas. ClipKitty mantiene tu historial al alcance, con buscador y fácil de usar, para que no pierdas el hilo y encuentres las cosas cuando las necesitas.
-
-Copia una vez. Encuéntralo siempre.
-
-Todo a mano
+Cópialo una vez; encuéntralo siempre.
 Conserva un historial completo de lo que has copiado, sin que se convierta en otra cosa más que gestionar.
 
 Búscalo como lo recuerdes
@@ -12,9 +8,6 @@ Escribe unas palabras, un fragmento o incluso una errata. ClipKitty da con lo qu
 
 Mira antes de pegar
 Visualiza el texto entero, el código, las imágenes y los colores antes de usarlos. Se acabó adivinar a partir de fragmentos cortados.
-
-Manéjalo todo desde el teclado
-Abre ClipKitty con Opción-Espacio, busca escribiendo, muévete con las flechas y pulsa Intro para pegar.
 
 Sincroniza solo si quieres
 Activa la sincronización con iCloud cuando te interese y mantén tu historial al día entre Mac, iPhone y iPad. Viene desactivada de serie.
