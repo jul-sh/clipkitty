@@ -1,11 +1,11 @@
 {
   "beta": {
-    "version": "1.13.1354",
-    "build_number": "1354",
-    "url": "https://github.com/jul-sh/clipkitty/releases/download/v1.13.1354-beta/ClipKitty.dmg",
-    "signature": "hVk9Ea+ar0XmSkgaRnYQYVu2ODGMnpbfQfAneQzoRlC9oL5gbUo7NHRrbAS80yrtpjHIzuQs5znVcON2mXywAg==",
-    "length": 19057965,
-    "published_at": "2026-06-08T03:55:01.241989+00:00"
+    "version": "1.13.1355",
+    "build_number": "1355",
+    "url": "https://github.com/jul-sh/clipkitty/releases/download/v1.13.1355-beta/ClipKitty.dmg",
+    "signature": "36ce20M13RZVrnHDwvNRAoQ6BDBTllJ9z6qa9i1ITXSf1jGQaItwm1eJqlIII90QFRhjosh13vUrPzN6TkmtAA==",
+    "length": 19058003,
+    "published_at": "2026-06-09T00:23:35.915538+00:00"
   },
   "stable": {
     "version": "1.12.2317",
