@@ -23,6 +23,13 @@ public enum Utilities {
         }
     }
 
+    /// Convert a size in gigabytes to bytes.
+    /// - Parameter gb: Size in gigabytes (binary: 1 GB = 1024³ bytes)
+    /// - Returns: Size in bytes
+    public static func bytes(fromGB gb: Double) -> Int64 {
+        Int64(gb * 1024 * 1024 * 1024)
+    }
+
     /// Compute SHA-256 hash of a file
     /// - Parameter url: File URL to hash
     /// - Returns: Lowercase hex string of the hash, or nil if file cannot be read

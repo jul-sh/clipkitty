@@ -1,6 +1,15 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%.0f GB" : {
+
+    },
+    "%.1f GB" : {
+
+    },
+    "%@ limit, %@ used" : {
+
+    },
     "About" : {
 
     },
@@ -1656,6 +1665,12 @@
         }
       }
     },
+    "Drag the handle to set how much space history can use. When it fills, the oldest items are overwritten." : {
+
+    },
+    "Drag to set the storage limit" : {
+
+    },
     "Edit" : {
       "localizations" : {
         "de" : {
@@ -1868,6 +1883,18 @@
 
     },
     "History" : {
+
+    },
+    "History already uses more space than the new limit. The oldest items will be removed to fit." : {
+
+    },
+    "Reduce Storage Limit?" : {
+
+    },
+    "Remove Oldest Items" : {
+
+    },
+    "Storage Limit" : {
 
     },
     "iCloud Sync" : {
@@ -3726,6 +3753,9 @@
       }
     },
     "Version" : {
+
+    },
+    "of %@" : {
 
     },
     "Yes" : {

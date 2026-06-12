@@ -349,6 +349,7 @@ struct ClipKittyiOSApp: App {
             #endif
 
             launchState = .ready(session)
+            Task { await container.pruneToStorageLimit() }
         case let .failure(error):
             launchState = .failed(error.localizedDescription)
         }

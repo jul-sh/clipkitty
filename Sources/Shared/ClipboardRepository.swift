@@ -217,7 +217,10 @@ public final class ClipboardRepository: @unchecked Sendable {
         }
     }
 
-    public func pruneToSize(maxBytes: Int64, keepRatio: Double) async -> Result<UInt64, ClipboardError> {
+    /// Prune oldest items until the database fits within `maxBytes`. When
+    /// over the limit, prunes down to `keepRatio` of it so the store isn't
+    /// re-pruned on every new item.
+    public func pruneToSize(maxBytes: Int64, keepRatio: Double = 0.8) async -> Result<UInt64, ClipboardError> {
         await runRepositoryOperation("pruneToSize", on: store) { store in
             try store.pruneToSize(maxBytes: maxBytes, keepRatio: keepRatio)
         }

@@ -18,6 +18,12 @@ final class iOSSettingsStore {
         didSet { save() }
     }
 
+    /// Maximum database size in gigabytes; oldest items are pruned beyond it.
+    /// Matches the macOS default of 7 GB.
+    var maxDatabaseSizeGB: Double {
+        didSet { save() }
+    }
+
     #if ENABLE_ICLOUD_SYNC
         var syncEnabled: Bool {
             didSet { save() }
@@ -29,6 +35,7 @@ final class iOSSettingsStore {
     private let hapticsEnabledKey = "iOSHapticsEnabled"
     private let generateLinkPreviewsKey = "iOSGenerateLinkPreviews"
     private let autoAddFromClipboardKey = "iOSAutoAddFromClipboard"
+    private let maxDatabaseSizeGBKey = "iOSMaxDatabaseSizeGB"
     #if ENABLE_ICLOUD_SYNC
         private let syncEnabledKey = "iOSSyncEnabled"
     #endif
@@ -47,6 +54,7 @@ final class iOSSettingsStore {
         hapticsEnabled = defaults.object(forKey: hapticsEnabledKey) as? Bool ?? true
         generateLinkPreviews = defaults.object(forKey: generateLinkPreviewsKey) as? Bool ?? true
         autoAddFromClipboard = defaults.object(forKey: autoAddFromClipboardKey) as? Bool ?? false
+        maxDatabaseSizeGB = defaults.object(forKey: maxDatabaseSizeGBKey) as? Double ?? 7.0
 
         #if ENABLE_ICLOUD_SYNC
             syncEnabled = defaults.object(forKey: syncEnabledKey) as? Bool ?? false
@@ -60,6 +68,7 @@ final class iOSSettingsStore {
         defaults.set(hapticsEnabled, forKey: hapticsEnabledKey)
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
         defaults.set(autoAddFromClipboard, forKey: autoAddFromClipboardKey)
+        defaults.set(maxDatabaseSizeGB, forKey: maxDatabaseSizeGBKey)
         #if ENABLE_ICLOUD_SYNC
             defaults.set(syncEnabled, forKey: syncEnabledKey)
         #endif
