@@ -161,6 +161,18 @@ final class AppState {
 
     func autoAddFromClipboard() async {
         guard container.settings.autoAddFromClipboard else { return }
+
+        // Reading changeCount does not trigger the paste-consent alert. If the
+        // pasteboard has not changed since we last looked, skip the read so we
+        // don't prompt for "Allow Paste" on every foreground.
+        let changeCount = container.clipboardService.pasteboardChangeCount
+        guard changeCount != container.settings.lastIngestedPasteboardChangeCount else { return }
+
+        // Record this generation now, before attempting the read, so a user
+        // denial or unreadable content is not re-prompted for the same
+        // pasteboard generation; we intentionally respect the denial.
+        container.settings.lastIngestedPasteboardChangeCount = changeCount
+
         guard let content = container.clipboardService.readCurrentClipboard() else { return }
 
         let result: Result<String, ClipboardError>

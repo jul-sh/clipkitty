@@ -12,6 +12,9 @@ public enum InfoKind: Equatable {
     case rebuildingIndex
     case catchingUpWithCloud
     case syncingCloudChanges(count: Int)
+    /// Shown by the Mac panel while an image paste is being prepared off the main
+    /// thread. Driven explicitly by the paste flow; never produced by scheduler evaluation.
+    case preparingPaste
 
     public var message: String {
         switch self {
@@ -21,6 +24,8 @@ public enum InfoKind: Equatable {
             return String(localized: "Catching up with iCloud")
         case let .syncingCloudChanges(count):
             return String(localized: "Syncing \(count) changes from iCloud")
+        case .preparingPaste:
+            return String(localized: "Preparing image…")
         }
     }
 
@@ -29,7 +34,7 @@ public enum InfoKind: Equatable {
     /// presentation).
     public var iconSystemName: String? {
         switch self {
-        case .rebuildingIndex:
+        case .rebuildingIndex, .preparingPaste:
             return nil
         case .catchingUpWithCloud, .syncingCloudChanges:
             return "icloud.and.arrow.down"
@@ -40,6 +45,11 @@ public enum InfoKind: Equatable {
 public enum NotificationKind: Equatable {
     case passive(message: String, iconSystemName: String)
     case actionable(message: String, iconSystemName: String, actionTitle: String)
+
+    /// How long an undoable action stays actionable. The delete commit delay
+    /// and the actionable snackbar duration both derive from this so the Undo
+    /// button never outlives the window in which undo still works.
+    public static let undoWindow: TimeInterval = 4.0
 
     public var message: String {
         switch self {
@@ -63,7 +73,7 @@ public enum NotificationKind: Equatable {
             let extraTime = Double(extraChars / 10) * 0.5
             return min(baseDuration + extraTime, 4.5)
         case .actionable:
-            return 4.0
+            return Self.undoWindow
         }
     }
 }
