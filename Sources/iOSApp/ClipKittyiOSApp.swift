@@ -1,4 +1,3 @@
-import Accessibility
 import ClipKittyAppleServices
 import ClipKittyRust
 import ClipKittyShared
@@ -96,9 +95,6 @@ final class AppState {
         withAnimation(.bouncy) {
             toast = ToastState(kind: kind, action: action)
         }
-        // Toasts are the only confirmation many actions give; make sure
-        // VoiceOver users hear them too.
-        AccessibilityNotification.Announcement(kind.message).post()
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(kind.duration))
             guard let self, self.toast.kind == kind else { return }
@@ -165,18 +161,6 @@ final class AppState {
 
     func autoAddFromClipboard() async {
         guard container.settings.autoAddFromClipboard else { return }
-
-        // Reading changeCount does not trigger the paste-consent alert. If the
-        // pasteboard has not changed since we last looked, skip the read so we
-        // don't prompt for "Allow Paste" on every foreground.
-        let changeCount = container.clipboardService.pasteboardChangeCount
-        guard changeCount != container.settings.lastIngestedPasteboardChangeCount else { return }
-
-        // Record this generation now, before attempting the read, so a user
-        // denial or unreadable content is not re-prompted for the same
-        // pasteboard generation; we intentionally respect the denial.
-        container.settings.lastIngestedPasteboardChangeCount = changeCount
-
         guard let content = container.clipboardService.readCurrentClipboard() else { return }
 
         let result: Result<String, ClipboardError>
@@ -442,9 +426,6 @@ struct ClipKittyiOSApp: App {
                 else {
                     return
                 }
-                // A delete inside its undo window must reach the store before
-                // the container is torn down, or the item resurrects later.
-                await session.appState.viewModel.flushPendingDeleteAndWait()
                 session.appState.prepareForSuspension()
                 session.container.prepareForSuspension()
             }
@@ -454,7 +435,6 @@ struct ClipKittyiOSApp: App {
             else {
                 return
             }
-            await session.appState.viewModel.flushPendingDeleteAndWait()
             session.appState.prepareForSuspension()
             session.container.prepareForSuspension()
         #endif

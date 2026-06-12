@@ -86,12 +86,12 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                 .onKeyPress(characters: .decimalDigits, phases: .down) { keyPress in
                     onHandleNumberKey(keyPress)
                 }
-                .onKeyPress(.delete, phases: .down) { _ in
+                .onKeyPress(.delete) {
                     guard selectedItemAvailable else { return .ignored }
                     onDelete()
                     return .handled
                 }
-                .onKeyPress(.deleteForward, phases: .down) { _ in
+                .onKeyPress(.deleteForward) {
                     guard selectedItemAvailable else { return .ignored }
                     onDelete()
                     return .handled

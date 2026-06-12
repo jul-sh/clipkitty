@@ -11801,63 +11801,7 @@
                   }
               }
           }
-      },
-    "Preparing image…": {
-      "localizations": {
-        "de": { "stringUnit": { "state": "translated", "value": "Bild wird vorbereitet…" } },
-        "en": { "stringUnit": { "state": "translated", "value": "Preparing image…" } },
-        "es": { "stringUnit": { "state": "translated", "value": "Preparando imagen…" } },
-        "fr": { "stringUnit": { "state": "translated", "value": "Préparation de l’image…" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "画像を準備中…" } },
-        "ko": { "stringUnit": { "state": "translated", "value": "이미지 준비 중…" } },
-        "pt-BR": { "stringUnit": { "state": "translated", "value": "Preparando imagem…" } },
-        "ru": { "stringUnit": { "state": "translated", "value": "Подготовка изображения…" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在准备图像…" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在準備圖像…" } }
       }
-    },
-    "Couldn’t copy image": {
-      "localizations": {
-        "de": { "stringUnit": { "state": "translated", "value": "Bild konnte nicht kopiert werden" } },
-        "en": { "stringUnit": { "state": "translated", "value": "Couldn’t copy image" } },
-        "es": { "stringUnit": { "state": "translated", "value": "No se pudo copiar la imagen" } },
-        "fr": { "stringUnit": { "state": "translated", "value": "Impossible de copier l’image" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "画像をコピーできませんでした" } },
-        "ko": { "stringUnit": { "state": "translated", "value": "이미지를 복사할 수 없음" } },
-        "pt-BR": { "stringUnit": { "state": "translated", "value": "Não foi possível copiar a imagem" } },
-        "ru": { "stringUnit": { "state": "translated", "value": "Не удалось скопировать изображение" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "无法拷贝图像" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "無法拷貝圖像" } }
-      }
-    },
-    "Copied. Enable Accessibility to paste automatically": {
-      "localizations": {
-        "de": { "stringUnit": { "state": "translated", "value": "Kopiert. Aktivieren Sie die Bedienungshilfen, um automatisch einzusetzen" } },
-        "en": { "stringUnit": { "state": "translated", "value": "Copied. Enable Accessibility to paste automatically" } },
-        "es": { "stringUnit": { "state": "translated", "value": "Copiado. Activa Accesibilidad para pegar automáticamente" } },
-        "fr": { "stringUnit": { "state": "translated", "value": "Copié. Activez Accessibilité pour coller automatiquement" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "コピー済み。自動でペーストするにはアクセシビリティを有効にしてください" } },
-        "ko": { "stringUnit": { "state": "translated", "value": "복사됨. 자동으로 붙여넣으려면 손쉬운 사용을 활성화하세요" } },
-        "pt-BR": { "stringUnit": { "state": "translated", "value": "Copiado. Ative a Acessibilidade para colar automaticamente" } },
-        "ru": { "stringUnit": { "state": "translated", "value": "Скопировано. Включите Универсальный доступ для автоматической вставки" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "已拷贝。启用辅助功能以自动粘贴" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "已拷貝。啟用輔助使用以自動貼上" } }
-      }
-    },
-    "Couldn’t save": {
-      "localizations": {
-        "de": { "stringUnit": { "state": "translated", "value": "Konnte nicht gesichert werden" } },
-        "en": { "stringUnit": { "state": "translated", "value": "Couldn’t save" } },
-        "es": { "stringUnit": { "state": "translated", "value": "No se pudo guardar" } },
-        "fr": { "stringUnit": { "state": "translated", "value": "Impossible d’enregistrer" } },
-        "ja": { "stringUnit": { "state": "translated", "value": "保存できませんでした" } },
-        "ko": { "stringUnit": { "state": "translated", "value": "저장할 수 없음" } },
-        "pt-BR": { "stringUnit": { "state": "translated", "value": "Não foi possível salvar" } },
-        "ru": { "stringUnit": { "state": "translated", "value": "Не удалось сохранить" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "无法存储" } },
-        "zh-Hant": { "stringUnit": { "state": "translated", "value": "無法儲存" } }
-      }
-    }
   },
   "version": "1.0"
 }

@@ -22,15 +22,6 @@ final class iOSSettingsStoreTests: XCTestCase {
         XCTAssertTrue(store.hapticsEnabled)
         XCTAssertTrue(store.generateLinkPreviews)
         XCTAssertFalse(store.autoAddFromClipboard)
-        XCTAssertEqual(store.lastIngestedPasteboardChangeCount, 0)
-    }
-
-    func testLastIngestedPasteboardChangeCountPersists() {
-        let store = iOSSettingsStore(defaults: defaults)
-        store.lastIngestedPasteboardChangeCount = 42
-
-        let reloaded = iOSSettingsStore(defaults: defaults)
-        XCTAssertEqual(reloaded.lastIngestedPasteboardChangeCount, 42)
     }
 
     func testHapticsEnabledPersists() {

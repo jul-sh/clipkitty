@@ -9,28 +9,12 @@ struct GlassBackgroundModifier: ViewModifier {
             content.glassEffect(.regular, in: .capsule)
         } else {
             content
-                .background(.thickMaterial, in: Capsule())
+                .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 10))
                 .overlay(
-                    Capsule()
+                    RoundedRectangle(cornerRadius: 10)
                         .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
                 )
         }
-    }
-}
-
-/// Glass capsule shared by every Mac snackbar variant, so they all agree on
-/// shape, spacing, and type size; the iOS equivalent lives in RootView.swift.
-private struct SnackbarCapsule<Content: View>: View {
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        HStack(spacing: 8) {
-            content
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .fixedSize()
-        .modifier(GlassBackgroundModifier())
     }
 }
 
@@ -58,13 +42,13 @@ private struct NotificationSnackbarView: View {
     let onAction: () -> Void
 
     var body: some View {
-        SnackbarCapsule {
+        HStack(spacing: 8) {
             Image(systemName: kind.iconSystemName)
-                .font(.system(size: 16, weight: .medium))
+                .font(.system(size: 18, weight: .medium))
                 .foregroundStyle(.secondary)
 
             Text(kind.message)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.primary)
 
             if case let .actionable(_, _, actionTitle) = kind {
@@ -75,6 +59,10 @@ private struct NotificationSnackbarView: View {
                     .padding(.leading, 8)
             }
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .fixedSize()
+        .modifier(GlassBackgroundModifier())
     }
 }
 
@@ -83,7 +71,7 @@ private struct LaunchAtLoginNudgeView: View {
     let onDismiss: () -> Void
 
     var body: some View {
-        SnackbarCapsule {
+        HStack(spacing: 8) {
             Image(systemName: "sunrise.fill")
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(.orange)
@@ -110,6 +98,10 @@ private struct LaunchAtLoginNudgeView: View {
             .buttonStyle(.plain)
             .padding(.leading, 2)
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .fixedSize()
+        .modifier(GlassBackgroundModifier())
     }
 }
 
@@ -117,7 +109,7 @@ private struct InfoSnackbarView: View {
     let kind: InfoKind
 
     var body: some View {
-        SnackbarCapsule {
+        HStack(spacing: 8) {
             if let icon = kind.iconSystemName {
                 Image(systemName: icon)
                     .font(.system(size: 16, weight: .medium))
@@ -131,5 +123,9 @@ private struct InfoSnackbarView: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.primary)
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .fixedSize()
+        .modifier(GlassBackgroundModifier())
     }
 }
