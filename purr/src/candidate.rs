@@ -156,6 +156,11 @@ impl SearchCandidate {
         self.phase_one_score.word_match_count
     }
 
+    #[cfg(test)]
+    pub(crate) fn weak_word_match_count(&self) -> u32 {
+        self.phase_one_score.weak_word_match_count
+    }
+
     pub fn content(&self) -> &str {
         self.match_context.content()
     }

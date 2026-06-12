@@ -20,12 +20,17 @@ struct Args {
     rebuild_fixture: bool,
 }
 
-const DEFAULT_QUERIES: [&str; 6] = [
+// "erro retur" and "fun ret" are variant-only multi-word queries (no exact
+// word matches): they gate the fuzzy/prefix recall and tail-scan cost per
+// keystroke, which exact-word queries do not exercise.
+const DEFAULT_QUERIES: [&str; 8] = [
     "function",
     "error",
     "class",
     "functoin",
     "error return",
+    "erro retur",
+    "fun ret",
     "lorem ipsum",
 ];
 

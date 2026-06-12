@@ -12,6 +12,7 @@
 //! - [`policy`] defines the ordered score types and tuning rules.
 
 mod alignment;
+mod folding;
 mod matching;
 mod policy;
 
@@ -20,13 +21,14 @@ use crate::search::is_word_token;
 use std::time::Instant;
 
 use self::alignment::{alignment_exactness_signals, choose_best_alignment, trim_match_candidates};
+pub(crate) use self::folding::fold_str;
 pub use self::matching::edit_distance_bounded;
 #[cfg(test)]
 use self::matching::subsequence_match;
 pub(crate) use self::matching::{
     classify_fuzzy_edit, does_word_match, does_word_match_fast, does_word_match_fast_raw,
     max_edit_distance, prefix_match_for_query_word, query_allows_fuzzy_recall, FuzzyEditKind,
-    PrefixMatch, WordMatchKind,
+    PrefixMatch, WordMatchKind, NON_FINAL_PREFIX_MIN_QUERY_CHARS,
 };
 use self::policy::{compute_quality_detail, compute_quality_tier, compute_recency_bucket};
 #[cfg(test)]
@@ -47,10 +49,10 @@ pub struct ScoringContext<'a> {
     pub document: &'a PreparedDocument<'a>,
     /// Query words to match against
     pub query_words: &'a [&'a str],
-    /// Lowercased query words, precomputed once per search
-    pub query_words_lower: &'a [&'a str],
-    /// Lowercased full query with spaces preserved between query tokens
-    pub joined_query_lower: Option<&'a str>,
+    /// Query words folded via `fold_str`, precomputed once per search
+    pub query_words_folded: &'a [&'a str],
+    /// Folded full query with spaces preserved between query tokens
+    pub joined_query_folded: Option<&'a str>,
     /// Whether the last query word is a prefix (user still typing)
     pub last_word_is_prefix: bool,
     /// Optional prefix preference for ranking
@@ -70,9 +72,9 @@ pub(crate) struct TokenSpan {
 #[derive(Debug)]
 pub struct SmallPreparedDocument<'a> {
     content: &'a str,
-    content_lower: String,
+    content_folded: String,
     token_spans: Vec<TokenSpan>,
-    lower_tokens: Vec<String>,
+    folded_tokens: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -112,24 +114,24 @@ impl<'a> PreparedDocument<'a> {
         }
     }
 
-    fn starts_with_case_insensitive(&self, needle_lower: &str) -> bool {
+    fn starts_with_case_insensitive(&self, needle_folded: &str) -> bool {
         match self {
-            Self::Small(doc) => doc.content_lower.starts_with(needle_lower),
+            Self::Small(doc) => doc.content_folded.starts_with(needle_folded),
             Self::LargeFast(doc) => match doc.case_mode {
                 LargeFastCaseMode::Ascii => {
-                    starts_with_ignore_ascii_case(doc.content, needle_lower)
+                    starts_with_ignore_ascii_case(doc.content, needle_folded)
                 }
-                LargeFastCaseMode::Unicode => doc.content.to_lowercase().starts_with(needle_lower),
+                LargeFastCaseMode::Unicode => fold_str(doc.content).starts_with(needle_folded),
             },
         }
     }
 
-    fn contains_case_insensitive(&self, needle_lower: &str) -> bool {
+    fn contains_case_insensitive(&self, needle_folded: &str) -> bool {
         match self {
-            Self::Small(doc) => doc.content_lower.contains(needle_lower),
+            Self::Small(doc) => doc.content_folded.contains(needle_folded),
             Self::LargeFast(doc) => match doc.case_mode {
-                LargeFastCaseMode::Ascii => contains_ignore_ascii_case(doc.content, needle_lower),
-                LargeFastCaseMode::Unicode => doc.content.to_lowercase().contains(needle_lower),
+                LargeFastCaseMode::Ascii => contains_ignore_ascii_case(doc.content, needle_folded),
+                LargeFastCaseMode::Unicode => fold_str(doc.content).contains(needle_folded),
             },
         }
     }
@@ -144,8 +146,8 @@ impl<'a> SmallPreparedDocument<'a> {
         raw_token_from(self.content, self.token_spans[index])
     }
 
-    fn lower_token(&self, index: usize) -> &str {
-        self.lower_tokens[index].as_str()
+    fn folded_token(&self, index: usize) -> &str {
+        self.folded_tokens[index].as_str()
     }
 }
 
@@ -179,16 +181,16 @@ pub(crate) fn prepare_document_for_ranking(content: &str) -> PreparedDocument<'_
             },
         })
     } else {
-        let content_lower = content.to_lowercase();
-        let lower_tokens = token_spans
+        let content_folded = fold_str(content);
+        let folded_tokens = token_spans
             .iter()
-            .map(|span| content[span.start..span.end].to_lowercase())
+            .map(|span| fold_str(&content[span.start..span.end]))
             .collect();
         PreparedDocument::Small(SmallPreparedDocument {
             content,
-            content_lower,
+            content_folded,
             token_spans,
-            lower_tokens,
+            folded_tokens,
         })
     }
 }
@@ -601,12 +603,12 @@ fn build_ranking_breakdown(ctx: &ScoringContext<'_>) -> RankingBreakdown {
     let word_matches = match_query_words(
         ctx.document,
         ctx.query_words,
-        ctx.query_words_lower,
+        ctx.query_words_folded,
         ctx.last_word_is_prefix,
     );
     let quality_signals = compute_document_quality_signals(
         ctx.document,
-        ctx.joined_query_lower,
+        ctx.joined_query_folded,
         ctx.prefix_preference,
         &word_matches,
     );
@@ -625,7 +627,7 @@ fn build_ranking_breakdown_with_perf(
     let (word_matches, mut perf) = match_query_words_with_perf(
         ctx.document,
         ctx.query_words,
-        ctx.query_words_lower,
+        ctx.query_words_folded,
         ctx.last_word_is_prefix,
     );
     perf.match_query_words_ns = match_start.elapsed().as_nanos() as u64;
@@ -633,7 +635,7 @@ fn build_ranking_breakdown_with_perf(
     let quality_start = Instant::now();
     let (quality_signals, exactness_ns) = compute_document_quality_signals_with_perf(
         ctx.document,
-        ctx.joined_query_lower,
+        ctx.joined_query_folded,
         ctx.prefix_preference,
         &word_matches,
     );
@@ -820,7 +822,7 @@ fn plan_document_quality_signals(
 
 fn compute_document_quality_signals(
     document: &PreparedDocument<'_>,
-    joined_query_lower: Option<&str>,
+    joined_query_folded: Option<&str>,
     prefix_preference: Option<PrefixPreferenceQuery<'_>>,
     word_matches: &[WordMatch],
 ) -> QualitySignals {
@@ -829,7 +831,7 @@ fn compute_document_quality_signals(
         DocumentQualityPlan::Detailed {
             prefix_preference_score,
         } => {
-            let exactness = compute_exactness_signals(document, joined_query_lower, word_matches);
+            let exactness = compute_exactness_signals(document, joined_query_folded, word_matches);
             build_quality_signals(
                 word_matches,
                 total_query_weight(word_matches),
@@ -843,7 +845,7 @@ fn compute_document_quality_signals(
 #[cfg(feature = "perf-log")]
 fn compute_document_quality_signals_with_perf(
     document: &PreparedDocument<'_>,
-    joined_query_lower: Option<&str>,
+    joined_query_folded: Option<&str>,
     prefix_preference: Option<PrefixPreferenceQuery<'_>>,
     word_matches: &[WordMatch],
 ) -> (QualitySignals, u64) {
@@ -853,7 +855,7 @@ fn compute_document_quality_signals_with_perf(
             prefix_preference_score,
         } => {
             let exactness_start = Instant::now();
-            let exactness = compute_exactness_signals(document, joined_query_lower, word_matches);
+            let exactness = compute_exactness_signals(document, joined_query_folded, word_matches);
             let exactness_ns = exactness_start.elapsed().as_nanos() as u64;
 
             (
@@ -934,14 +936,14 @@ enum MatchQueryPlan {
 fn build_match_query_plan(
     document: &PreparedDocument<'_>,
     query_words: &[&str],
-    query_words_lower: &[&str],
+    query_words_folded: &[&str],
     last_word_is_prefix: bool,
 ) -> MatchQueryPlan {
     if document.is_fast_mode() && query_words.len() == 1 {
         let (word_match, raw_candidate_count) = match_single_query_word_fast_with_count(
             document,
             query_words[0],
-            query_words_lower[0],
+            query_words_folded[0],
             prefix_match_for_query_word(query_words.len(), 0, last_word_is_prefix),
         );
         #[cfg(not(feature = "perf-log"))]
@@ -967,7 +969,7 @@ fn build_match_query_plan(
             let prefix_match =
                 prefix_match_for_query_word(query_words.len(), qi, last_word_is_prefix);
             let (candidates, raw_count) =
-                collect_match_candidates(qw, query_words_lower[qi], document, prefix_match);
+                collect_match_candidates(qw, query_words_folded[qi], document, prefix_match);
             raw_candidate_count += raw_count;
             trimmed_candidate_count += candidates.len();
             candidates
@@ -987,13 +989,13 @@ fn build_match_query_plan(
 fn match_query_words(
     document: &PreparedDocument<'_>,
     query_words: &[&str],
-    query_words_lower: &[&str],
+    query_words_folded: &[&str],
     last_word_is_prefix: bool,
 ) -> Vec<WordMatch> {
     match build_match_query_plan(
         document,
         query_words,
-        query_words_lower,
+        query_words_folded,
         last_word_is_prefix,
     ) {
         MatchQueryPlan::SingleFast { word_match, .. } => vec![word_match],
@@ -1009,14 +1011,14 @@ fn match_query_words(
 fn match_query_words_with_perf(
     document: &PreparedDocument<'_>,
     query_words: &[&str],
-    query_words_lower: &[&str],
+    query_words_folded: &[&str],
     last_word_is_prefix: bool,
 ) -> (Vec<WordMatch>, RankingPerfBreakdown) {
     let collect_start = Instant::now();
     let plan = build_match_query_plan(
         document,
         query_words,
-        query_words_lower,
+        query_words_folded,
         last_word_is_prefix,
     );
     let collect_candidates_ns = collect_start.elapsed().as_nanos() as u64;
@@ -1077,7 +1079,7 @@ fn base_match_weight(qw: &str) -> u16 {
 fn match_single_query_word_fast_with_count(
     document: &PreparedDocument<'_>,
     query_word: &str,
-    query_word_lower: &str,
+    query_word_folded: &str,
     prefix_match: PrefixMatch,
 ) -> (WordMatch, usize) {
     if !document.is_fast_mode() {
@@ -1091,7 +1093,7 @@ fn match_single_query_word_fast_with_count(
     document.for_each_fast_token(|dpos, doc_token| {
         let Some(candidate) = classify_fast_match_candidate(
             query_word,
-            query_word_lower,
+            query_word_folded,
             doc_token,
             dpos,
             prefix_match,
@@ -1129,16 +1131,16 @@ fn match_single_query_word_fast_with_count(
 
 fn collect_match_candidates(
     query_word: &str,
-    query_word_lower: &str,
+    query_word_folded: &str,
     document: &PreparedDocument<'_>,
     prefix_match: PrefixMatch,
 ) -> (Vec<WordMatch>, usize) {
-    collect_match_candidates_impl(query_word, query_word_lower, document, prefix_match)
+    collect_match_candidates_impl(query_word, query_word_folded, document, prefix_match)
 }
 
 fn collect_match_candidates_impl(
     query_word: &str,
-    query_word_lower: &str,
+    query_word_folded: &str,
     document: &PreparedDocument<'_>,
     prefix_match: PrefixMatch,
 ) -> (Vec<WordMatch>, usize) {
@@ -1146,8 +1148,8 @@ fn collect_match_candidates_impl(
         PreparedDocument::Small(doc) => (0..doc.token_spans.len())
             .filter_map(|dpos| {
                 let dw_raw = doc.raw_token(dpos);
-                let dw_lower = doc.lower_token(dpos);
-                let wmk = does_word_match(query_word_lower, dw_lower, dw_raw, prefix_match);
+                let dw_folded = doc.folded_token(dpos);
+                let wmk = does_word_match(query_word_folded, dw_folded, dw_raw, prefix_match);
                 match wmk {
                     WordMatchKind::Exact => Some(WordMatch::exact(query_word, dpos)),
                     WordMatchKind::Prefix { .. } => Some(WordMatch::prefix(query_word, dpos)),
@@ -1161,7 +1163,7 @@ fn collect_match_candidates_impl(
                         query_word,
                         dpos,
                         dist,
-                        classify_fuzzy_typo(query_word_lower, dw_lower, dist),
+                        classify_fuzzy_typo(query_word_folded, dw_folded, dist),
                     )),
                     WordMatchKind::Subsequence(gaps) => {
                         Some(WordMatch::subsequence(query_word, dpos, gaps))
@@ -1175,7 +1177,7 @@ fn collect_match_candidates_impl(
             document.for_each_fast_token(|dpos, doc_token| {
                 if let Some(candidate) = classify_fast_match_candidate(
                     query_word,
-                    query_word_lower,
+                    query_word_folded,
                     doc_token,
                     dpos,
                     prefix_match,
@@ -1194,12 +1196,12 @@ fn collect_match_candidates_impl(
 
 fn classify_fast_match_candidate(
     query_word: &str,
-    query_word_lower: &str,
+    query_word_folded: &str,
     document_token: &str,
     doc_word_pos: usize,
     prefix_match: PrefixMatch,
 ) -> Option<WordMatch> {
-    match does_word_match_fast_raw(query_word_lower, document_token, prefix_match) {
+    match does_word_match_fast_raw(query_word_folded, document_token, prefix_match) {
         WordMatchKind::Exact => Some(WordMatch::exact(query_word, doc_word_pos)),
         WordMatchKind::Prefix { .. } => Some(WordMatch::prefix(query_word, doc_word_pos)),
         WordMatchKind::None => None,
@@ -1256,15 +1258,15 @@ fn compute_prefix_preference_score_case_insensitive(
 ) -> u8 {
     match prefix_preference {
         Some(PrefixPreferenceQuery {
-            raw_query_lower, ..
-        }) if document.starts_with_case_insensitive(raw_query_lower) => 3,
+            raw_query_folded, ..
+        }) if document.starts_with_case_insensitive(raw_query_folded) => 3,
         Some(PrefixPreferenceQuery {
-            raw_query_lower, ..
-        }) if document.contains_case_insensitive(raw_query_lower) => 2,
+            raw_query_folded, ..
+        }) if document.contains_case_insensitive(raw_query_folded) => 2,
         Some(PrefixPreferenceQuery {
-            stripped_query_lower,
+            stripped_query_folded,
             ..
-        }) if document.starts_with_case_insensitive(stripped_query_lower) => 1,
+        }) if document.starts_with_case_insensitive(stripped_query_folded) => 1,
         _ => 0,
     }
 }
@@ -1312,7 +1314,7 @@ fn contains_ignore_ascii_case(content: &str, needle_lower: &str) -> bool {
 /// Compute explicit exactness signals for the matched query terms.
 fn compute_exactness_signals(
     document: &PreparedDocument<'_>,
-    full_query_lower: Option<&str>,
+    full_query_folded: Option<&str>,
     word_matches: &[WordMatch],
 ) -> ExactnessSignals {
     let matched: Vec<&WordMatch> = word_matches
@@ -1323,7 +1325,7 @@ fn compute_exactness_signals(
         return ExactnessSignals::default();
     }
 
-    let full_query = full_query_lower.unwrap_or("");
+    let full_query = full_query_folded.unwrap_or("");
 
     let all_matched = word_matches
         .iter()
@@ -1369,8 +1371,8 @@ fn compute_exactness_signals(
 #[cfg(test)]
 fn compute_exactness(content: &str, query_words: &[&str], word_matches: &[WordMatch]) -> u8 {
     let document = prepare_document_for_ranking(content);
-    let full_query_lower = (!query_words.is_empty()).then(|| query_words.join(" ").to_lowercase());
-    compute_exactness_signals(&document, full_query_lower.as_deref(), word_matches)
+    let full_query_folded = (!query_words.is_empty()).then(|| fold_str(&query_words.join(" ")));
+    compute_exactness_signals(&document, full_query_folded.as_deref(), word_matches)
         .band()
         .score()
 }
@@ -1380,7 +1382,7 @@ mod tests {
     use super::matching::TokenMatchSpan;
     use super::*;
 
-    /// Helper: compute bucket score from raw content (handles lowercasing/tokenization).
+    /// Helper: compute bucket score from raw content (handles folding/tokenization).
     fn score(
         content: &str,
         query_words: &[&str],
@@ -1390,18 +1392,20 @@ mod tests {
         now: i64,
     ) -> BucketScore {
         let document = prepare_document_for_ranking(content);
-        let query_words_lower_owned: Vec<String> =
-            query_words.iter().map(|word| word.to_lowercase()).collect();
-        let query_words_lower: Vec<&str> =
-            query_words_lower_owned.iter().map(String::as_str).collect();
-        let joined_query_lower =
-            (!query_words.is_empty()).then(|| query_words.join(" ").to_lowercase());
+        let query_words_folded_owned: Vec<String> =
+            query_words.iter().map(|word| fold_str(word)).collect();
+        let query_words_folded: Vec<&str> = query_words_folded_owned
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let joined_query_folded =
+            (!query_words.is_empty()).then(|| fold_str(&query_words.join(" ")));
 
         compute_bucket_score(&ScoringContext {
             document: &document,
             query_words,
-            query_words_lower: &query_words_lower,
-            joined_query_lower: joined_query_lower.as_deref(),
+            query_words_folded: &query_words_folded,
+            joined_query_folded: joined_query_folded.as_deref(),
             last_word_is_prefix,
             prefix_preference,
             timestamp,
@@ -1411,8 +1415,8 @@ mod tests {
 
     fn dwm(query_word: &str, doc_word: &str, prefix_match: PrefixMatch) -> WordMatchKind {
         does_word_match(
-            &query_word.to_lowercase(),
-            &doc_word.to_lowercase(),
+            &fold_str(query_word),
+            &fold_str(doc_word),
             doc_word,
             prefix_match,
         )
@@ -1433,14 +1437,16 @@ mod tests {
     ) -> Vec<WordMatch> {
         let content = doc_words.join(" ");
         let document = prepare_document_for_ranking(&content);
-        let query_words_lower_owned: Vec<String> =
-            query_words.iter().map(|word| word.to_lowercase()).collect();
-        let query_words_lower: Vec<&str> =
-            query_words_lower_owned.iter().map(String::as_str).collect();
+        let query_words_folded_owned: Vec<String> =
+            query_words.iter().map(|word| fold_str(word)).collect();
+        let query_words_folded: Vec<&str> = query_words_folded_owned
+            .iter()
+            .map(String::as_str)
+            .collect();
         match_query_words(
             &document,
             query_words,
-            &query_words_lower,
+            &query_words_folded,
             last_word_is_prefix,
         )
     }
@@ -1793,10 +1799,22 @@ mod tests {
     }
 
     #[test]
-    fn test_match_prefix_not_allowed_non_last() {
-        let doc_words = vec!["clipkitty"];
+    fn test_match_prefix_non_final_word_three_chars() {
+        let doc_words = vec!["clipboard", "manager"];
+        let matches = match_words(&["clip", "man"], &doc_words, true);
+        assert!(matches!(matches[0].state, WordMatchState::Prefix { .. }));
+        assert!(matches!(matches[1].state, WordMatchState::Prefix { .. }));
+        assert_eq!(matches[0].doc_word_pos(), Some(0));
+        assert_eq!(matches[1].doc_word_pos(), Some(1));
+    }
+
+    #[test]
+    fn test_match_prefix_non_final_word_too_short() {
+        // NON_FINAL_PREFIX_MIN_QUERY_CHARS: 1-2 char completed words stay unmatched
+        let doc_words = vec!["clipkitty", "hello"];
         let matches = match_words(&["cl", "hello"], &doc_words, true);
         assert!(matches!(matches[0].state, WordMatchState::Unmatched));
+        assert!(matches!(matches[1].state, WordMatchState::Exact { .. }));
     }
 
     #[test]
@@ -2290,6 +2308,69 @@ mod tests {
         assert!(
             older_subword > newer_infix,
             "Across a moderate age gap, subword-prefix should beat a newer raw infix substring"
+        );
+    }
+
+    #[test]
+    fn test_fresh_prefix_phrase_beats_stale_infix_phrase() {
+        let now = 1700000000i64;
+        let fresh_prefix = score(
+            "category review draft",
+            &["cat", "review"],
+            true,
+            None,
+            now - 300,
+            now,
+        );
+        let stale_infix = score(
+            "concatenated review output",
+            &["cat", "review"],
+            true,
+            None,
+            now - 60 * 86400,
+            now,
+        );
+        assert!(
+            fresh_prefix > stale_infix,
+            "A fresh non-final-prefix phrase should beat a stale infix phrase"
+        );
+
+        let equal_infix = score(
+            "concatenated review output",
+            &["cat", "review"],
+            true,
+            None,
+            now - 300,
+            now,
+        );
+        assert!(
+            fresh_prefix > equal_infix,
+            "At equal recency, a non-final word-prefix should beat a mid-word infix"
+        );
+    }
+
+    #[test]
+    fn test_word_start_fragment_ranks_at_least_as_well_as_midword_fragment() {
+        let now = 1700000000i64;
+        let word_start = score(
+            "clipboard manager settings",
+            &["clip", "man"],
+            true,
+            None,
+            now - 300,
+            now,
+        );
+        let mid_word = score(
+            "clipboard manager settings",
+            &["lip", "man"],
+            true,
+            None,
+            now - 300,
+            now,
+        );
+        assert!(
+            word_start >= mid_word,
+            "A word-start fragment should rank at least as well as a same-length mid-word fragment"
         );
     }
 

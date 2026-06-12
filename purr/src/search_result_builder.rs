@@ -1,7 +1,7 @@
 use crate::database::{Database, RowMetadata, SearchRowMetadata};
 use crate::interface::{
-    ClipKittyError, ContentTypeFilter, ItemMatch, ItemQueryFilter, ItemTag, ListPresentationProfile,
-    MatchedExcerptRequest, RowPresentation, SearchResult,
+    ClipKittyError, ContentTypeFilter, ItemMatch, ItemQueryFilter, ItemTag,
+    ListPresentationProfile, MatchedExcerptRequest, RowPresentation, SearchResult,
 };
 use crate::match_presentation::{HighlightAnalysisCache, MatchPresentation};
 use crate::models::StoredItem;
@@ -126,9 +126,14 @@ impl<'a> SearchResultAssembler<'a> {
             return Ok(Vec::new());
         }
 
-        let query_lower = trimmed.to_lowercase();
+        let query_folded = crate::ranking::fold_str(trimmed);
         let mut ordered_ids = Vec::with_capacity(SHORT_QUERY_MAX_RESULTS);
         let mut prefix_ids = HashSet::new();
+        // The SQL LIKE prefix tier is ASCII-case-insensitive only: SQLite
+        // cannot fold stored content, and folding just the query would break
+        // accented-query prefix matches. Diacritic folding is covered by the
+        // contains tier below; the full short-path rework is tracked
+        // separately (filtering-intuition-review Finding 1).
         let prefix_candidates =
             self.db
                 .search_prefix_query(trimmed, SHORT_QUERY_MAX_RESULTS, filter, tag.as_ref())?;
@@ -156,7 +161,7 @@ impl<'a> SearchResultAssembler<'a> {
                 }
                 let content_prefix: String =
                     content.chars().take(SHORT_QUERY_CONTENT_CAP).collect();
-                if content_prefix.to_lowercase().contains(&query_lower) {
+                if crate::ranking::fold_str(&content_prefix).contains(&query_folded) {
                     ordered_ids.push(id);
                 }
                 if ordered_ids.len() >= SHORT_QUERY_MAX_RESULTS {
@@ -215,7 +220,12 @@ impl<'a> SearchResultAssembler<'a> {
                 None => true,
             })
             .filter(|metadata| metadata_matches_filter(metadata, filter))
-            .map(|metadata| (metadata.row_metadata.item_metadata.item_id.clone(), metadata))
+            .map(|metadata| {
+                (
+                    metadata.row_metadata.item_metadata.item_id.clone(),
+                    metadata,
+                )
+            })
             .collect();
 
         let presentation = self.presentation();
@@ -344,10 +354,7 @@ impl<'a> SearchResultAssembler<'a> {
         Ok(())
     }
 
-    fn hydrate_item_metadata_tags(
-        &self,
-        items: &mut [RowMetadata],
-    ) -> Result<(), ClipKittyError> {
+    fn hydrate_item_metadata_tags(&self, items: &mut [RowMetadata]) -> Result<(), ClipKittyError> {
         let ids: Vec<String> = items
             .iter()
             .map(|item| item.item_metadata.item_id.clone())

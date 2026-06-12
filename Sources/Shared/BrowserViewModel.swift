@@ -810,7 +810,12 @@ public final class BrowserViewModel {
         case let .success(response):
             applySearchResponse(response, targetContentRevision: targetContentRevision)
         case .cancelled:
-            break
+            // The operationId guard passed, so this cancellation came from outside the
+            // view model (another consumer of the shared Rust store cancelled the global
+            // search token). Re-run the current request instead of stranding `.loading`
+            // with stale results or a stuck spinner.
+            guard case let .loading(request, _, _) = contentState else { return }
+            beginSearch(request: request, targetContentRevision: targetContentRevision)
         case let .failure(error):
             guard case let .loading(request, previous, _) = contentState else { return }
             contentState = .failed(

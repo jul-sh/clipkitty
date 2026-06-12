@@ -12,8 +12,8 @@ use crate::interface::{
     HighlightKind, ListPresentationProfile, MatchedExcerpt, PreviewDecoration, Utf16HighlightRange,
 };
 use crate::ranking::{
-    does_word_match, does_word_match_fast, does_word_match_fast_raw, prefix_match_for_query_word,
-    WordMatchKind, LARGE_DOC_THRESHOLD_BYTES,
+    does_word_match, does_word_match_fast, does_word_match_fast_raw, fold_str,
+    prefix_match_for_query_word, WordMatchKind, LARGE_DOC_THRESHOLD_BYTES,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -24,6 +24,18 @@ pub(crate) const MIN_TRIGRAM_QUERY_LEN: usize = 3;
 
 /// Context chars to include before/after match in snippet
 pub(crate) const SNIPPET_CONTEXT_CHARS: usize = 200;
+
+/// Maximum hard line breaks kept before the selected match in Card excerpts.
+/// One leading break means the match starts on excerpt hard-line 2 at worst,
+/// which stays visible even under the lineLimit(2) link/image cards.
+const CARD_MAX_LEADING_LINE_BREAKS: usize = 1;
+
+/// Leading char budget for Card excerpts. Together with the 1-char leading
+/// ellipsis this is at most one wrapped line at the card font (15pt; the
+/// narrowest layout is the 2-line link/image HStack with leading icon,
+/// ~38 chars/line), so wrapping cannot push the match start past visible
+/// line 2 either.
+const CARD_LEADING_CONTEXT_CHARS: usize = 36;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Excerpt policy — profile-driven formatting
@@ -48,10 +60,15 @@ pub(crate) struct ExcerptPolicy {
     pub(crate) context_chars: usize,
     /// Maximum normalized source characters to keep before the selected match.
     ///
-    /// Multiline card rows are line-clamped by SwiftUI, so they need the match
-    /// biased toward the top of the excerpt instead of centered in a large
-    /// balanced character window.
+    /// Multiline card rows are line-clamped by SwiftUI, so the match must stay
+    /// near the top of the excerpt rather than centered in a large balanced
+    /// character window. Trailing context is never expanded to compensate for
+    /// a short lead: for matches near the end of content the excerpt is
+    /// deliberately sparse, because extra leading content pushes the match
+    /// back toward the clipped region.
     pub(crate) leading_context_chars: usize,
+    /// Maximum hard line breaks kept before the selected match; None = unbounded.
+    pub(crate) max_leading_line_breaks: Option<usize>,
 }
 
 impl ExcerptPolicy {
@@ -62,12 +79,15 @@ impl ExcerptPolicy {
                 max_chars: SNIPPET_CONTEXT_CHARS * 2, // 400
                 context_chars: SNIPPET_CONTEXT_CHARS, // 200
                 leading_context_chars: SNIPPET_CONTEXT_CHARS,
+                // CollapseAll removes all newlines; a line cap is meaningless.
+                max_leading_line_breaks: None,
             },
             ListPresentationProfile::Card => Self {
                 whitespace_mode: WhitespaceMode::PreserveLineBreaks,
                 max_chars: SNIPPET_CONTEXT_CHARS * 4,     // 800
                 context_chars: SNIPPET_CONTEXT_CHARS * 2, // 400
-                leading_context_chars: 120,
+                leading_context_chars: CARD_LEADING_CONTEXT_CHARS,
+                max_leading_line_breaks: Some(CARD_MAX_LEADING_LINE_BREAKS),
             },
         }
     }
@@ -360,8 +380,8 @@ pub(crate) struct HighlightContext<'a> {
 /// (exact, prefix, substring, fuzzy edit-distance) via `does_word_match`. This ensures
 /// what's highlighted matches what was ranked in Phase 2 bucket scoring.
 ///
-/// `content_lower` and `doc_words` are pre-computed in Phase 2 to avoid
-/// redundant lowercasing and tokenization (~4000 allocations per search).
+/// `doc_words` is pre-computed in Phase 2 to avoid redundant tokenization
+/// (~4000 allocations per search); folding happens per token here.
 ///
 /// For large documents (>32KB), uses fast matching (exact + prefix only)
 /// to avoid expensive fuzzy/subsequence matching.
@@ -369,19 +389,19 @@ pub(crate) fn highlight_candidate(ctx: &HighlightContext<'_>) -> FuzzyMatch {
     let mut word_highlights: Vec<(usize, usize, HighlightKind)> = Vec::new();
     let mut matched_query_words = vec![false; ctx.query_words.len()];
 
-    let query_lower: Vec<String> = ctx.query_words.iter().map(|w| w.to_lowercase()).collect();
+    let query_folded: Vec<String> = ctx.query_words.iter().map(|w| fold_str(w)).collect();
     // Use fast matching for large documents
     let is_large_doc = ctx.content.len() > LARGE_DOC_THRESHOLD_BYTES;
 
     for (char_start, char_end, doc_word) in ctx.doc_words {
-        let doc_word_lower = doc_word.to_lowercase();
-        for (qi, qw) in query_lower.iter().enumerate() {
+        let doc_word_folded = fold_str(doc_word);
+        for (qi, qw) in query_folded.iter().enumerate() {
             let prefix_match =
-                prefix_match_for_query_word(query_lower.len(), qi, ctx.last_word_is_prefix);
+                prefix_match_for_query_word(query_folded.len(), qi, ctx.last_word_is_prefix);
             let wmk = if is_large_doc {
-                does_word_match_fast(qw, &doc_word_lower, prefix_match)
+                does_word_match_fast(qw, &doc_word_folded, prefix_match)
             } else {
-                does_word_match(qw, &doc_word_lower, doc_word, prefix_match)
+                does_word_match(qw, &doc_word_folded, doc_word, prefix_match)
             };
             if wmk != WordMatchKind::None {
                 matched_query_words[qi] = true;
@@ -578,6 +598,7 @@ pub(crate) fn generate_snippet(
         max_chars: max_len,
         context_chars: SNIPPET_CONTEXT_CHARS,
         leading_context_chars: SNIPPET_CONTEXT_CHARS,
+        max_leading_line_breaks: None,
     };
     generate_snippet_with_policy(content, highlights, &policy)
 }
@@ -645,6 +666,11 @@ pub(crate) fn generate_snippet_with_policy(
         }
     }
 
+    if let Some(max_breaks) = policy.max_leading_line_breaks {
+        snippet_start_char =
+            clamp_leading_line_breaks(content, snippet_start_char, match_start_char, max_breaks);
+    }
+
     let ellipsis_reserve = (if snippet_start_char > 0 { 1 } else { 0 })
         + (if snippet_end_char < content_char_len {
             1
@@ -695,6 +721,40 @@ pub(crate) fn generate_snippet_with_policy(
         .collect();
 
     (final_snippet, adjusted_highlights, line_number)
+}
+
+/// Advance the snippet window start so at most `max_line_breaks` hard line
+/// breaks remain before the match, keeping the partial line before the kept
+/// breaks. Raw newline count is an upper bound on the normalized count
+/// (PreserveLineBreaks only collapses runs), so the cap holds in the final
+/// excerpt. The start only moves forward and the clamp runs before
+/// normalization and highlight remapping, so downstream offsets stay correct.
+fn clamp_leading_line_breaks(
+    content: &str,
+    window_start_char: usize,
+    match_start_char: usize,
+    max_line_breaks: usize,
+) -> usize {
+    let lead_len = match_start_char.saturating_sub(window_start_char);
+    let break_positions: Vec<usize> = content
+        .chars()
+        .enumerate()
+        .skip(window_start_char)
+        .take(lead_len)
+        .filter(|&(_, c)| c == '\n')
+        .map(|(pos, _)| pos)
+        .collect();
+
+    let mut start = window_start_char;
+    if break_positions.len() > max_line_breaks {
+        start = break_positions[break_positions.len() - 1 - max_line_breaks] + 1;
+    }
+    // A window starting on '\n' would render as an ellipsis-only first line;
+    // skip past any blank-line run.
+    while start < match_start_char && break_positions.binary_search(&start).is_ok() {
+        start += 1;
+    }
+    start
 }
 
 /// Create a matched excerpt from full-content scalar highlights, using a presentation profile.
@@ -766,16 +826,18 @@ fn short_query_highlights(content: &str, query: &str, prefer_prefix: bool) -> Ve
         return Vec::new();
     }
 
-    let content_lower = content.to_lowercase();
-    let query_lower = trimmed.to_lowercase();
+    // fold_str is 1:1 per char, so a char index computed on the folded string
+    // is valid in the original content (byte indices are not interchangeable).
+    let content_folded = fold_str(content);
+    let query_folded = fold_str(trimmed);
     let query_char_len = trimmed.chars().count();
 
-    let start = if prefer_prefix && content_lower.starts_with(&query_lower) {
+    let start = if prefer_prefix && content_folded.starts_with(&query_folded) {
         Some(0)
     } else {
-        content_lower
-            .find(&query_lower)
-            .map(|byte_idx| content_lower[..byte_idx].chars().count())
+        content_folded
+            .find(&query_folded)
+            .map(|byte_idx| content_folded[..byte_idx].chars().count())
     };
 
     start
@@ -840,8 +902,11 @@ pub(crate) fn analyze_content_for_query(content: &str, query: &str) -> Option<Hi
 
 /// Lightweight word-match-only analysis for Phase 1-only (tail) items.
 ///
-/// Uses exact + prefix matching only (via `does_word_match_fast_raw`),
-/// skipping fuzzy, subsequence, and subword matching for performance.
+/// Small contents (<= 32KB) honor all ranking match classes via
+/// `does_word_match`, so scan-rescued tail items visibly show why they
+/// matched; larger contents keep exact + prefix matching only (via
+/// `does_word_match_fast_raw`) for performance, mirroring Phase 2's
+/// large-doc policy.
 pub(crate) fn analyze_content_word_match(content: &str, query: &str) -> Option<HighlightAnalysis> {
     let trimmed = query.trim();
     if trimmed.is_empty() {
@@ -858,11 +923,12 @@ pub(crate) fn analyze_content_word_match(content: &str, query: &str) -> Option<H
     })
 }
 
-/// Compute highlights using exact + prefix word matching only.
+/// Compute highlights using per-word matching.
 ///
 /// For each query word, finds all matching document words and emits highlight
-/// ranges. Only `Exact` and `Prefix` match kinds are produced — no fuzzy,
-/// subsequence, or subword matching.
+/// ranges. Contents up to `LARGE_DOC_THRESHOLD_BYTES` honor every ranking
+/// match class (exact, prefix, subword, infix, fuzzy, subsequence); larger
+/// contents produce only `Exact` and `Prefix` kinds for performance.
 fn compute_word_match_highlights(content: &str, query: &str) -> Vec<HighlightRange> {
     let query_words_owned = tokenize_words(query);
     let query_words: Vec<&str> = query_words_owned
@@ -872,7 +938,8 @@ fn compute_word_match_highlights(content: &str, query: &str) -> Vec<HighlightRan
     let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
 
     let doc_words = tokenize_words(content);
-    let query_lower: Vec<String> = query_words.iter().map(|w| w.to_lowercase()).collect();
+    let query_folded: Vec<String> = query_words.iter().map(|w| fold_str(w)).collect();
+    let use_full_matching = content.len() <= LARGE_DOC_THRESHOLD_BYTES;
 
     let mut highlights: Vec<(usize, usize, HighlightKind)> = Vec::new();
 
@@ -880,13 +947,17 @@ fn compute_word_match_highlights(content: &str, query: &str) -> Vec<HighlightRan
         if !is_word_token(doc_word) {
             continue;
         }
-        for (qi, qw_lower) in query_lower.iter().enumerate() {
+        let doc_word_folded = use_full_matching.then(|| fold_str(doc_word));
+        for (qi, qw_folded) in query_folded.iter().enumerate() {
             if !is_word_token(&query_words[qi]) {
                 continue;
             }
             let prefix_match =
-                prefix_match_for_query_word(query_lower.len(), qi, last_word_is_prefix);
-            let wmk = does_word_match_fast_raw(qw_lower, doc_word, prefix_match);
+                prefix_match_for_query_word(query_folded.len(), qi, last_word_is_prefix);
+            let wmk = match &doc_word_folded {
+                Some(dw_folded) => does_word_match(qw_folded, dw_folded, doc_word, prefix_match),
+                None => does_word_match_fast_raw(qw_folded, doc_word, prefix_match),
+            };
             if wmk != WordMatchKind::None {
                 append_word_highlight(&mut highlights, *char_start, *char_end, wmk);
                 break;
@@ -1117,6 +1188,35 @@ mod tests {
             end,
             kind: HighlightKind::Exact,
         }
+    }
+
+    #[test]
+    fn test_word_match_highlights_include_substring_and_fuzzy_for_small_content() {
+        let substring = super::compute_word_match_highlights("clipboard manager", "board");
+        assert!(
+            substring
+                .iter()
+                .any(|h| h.kind == HighlightKind::Substring && h.start == 4 && h.end == 9),
+            "'board' should highlight its infix inside 'clipboard', got {:?}",
+            substring
+        );
+
+        let fuzzy = super::compute_word_match_highlights("clipboard manager", "managr");
+        assert!(
+            fuzzy.iter().any(|h| h.kind == HighlightKind::Fuzzy),
+            "typo'd 'managr' should highlight 'manager' on small content, got {:?}",
+            fuzzy
+        );
+
+        // LargeFast parity: above 32KB only exact + prefix kinds survive.
+        let large_content = format!("clipboard manager {}", "filler ".repeat(5_000));
+        assert!(large_content.len() > LARGE_DOC_THRESHOLD_BYTES);
+        let large = super::compute_word_match_highlights(&large_content, "board");
+        assert!(
+            large.is_empty(),
+            "large contents keep exact + prefix matching only, got {:?}",
+            large
+        );
     }
 
     #[test]
@@ -1399,9 +1499,11 @@ mod tests {
 
     #[test]
     fn test_highlight_url_query_bridges_punctuation() {
-        // "http" and "github" match adjacent words; the "://" gap should be bridged
+        // "http" prefix-matches "https" as a non-final query word; PrefixTail
+        // blocks bridging, so the highlight honestly shows three ranges instead
+        // of one bridged "https://github" run
         let words = highlighted_words("https://github.com/user/repo", &["http", "github"]);
-        assert_eq!(words, vec!["https://github"]);
+        assert_eq!(words, vec!["http", "s", "github"]);
     }
 
     #[test]
@@ -1430,8 +1532,28 @@ mod tests {
             .iter()
             .map(|r| chars[r.start as usize..r.end as usize].iter().collect())
             .collect();
-        // "://" matched as a real token, producing contiguous highlight
-        assert_eq!(words, vec!["https://github"]);
+        // "http" prefix-matches "https" (Prefix + PrefixTail, never bridged);
+        // "://" matches as a real token but punctuation is not highlighted directly
+        assert_eq!(words, vec!["http", "s", "github"]);
+    }
+
+    #[test]
+    fn test_highlight_non_final_prefix_match() {
+        let fm = hc(1, "clipboard manager", 1000, 1.0, &["clip", "man"], true);
+        let ranges: Vec<(u64, u64, HighlightKind)> = fm
+            .highlight_ranges
+            .iter()
+            .map(|r| (r.start, r.end, r.kind))
+            .collect();
+        assert_eq!(
+            ranges,
+            vec![
+                (0, 4, HighlightKind::Prefix),
+                (4, 9, HighlightKind::PrefixTail),
+                (10, 13, HighlightKind::Prefix),
+                (13, 17, HighlightKind::PrefixTail),
+            ]
+        );
     }
 
     #[test]
@@ -1566,8 +1688,7 @@ error: Cannot build '/nix/store/djv08y006z7jk69j2q9fq5f1ch195i4s-home-manager.dr
 error: Build failed due to failed dependency";
 
     fn build_query_words(query: &str) -> Vec<String> {
-        query
-            .to_lowercase()
+        fold_str(query)
             .split_whitespace()
             .map(|s| s.to_string())
             .collect()

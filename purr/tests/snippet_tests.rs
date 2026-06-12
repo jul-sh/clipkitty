@@ -98,10 +98,7 @@ async fn trigram_search_eagerly_decorates_initial_short_results() {
         result
             .matches
             .iter()
-            .all(|item| matches!(
-                item.presentation,
-                RowPresentation::Matched { .. }
-            )),
+            .all(|item| matches!(item.presentation, RowPresentation::Matched { .. })),
         "expected every short initial trigram match to have a ready matched excerpt"
     );
 }
@@ -234,7 +231,9 @@ Feel free to reach out via email at [j@jul.sh]
     let row = matched_excerpt_for_profile(content, "git", ListPresentationProfile::Card).await;
 
     assert!(!row.highlights.is_empty());
-    let visible_prefix = row.text.lines().take(8).collect::<Vec<_>>().join("\n");
+    // The match must start within the first 2 hard lines so it survives both
+    // lineLimit(8) text cards and lineLimit(2) link/image cards.
+    let visible_prefix = row.text.lines().take(2).collect::<Vec<_>>().join("\n");
     assert!(
         visible_prefix.contains("GitHub"),
         "card row prefix should include the actual match, got: {:?}",
@@ -247,6 +246,156 @@ Feel free to reach out via email at [j@jul.sh]
             row.highlights[0].utf16_end,
         ),
         "Git"
+    );
+}
+
+/// Number of hard line breaks in the excerpt text before the given UTF-16 offset.
+fn newlines_before_utf16(text: &str, utf16_offset: u64) -> usize {
+    utf16_slice(text, 0, utf16_offset)
+        .chars()
+        .filter(|&c| c == '\n')
+        .count()
+}
+
+/// The finding's repro: a 40-line list of ~5-char items with the match deep in
+/// the list (line 30). Card excerpts must keep the match within the first two
+/// hard lines so it stays visible under lineLimit(2).
+#[tokio::test]
+async fn card_excerpt_short_line_list_keeps_match_within_first_two_hard_lines() {
+    let content = (1..=40)
+        .map(|i| {
+            if i == 30 {
+                "tofu".to_string()
+            } else {
+                format!("it{i:02}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let row = matched_excerpt_for_profile(&content, "tofu", ListPresentationProfile::Card).await;
+
+    assert!(!row.highlights.is_empty());
+    assert_eq!(
+        utf16_slice(
+            &row.text,
+            row.highlights[0].utf16_start,
+            row.highlights[0].utf16_end,
+        ),
+        "tofu"
+    );
+    let leading_newlines = newlines_before_utf16(&row.text, row.highlights[0].utf16_start);
+    assert!(
+        leading_newlines <= 1,
+        "match should start within the first 2 hard lines, got {} leading newlines in: {:?}",
+        leading_newlines,
+        row.text
+    );
+}
+
+/// Single-line URL-like content cannot be line-capped, so the char budget must
+/// bound the lead: at most 36 chars plus the leading ellipsis, keeping the
+/// match within ~2 wrapped lines on lineLimit(2) cards.
+#[tokio::test]
+async fn card_excerpt_leading_context_capped_for_long_single_line() {
+    let content = format!(
+        "{} needle {}",
+        "x".repeat(200),
+        "trailing prose after the match"
+    );
+    let row = matched_excerpt_for_profile(&content, "needle", ListPresentationProfile::Card).await;
+
+    assert!(!row.highlights.is_empty());
+    assert_eq!(
+        utf16_slice(
+            &row.text,
+            row.highlights[0].utf16_start,
+            row.highlights[0].utf16_end,
+        ),
+        "needle"
+    );
+    assert!(
+        row.highlights[0].utf16_start <= 37,
+        "expected at most 36 leading chars + 1 ellipsis before the match, got {} in: {:?}",
+        row.highlights[0].utf16_start,
+        row.text
+    );
+}
+
+/// A blank-line run right before the match must not produce an excerpt whose
+/// first line is only an ellipsis.
+#[tokio::test]
+async fn card_excerpt_blank_line_run_before_match_yields_no_empty_lead() {
+    let content = "para one\n\n\n\nMATCH here";
+    let row = matched_excerpt_for_profile(content, "MATCH", ListPresentationProfile::Card).await;
+
+    assert!(!row.highlights.is_empty());
+    assert!(
+        !row.text.starts_with("\u{2026}\n"),
+        "excerpt should not start with an ellipsis-only line, got: {:?}",
+        row.text
+    );
+    let leading_newlines = newlines_before_utf16(&row.text, row.highlights[0].utf16_start);
+    assert!(
+        leading_newlines <= 1,
+        "expected at most 1 newline before the match, got {} in: {:?}",
+        leading_newlines,
+        row.text
+    );
+}
+
+/// A match on the final line yields a deliberately sparse card (no leading
+/// expansion), and multibyte chars in the kept leading line must not skew the
+/// UTF-16 highlight offsets.
+#[tokio::test]
+async fn card_excerpt_match_at_end_keeps_offsets_with_multibyte_lead() {
+    let content = "line one\nline two\nline three\nhéllo wörld 🎉\nthe target word";
+    let row = matched_excerpt_for_profile(content, "target", ListPresentationProfile::Card).await;
+
+    assert!(!row.highlights.is_empty());
+    assert_eq!(
+        utf16_slice(
+            &row.text,
+            row.highlights[0].utf16_start,
+            row.highlights[0].utf16_end,
+        ),
+        "target"
+    );
+    let leading_newlines = newlines_before_utf16(&row.text, row.highlights[0].utf16_start);
+    assert!(
+        leading_newlines <= 1,
+        "expected at most 1 newline before the match, got {} in: {:?}",
+        leading_newlines,
+        row.text
+    );
+}
+
+/// CompactRow has no line cap: the same 40-line list keeps its full 200-char
+/// leading budget (collapsed to spaces), pinning macOS non-regression.
+#[tokio::test]
+async fn compact_row_excerpt_unaffected_by_line_cap() {
+    let content = (1..=40)
+        .map(|i| {
+            if i == 30 {
+                "tofu".to_string()
+            } else {
+                format!("it{i:02}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let row =
+        matched_excerpt_for_profile(&content, "tofu", ListPresentationProfile::CompactRow).await;
+
+    assert!(row.text.contains("tofu"));
+    assert!(
+        !row.text.contains('\n'),
+        "CompactRow should not contain newlines, got: {:?}",
+        row.text
+    );
+    assert!(
+        row.text.starts_with("it01 "),
+        "CompactRow leading context should not be capped, got: {:?}",
+        row.text
     );
 }
 

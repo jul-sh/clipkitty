@@ -72,6 +72,39 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(client.startedSearchRequests.count, 1)
     }
 
+    func testExternallyCancelledInFlightSearchResubmitsCurrentRequest() async {
+        let client = MockBrowserStoreClient()
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        XCTAssertEqual(client.startedSearchRequests.count, 1)
+
+        // Deliver a .cancelled outcome to the CURRENT operation, simulating another
+        // consumer of the shared Rust store cancelling the global search token.
+        client.cancelNextSearch()
+        await flushMainActor()
+
+        XCTAssertEqual(client.startedSearchRequests.count, 2)
+
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "recovered")],
+            firstPreviewPayload: nil,
+            totalCount: 1
+        ))
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.itemIds, ["1"])
+        XCTAssertEqual(viewModel.selectedItemId, "1")
+        XCTAssertFalse(viewModel.searchSpinnerVisible)
+    }
+
     func testVisiblePanelAfterSuspensionRestartsCancelledInitialSearch() async {
         let client = MockBrowserStoreClient()
         let viewModel = BrowserViewModel(

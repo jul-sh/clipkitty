@@ -13,21 +13,23 @@ use crate::ranking::{
     compute_bucket_score_with_perf, RankingPerfBreakdown, LARGE_DOC_THRESHOLD_BYTES,
 };
 use crate::ranking::{
-    prepare_document_for_ranking, PrefixPreferenceQuery, QualityTier, ScoringContext,
+    fold_str, prepare_document_for_ranking, PrefixPreferenceQuery, QualityTier, ScoringContext,
 };
 use crate::search::{self, SearchQuery};
 pub(crate) use crate::search_admission::CHUNK_PARENT_THRESHOLD_BYTES;
 use crate::search_admission::{
-    PhaseOneAdmissionPolicy, PhaseOneBlendedScore, PhaseTwoHead, PROXIMITY_BOOST_SCALE,
-    WORD_MATCH_SIGNAL,
+    verify_tail_word_evidence, PhaseOneAdmissionPolicy, PhaseOneBlendedScore, PhaseTwoHead,
+    TailEvidence, TailScanBudget, TailVerifyQuery, MAX_WEAK_SIGNAL_WORDS, PROXIMITY_BOOST_SCALE,
+    TAIL_SCAN_BUDGET_UNITS, WEAK_WORD_MATCH_SIGNAL, WORD_MATCH_SIGNAL,
 };
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
 
 /// Index version - bump this when schema changes to trigger automatic rebuild.
 /// History: v3 = initial trigram, v4 = content_words WithFreqsAndPositions,
-///          v5 = previous i64 item_id, v6 = string item_id
-pub const INDEX_VERSION: &str = "v6";
+///          v5 = previous i64 item_id, v6 = string item_id,
+///          v7 = diacritic folding in trigram + content_words analyzers
+pub const INDEX_VERSION: &str = "v7";
 
 const CHUNK_TARGET_BYTES: usize = 16 * 1024;
 const CHUNK_OVERLAP_BYTES: usize = 2 * 1024;
@@ -46,7 +48,10 @@ use tantivy::query::{
     PhraseQuery, TermQuery,
 };
 use tantivy::schema::*;
-use tantivy::tokenizer::{NgramTokenizer, TextAnalyzer, TokenFilter, TokenStream, Tokenizer};
+use tantivy::tokenizer::{
+    LowerCaser, NgramTokenizer, RemoveLongFilter, SimpleTokenizer, TextAnalyzer, TokenFilter,
+    TokenStream, Tokenizer,
+};
 use tantivy::{
     DocAddress, DocId, Index, IndexReader, IndexWriter, ReloadPolicy, Score, SegmentReader, Term,
 };
@@ -112,6 +117,59 @@ impl<T: TokenStream> TokenStream for IncrementPositionTokenStream<T> {
     }
 }
 
+/// Token filter applying `fold_str` to non-ASCII token text so index terms use
+/// the same diacritic fold as query terms and Phase 2 matching. Because the
+/// fold is 1:1 per char, folding ngram tokens post-tokenization equals
+/// ngram-tokenizing folded text.
+#[derive(Clone)]
+struct DiacriticFoldFilter;
+
+impl TokenFilter for DiacriticFoldFilter {
+    type Tokenizer<T: Tokenizer> = DiacriticFoldFilterWrapper<T>;
+
+    fn transform<T: Tokenizer>(self, tokenizer: T) -> Self::Tokenizer<T> {
+        DiacriticFoldFilterWrapper(tokenizer)
+    }
+}
+
+#[derive(Clone)]
+struct DiacriticFoldFilterWrapper<T>(T);
+
+impl<T: Tokenizer> Tokenizer for DiacriticFoldFilterWrapper<T> {
+    type TokenStream<'a> = DiacriticFoldTokenStream<T::TokenStream<'a>>;
+
+    fn token_stream<'a>(&'a mut self, text: &'a str) -> Self::TokenStream<'a> {
+        DiacriticFoldTokenStream {
+            inner: self.0.token_stream(text),
+        }
+    }
+}
+
+struct DiacriticFoldTokenStream<T> {
+    inner: T,
+}
+
+impl<T: TokenStream> TokenStream for DiacriticFoldTokenStream<T> {
+    fn advance(&mut self) -> bool {
+        if !self.inner.advance() {
+            return false;
+        }
+        let token = self.inner.token_mut();
+        if !token.text.is_ascii() {
+            token.text = fold_str(&token.text);
+        }
+        true
+    }
+
+    fn token(&self) -> &tantivy::tokenizer::Token {
+        self.inner.token()
+    }
+
+    fn token_mut(&mut self) -> &mut tantivy::tokenizer::Token {
+        self.inner.token_mut()
+    }
+}
+
 /// Error type for indexer operations
 #[derive(Error, Debug)]
 pub enum IndexerError {
@@ -127,15 +185,15 @@ pub type IndexerResult<T> = Result<T, IndexerError>;
 
 #[derive(Debug, Clone)]
 struct OwnedPrefixPreferenceQuery {
-    raw_query_lower: String,
-    stripped_query_lower: String,
+    raw_query_folded: String,
+    stripped_query_folded: String,
 }
 
 impl OwnedPrefixPreferenceQuery {
     fn as_borrowed(&self) -> PrefixPreferenceQuery<'_> {
         PrefixPreferenceQuery {
-            raw_query_lower: &self.raw_query_lower,
-            stripped_query_lower: &self.stripped_query_lower,
+            raw_query_folded: &self.raw_query_folded,
+            stripped_query_folded: &self.stripped_query_folded,
         }
     }
 }
@@ -143,8 +201,8 @@ impl OwnedPrefixPreferenceQuery {
 #[derive(Debug, Clone, Copy)]
 struct PhaseTwoQuery<'a> {
     query_words: &'a [&'a str],
-    query_words_lower: &'a [&'a str],
-    joined_query_lower: Option<&'a str>,
+    query_words_folded: &'a [&'a str],
+    joined_query_folded: Option<&'a str>,
     last_word_is_prefix: bool,
     prefix_preference: Option<PrefixPreferenceQuery<'a>>,
 }
@@ -192,8 +250,8 @@ struct WordSequenceRecallPlan {
 #[derive(Debug, Clone)]
 struct OwnedPhaseTwoQuery {
     query_words: Vec<String>,
-    query_words_lower: Vec<String>,
-    joined_query_lower: Option<String>,
+    query_words_folded: Vec<String>,
+    joined_query_folded: Option<String>,
     last_word_is_prefix: bool,
     prefix_preference: Option<OwnedPrefixPreferenceQuery>,
 }
@@ -267,9 +325,8 @@ fn prepare_phase_two_query(query: &SearchQuery, recall_text: &str) -> OwnedPhase
         .into_iter()
         .map(|(_, _, word)| word)
         .collect::<Vec<_>>();
-    let query_words_lower = query_words.iter().map(|word| word.to_lowercase()).collect();
-    let joined_query_lower =
-        (!query_words.is_empty()).then(|| query_words.join(" ").to_lowercase());
+    let query_words_folded = query_words.iter().map(|word| fold_str(word)).collect();
+    let joined_query_folded = (!query_words.is_empty()).then(|| fold_str(&query_words.join(" ")));
     let last_word_is_prefix = recall_text.ends_with(|c: char| c.is_alphanumeric());
     let prefix_preference = match query {
         SearchQuery::Plain { .. } => None,
@@ -277,15 +334,15 @@ fn prepare_phase_two_query(query: &SearchQuery, recall_text: &str) -> OwnedPhase
             raw_text,
             stripped_text,
         } => Some(OwnedPrefixPreferenceQuery {
-            raw_query_lower: raw_text.to_lowercase(),
-            stripped_query_lower: stripped_text.to_lowercase(),
+            raw_query_folded: fold_str(raw_text),
+            stripped_query_folded: fold_str(stripped_text),
         }),
     };
 
     OwnedPhaseTwoQuery {
         query_words,
-        query_words_lower,
-        joined_query_lower,
+        query_words_folded,
+        joined_query_folded,
         last_word_is_prefix,
         prefix_preference,
     }
@@ -453,8 +510,8 @@ fn score_phase_two_candidate(
     let bucket = compute_bucket_score(&ScoringContext {
         document: &document,
         query_words: phase_two_query.query_words,
-        query_words_lower: phase_two_query.query_words_lower,
-        joined_query_lower: phase_two_query.joined_query_lower,
+        query_words_folded: phase_two_query.query_words_folded,
+        joined_query_folded: phase_two_query.joined_query_folded,
         last_word_is_prefix: phase_two_query.last_word_is_prefix,
         prefix_preference: phase_two_query.prefix_preference,
         timestamp: candidate.timestamp,
@@ -480,8 +537,8 @@ fn score_phase_two_candidate(
     let (bucket, ranking) = compute_bucket_score_with_perf(&ScoringContext {
         document: &document,
         query_words: phase_two_query.query_words,
-        query_words_lower: phase_two_query.query_words_lower,
-        joined_query_lower: phase_two_query.joined_query_lower,
+        query_words_folded: phase_two_query.query_words_folded,
+        joined_query_folded: phase_two_query.joined_query_folded,
         last_word_is_prefix: phase_two_query.last_word_is_prefix,
         prefix_preference: phase_two_query.prefix_preference,
         timestamp: candidate.timestamp,
@@ -841,7 +898,7 @@ impl Indexer {
         std::fs::create_dir_all(path)?;
         let dir = MmapDirectory::open(path)?;
         let index = Index::open_or_create(dir, schema.clone())?;
-        Self::register_tokenizer(&index);
+        Self::register_tokenizers(&index);
 
         let reader = index
             .reader_builder()
@@ -856,7 +913,7 @@ impl Indexer {
     pub fn new_in_memory() -> IndexerResult<Self> {
         let schema = Self::build_schema();
         let index = Index::create_in_ram(schema.clone());
-        Self::register_tokenizer(&index);
+        Self::register_tokenizers(&index);
 
         let reader = index
             .reader_builder()
@@ -943,9 +1000,11 @@ impl Indexer {
         builder.add_text_field("content", text_options);
 
         // Word-tokenized field for exact word matching and proximity queries.
-        // Uses WithFreqsAndPositions to enable PhraseQuery with slop.
+        // Uses WithFreqsAndPositions to enable PhraseQuery with slop. The
+        // analyzer is tantivy's "default" plus diacritic folding; the distinct
+        // name also makes the v6->v7 analyzer change visible to schema compare.
         let word_field_indexing = TextFieldIndexing::default()
-            .set_tokenizer("default")
+            .set_tokenizer("words_folded")
             .set_index_option(IndexRecordOption::WithFreqsAndPositions);
         let word_options = TextOptions::default().set_indexing_options(word_field_indexing);
         builder.add_text_field("content_words", word_options);
@@ -958,15 +1017,26 @@ impl Indexer {
         builder.build()
     }
 
-    /// Register the trigram tokenizer with the index.
-    /// NgramTokenizer assigns position=0 to all tokens, breaking PhraseQuery.
+    /// Register the custom analyzers with the index. Both fold diacritics so
+    /// index terms agree with query-side `fold_str` (LowerCaser stays first:
+    /// `fold_char` on pre-lowercased text only strips marks).
+    /// NgramTokenizer assigns position=0 to all tokens, breaking PhraseQuery;
     /// IncrementPositionFilter fixes this by assigning incrementing positions.
-    fn register_tokenizer(index: &Index) {
-        let tokenizer = TextAnalyzer::builder(NgramTokenizer::new(3, 3, false).unwrap())
-            .filter(tantivy::tokenizer::LowerCaser)
+    fn register_tokenizers(index: &Index) {
+        let trigram = TextAnalyzer::builder(NgramTokenizer::new(3, 3, false).unwrap())
+            .filter(LowerCaser)
+            .filter(DiacriticFoldFilter)
             .filter(IncrementPositionFilter)
             .build();
-        index.tokenizers().register("trigram", tokenizer);
+        index.tokenizers().register("trigram", trigram);
+
+        // tantivy's "default" analyzer plus diacritic folding.
+        let words_folded = TextAnalyzer::builder(SimpleTokenizer::default())
+            .filter(RemoveLongFilter::limit(40))
+            .filter(LowerCaser)
+            .filter(DiacriticFoldFilter)
+            .build();
+        index.tokenizers().register("words_folded", words_folded);
     }
 
     fn add_search_unit_document(
@@ -1138,15 +1208,15 @@ impl Indexer {
             .iter()
             .map(String::as_str)
             .collect();
-        let query_words_lower: Vec<&str> = phase_two_query_owned
-            .query_words_lower
+        let query_words_folded: Vec<&str> = phase_two_query_owned
+            .query_words_folded
             .iter()
             .map(String::as_str)
             .collect();
         let phase_two_query = PhaseTwoQuery {
             query_words: &query_words,
-            query_words_lower: &query_words_lower,
-            joined_query_lower: phase_two_query_owned.joined_query_lower.as_deref(),
+            query_words_folded: &query_words_folded,
+            joined_query_folded: phase_two_query_owned.joined_query_folded.as_deref(),
             last_word_is_prefix: phase_two_query_owned.last_word_is_prefix,
             prefix_preference: phase_two_query_owned
                 .prefix_preference
@@ -1155,11 +1225,100 @@ impl Indexer {
         };
         let now = Utc::now().timestamp();
         let phase_two_head = PhaseOneAdmissionPolicy::select_phase_two_head(&candidates);
+        let head_indices: HashSet<usize> = phase_two_head.indices().iter().copied().collect();
         let PhaseTwoRun {
             mut scored,
             #[cfg(feature = "perf-log")]
-                perf: phase_two_perf,
+                perf: mut phase_two_perf,
         } = run_phase_two_head(phase_two_head, &candidates, phase_two_query, now, token)?;
+
+        // Tail admission: candidates outside the scored head must show real
+        // word-level evidence for at least 40% of the scanned query words.
+        // Exact content_words signals satisfy this for free; otherwise the
+        // content is scan-verified with the same match classes Phase 2 ranks
+        // (prefix/substring/fuzzy/subsequence), so variant-only matches
+        // survive a head full of exact-word competitors.
+        let word_field = phase_one_plan.word_field();
+        let tail_query = TailVerifyQuery::new(
+            &word_field.words,
+            word_field.last_word_is_prefix,
+            word_field.signal_min_chars,
+        );
+        // 40% of the capped scan set, at least 1; derived from the same words
+        // verification scans so the threshold stays satisfiable.
+        let eligible_word_count = tail_query.word_count() as u32;
+        let min_word_matches = if eligible_word_count > 0 {
+            (eligible_word_count * 2 / 5).max(1)
+        } else {
+            0
+        };
+
+        let scored_pre_rescue: HashSet<usize> = scored.iter().map(|(_, index)| *index).collect();
+        let mut tail_admitted = vec![false; candidates.len()];
+        let mut rescue_indices = Vec::new();
+        let mut scan_budget = TailScanBudget::new(TAIL_SCAN_BUDGET_UNITS);
+        // Scan in two passes, both in blend order: rescue-eligible non-head
+        // candidates first, then head candidates Phase 2 already rejected.
+        // Head rejects can only keep a bottom-of-tail slot, so they must not
+        // drain the budget before genuine variants deeper in the tail are
+        // verified.
+        let tail_scan_order = (0..candidates.len())
+            .filter(|index| !head_indices.contains(index))
+            .chain((0..candidates.len()).filter(|index| head_indices.contains(index)));
+        for index in tail_scan_order {
+            if scored_pre_rescue.contains(&index) {
+                continue;
+            }
+            let candidate = &candidates[index];
+            if candidate.word_match_count() >= min_word_matches {
+                tail_admitted[index] = true;
+                continue;
+            }
+            let is_rejected_head = head_indices.contains(&index);
+            // When admission requires every scanned word, rescanning a head
+            // reject is provably futile: Phase 2 just ran the same match
+            // classes over this content and found no word evidence.
+            if is_rejected_head && min_word_matches == eligible_word_count {
+                continue;
+            }
+            match verify_tail_word_evidence(
+                candidate.content(),
+                &tail_query,
+                min_word_matches,
+                &mut scan_budget,
+            ) {
+                TailEvidence::Verified => {
+                    tail_admitted[index] = true;
+                    // Head candidates Phase 2 already rejected keep their tail
+                    // slot but get no second scoring pass.
+                    if !is_rejected_head
+                        && rescue_indices.len() < PhaseOneAdmissionPolicy::TAIL_RESCUE_HEAD_LIMIT
+                    {
+                        rescue_indices.push(index);
+                    }
+                }
+                // Budget exhaustion falls back to the exact-only rule, which
+                // this candidate already failed.
+                TailEvidence::NoEvidence | TailEvidence::BudgetExhausted => {}
+            }
+        }
+
+        // Rescue scoring: bucket-rank the top scan-verified tail candidates so
+        // a fresh variant match lands where it would in a small history
+        // instead of below every exact-word item. Rescued candidates Phase 2
+        // scores NoMatch stay tail-admitted.
+        if !rescue_indices.is_empty() {
+            let rescue_run = run_phase_two_head(
+                PhaseTwoHead::from_indices(rescue_indices),
+                &candidates,
+                phase_two_query,
+                now,
+                token,
+            )?;
+            scored.extend(rescue_run.scored);
+            #[cfg(feature = "perf-log")]
+            phase_two_perf.merge(rescue_run.perf);
+        }
 
         scored.sort_unstable_by(|a, b| b.0.cmp(&a.0));
         let scored_indices: HashSet<usize> = scored.iter().map(|(_, index)| *index).collect();
@@ -1208,27 +1367,14 @@ impl Indexer {
                 .into_iter()
                 .filter_map(|(_, index)| candidate_slots[index].take()),
         );
-        // Tail: unscored candidates that didn't go through Phase 2.
-        // Require at least 40% of query words to have word-level matches;
-        // pure trigram coincidences without sufficient word overlap are noise.
-        let word_field = phase_one_plan.word_field();
-        let query_word_count = word_field
-            .words
-            .iter()
-            .filter(|word| word.chars().count() >= word_field.signal_min_chars)
-            .count() as u32;
-        let min_word_matches = if query_word_count > 0 {
-            (query_word_count * 2 / 5).max(1) // 40%, at least 1
-        } else {
-            0
-        };
+        // Tail: admitted candidates that stayed outside the bucket-sorted head,
+        // appended in Phase 1 blend order.
         ordered.extend(
             candidate_slots
                 .into_iter()
                 .enumerate()
-                .filter(|(index, _)| !scored_indices.contains(index))
-                .filter_map(|(_, candidate)| candidate)
-                .filter(|candidate| candidate.word_match_count() >= min_word_matches),
+                .filter(|(index, _)| !scored_indices.contains(index) && tail_admitted[*index])
+                .filter_map(|(_, candidate)| candidate),
         );
         ordered.truncate(limit);
 
@@ -1452,10 +1598,35 @@ impl Indexer {
             if distance == 0 {
                 continue;
             }
-            let term = Term::from_field_text(self.content_words_field, &word.to_lowercase());
+            let term = Term::from_field_text(self.content_words_field, &fold_str(word));
             let is_last = i == words.len() - 1;
-            let q: Box<dyn tantivy::query::Query> = if is_last && last_word_is_prefix {
-                Box::new(FuzzyTermQuery::new_prefix(term, distance, true))
+            // Non-final words use prefix acceptance to match phase-2 ranking, where
+            // completed words of >= 3 chars prefix-match longer document words
+            // (NON_FINAL_PREFIX_MIN_QUERY_CHARS shares query_allows_fuzzy_recall's
+            // 3-char floor, so the gate above already enforces it).
+            //
+            // The prefix pathway pairs a distance-0 prefix automaton (the
+            // phase-2 literal folded-prefix contract) with whole-word fuzzy
+            // for typo tolerance. A distance>=1 prefix automaton would also
+            // accept deletion/substitution-variant prefixes ("man" -> "ma*",
+            // "min*") that phase 2 always rejects, inflating recall with
+            // wasted per-keystroke work. Combined per word so the fuzzy_min
+            // clause counting is unchanged.
+            let q: Box<dyn tantivy::query::Query> = if !is_last || last_word_is_prefix {
+                let prefix_d0 = FuzzyTermQuery::new_prefix(term.clone(), 0, true);
+                let fuzzy_whole = FuzzyTermQuery::new(term, distance, true);
+                let mut word_query = BooleanQuery::new(vec![
+                    (
+                        Occur::Should,
+                        Box::new(prefix_d0) as Box<dyn tantivy::query::Query>,
+                    ),
+                    (
+                        Occur::Should,
+                        Box::new(fuzzy_whole) as Box<dyn tantivy::query::Query>,
+                    ),
+                ]);
+                word_query.set_minimum_number_should_match(1);
+                Box::new(word_query)
             } else {
                 Box::new(FuzzyTermQuery::new(term, distance, true))
             };
@@ -1475,7 +1646,7 @@ impl Indexer {
 
         let terms = words
             .iter()
-            .map(|word| Term::from_field_text(self.content_words_field, &word.to_lowercase()))
+            .map(|word| Term::from_field_text(self.content_words_field, &fold_str(word)))
             .collect();
 
         Some(PhrasePrefixQuery::new(terms))
@@ -1483,16 +1654,19 @@ impl Indexer {
 
     /// Build word-level boost clauses for exact word matching and proximity.
     ///
-    /// Uses exact word TermQuery boosts + proximity PhraseQuery boosts.
-    /// The boosts are scaled so that proximity differences become meaningful
-    /// tiebreakers within the same recency bucket.
+    /// Uses exact word TermQuery boosts + constant-score proximity phrase
+    /// signals. The boosts are scaled so that proximity differences become
+    /// meaningful tiebreakers within the same recency bucket.
     ///
     /// Boost scale:
     /// - Exact word match: 2.0x (approximates words_matched_weight)
-    /// - Word proximity (slop=3): PROXIMITY_BOOST_SCALE (encodes proximity tier)
+    /// - Word proximity (slop=3 phrase, trailing-prefix phrase): each clause
+    ///   adds exactly [`PROXIMITY_BOOST_SCALE`] via `ConstScoreQuery`, so the
+    ///   proximity tier is at most 2 and stays inside its 1_000..10_000 band.
+    ///   A multiplicative boost on unbounded phrase BM25 would bleed into the
+    ///   weak word-match band above it.
     ///
-    /// The PROXIMITY_BOOST_SCALE creates distinct score bands that tweak_score
-    /// can decode and convert to an additive proximity tier.
+    /// [`PhaseOneBlendedScore::decode`] recovers the tier from its band.
     fn build_word_boosts(
         &self,
         word_field: &WordFieldPlan,
@@ -1505,7 +1679,7 @@ impl Indexer {
             if word.chars().count() < word_field.signal_min_chars {
                 continue;
             }
-            let term = Term::from_field_text(self.content_words_field, &word.to_lowercase());
+            let term = Term::from_field_text(self.content_words_field, &fold_str(word));
             let term_q = TermQuery::new(term, IndexRecordOption::Basic);
             let boosted: Box<dyn tantivy::query::Query> =
                 Box::new(BoostQuery::new(Box::new(term_q), 2.0));
@@ -1513,21 +1687,24 @@ impl Indexer {
         }
 
         // Word proximity PhraseQuery with slop=3 (allows 3 intervening words).
-        // Uses a large boost to create score bands that tweak_score decodes.
+        // Constant-scored so the contribution stays inside the proximity band
+        // regardless of phrase BM25 magnitude.
         if word_field.words.len() >= 2 {
             let terms: Vec<Term> = word_field
                 .words
                 .iter()
                 .filter(|word| word.chars().count() >= word_field.signal_min_chars)
-                .map(|w| Term::from_field_text(self.content_words_field, &w.to_lowercase()))
+                .map(|w| Term::from_field_text(self.content_words_field, &fold_str(w)))
                 .collect();
             if terms.len() >= 2 {
                 let phrase_q = PhraseQuery::new_with_offset_and_slop(
                     terms.into_iter().enumerate().collect(),
                     3, // slop: allow up to 3 intervening words
                 );
-                let boosted: Box<dyn tantivy::query::Query> =
-                    Box::new(BoostQuery::new(Box::new(phrase_q), PROXIMITY_BOOST_SCALE));
+                let boosted: Box<dyn tantivy::query::Query> = Box::new(ConstScoreQuery::new(
+                    Box::new(phrase_q),
+                    PROXIMITY_BOOST_SCALE,
+                ));
                 boosts.push((Occur::Should, boosted));
             }
         }
@@ -1535,7 +1712,7 @@ impl Indexer {
         if let Some(prefix_query) =
             self.build_trailing_prefix_query(&word_field.words, word_field.last_word_is_prefix)
         {
-            let boosted: Box<dyn tantivy::query::Query> = Box::new(BoostQuery::new(
+            let boosted: Box<dyn tantivy::query::Query> = Box::new(ConstScoreQuery::new(
                 Box::new(prefix_query),
                 PROXIMITY_BOOST_SCALE,
             ));
@@ -1561,9 +1738,46 @@ impl Indexer {
             .iter()
             .filter(|word| word.chars().count() >= min_chars)
             .map(|word| {
-                let term = Term::from_field_text(content_words_field, &word.to_lowercase());
+                let term = Term::from_field_text(content_words_field, &fold_str(word));
                 let term_q = TermQuery::new(term, IndexRecordOption::Basic);
                 let signal = ConstScoreQuery::new(Box::new(term_q), WORD_MATCH_SIGNAL);
+                (
+                    Occur::Should,
+                    Box::new(signal) as Box<dyn tantivy::query::Query>,
+                )
+            })
+            .collect()
+    }
+
+    /// Encode weak word evidence (prefix or typo variants) into the score.
+    ///
+    /// Each query word at the prefix/fuzzy floor gets a prefix-accepting
+    /// `FuzzyTermQuery` worth [`WEAK_WORD_MATCH_SIGNAL`] when a variant of the
+    /// word appears in `content_words`. The signal is ordering-only: admission
+    /// is decided by scan verification, never by the looser index automaton.
+    /// Capped at the first 9 eligible words so the weak band cannot bleed
+    /// into the exact word-match band above it.
+    fn encode_weak_word_match_signals(
+        words: &[String],
+        content_words_field: Field,
+    ) -> Vec<(Occur, Box<dyn tantivy::query::Query>)> {
+        let mut eligible: Vec<&String> = words
+            .iter()
+            .filter(|word| word.chars().count() >= crate::ranking::NON_FINAL_PREFIX_MIN_QUERY_CHARS)
+            .collect();
+        eligible.truncate(MAX_WEAK_SIGNAL_WORDS);
+
+        eligible
+            .into_iter()
+            .map(|word| {
+                let distance = if crate::ranking::query_allows_fuzzy_recall(word) {
+                    crate::ranking::max_edit_distance(word.chars().count())
+                } else {
+                    0
+                };
+                let term = Term::from_field_text(content_words_field, &fold_str(word));
+                let fuzzy = FuzzyTermQuery::new_prefix(term, distance, true);
+                let signal = ConstScoreQuery::new(Box::new(fuzzy), WEAK_WORD_MATCH_SIGNAL);
                 (
                     Occur::Should,
                     Box::new(signal) as Box<dyn tantivy::query::Query>,
@@ -1598,6 +1812,10 @@ impl Indexer {
                 self.content_words_field,
                 word_field.signal_min_chars,
             ));
+            outer.extend(Self::encode_weak_word_match_signals(
+                &word_field.words,
+                self.content_words_field,
+            ));
             Box::new(BooleanQuery::new(outer))
         }
     }
@@ -1613,9 +1831,7 @@ impl Indexer {
             .map(|(index, words)| {
                 let pair_terms = words
                     .iter()
-                    .map(|word| {
-                        Term::from_field_text(self.content_words_field, &word.to_lowercase())
-                    })
+                    .map(|word| Term::from_field_text(self.content_words_field, &fold_str(word)))
                     .collect::<Vec<_>>();
                 let is_last_pair = index + 1 == recall.words.len() - 1;
                 let query: Box<dyn tantivy::query::Query> =
@@ -2062,6 +2278,63 @@ mod tests {
         assert!(!ids.contains(&"2".to_string()));
     }
 
+    // ── Non-final prefix matching tests ─────────────────────────
+
+    #[test]
+    fn test_progressive_typing_never_drops_prefix_target() {
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer
+            .add_document("1", "clipboard manager settings", 1000)
+            .unwrap();
+        indexer.commit().unwrap();
+
+        for query in ["clip", "clip m", "clip man", "clip mana", "clip manag"] {
+            let results = indexer.search(query, 10).unwrap();
+            let ids: Vec<String> = results.iter().map(|c| c.id.clone()).collect();
+            assert!(
+                ids.contains(&"1".to_string()),
+                "'{}' should keep matching 'clipboard manager settings', got {:?}",
+                query,
+                ids
+            );
+        }
+    }
+
+    #[test]
+    fn test_non_final_prefix_recall_without_adjacency() {
+        // Reordered prefix words share too few trigrams for trigram recall;
+        // the fuzzy-prefix clauses must carry it
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer.add_document("1", "manual category", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("cat man", 10).unwrap();
+        let ids: Vec<String> = results.iter().map(|c| c.id.clone()).collect();
+        assert!(
+            ids.contains(&"1".to_string()),
+            "'cat man' should recall doc with 'manual category', got {:?}",
+            ids
+        );
+    }
+
+    #[test]
+    fn test_exact_word_still_outranks_non_final_prefix_at_equal_recency() {
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer.add_document("1", "clip man notes", 1000).unwrap();
+        indexer
+            .add_document("2", "clipboard manager notes", 1000)
+            .unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("clip man", 10).unwrap();
+        let ids: Vec<String> = results.iter().map(|c| c.id.clone()).collect();
+        assert_eq!(
+            ids,
+            vec!["1".to_string(), "2".to_string()],
+            "literal 'clip man' should outrank the prefix match at equal recency"
+        );
+    }
+
     #[test]
     fn test_chunked_parent_collapses_to_single_candidate() {
         let indexer = Indexer::new_in_memory().unwrap();
@@ -2263,6 +2536,543 @@ mod tests {
             ids.is_empty(),
             "query 'to be or not' should not recall scattered short words without adjacent pairs, got {:?}",
             ids
+        );
+    }
+
+    // ── Scan-verified tail admission tests ──────────────────────
+    //
+    // With 64+ exact-word competitors filling the Phase 2 head, variant-only
+    // matches (prefix/plural, substring, typo) land in the tail; admission
+    // must verify their content instead of requiring exact word signals.
+
+    fn index_dense_exact_history(indexer: &Indexer, word_pattern: &str, now: i64) {
+        for i in 0..70i64 {
+            indexer
+                .add_document(
+                    &format!("exact-{i}"),
+                    &format!("{word_pattern} {i}"),
+                    now - (i + 2) * 3600,
+                )
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn tail_admission_rescues_prefix_variant_when_head_full_of_exact_matches() {
+        let indexer = Indexer::new_in_memory().unwrap();
+        let now = Utc::now().timestamp();
+        index_dense_exact_history(&indexer, "error log entry", now);
+        indexer
+            .add_document("variant", "404 errors spiking on prod", now - 300)
+            .unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("error", 500).unwrap();
+        let ids: Vec<&str> = results.iter().map(|c| c.id.as_str()).collect();
+        assert!(
+            ids.contains(&"variant"),
+            "prefix variant 'errors' should survive 70 exact 'error' competitors, got {:?}",
+            ids
+        );
+        assert_eq!(
+            ids.first(),
+            Some(&"variant"),
+            "the sole last-hour item should be bucket-ranked first, as in a small history"
+        );
+        let variant = results.iter().find(|c| c.id == "variant").unwrap();
+        assert_eq!(
+            variant.scoring_phase(),
+            crate::candidate::ScoringPhase::PhaseTwoScored,
+            "rescued variant should be Phase 2 bucket-scored"
+        );
+    }
+
+    #[test]
+    fn repro_claim1_variant_dropped_with_300_exact_items() {
+        // 300 exact-word items spread over 300 hours, plus a 5-minute-old
+        // variant-only item. Mirrors the shipped rescue test at larger scale
+        // (> RAW_RECALL_BATCHES[0] = 256): recall must keep deepening while
+        // the frontier still carries word evidence, or the variant is never
+        // recalled and tail rescue cannot see it.
+        let indexer = Indexer::new_in_memory().unwrap();
+        let now = Utc::now().timestamp();
+        for i in 0..300i64 {
+            indexer
+                .add_document(
+                    &format!("exact-{i}"),
+                    &format!("error log entry {i}"),
+                    now - (i + 2) * 3600,
+                )
+                .unwrap();
+        }
+        indexer
+            .add_document("variant", "404 errors spiking on prod", now - 300)
+            .unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("error", 500).unwrap();
+        let ids: Vec<&str> = results.iter().map(|c| c.id.as_str()).collect();
+        assert!(
+            ids.contains(&"variant"),
+            "prefix variant 'errors' should survive 300 exact 'error' competitors; got {} results, variant absent",
+            ids.len()
+        );
+        assert_eq!(
+            ids.first(),
+            Some(&"variant"),
+            "the sole last-hour item should be bucket-ranked first"
+        );
+    }
+
+    #[test]
+    fn tail_admission_rescues_non_final_prefix_match_when_head_full() {
+        let indexer = Indexer::new_in_memory().unwrap();
+        let now = Utc::now().timestamp();
+        index_dense_exact_history(&indexer, "clip man notes", now);
+        indexer
+            .add_document("variant", "clipboard manager settings", now - 300)
+            .unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("clip man", 500).unwrap();
+        let ids: Vec<&str> = results.iter().map(|c| c.id.as_str()).collect();
+        assert!(
+            ids.contains(&"variant"),
+            "'clip man' should keep matching 'clipboard manager settings' past 70 exact competitors, got {:?}",
+            ids
+        );
+        let variant = results.iter().find(|c| c.id == "variant").unwrap();
+        assert_eq!(
+            variant.scoring_phase(),
+            crate::candidate::ScoringPhase::PhaseTwoScored,
+            "rescued non-final prefix match should be Phase 2 bucket-scored"
+        );
+    }
+
+    #[test]
+    fn tail_admission_rescues_substring_match_when_head_full() {
+        let indexer = Indexer::new_in_memory().unwrap();
+        let now = Utc::now().timestamp();
+        index_dense_exact_history(&indexer, "board meeting notes", now);
+        indexer
+            .add_document("variant", "clipboard manager", now - 300)
+            .unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("board", 500).unwrap();
+        let ids: Vec<&str> = results.iter().map(|c| c.id.as_str()).collect();
+        assert!(
+            ids.contains(&"variant"),
+            "substring match 'clipboard' should survive 70 exact 'board' competitors, got {:?}",
+            ids
+        );
+    }
+
+    #[test]
+    fn tail_admission_rescues_typo_match_when_head_full() {
+        let indexer = Indexer::new_in_memory().unwrap();
+        let now = Utc::now().timestamp();
+        index_dense_exact_history(&indexer, "riverside cafe", now);
+        indexer
+            .add_document("variant", "riversde park", now - 300)
+            .unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("riverside", 500).unwrap();
+        let ids: Vec<&str> = results.iter().map(|c| c.id.as_str()).collect();
+        assert!(
+            ids.contains(&"variant"),
+            "typo'd 'riversde' should survive 70 exact 'riverside' competitors, got {:?}",
+            ids
+        );
+    }
+
+    #[test]
+    fn tail_admission_still_drops_candidates_without_word_evidence() {
+        // "burrows mirror" is recalled for "error" via trigrams 'rro'/'ror'
+        // but matches no word class; it must stay dropped in dense and small
+        // histories alike (consistent with Phase 2's NoMatch).
+        let dense = Indexer::new_in_memory().unwrap();
+        let now = Utc::now().timestamp();
+        index_dense_exact_history(&dense, "error log entry", now);
+        dense
+            .add_document("noise", "burrows mirror", now - 300)
+            .unwrap();
+        dense.commit().unwrap();
+
+        let dense_ids: Vec<String> = dense
+            .search("error", 500)
+            .unwrap()
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        assert!(
+            !dense_ids.contains(&"noise".to_string()),
+            "trigram coincidence should be dropped from a dense history, got {:?}",
+            dense_ids
+        );
+
+        let small = Indexer::new_in_memory().unwrap();
+        small
+            .add_document("noise", "burrows mirror", now - 300)
+            .unwrap();
+        small.commit().unwrap();
+
+        let small_ids: Vec<String> = small
+            .search("error", 500)
+            .unwrap()
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        assert!(
+            !small_ids.contains(&"noise".to_string()),
+            "trigram coincidence should be dropped from a small history, got {:?}",
+            small_ids
+        );
+    }
+
+    #[test]
+    fn rescued_items_beyond_rescue_limit_still_admitted() {
+        let indexer = Indexer::new_in_memory().unwrap();
+        let now = Utc::now().timestamp();
+        index_dense_exact_history(&indexer, "error log entry", now);
+        for i in 0..20i64 {
+            indexer
+                .add_document(
+                    &format!("variant-{i}"),
+                    &format!("errors spiking on host {i}"),
+                    now - 60 - i,
+                )
+                .unwrap();
+        }
+        indexer.commit().unwrap();
+
+        let results = indexer.search("error", 500).unwrap();
+        let variants: Vec<&SearchCandidate> = results
+            .iter()
+            .filter(|c| c.id.starts_with("variant-"))
+            .collect();
+        assert_eq!(
+            variants.len(),
+            20,
+            "admission must not be capped by TAIL_RESCUE_HEAD_LIMIT"
+        );
+        let rescued = variants
+            .iter()
+            .filter(|c| c.scoring_phase() == crate::candidate::ScoringPhase::PhaseTwoScored)
+            .count();
+        assert_eq!(
+            rescued,
+            PhaseOneAdmissionPolicy::TAIL_RESCUE_HEAD_LIMIT,
+            "exactly the rescue limit should be Phase 2 scored"
+        );
+        assert_eq!(
+            variants.len() - rescued,
+            4,
+            "variants past the rescue limit stay admitted as Phase 1 tail items"
+        );
+    }
+
+    #[test]
+    fn weak_signal_counts_prefix_and_typo_variants() {
+        // Pins FuzzyTermQuery::new_prefix semantics: a prefix variant
+        // ('errors') and a transposition typo ('erorr') must both carry the
+        // weak word-evidence band in the decoded Phase 1 score.
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer
+            .add_document("prefix-variant", "errors spiking", 1000)
+            .unwrap();
+        indexer
+            .add_document("typo-variant", "erorr log", 1000)
+            .unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("error", 10).unwrap();
+        for id in ["prefix-variant", "typo-variant"] {
+            let candidate = results
+                .iter()
+                .find(|c| c.id == id)
+                .unwrap_or_else(|| panic!("'{id}' should be recalled for 'error'"));
+            assert!(
+                candidate.weak_word_match_count() >= 1,
+                "'{id}' should carry weak word evidence, got {}",
+                candidate.weak_word_match_count()
+            );
+        }
+    }
+
+    // ── Tail-scan budget and ordering tests ─────────────────────
+    //
+    // The scan budget must be spent on rescuable candidates first; noise
+    // that Phase 2 always rejects must never starve a genuine variant
+    // sitting deeper in blend order.
+
+    /// History where fresh noise items (token "early", within edit distance
+    /// 1 of "err" but matching no Phase 2 word class) outrank an older
+    /// genuine prefix variant ("error") in blend order. `noise_bytes`
+    /// controls how much budget each failed tail scan burns.
+    fn claim3_index(noise_count: i64, noise_bytes: usize) -> Indexer {
+        let indexer = Indexer::new_in_memory().unwrap();
+        let now = Utc::now().timestamp();
+        let filler_repeats = noise_bytes / 9;
+        let filler = "abcdefgh ".repeat(filler_repeats.max(1));
+        for i in 0..noise_count {
+            indexer
+                .add_document(&format!("noise-{i}"), &format!("early {filler}"), now - i)
+                .unwrap();
+        }
+        indexer
+            .add_document("genuine", "deploy error logs", now - 86_400)
+            .unwrap();
+        indexer.commit().unwrap();
+        indexer
+    }
+
+    #[test]
+    fn claim3_control_small_noise_genuine_variant_survives() {
+        // 80 fresh noise items, but tiny: total failed-scan cost is a sliver
+        // of the budget. The genuine old "error" item must be scan-verified
+        // and admitted despite sitting behind all noise in blend order.
+        let indexer = claim3_index(80, 10);
+        let results = indexer.search("err", 500).unwrap();
+        let ids: Vec<&str> = results.iter().map(|c| c.id.as_str()).collect();
+        assert!(
+            ids.contains(&"genuine"),
+            "control: genuine 'error' item should be admitted, got {ids:?}"
+        );
+    }
+
+    #[test]
+    fn claim3_budget_drained_by_unrescuable_noise_drops_genuine_variant() {
+        // Same shape, but each noise item is ~30KB, so a failed scan costs
+        // ~270KB (pass 1 + 8x pass 2): unchecked, ~16 of the 80 noise items
+        // would exhaust the 4MiB budget before the genuine variant.
+        let indexer = claim3_index(80, 30 * 1024);
+        let results = indexer.search("err", 500).unwrap();
+        let ids: Vec<&str> = results.iter().map(|c| c.id.as_str()).collect();
+        assert!(
+            ids.contains(&"genuine"),
+            "genuine 'error' item should not be dropped by budget drained on \
+             unrescuable noise; got {} results: {:?}",
+            ids.len(),
+            &ids[..ids.len().min(5)]
+        );
+    }
+
+    #[test]
+    fn tail_scan_verifies_genuine_variant_before_rejected_head_noise() {
+        // Query "man" recalls "map ..." via whole-word fuzzy (d=1), but
+        // Phase 2 and tail verification both reject the 3-char substitution,
+        // so every fresh noise item is an unrescuable head reject. Scanning
+        // those 72 head rejects first (~270KB per failed scan) would exhaust
+        // the 4MiB budget and silently drop the genuine old prefix variant:
+        // rescue-eligible tail candidates must scan first, and a single-word
+        // query must skip rejected-head rescans outright.
+        let indexer = Indexer::new_in_memory().unwrap();
+        let now = Utc::now().timestamp();
+        let filler = "abcdefgh ".repeat((30 * 1024) / 9);
+        for i in 0..80i64 {
+            indexer
+                .add_document(&format!("noise-{i}"), &format!("map {filler}"), now - i)
+                .unwrap();
+        }
+        indexer
+            .add_document("genuine", "manager weekly sync", now - 86_400)
+            .unwrap();
+        indexer.commit().unwrap();
+
+        // Premise: the fresh noise must outnumber the head limit in phase-1
+        // recall, or this test stops exercising the scan order at all.
+        let plan = indexer.plan_phase_one_query("man");
+        let candidates = indexer.phase_one_recall(&plan, 500).unwrap();
+        let noise_recalled = candidates
+            .iter()
+            .filter(|c| c.id.starts_with("noise-"))
+            .count();
+        assert!(
+            noise_recalled > PhaseOneAdmissionPolicy::TOTAL_HEAD_LIMIT,
+            "noise must fill the head to exercise scan ordering, recalled {noise_recalled}"
+        );
+
+        let results = indexer.search("man", 500).unwrap();
+        let ids: Vec<&str> = results.iter().map(|c| c.id.as_str()).collect();
+        assert!(
+            ids.contains(&"genuine"),
+            "genuine 'manager' prefix variant should not be dropped by budget \
+             drained on unrescuable head rejects; got {} results",
+            ids.len()
+        );
+    }
+
+    #[test]
+    fn claim15_nonfinal_prefix_fuzzy_rejects_deletion_variant_prefixes() {
+        // For "man clip", fuzzy_min = 2.div_ceil(2) = 1, so a single fuzzy
+        // clause alone recalls a doc. The non-final prefix pathway must only
+        // accept literal prefixes ("man" -> "manager") plus whole-word fuzzy
+        // typos ("mna"); a distance>=1 prefix automaton would also recall
+        // every "ma*" deletion-variant and "min*"/"can*" substitution-variant
+        // prefix that phase 2 always rejects, as wasted per-keystroke work.
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer
+            .add_document("legit", "manager clipboard notes", 1000)
+            .unwrap();
+        indexer.add_document("typo", "mna power", 1000).unwrap();
+        // Deletion/substitution-variant prefix noise: no literal "man"/"clip"
+        // prefix, and no whole word within edit distance 1 of either.
+        let noise = [
+            ("noise-magic", "magic show tonight"),
+            ("noise-matrix", "matrix view toggle"),
+            ("noise-market", "market update report"),
+            ("noise-madrid", "madrid trip photos"),
+            ("noise-minutes", "minutes remaining today"),
+            ("noise-candle", "candle wax order"),
+        ];
+        for (id, content) in noise {
+            indexer.add_document(id, content, 1000).unwrap();
+        }
+        indexer
+            .add_document("control", "zebra yoga sunset", 1000)
+            .unwrap();
+        indexer.commit().unwrap();
+
+        let plan = indexer.plan_phase_one_query("man clip");
+        let candidates = indexer.phase_one_recall(&plan, 50).unwrap();
+        let recalled: Vec<&str> = candidates.iter().map(|c| c.id.as_str()).collect();
+
+        assert!(recalled.contains(&"legit"), "true prefix match must recall");
+        assert!(
+            recalled.contains(&"typo"),
+            "whole-word transposition typo must keep fuzzy recall"
+        );
+        assert!(
+            !recalled.contains(&"control"),
+            "unrelated doc must not recall"
+        );
+
+        let noise_recalled: Vec<&str> = noise
+            .iter()
+            .map(|(id, _)| *id)
+            .filter(|id| recalled.contains(id))
+            .collect();
+        assert!(
+            noise_recalled.is_empty(),
+            "deletion/substitution-variant prefixes leaked into phase-1 recall: {noise_recalled:?}"
+        );
+    }
+
+    #[test]
+    fn weak_signals_cap_at_nine_words_instead_of_dropping() {
+        // Past MAX_WEAK_SIGNAL_WORDS (9) the encoder must cap, not drop: a
+        // 10-word query keeps weak evidence for its first 9 words instead of
+        // collapsing every candidate's weak count to 0 in one step.
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer
+            .add_document(
+                "variants",
+                "alphas bravos charlies deltas echoes foxtrots golfs hotels indias juliets",
+                1000,
+            )
+            .unwrap();
+        indexer.commit().unwrap();
+
+        let nine_words = "alpha bravo charlie delta echo foxtrot golf hotel india";
+        let ten_words = "alpha bravo charlie delta echo foxtrot golf hotel india juliet";
+        for query in [nine_words, ten_words] {
+            let results = indexer.search(query, 10).unwrap();
+            let candidate = results
+                .iter()
+                .find(|c| c.id == "variants")
+                .unwrap_or_else(|| panic!("plural variants should be recalled for {query:?}"));
+            assert_eq!(
+                candidate.weak_word_match_count(),
+                9,
+                "query {query:?} should carry weak evidence for 9 words",
+            );
+        }
+    }
+
+    #[test]
+    fn claim23_proximity_boost_pollutes_weak_word_match_band() {
+        // Proximity clauses must contribute a constant PROXIMITY_BOOST_SCALE
+        // per matched clause: a multiplicative boost on phrase BM25 exceeds
+        // WEAK_WORD_MATCH_SIGNAL (10_000) for rare adjacent terms and decode
+        // then miscounts the proximity mass as weak word evidence.
+        let indexer = Indexer::new_in_memory().unwrap();
+        for i in 0..600 {
+            indexer
+                .add_document(
+                    &format!("filler-{i}"),
+                    &format!("meeting notes entry {i} quarterly planning review"),
+                    1000,
+                )
+                .unwrap();
+        }
+        indexer
+            .add_document("target", "docker password hunter", 1000)
+            .unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("docker password", 10).unwrap();
+        let candidate = results
+            .iter()
+            .find(|c| c.id == "target")
+            .expect("target should be recalled");
+
+        // A two-word query has at most two words with prefix/typo evidence,
+        // so a correctly banded encoding can never decode more than 2 here.
+        assert!(
+            candidate.phase_one_score.weak_word_match_count <= 2,
+            "two-word query decoded {} weak word matches; proximity mass bled \
+             into the weak band",
+            candidate.phase_one_score.weak_word_match_count
+        );
+        assert!(
+            (1..=2).contains(&candidate.phase_one_score.proximity_tier),
+            "true adjacent phrase should decode a proximity tier of 1-2, got {}",
+            candidate.phase_one_score.proximity_tier
+        );
+    }
+
+    // ── Diacritic folding tests ─────────────────────────────────
+
+    #[test]
+    fn diacritic_recall_through_trigram_and_word_fields() {
+        // Would fail with matching-only folding: phase 1 trigrams of "resume"
+        // and "résumé" share zero terms unless the analyzers fold too.
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer.add_document("1", "résumé draft v2", 1000).unwrap();
+        indexer.commit().unwrap();
+
+        for query in ["resume", "résumé", "resume draft"] {
+            let results = indexer.search(query, 10).unwrap();
+            let ids: Vec<&str> = results.iter().map(|c| c.id.as_str()).collect();
+            assert!(
+                ids.contains(&"1"),
+                "query {query:?} should find 'résumé draft v2', got {ids:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn folded_match_counts_as_word_match_signal() {
+        // Pins the encode_word_match_signals fold: a folded-exact hit must
+        // count as an exact phase-1 word match so it is never tail-filtered
+        // behind exact-word competitors.
+        let indexer = Indexer::new_in_memory().unwrap();
+        indexer
+            .add_document("folded", "404 résumés sent last week", 1000)
+            .unwrap();
+        indexer.commit().unwrap();
+
+        let results = indexer.search("resumes", 10).unwrap();
+        let candidate = results
+            .iter()
+            .find(|c| c.id == "folded")
+            .expect("'resumes' should recall the accented item");
+        assert!(
+            candidate.word_match_count() >= 1,
+            "folded word hit should carry the exact word-match signal, got {}",
+            candidate.word_match_count()
         );
     }
 }

@@ -52,8 +52,9 @@ pub struct ClipboardStore {
     analysis_cache: Arc<match_presentation::HighlightAnalysisCache>,
     #[cfg(feature = "sync")]
     sync_emitter: Arc<RealSyncEmitter>,
-    /// Token for the currently running search, if any. Starting a new search cancels
-    /// the previous one by calling cancel() on this token.
+    /// Token for the currently running search, if any. The store allows one in-flight
+    /// search: beginning a search cancels the previous one by calling cancel() on this
+    /// token, so each UI surface must funnel interactive searches through a single owner.
     active_search_token: Arc<Mutex<Option<CancellationToken>>>,
 }
 
@@ -133,9 +134,32 @@ impl ClipboardStore {
             .unwrap_or_else(|| PathBuf::from(&index_dir))
     }
 
+    /// Best-effort removal of index directories left behind by INDEX_VERSION
+    /// bumps; failures are ignored (a stale dir only costs disk space).
+    fn remove_stale_index_dirs(current_index_path: &Path) {
+        let Some(parent) = current_index_path.parent() else {
+            return;
+        };
+        let Ok(entries) = std::fs::read_dir(parent) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let is_stale_index_dir = entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with("tantivy_index_v"));
+            let entry_path = entry.path();
+            if is_stale_index_dir && entry_path != current_index_path && entry_path.is_dir() {
+                let _ = std::fs::remove_dir_all(&entry_path);
+            }
+        }
+    }
+
     fn open_at_path(path: &Path) -> Result<Self, ClipKittyError> {
         let db = Database::open(path).map_err(ClipKittyError::from)?;
-        let indexer = Indexer::new(&Self::index_path_for_database(path))?;
+        let index_path = Self::index_path_for_database(path);
+        Self::remove_stale_index_dirs(&index_path);
+        let indexer = Indexer::new(&index_path)?;
         #[cfg(feature = "sync")]
         let sync_emitter = Arc::new(RealSyncEmitter::new(db.pool().clone()));
 
@@ -1444,6 +1468,30 @@ mod tests {
     }
 
     #[test]
+    fn index_version_v7_dir_name() {
+        // Pins the v7 migration trigger (diacritic folding analyzers): a
+        // revert of INDEX_VERSION would silently reuse a stale-fold index.
+        let path = ClipboardStore::index_path_for_database(Path::new("/tmp/clipkitty/test.db"));
+        assert!(
+            path.ends_with("tantivy_index_v7"),
+            "expected v7 index dir, got {path:?}"
+        );
+    }
+
+    #[test]
+    fn open_at_path_sweeps_stale_index_dirs() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("test.db");
+        let stale_dir = temp.path().join("tantivy_index_v6");
+        std::fs::create_dir_all(&stale_dir).unwrap();
+
+        let _store = ClipboardStore::open_at_path(&db_path).unwrap();
+
+        assert!(!stale_dir.exists(), "stale v6 index dir should be removed");
+        assert!(ClipboardStore::index_path_for_database(&db_path).exists());
+    }
+
+    #[test]
     fn test_round_trip_save_and_fetch() {
         let store = ClipboardStore::new_in_memory().unwrap();
         let id = store.save_text("hello world".into(), None, None).unwrap();
@@ -1536,5 +1584,32 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(after_touch.matches[0].item_metadata.item_id, first.item_id);
+    }
+
+    #[tokio::test]
+    async fn second_consumer_search_cancels_first_consumers_in_flight_search() {
+        // Pins the single-flight contract on active_search_token: starting any
+        // search cancels the previous in-flight one, so each UI surface must
+        // funnel interactive searches through a single owner.
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let now = chrono::Utc::now().timestamp();
+        for i in 0..100i64 {
+            insert_indexed_text_with_timestamp(&store, &format!("invoice draft {i}"), now - i);
+        }
+        store.indexer.commit().unwrap();
+
+        let first = store.start_search(
+            "invoice".to_string(),
+            ItemQueryFilter::All,
+            ListPresentationProfile::CompactRow,
+        );
+        let _second = store.start_search(
+            String::new(),
+            ItemQueryFilter::All,
+            ListPresentationProfile::CompactRow,
+        );
+
+        let outcome = first.await_result().await.unwrap();
+        assert_eq!(outcome, SearchOutcome::Cancelled);
     }
 }

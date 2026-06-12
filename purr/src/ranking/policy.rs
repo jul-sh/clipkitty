@@ -55,10 +55,11 @@ pub struct QualityDetail {
 }
 
 /// Prefix preference state carried from the `^query` mode.
+/// Both fields are folded via `fold_str`.
 #[derive(Debug, Clone, Copy)]
 pub struct PrefixPreferenceQuery<'a> {
-    pub raw_query_lower: &'a str,
-    pub stripped_query_lower: &'a str,
+    pub raw_query_folded: &'a str,
+    pub stripped_query_folded: &'a str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]

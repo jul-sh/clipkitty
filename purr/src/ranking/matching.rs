@@ -1,3 +1,4 @@
+use super::folding::fold_str;
 use strsim::osa_distance;
 use triple_accel::levenshtein::{levenshtein_simd_k_with_opts, RDAMERAU_COSTS};
 
@@ -44,12 +45,28 @@ pub(crate) enum PrefixMatch {
     Enabled { min_query_chars: usize },
 }
 
+/// Minimum chars for a completed (non-final) query word to prefix-match a longer
+/// document word. Matches the codebase's "meaningful fragment" floor: 3-char
+/// trigram queries, 3-char contained substrings, and 3-char fuzzy minimums.
+pub(crate) const NON_FINAL_PREFIX_MIN_QUERY_CHARS: usize = 3;
+
+/// Prefix-match policy per query word: a completed (space-terminated) word may
+/// still prefix a longer document word when the fragment is discriminating
+/// (>= 3 chars); the in-progress last word keeps generous 1/2-char thresholds;
+/// an explicitly finalized last word (query ends non-alphanumeric) stays
+/// disabled per the Milli "explicitly completed" contract.
 pub(crate) fn prefix_match_for_query_word(
     query_word_count: usize,
     query_word_index: usize,
     last_word_is_prefix: bool,
 ) -> PrefixMatch {
-    if !last_word_is_prefix || query_word_index + 1 != query_word_count {
+    let is_last = query_word_index + 1 == query_word_count;
+    if !is_last {
+        return PrefixMatch::Enabled {
+            min_query_chars: NON_FINAL_PREFIX_MIN_QUERY_CHARS,
+        };
+    }
+    if !last_word_is_prefix {
         return PrefixMatch::Disabled;
     }
 
@@ -60,32 +77,33 @@ pub(crate) fn prefix_match_for_query_word(
 
 /// Check if a query word matches a document word using the same criteria
 /// as ranking: exact -> prefix -> subword-prefix -> infix substring -> fuzzy
-/// -> subsequence. `qw_lower` and `dw_lower` must already be lowercased; `dw_raw`
+/// -> subsequence. `qw_folded` and `dw_folded` must already be folded via
+/// `fold_str` (lowercase + char-count-preserving diacritic strip); `dw_raw`
 /// preserves original casing for camelCase/digit boundary detection.
 pub(crate) fn does_word_match(
-    qw_lower: &str,
-    dw_lower: &str,
+    qw_folded: &str,
+    dw_folded: &str,
     dw_raw: &str,
     prefix_match: PrefixMatch,
 ) -> WordMatchKind {
-    if dw_lower == qw_lower {
+    if dw_folded == qw_folded {
         return WordMatchKind::Exact;
     }
-    if let Some(span) = prefix_match_span(qw_lower, dw_lower, prefix_match) {
+    if let Some(span) = prefix_match_span(qw_folded, dw_folded, prefix_match) {
         return WordMatchKind::Prefix { span };
     }
-    if let Some(contained_match) = classify_contained_match(qw_lower, dw_lower, dw_raw) {
+    if let Some(contained_match) = classify_contained_match(qw_folded, dw_folded, dw_raw) {
         return contained_match;
     }
-    let max_typo = max_edit_distance(qw_lower.chars().count());
+    let max_typo = max_edit_distance(qw_folded.chars().count());
     if max_typo > 0 {
-        if let Some(dist) = edit_distance_bounded(qw_lower, dw_lower, max_typo) {
-            if dist > 0 && allows_fuzzy_match(qw_lower, dw_lower, dist) {
+        if let Some(dist) = edit_distance_bounded(qw_folded, dw_folded, max_typo) {
+            if dist > 0 && allows_fuzzy_match(qw_folded, dw_folded, dist) {
                 return WordMatchKind::Fuzzy(dist);
             }
         }
     }
-    if let Some(gaps) = subsequence_match(qw_lower, dw_lower) {
+    if let Some(gaps) = subsequence_match(qw_folded, dw_folded) {
         return WordMatchKind::Subsequence(gaps);
     }
     WordMatchKind::None
@@ -95,31 +113,31 @@ pub(crate) fn does_word_match(
 /// no fuzzy edit distance or subsequence matching. This is much faster as it avoids
 /// expensive DP table allocations for edit distance computation.
 pub(crate) fn does_word_match_fast(
-    qw_lower: &str,
-    dw_lower: &str,
+    qw_folded: &str,
+    dw_folded: &str,
     prefix_match: PrefixMatch,
 ) -> WordMatchKind {
-    match_fast_lowered(qw_lower, dw_lower, prefix_match)
+    match_fast_folded(qw_folded, dw_folded, prefix_match)
 }
 
 /// Fast matching against a raw token slice. ASCII-heavy content stays allocation-free;
-/// non-ASCII tokens fall back to lowercasing the token once for comparison.
+/// non-ASCII tokens fall back to folding the token once for comparison.
 pub(crate) fn does_word_match_fast_raw(
-    qw_lower: &str,
+    qw_folded: &str,
     dw_raw: &str,
     prefix_match: PrefixMatch,
 ) -> WordMatchKind {
-    if qw_lower.is_ascii() && dw_raw.is_ascii() {
-        if dw_raw.eq_ignore_ascii_case(qw_lower) {
+    if qw_folded.is_ascii() && dw_raw.is_ascii() {
+        if dw_raw.eq_ignore_ascii_case(qw_folded) {
             return WordMatchKind::Exact;
         }
-        if let Some(span) = ascii_prefix_match_span(qw_lower, dw_raw, prefix_match) {
+        if let Some(span) = ascii_prefix_match_span(qw_folded, dw_raw, prefix_match) {
             return WordMatchKind::Prefix { span };
         }
         return WordMatchKind::None;
     }
 
-    match_fast_lowered(qw_lower, &dw_raw.to_lowercase(), prefix_match)
+    match_fast_folded(qw_folded, &fold_str(dw_raw), prefix_match)
 }
 
 fn ascii_starts_with_ignore_case(haystack: &[u8], needle_lower: &[u8]) -> bool {
@@ -127,61 +145,70 @@ fn ascii_starts_with_ignore_case(haystack: &[u8], needle_lower: &[u8]) -> bool {
         && haystack[..needle_lower.len()].eq_ignore_ascii_case(needle_lower)
 }
 
-fn match_fast_lowered(qw_lower: &str, dw_lower: &str, prefix_match: PrefixMatch) -> WordMatchKind {
-    if dw_lower == qw_lower {
+fn match_fast_folded(qw_folded: &str, dw_folded: &str, prefix_match: PrefixMatch) -> WordMatchKind {
+    if dw_folded == qw_folded {
         return WordMatchKind::Exact;
     }
-    if let Some(span) = prefix_match_span(qw_lower, dw_lower, prefix_match) {
+    if let Some(span) = prefix_match_span(qw_folded, dw_folded, prefix_match) {
         return WordMatchKind::Prefix { span };
     }
     WordMatchKind::None
 }
 
 fn prefix_match_span(
-    qw_lower: &str,
-    dw_lower: &str,
+    qw_folded: &str,
+    dw_folded: &str,
     prefix_match: PrefixMatch,
 ) -> Option<TokenMatchSpan> {
     match prefix_match {
         PrefixMatch::Disabled => None,
         PrefixMatch::Enabled { min_query_chars } => {
-            let query_len = qw_lower.chars().count();
-            (query_len >= min_query_chars && dw_lower.starts_with(qw_lower))
+            let query_len = qw_folded.chars().count();
+            (query_len >= min_query_chars && dw_folded.starts_with(qw_folded))
                 .then(|| TokenMatchSpan::at_start(query_len))
         }
     }
 }
 
 fn ascii_prefix_match_span(
-    qw_lower: &str,
+    qw_folded: &str,
     dw_raw: &str,
     prefix_match: PrefixMatch,
 ) -> Option<TokenMatchSpan> {
     match prefix_match {
         PrefixMatch::Disabled => None,
         PrefixMatch::Enabled { min_query_chars } => {
-            let query_len = qw_lower.chars().count();
+            let query_len = qw_folded.chars().count();
             (query_len >= min_query_chars
-                && ascii_starts_with_ignore_case(dw_raw.as_bytes(), qw_lower.as_bytes()))
+                && ascii_starts_with_ignore_case(dw_raw.as_bytes(), qw_folded.as_bytes()))
             .then(|| TokenMatchSpan::at_start(query_len))
         }
     }
 }
 
-fn classify_contained_match(qw_lower: &str, dw_lower: &str, dw_raw: &str) -> Option<WordMatchKind> {
-    let query_chars: Vec<char> = qw_lower.chars().collect();
-    let doc_lower_chars: Vec<char> = dw_lower.chars().collect();
-    if query_chars.len() < 3 || query_chars.len() >= doc_lower_chars.len() {
+fn classify_contained_match(
+    qw_folded: &str,
+    dw_folded: &str,
+    dw_raw: &str,
+) -> Option<WordMatchKind> {
+    let query_chars: Vec<char> = qw_folded.chars().collect();
+    let doc_folded_chars: Vec<char> = dw_folded.chars().collect();
+    if query_chars.len() < 3 || query_chars.len() >= doc_folded_chars.len() {
         return None;
     }
 
+    // fold_str is 1:1 per char so this never trips for folded input; kept as
+    // defense against callers passing differently normalized text.
     let doc_raw_chars: Vec<char> = dw_raw.chars().collect();
-    if doc_raw_chars.len() != doc_lower_chars.len() {
+    if doc_raw_chars.len() != doc_folded_chars.len() {
         return None;
     }
 
-    for start in 1..=(doc_lower_chars.len() - query_chars.len()) {
-        if doc_lower_chars[start..start + query_chars.len()] == query_chars[..] {
+    // Scan starts at 1: word-start fragments belong to the higher-ranked Prefix
+    // arm when prefix matching is enabled; when it is deliberately Disabled,
+    // classifying them here would reopen that gate.
+    for start in 1..=(doc_folded_chars.len() - query_chars.len()) {
+        if doc_folded_chars[start..start + query_chars.len()] == query_chars[..] {
             let span = TokenMatchSpan {
                 start,
                 len: query_chars.len(),
@@ -473,4 +500,52 @@ fn edit_distance_bounded_unicode(a: &str, b: &str, max_dist: u8) -> Option<u8> {
 
     let dist = osa_distance(a, b) + first_char_penalty;
     (dist <= max_d).then_some(dist as u8)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fold_str;
+    use super::{does_word_match, does_word_match_fast_raw, PrefixMatch, WordMatchKind};
+
+    #[test]
+    fn folded_word_matches_classify_as_exact_and_prefix() {
+        assert_eq!(
+            does_word_match(
+                &fold_str("resume"),
+                &fold_str("résumé"),
+                "résumé",
+                PrefixMatch::Disabled,
+            ),
+            WordMatchKind::Exact
+        );
+        assert_eq!(
+            does_word_match(
+                &fold_str("uber"),
+                &fold_str("über"),
+                "über",
+                PrefixMatch::Disabled,
+            ),
+            WordMatchKind::Exact
+        );
+
+        let prefix = does_word_match(
+            &fold_str("resu"),
+            &fold_str("résumé"),
+            "résumé",
+            PrefixMatch::Enabled { min_query_chars: 1 },
+        );
+        match prefix {
+            WordMatchKind::Prefix { span } => {
+                assert_eq!(span.start, 0);
+                assert_eq!(span.len, 4);
+            }
+            other => panic!("expected folded prefix match, got {other:?}"),
+        }
+
+        // Non-ASCII doc token takes the fold fallback in the fast path
+        assert_eq!(
+            does_word_match_fast_raw(&fold_str("uber"), "über", PrefixMatch::Disabled),
+            WordMatchKind::Exact
+        );
+    }
 }

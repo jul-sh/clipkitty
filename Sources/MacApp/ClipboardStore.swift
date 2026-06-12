@@ -7,7 +7,6 @@ import Foundation
 import ImageIO
 import Observation
 import os
-import QuartzCore
 import UniformTypeIdentifiers
 #if ENABLE_APP_SHORTCUTS
     import ClipKittyShortcuts
@@ -59,51 +58,9 @@ enum StoreLifecycle: Equatable {
     case failed(String)
 }
 
-/// Display state for the clipboard list
-/// Search with empty query returns all items (what was previously called "browse mode")
-enum DisplayState: Equatable {
-    /// Initial loading state before any data
-    case loading
-    /// Results ready - query can be empty (all items) or non-empty (filtered)
-    /// Includes optional first item for immediate preview display
-    case results(query: String, items: [ItemMatch], firstItem: ClipboardItem?)
-    /// Loading in progress - showing fallback results while waiting for new results
-    /// Preserves match highlights from previous search to prevent text flash
-    case resultsLoading(query: String, fallback: [ItemMatch])
-    /// Error state
-    case error(String)
-}
-
 @MainActor
 @Observable
 final class ClipboardStore {
-    // MARK: - State (Single Source of Truth)
-
-    private(set) var state: DisplayState = .loading
-
-    /// Whether currently showing results (not in initial loading or error state)
-    var hasResults: Bool {
-        switch state {
-        case .results, .resultsLoading:
-            return true
-        case .loading, .error:
-            return false
-        }
-    }
-
-    /// Current query (empty string if showing all items)
-    var currentQuery: String {
-        switch state {
-        case let .results(query, _, _), let .resultsLoading(query, _):
-            return query
-        case .loading, .error:
-            return ""
-        }
-    }
-
-    /// Current browser filter for refreshes driven by this store facade.
-    private(set) var queryFilter: ItemQueryFilter = .all
-
     // MARK: - Lifecycle
 
     private(set) var lifecycle: StoreLifecycle = .initializing
@@ -113,29 +70,6 @@ final class ClipboardStore {
     /// Rust-backed repository facade (available after bootstrap completes)
     private var repository: ClipboardRepository?
     private var bootstrapTask: Task<StoreRuntime, Error>?
-
-    private enum SearchExecution {
-        case idle
-        case debouncing(query: String, task: Task<Void, Never>)
-        case running(query: String, operation: ClipboardSearchOperation, observer: Task<Void, Never>)
-
-        mutating func cancel() {
-            switch self {
-            case .idle:
-                break
-            case let .debouncing(_, task):
-                task.cancel()
-            case let .running(_, operation, observer):
-                operation.cancel()
-                observer.cancel()
-            }
-            self = .idle
-        }
-    }
-
-    private var searchExecution: SearchExecution = .idle
-    /// Current search query
-    private var currentSearchQuery: String = ""
 
     private enum FilePreviewCandidate {
         case image
@@ -247,7 +181,6 @@ final class ClipboardStore {
             let dbError = ClipboardError.databaseInitFailed(underlying: error)
             ErrorReporter.reportCritical(dbError)
             lifecycle = .failed(dbError.localizedDescription)
-            state = .error(dbError.localizedDescription)
             return
         }
 
@@ -269,7 +202,6 @@ final class ClipboardStore {
             self.repository = repository
             previewLoader = PreviewLoader(repository: repository)
             lifecycle = .ready
-            refresh()
             pruneIfNeeded()
             #if ENABLE_ICLOUD_SYNC
                 initializeSyncRuntime(with: rustStore)
@@ -278,7 +210,6 @@ final class ClipboardStore {
             let dbError = ClipboardError.databaseInitFailed(underlying: error)
             ErrorReporter.reportCritical(dbError)
             lifecycle = .failed(dbError.localizedDescription)
-            state = .error(dbError.localizedDescription)
         }
     }
 
@@ -297,7 +228,6 @@ final class ClipboardStore {
                 self.repository = runtime.repository
                 self.previewLoader = PreviewLoader(repository: runtime.repository)
                 self.lifecycle = .ready
-                self.refresh()
                 self.pruneIfNeeded()
                 #if ENABLE_ICLOUD_SYNC
                     self.initializeSyncRuntime(with: runtime.store)
@@ -306,7 +236,6 @@ final class ClipboardStore {
                 let dbError = ClipboardError.databaseInitFailed(underlying: error)
                 ErrorReporter.reportCritical(dbError)
                 self.lifecycle = .failed(dbError.localizedDescription)
-                self.state = .error(dbError.localizedDescription)
             }
         }
     }
@@ -316,7 +245,7 @@ final class ClipboardStore {
             guard let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
                 let error = ClipboardError.databaseInitFailed(underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to locate application support directory"]))
                 ErrorReporter.reportCritical(error)
-                state = .error(error.localizedDescription)
+                lifecycle = .failed(error.localizedDescription)
                 return nil
             }
             let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
@@ -325,7 +254,7 @@ final class ClipboardStore {
         } catch {
             let dbError = ClipboardError.databaseInitFailed(underlying: error)
             ErrorReporter.reportCritical(dbError)
-            state = .error(dbError.localizedDescription)
+            lifecycle = .failed(dbError.localizedDescription)
             return nil
         }
     }
@@ -353,47 +282,8 @@ final class ClipboardStore {
 
     // MARK: - Public API
 
-    func setSearchQuery(_ newQuery: String) {
-        let query = newQuery
-
-        searchExecution.cancel()
-        currentSearchQuery = query
-
-        // Capture fallback results from current state (preserves match text to prevent flash)
-        let fallback: [ItemMatch] = {
-            switch state {
-            case let .results(_, items, _), let .resultsLoading(_, items):
-                return items
-            case .loading, .error:
-                return []
-            }
-        }()
-
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        state = .resultsLoading(query: query, fallback: fallback)
-        CATransaction.commit()
-
-        if query.isEmpty {
-            beginSearch(query: query)
-            return
-        }
-
-        let debounceTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(50))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                self?.beginSearch(query: query)
-            }
-        }
-        searchExecution = .debouncing(query: query, task: debounceTask)
-    }
-
     func resetForDisplay() {
-        searchExecution.cancel()
-        queryFilter = .all
         displayVersion += 1
-        refresh()
     }
 
     func setPanelVisibility(_ isVisible: Bool) {
@@ -401,30 +291,11 @@ final class ClipboardStore {
         isPanelVisible = isVisible
     }
 
-    func setQueryFilter(_ filter: ItemQueryFilter) {
-        queryFilter = filter
-        refresh()
-    }
-
     func startSearch(query: String, filter: ItemQueryFilter, presentation: ListPresentationProfile) -> ClipboardSearchOperation {
         guard let repository else {
             return MissingRepositorySearchOperation()
         }
         return repository.startSearch(query: query, filter: filter, presentation: presentation)
-    }
-
-    func search(query: String, filter: ItemQueryFilter) async throws -> SearchResult {
-        switch await startSearch(query: query, filter: filter, presentation: .compactRow).awaitOutcome() {
-        case let .success(searchResult):
-            return searchResult
-        case .cancelled:
-            throw ClipboardError.databaseOperationFailed(
-                operation: "search",
-                underlying: ClipKittyError.Cancelled
-            )
-        case let .failure(error):
-            throw error
-        }
     }
 
     /// Fetch full ClipboardItem by ID
@@ -463,16 +334,8 @@ final class ClipboardStore {
 
     // MARK: - Refresh
 
-    /// Refresh items with current query (convenience for reload scenarios)
-    private func refresh() {
-        setSearchQuery(currentSearchQuery)
-    }
-
-    private func invalidateContent(refreshDisplayState: Bool = true) {
+    private func invalidateContent() {
         contentRevision += 1
-        if refreshDisplayState, hasResults, isPanelVisible {
-            refresh()
-        }
     }
 
     // MARK: - Sync Engine
@@ -539,52 +402,6 @@ final class ClipboardStore {
             }
         }
     #endif
-
-    private func beginSearch(query: String) {
-        guard let repository else {
-            state = .error(String(localized: "Database not available"))
-            return
-        }
-
-        let operation = repository.startSearch(query: query, filter: queryFilter, presentation: .compactRow)
-        let observer = Task { [weak self] in
-            let outcome = await operation.awaitOutcome()
-            await MainActor.run {
-                self?.applySearchOutcome(outcome, query: query)
-            }
-        }
-        searchExecution = .running(query: query, operation: operation, observer: observer)
-    }
-
-    private func applySearchOutcome(_ outcome: RepositorySearchOutcome, query: String) {
-        guard case let .resultsLoading(currentQuery, _) = state, currentQuery == query else { return }
-
-        switch outcome {
-        case let .success(searchResult):
-            let oldState = state
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            state = .results(
-                query: query,
-                items: searchResult.matches,
-                firstItem: searchResult.firstPreviewPayload?.item
-            )
-            CATransaction.commit()
-
-            Task.detached(priority: .background) {
-                _ = oldState
-            }
-        case .cancelled:
-            break
-        case let .failure(error):
-            ErrorReporter.report(error, showToast: false)
-            state = .error(error.localizedDescription)
-        }
-
-        if case let .running(runningQuery, _, _) = searchExecution, runningQuery == query {
-            searchExecution = .idle
-        }
-    }
 
     // MARK: - Clipboard Monitoring
 
@@ -1269,33 +1086,6 @@ final class ClipboardStore {
         invalidateContent()
     }
 
-    func delete(itemId: String) {
-        // Update UI immediately
-        switch state {
-        case let .results(query, items, firstItem):
-            let filteredItems = items.filter { $0.itemMetadata.itemId != itemId }
-            let newFirstItem = firstItem?.itemMetadata.itemId == itemId ? nil : firstItem
-            state = .results(query: query, items: filteredItems, firstItem: newFirstItem)
-        case let .resultsLoading(query, fallback):
-            state = .resultsLoading(
-                query: query,
-                fallback: fallback.filter { $0.itemMetadata.itemId != itemId }
-            )
-        case .loading, .error:
-            break
-        }
-
-        guard let repository else { return }
-        Task {
-            let result = await repository.delete(itemId: itemId)
-            if case let .failure(error) = result {
-                ErrorReporter.report(error, showToast: true)
-            } else {
-                self.invalidateContent(refreshDisplayState: false)
-            }
-        }
-    }
-
     func deleteItem(itemId: String) async -> Result<Void, ClipboardError> {
         guard let repository else {
             return .failure(.databaseOperationFailed(
@@ -1339,16 +1129,13 @@ final class ClipboardStore {
     }
 
     func clear() {
-        // Update UI immediately
-        state = .results(query: "", items: [], firstItem: nil)
-
         guard let repository else { return }
         Task {
             let result = await repository.clear()
             if case let .failure(error) = result {
                 ErrorReporter.report(error, showToast: true)
             } else {
-                self.invalidateContent(refreshDisplayState: false)
+                self.invalidateContent()
             }
         }
     }

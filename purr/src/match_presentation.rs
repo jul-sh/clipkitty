@@ -1,9 +1,9 @@
 use crate::candidate::{ScoringPhase, SearchMatchContext};
 use crate::database::{Database, SearchRowMetadata};
 use crate::interface::{
-    BaselineExcerpt, ClipKittyError, ClipboardItem, ExcerptPlaceholder,
-    ExcerptUnavailableReason, ListPresentationProfile, MatchedExcerpt, MatchedExcerptRequest,
-    MatchedExcerptResolution, PreviewPayload,
+    BaselineExcerpt, ClipKittyError, ClipboardItem, ExcerptPlaceholder, ExcerptUnavailableReason,
+    ListPresentationProfile, MatchedExcerpt, MatchedExcerptRequest, MatchedExcerptResolution,
+    PreviewPayload,
 };
 use crate::models::StoredItem;
 use crate::search::{self, HighlightAnalysis};
@@ -87,7 +87,8 @@ struct CachedHighlightAnalysis {
 pub(crate) enum HighlightStrategy {
     /// Full analysis: fuzzy, subsequence, subword matching (Phase 2 items).
     Full,
-    /// Exact + prefix word matching only (Phase 1-only tail items).
+    /// Per-word matching for Phase 1-only tail items: all match classes for
+    /// small contents, exact + prefix only above 32KB.
     WordMatch,
 }
 
@@ -346,7 +347,8 @@ impl HighlightAnalysisCache {
         let query_key = Self::normalized_query(query)?;
         let state = self.state.lock();
         state.query_order.iter().rev().find_map(|source_query| {
-            if source_query == &query_key || !Self::queries_are_compatible(source_query, &query_key) {
+            if source_query == &query_key || !Self::queries_are_compatible(source_query, &query_key)
+            {
                 return None;
             }
             let context = state
@@ -440,12 +442,18 @@ impl<'a> MatchPresentation<'a> {
             .map(|request| request.item_id.clone())
             .collect();
         let id_refs: Vec<&str> = item_ids.iter().map(|s| s.as_str()).collect();
-        let metadata_rows = self
-            .db
-            .fetch_search_row_metadata_by_string_ids(&id_refs, ListPresentationProfile::CompactRow)?;
+        let metadata_rows = self.db.fetch_search_row_metadata_by_string_ids(
+            &id_refs,
+            ListPresentationProfile::CompactRow,
+        )?;
         let metadata_map: HashMap<String, SearchRowMetadata> = metadata_rows
             .into_iter()
-            .map(|metadata| (metadata.row_metadata.item_metadata.item_id.clone(), metadata))
+            .map(|metadata| {
+                (
+                    metadata.row_metadata.item_metadata.item_id.clone(),
+                    metadata,
+                )
+            })
             .collect();
         // Find items not in match-context cache (need full content for highlighting).
         let missing_item_ids: Vec<String> = requests
@@ -615,7 +623,11 @@ impl<'a> MatchPresentation<'a> {
         {
             return ExcerptPlaceholder::CompatibleCached {
                 source_query,
-                excerpt: search::create_matched_excerpt(context.content(), &analysis.highlights, profile),
+                excerpt: search::create_matched_excerpt(
+                    context.content(),
+                    &analysis.highlights,
+                    profile,
+                ),
             };
         }
 
