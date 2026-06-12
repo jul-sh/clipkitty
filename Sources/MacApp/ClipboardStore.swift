@@ -1367,15 +1367,22 @@ final class ClipboardStore {
     // MARK: - Pruning
 
     func pruneIfNeeded() {
+        Task { await pruneToLimit() }
+    }
+
+    /// Prune the database to the configured size limit, then refresh the
+    /// cached size so observing views update.
+    func pruneToLimit() async {
         let maxSizeGB = AppSettings.shared.maxDatabaseSizeGB
         guard maxSizeGB > 0, let repository else { return }
 
-        let maxBytes = Int64(maxSizeGB * 1024 * 1024 * 1024)
-
-        Task {
-            if case let .failure(error) = await repository.pruneToSize(maxBytes: maxBytes, keepRatio: 0.8) {
-                ErrorReporter.report(error, showToast: false)
-            }
+        if case let .failure(error) = await repository.pruneToSize(
+            maxBytes: Utilities.bytes(fromGB: maxSizeGB)
+        ) {
+            ErrorReporter.report(error, showToast: false)
+        }
+        if case let .success(size) = await repository.databaseSize() {
+            databaseSizeBytes = size
         }
     }
 }

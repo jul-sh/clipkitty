@@ -2,6 +2,7 @@
   "sourceLanguage": "en",
   "strings": {
     "": {},
+    "%.0f GB": {},
     "%.0f KB": {},
     "%.1f GB": {},
     "%.1f MB": {},
@@ -16,6 +17,7 @@
         }
       }
     },
+    "%@ limit, %@ used": {},
     "%lld": {},
     "%lld bytes": {},
     "About": {
@@ -368,6 +370,9 @@
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "應用程式字體" } }
       }
     },
+    "Drag the handle to set how much space history can use. When it fills, the oldest items are overwritten.": {},
+    "Drag to set the storage limit": {},
+    "History already uses more space than the new limit. The oldest items will be removed to fit.": {},
     "Preview Character Spacing": {
       "localizations": {
         "de": { "stringUnit": { "state": "translated", "value": "Zeichenabstand der Vorschau" } },
@@ -396,6 +401,8 @@
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "ClipKitty 緊湊而獨特的字體。" } }
       }
     },
+    "Reduce Storage Limit?": {},
+    "Remove Oldest Items": {},
     "The native macOS system font.": {
       "localizations": {
         "de": { "stringUnit": { "state": "translated", "value": "Die native macOS-Systemschrift." } },
@@ -10452,6 +10459,7 @@
         }
       }
     },
+    "of %@": {},
     "⌘-": {},
     "⌘K Actions": {
       "localizations": {

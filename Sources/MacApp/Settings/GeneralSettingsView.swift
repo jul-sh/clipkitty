@@ -18,6 +18,8 @@ struct GeneralSettingsView: View {
     @State private var isICloudAvailable = true
     @State private var iCloudStatusMessage: String? = nil
     @State private var logsCopied = false
+    @State private var committedLimitGB: Double?
+    @State private var showShrinkConfirmation = false
 
     let store: ClipboardStore
     #if ENABLE_SPARKLE_UPDATES
@@ -31,8 +33,7 @@ struct GeneralSettingsView: View {
         return formatter
     }()
 
-    private let minDatabaseSizeGB = 0.5
-    private let maxDatabaseSizeGB = 64.0
+    private let limitScale = StorageLimitScale()
 
     private var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
@@ -117,25 +118,47 @@ struct GeneralSettingsView: View {
             }
 
             Section(String(localized: "History")) {
-                LabeledContent(String(localized: "Storage Limit")) {
-                    HStack(spacing: 8) {
-                        Slider(value: databaseSizeSlider, in: 0 ... 1)
-                            .frame(maxWidth: .infinity)
-                        Text(databaseSizeLabel)
-                            .foregroundStyle(.secondary)
-                            .frame(width: 80, alignment: .trailing)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-
-                Text(
-                    String(
-                        localized:
-                        "Currently using \(Utilities.formatBytes(store.databaseSizeBytes)). Oldest items removed when limit is reached."
+                VStack(spacing: 10) {
+                    StorageBarView(
+                        limitGB: $settings.maxDatabaseSizeGB,
+                        usedBytes: store.databaseSizeBytes,
+                        scale: limitScale,
+                        onEditingEnded: handleStorageLimitEdit
                     )
-                )
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+
+                    Text(
+                        String(
+                            localized:
+                            "Drag the handle to set how much space history can use. When it fills, the oldest items are overwritten."
+                        )
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .alert(
+                    String(localized: "Reduce Storage Limit?"),
+                    isPresented: $showShrinkConfirmation
+                ) {
+                    Button(String(localized: "Remove Oldest Items"), role: .destructive) {
+                        committedLimitGB = settings.maxDatabaseSizeGB
+                        Task { await store.pruneToLimit() }
+                    }
+                    Button(String(localized: "Cancel"), role: .cancel) {
+                        if let committed = committedLimitGB {
+                            settings.maxDatabaseSizeGB = committed
+                        }
+                    }
+                } message: {
+                    Text(
+                        String(
+                            localized:
+                            "History already uses more space than the new limit. The oldest items will be removed to fit."
+                        )
+                    )
+                }
 
                 Button(role: .destructive) {
                     showClearConfirmation = true
@@ -330,8 +353,20 @@ struct GeneralSettingsView: View {
         .onAppear {
             store.refreshDatabaseSize()
             if settings.maxDatabaseSizeGB <= 0 {
-                settings.maxDatabaseSizeGB = minDatabaseSizeGB
+                settings.maxDatabaseSizeGB = limitScale.minGB
             }
+            committedLimitGB = settings.maxDatabaseSizeGB
+        }
+    }
+
+    /// Called when the user releases the dial knob. Shrinking the limit below
+    /// the space already used deletes the oldest items, so confirm first;
+    /// otherwise just remember the new value as the committed one.
+    private func handleStorageLimitEdit() {
+        if store.databaseSizeBytes > Utilities.bytes(fromGB: settings.maxDatabaseSizeGB) {
+            showShrinkConfirmation = true
+        } else {
+            committedLimitGB = settings.maxDatabaseSizeGB
         }
     }
 
@@ -344,39 +379,6 @@ struct GeneralSettingsView: View {
                 }
             }
         )
-    }
-
-    private var databaseSizeSlider: Binding<Double> {
-        Binding(
-            get: {
-                sliderValue(for: max(settings.maxDatabaseSizeGB, minDatabaseSizeGB))
-            },
-            set: { newValue in
-                settings.maxDatabaseSizeGB = gbValue(for: newValue)
-            }
-        )
-    }
-
-    private var databaseSizeLabel: String {
-        String(localized: "\(settings.maxDatabaseSizeGB, specifier: "%.1f") GB")
-    }
-
-    private func sliderValue(for gb: Double) -> Double {
-        let clamped = min(max(gb, minDatabaseSizeGB), maxDatabaseSizeGB)
-        let ratio = maxDatabaseSizeGB / minDatabaseSizeGB
-        return log(clamped / minDatabaseSizeGB) / log(ratio)
-    }
-
-    private func gbValue(for sliderValue: Double) -> Double {
-        let ratio = maxDatabaseSizeGB / minDatabaseSizeGB
-        let value = minDatabaseSizeGB * pow(ratio, sliderValue)
-        let rounded: Double
-        if value >= 1.0 {
-            rounded = value.rounded()
-        } else {
-            rounded = (value * 10).rounded() / 10
-        }
-        return min(max(rounded, minDatabaseSizeGB), maxDatabaseSizeGB)
     }
 
     #if ENABLE_ICLOUD_SYNC

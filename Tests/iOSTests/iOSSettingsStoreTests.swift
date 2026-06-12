@@ -22,6 +22,15 @@ final class iOSSettingsStoreTests: XCTestCase {
         XCTAssertTrue(store.hapticsEnabled)
         XCTAssertTrue(store.generateLinkPreviews)
         XCTAssertFalse(store.autoAddFromClipboard)
+        XCTAssertEqual(store.maxDatabaseSizeGB, 7.0, accuracy: 1e-9)
+    }
+
+    func testMaxDatabaseSizeGBPersists() {
+        let store = iOSSettingsStore(defaults: defaults)
+        store.maxDatabaseSizeGB = 16.0
+
+        let reloaded = iOSSettingsStore(defaults: defaults)
+        XCTAssertEqual(reloaded.maxDatabaseSizeGB, 16.0, accuracy: 1e-9)
     }
 
     func testHapticsEnabledPersists() {
