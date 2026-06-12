@@ -1117,20 +1117,17 @@ final class ClipboardStore {
 
     // MARK: - Actions
 
-    /// Writes the item to the pasteboard, returning whether the write succeeded.
-    /// Image writes convert off the main thread and are awaited so callers can
-    /// give honest feedback; text and file writes are synchronous and always succeed.
-    @discardableResult
-    func paste(itemId: String, content: ClipboardContent) async -> Bool {
+    func paste(itemId: String, content: ClipboardContent) {
         // Handle images differently - convert off main thread
         if case let .image(data, _, isAnimated) = content {
-            return await pasteImage(data: Data(data), isAnimated: isAnimated, itemId: itemId)
+            pasteImage(data: Data(data), isAnimated: isAnimated, itemId: itemId)
+            return
         }
 
         #if ENABLE_FILE_CLIPBOARD_ITEMS
             if case let .file(_, files) = content {
                 pasteFiles(files: files, itemId: itemId)
-                return true
+                return
             }
         #endif
 
@@ -1139,53 +1136,53 @@ final class ClipboardStore {
         Task { [weak self] in
             await self?.updateItemTimestamp(id: itemId)
         }
-        return true
     }
 
-    private func pasteImage(data: Data, isAnimated: Bool, itemId: String?) async -> Bool {
-        if isAnimated {
-            // Convert animated HEIC to GIF for pasting (CPU-intensive, use background)
-            let gifData: Data? = await withCheckedContinuation { continuation in
-                Task.detached(priority: .userInitiated) {
-                    continuation.resume(returning: Self.convertAnimatedHEICToGIF(data))
-                }
-            }
-
-            guard let gifData else {
-                pasteboardMonitor.acknowledgeLocalWrite(changeCount: pasteboard.changeCount)
-                return false
-            }
-
-            let fallback = NSImage(data: data)?.tiffRepresentation
-            pasteboardMonitor.acknowledgeLocalWrite(
-                changeCount: pasteService.writeAnimatedImage(gifData: gifData, tiffFallback: fallback)
-            )
-        } else {
-            // Convert from stored format (HEIC) to TIFF off main thread
-            let tiffData: Data? = await withCheckedContinuation { continuation in
-                Task.detached(priority: .userInitiated) {
-                    guard let image = NSImage(data: data),
-                          let tiff = image.tiffRepresentation
-                    else {
-                        continuation.resume(returning: nil)
-                        return
+    private func pasteImage(data: Data, isAnimated: Bool, itemId: String?) {
+        Task {
+            if isAnimated {
+                // Convert animated HEIC to GIF for pasting (CPU-intensive, use background)
+                let gifData: Data? = await withCheckedContinuation { continuation in
+                    Task.detached(priority: .userInitiated) {
+                        continuation.resume(returning: Self.convertAnimatedHEICToGIF(data))
                     }
-                    continuation.resume(returning: tiff)
                 }
+
+                guard let gifData else {
+                    self.pasteboardMonitor.acknowledgeLocalWrite(changeCount: self.pasteboard.changeCount)
+                    return
+                }
+
+                let fallback = NSImage(data: data)?.tiffRepresentation
+                self.pasteboardMonitor.acknowledgeLocalWrite(
+                    changeCount: self.pasteService.writeAnimatedImage(gifData: gifData, tiffFallback: fallback)
+                )
+            } else {
+                // Convert from stored format (HEIC) to TIFF off main thread
+                let tiffData: Data? = await withCheckedContinuation { continuation in
+                    Task.detached(priority: .userInitiated) {
+                        guard let image = NSImage(data: data),
+                              let tiff = image.tiffRepresentation
+                        else {
+                            continuation.resume(returning: nil)
+                            return
+                        }
+                        continuation.resume(returning: tiff)
+                    }
+                }
+
+                guard let tiffData else {
+                    self.pasteboardMonitor.acknowledgeLocalWrite(changeCount: self.pasteboard.changeCount)
+                    return
+                }
+
+                self.pasteboardMonitor.acknowledgeLocalWrite(changeCount: self.pasteService.writeStaticImage(tiffData))
             }
 
-            guard let tiffData else {
-                pasteboardMonitor.acknowledgeLocalWrite(changeCount: pasteboard.changeCount)
-                return false
+            if let itemId {
+                await self.updateItemTimestamp(id: itemId)
             }
-
-            pasteboardMonitor.acknowledgeLocalWrite(changeCount: pasteService.writeStaticImage(tiffData))
         }
-
-        if let itemId {
-            await updateItemTimestamp(id: itemId)
-        }
-        return true
     }
 
     /// Convert animated HEIC (HEICS) to GIF format

@@ -485,38 +485,6 @@
             XCTAssertTrue(createdEngines.isEmpty)
         }
 
-        // MARK: - User-initiated sync
-
-        func testPerformUserInitiatedSyncStartsEngineAndRunsCycleWhenEnabled() async {
-            let coordinator = iOSSyncCoordinator(
-                store: store,
-                enabled: true,
-                onContentChanged: {},
-                engineFactory: spyFactory()
-            )
-            latestEngine?.stubbedBackgroundSyncResult = .failed("network")
-
-            let result = await coordinator.performUserInitiatedSync()
-
-            XCTAssertEqual(result, .failed("network"))
-            XCTAssertEqual(latestEngine?.startCallCount, 1)
-            XCTAssertEqual(latestEngine?.runBackgroundSyncCycleCallCount, 1)
-        }
-
-        func testPerformUserInitiatedSyncReturnsUnavailableWhenDisabled() async {
-            let coordinator = iOSSyncCoordinator(
-                store: store,
-                enabled: false,
-                onContentChanged: {},
-                engineFactory: spyFactory()
-            )
-
-            let result = await coordinator.performUserInitiatedSync()
-
-            XCTAssertEqual(result, .unavailable)
-            XCTAssertTrue(createdEngines.isEmpty)
-        }
-
         // MARK: - Background runner cancellation
 
         func testCancelInFlightSyncKeepsLaterWakeJoinedUntilOperationFinishes() async {

@@ -47,24 +47,23 @@ struct CardView: View {
     }
 
     var body: some View {
-        Button {
-            viewModel.copyOnlyItem(itemId: metadata.itemId)
-            haptics.fire(.copy)
-            appState.showToast(.copied)
-        } label: {
-            VStack(alignment: .leading, spacing: 10) {
-                metadataLine
-                contentPreview
-            }
-            .cardSurface()
-            .padding(.horizontal, 16)
-            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        VStack(alignment: .leading, spacing: 10) {
+            metadataLine
+            contentPreview
         }
-        .buttonStyle(CardPressButtonStyle())
+        .cardSurface()
+        .padding(.horizontal, 16)
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityCardLabel)
         .accessibilityHint(String(localized: "Double tap to copy"))
-        .contextMenu(menuItems: { contextMenuActions }, preview: { cardPeek })
+        .accessibilityAddTraits(.isButton)
+        .onTapGesture {
+            viewModel.copyOnlyItem(itemId: metadata.itemId)
+            haptics.fire(.copy)
+            appState.showToast(.copied)
+        }
+        .contextMenu { contextMenuActions }
         .onDrag {
             let storeClient = container.storeClient
             return DragItemProvider.make(itemId: metadata.itemId) { id in
@@ -192,58 +191,6 @@ struct CardView: View {
                 highlightedText(displayExcerpt.text, highlights: displayExcerpt.highlights, font: .custom(FontManager.sansSerif, size: 15))
                     .lineLimit(2)
             }
-        }
-    }
-
-    // MARK: - Long-press peek
-
-    /// Expanded preview shown above the context menu; sized close to the card
-    /// width so the lift animation doesn't visibly morph.
-    @ViewBuilder
-    private var cardPeek: some View {
-        Group {
-            switch metadata.icon {
-            case let .symbol(iconType):
-                highlightedText(
-                    displayExcerpt.text,
-                    highlights: displayExcerpt.highlights,
-                    font: peekFont(for: iconType)
-                )
-                .lineLimit(30)
-                .padding(16)
-
-            case let .colorSwatch(rgba):
-                VStack(spacing: 12) {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(colorFromRGBA(rgba))
-                        .frame(height: 140)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .strokeBorder(.primary.opacity(0.1), lineWidth: 1)
-                        )
-
-                    Text(hexStringFromRGBA(rgba))
-                        .font(.custom(FontManager.mono, size: 17))
-                }
-                .padding(16)
-
-            case let .thumbnail(bytes):
-                CardImagePreview(itemId: metadata.itemId, thumbnailBytes: bytes)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .padding(16)
-            }
-        }
-        .containerRelativeFrame(.horizontal, alignment: .leading) { length, _ in
-            max(length - 32, 0)
-        }
-    }
-
-    private func peekFont(for iconType: IconType) -> Font {
-        switch iconType {
-        case .text, .color:
-            return .custom(FontManager.mono, size: 15)
-        case .link, .image, .file:
-            return .custom(FontManager.sansSerif, size: 15)
         }
     }
 

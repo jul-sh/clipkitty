@@ -8,8 +8,6 @@ final class SnackbarWindow {
 
     private var nudgeWindow: NSWindow?
     private var notification: ActiveNotification?
-    private var progressWindow: NSWindow?
-    private var progressAnchoredToPanel = false
 
     /// Last known panel frame — used for positioning. Nil when panel is hidden.
     private var panelFrame: NSRect?
@@ -60,12 +58,7 @@ final class SnackbarWindow {
 
         if let existingWindow = nudgeWindow {
             existingWindow.contentView = hostingView
-            let target = frameRelativeToPanel(size: fittingSize, panelFrame: panelFrame)
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.15
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                existingWindow.animator().setFrame(target, display: true)
-            }
+            positionRelativeToPanel(existingWindow, size: fittingSize, panelFrame: panelFrame)
             existingWindow.orderFront(nil)
             return
         }
@@ -87,10 +80,7 @@ final class SnackbarWindow {
     func showNotification(_ kind: NotificationKind, onAction: (() -> Void)? = nil) {
         if let existing = notification {
             existing.dismissTask?.cancel()
-            // Cross-fade: the old window fades while the new one animates in.
-            // Windows animate independently, so a third notification mid-fade
-            // is safe.
-            fadeOutAndOrderOut(existing.window)
+            existing.window.orderOut(nil)
             notification = nil
         }
 
@@ -129,54 +119,12 @@ final class SnackbarWindow {
 
         animateIn(window, slideUp: !anchored)
 
-        // VoiceOver may suppress announcements from apps that never become
-        // active; the snackbar window is used as the element because this
-        // accessory app has no main window.
-        NSAccessibility.post(
-            element: window,
-            notification: .announcementRequested,
-            userInfo: [
-                .announcement: kind.message,
-                .priority: NSAccessibilityPriorityLevel.high.rawValue,
-            ]
-        )
-
         notification = ActiveNotification(
             window: window,
             anchoredToPanel: anchored,
             dismissTask: scheduleDismiss(after: kind.duration),
             action: onAction
         )
-    }
-
-    // MARK: - Progress (explicitly dismissed, no auto-dismiss)
-
-    /// Shows a spinner snackbar for an in-flight operation. Stays up until
-    /// `dismissProgress()` is called; never produced by scheduler evaluation.
-    func showProgress(_ kind: InfoKind) {
-        guard progressWindow == nil else { return }
-
-        let view = SnackbarView(item: .info(kind), onAction: {}, onDismiss: {})
-        let hostingView = NSHostingView(rootView: view)
-        let fittingSize = hostingView.fittingSize
-        hostingView.frame = NSRect(origin: .zero, size: fittingSize)
-
-        let window = makeWindow(hostingView: hostingView)
-        let anchored = panelFrame != nil
-        if let panelFrame {
-            positionRelativeToPanel(window, size: fittingSize, panelFrame: panelFrame)
-        } else {
-            positionScreenCenter(window, size: fittingSize)
-        }
-        animateIn(window, slideUp: !anchored)
-        progressWindow = window
-        progressAnchoredToPanel = anchored
-    }
-
-    func dismissProgress() {
-        guard let progressWindow else { return }
-        self.progressWindow = nil
-        animateOut(progressWindow, slideUp: progressAnchoredToPanel)
     }
 
     func dismissNotification() {
@@ -207,19 +155,14 @@ final class SnackbarWindow {
     func hideAll() {
         dismissNudge()
         dismissNotification()
-        dismissProgress()
     }
 
     // MARK: - Positioning
 
-    private func frameRelativeToPanel(size: NSSize, panelFrame: NSRect) -> NSRect {
+    private func positionRelativeToPanel(_ window: NSWindow, size: NSSize, panelFrame: NSRect) {
         let x = panelFrame.minX
         let y = panelFrame.minY - size.height - 8
-        return NSRect(x: x, y: y, width: size.width, height: size.height)
-    }
-
-    private func positionRelativeToPanel(_ window: NSWindow, size: NSSize, panelFrame: NSRect) {
-        window.setFrame(frameRelativeToPanel(size: size, panelFrame: panelFrame), display: true)
+        window.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
     }
 
     private func positionScreenCenter(_ window: NSWindow, size: NSSize) {
@@ -264,15 +207,6 @@ final class SnackbarWindow {
             endFrame.origin.y += slideUp ? 20 : -10
             window.animator().setFrame(endFrame, display: true)
             window.animator().alphaValue = 1
-        }
-    }
-
-    private func fadeOutAndOrderOut(_ window: NSWindow) {
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.15
-            window.animator().alphaValue = 0
-        } completionHandler: {
-            window.orderOut(nil)
         }
     }
 
