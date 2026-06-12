@@ -51,6 +51,9 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     /// Initial search query to pre-fill (for CI screenshots)
     var initialSearchQuery: String?
 
+    /// Whether the Accessibility-permission notice has been shown this launch.
+    private var hasShownNoPermissionNotice = false
+
     private var textScaleCancellable: AnyCancellable?
 
     init(
@@ -374,29 +377,75 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     }
 
     private func selectItem(itemId: String, content: ClipboardContent) {
-        store.paste(itemId: itemId, content: content)
         #if ENABLE_SYNTHETIC_PASTE
             let targetApp = hide()
-            switch AppSettings.shared.pasteMode {
-            case .autoPaste:
-                switch activationService.syntheticPasteBehavior(for: targetApp) {
-                case let .paste(targetApp):
-                    activationService.simulatePaste(to: targetApp)
+            Task { @MainActor in
+                guard await pasteReportingProgress(itemId: itemId, content: content) else { return }
+                switch AppSettings.shared.pasteMode {
+                case .autoPaste:
+                    switch activationService.syntheticPasteBehavior(for: targetApp) {
+                    case let .paste(targetApp):
+                        activationService.simulatePaste(to: targetApp)
+                    case .copyOnly:
+                        snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
+                    }
                 case .copyOnly:
                     snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
+                case .noPermission:
+                    showCopiedWithPermissionNotice()
                 }
-            case .copyOnly, .noPermission:
-                snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
             }
         #else
             hide()
-            snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
+            Task { @MainActor in
+                guard await pasteReportingProgress(itemId: itemId, content: content) else { return }
+                snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
+            }
         #endif
     }
 
     private func copyOnlyItem(itemId: String, content: ClipboardContent) {
-        store.paste(itemId: itemId, content: content)
         hide()
-        snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
+        Task { @MainActor in
+            guard await pasteReportingProgress(itemId: itemId, content: content) else { return }
+            snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
+        }
+    }
+
+    /// Writes the item to the pasteboard, surfacing a delayed progress snackbar
+    /// for slow image conversions and an error snackbar on failure.
+    private func pasteReportingProgress(itemId: String, content: ClipboardContent) async -> Bool {
+        let progressTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            snackbarWindow.showProgress(.preparingPaste)
+        }
+        let ok = await store.paste(itemId: itemId, content: content)
+        progressTask.cancel()
+        snackbarWindow.dismissProgress()
+        if !ok {
+            snackbarWindow.showNotification(.passive(message: String(localized: "Couldn’t copy image"), iconSystemName: "exclamationmark.triangle.fill"))
+        }
+        return ok
+    }
+
+    /// Copy succeeded but synthetic paste is unavailable because the Accessibility
+    /// permission is missing; tell the user how to enable it, once per launch.
+    private func showCopiedWithPermissionNotice() {
+        if hasShownNoPermissionNotice {
+            snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
+            return
+        }
+        hasShownNoPermissionNotice = true
+        snackbarWindow.showNotification(
+            .actionable(
+                message: String(localized: "Copied. Enable Accessibility to paste automatically"),
+                iconSystemName: "exclamationmark.triangle.fill",
+                actionTitle: String(localized: "Enable")
+            ),
+            onAction: {
+                NotificationCenter.default.post(name: .clipKittyOpenSettings, object: nil)
+            }
+        )
     }
 }

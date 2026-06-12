@@ -165,6 +165,17 @@
                 return await engine.runBackgroundSyncCycle()
             }
         }
+
+        @discardableResult
+        func performUserInitiatedSync() async -> SyncEngine.BackgroundSyncResult {
+            switch runtime {
+            case .disabled:
+                return .unavailable
+            case let .enabled(_, engine):
+                engine.start()
+                return await engine.runBackgroundSyncCycle()
+            }
+        }
     }
 
     // MARK: - Background Sync

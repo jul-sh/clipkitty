@@ -6,6 +6,10 @@ struct HomeFeedView: View {
     @Environment(AppState.self) private var appState
     @Environment(BrowserViewModel.self) private var viewModel
 
+    #if ENABLE_ICLOUD_SYNC
+        @Environment(iOSSyncCoordinator.self) private var syncCoordinator: iOSSyncCoordinator?
+    #endif
+
     @State private var isSearchActive = false
     @State private var previewItemId: String?
     @State private var hasAppeared = false
@@ -108,6 +112,9 @@ struct HomeFeedView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .refreshable {
+            await refreshFeed()
+        }
     }
 
     /// Filter out file items — iPhone app doesn't support file sharing.
@@ -128,6 +135,18 @@ struct HomeFeedView: View {
     }
 
     private var emptyStateView: some View {
+        ScrollView {
+            emptyStateContent
+                .frame(maxWidth: .infinity)
+                .containerRelativeFrame(.vertical)
+        }
+        .scrollContentBackground(.hidden)
+        .refreshable {
+            await refreshFeed()
+        }
+    }
+
+    private var emptyStateContent: some View {
         VStack(spacing: 16) {
             Spacer()
 
@@ -182,6 +201,16 @@ struct HomeFeedView: View {
 
     private func loadMatchedExcerptIfNeeded(for row: DisplayRow) {
         viewModel.loadMatchedExcerptsForItems([row.id])
+    }
+
+    /// Pull-to-refresh: kick an immediate iCloud sync cycle when sync is
+    /// available, then always requery the local store so a refresh does
+    /// something even with sync disabled or the feature flag off.
+    private func refreshFeed() async {
+        #if ENABLE_ICLOUD_SYNC
+            _ = await syncCoordinator?.performUserInitiatedSync()
+        #endif
+        appState.refreshFeed()
     }
 }
 

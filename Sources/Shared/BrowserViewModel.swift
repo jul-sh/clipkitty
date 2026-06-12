@@ -15,6 +15,9 @@ public final class BrowserViewModel {
     private let onDismiss: () -> Void
     private let showSnackbarNotification: (NotificationKind, (() -> Void)?) -> Void
     private let dismissSnackbarNotification: () -> Void
+    /// How long a pending delete stays undoable before committing; injectable
+    /// so tests don't have to wait out the real undo window.
+    private let deleteCommitDelay: TimeInterval
 
     private enum SearchExecution {
         case idle
@@ -76,6 +79,7 @@ public final class BrowserViewModel {
     private var prefetchTask: Task<Void, Never>?
     private var previewSpinnerTask: Task<Void, Never>?
     private var pendingDeleteTask: Task<Void, Never>?
+    private var deleteCommitTask: Task<Void, Never>?
     private var pendingTagSettleTask: Task<Void, Never>?
     private var queryGeneration = 0
     private var previewGeneration = 0
@@ -107,7 +111,8 @@ public final class BrowserViewModel {
         onCopyOnly: @escaping (String, ClipboardContent) -> Void,
         onDismiss: @escaping () -> Void,
         showSnackbarNotification: @escaping (NotificationKind, (() -> Void)?) -> Void = { _, _ in },
-        dismissSnackbarNotification: @escaping () -> Void = {}
+        dismissSnackbarNotification: @escaping () -> Void = {},
+        deleteCommitDelay: TimeInterval = NotificationKind.undoWindow
     ) {
         self.client = client
         self.shouldGenerateLinkPreviews = shouldGenerateLinkPreviews
@@ -116,6 +121,7 @@ public final class BrowserViewModel {
         self.onDismiss = onDismiss
         self.showSnackbarNotification = showSnackbarNotification
         self.dismissSnackbarNotification = dismissSnackbarNotification
+        self.deleteCommitDelay = deleteCommitDelay
     }
 
     public var searchText: String {
@@ -187,6 +193,11 @@ public final class BrowserViewModel {
         return failure.message
     }
 
+    public var hasPendingDelete: Bool {
+        if case .deleting(.pending) = mutationState { return true }
+        return false
+    }
+
     /// Draft text for the currently-editing item, if any.
     /// Callers should prefer matching `editSession` directly.
     public var draftText: (itemId: String, text: String)? {
@@ -203,6 +214,7 @@ public final class BrowserViewModel {
     }
 
     public func handleDisplayReset(initialSearchQuery: String, contentRevision: Int = 0) {
+        flushPendingDelete()
         cancelInFlightWork()
         latestKnownContentRevision = contentRevision
         lastLoadedContentRevision = nil
@@ -211,7 +223,7 @@ public final class BrowserViewModel {
         previewPayloadsByItemId.removeAll()
         resolvedMatchedExcerptsByItemId.removeAll()
         overlayState = .none
-        mutationState = .idle
+        resetMutationStateUnlessCommitting()
         editSession = .inactive
         // Clear selection so the fresh search lands on the top item rather
         // than carrying the prior highlight across a hide/show cycle.
@@ -223,12 +235,37 @@ public final class BrowserViewModel {
     }
 
     public func prepareForSuspension() {
+        flushPendingDelete()
         cancelInFlightWork()
         dismissSnackbarNotification()
         overlayState = .none
-        mutationState = .idle
+        resetMutationStateUnlessCommitting()
         editSession = .inactive
         hasUserNavigated = false
+    }
+
+    /// Commits any still-pending delete immediately. Called when the UI is
+    /// about to reset or suspend, so an optimistic delete is never dropped on
+    /// the floor with the item silently resurrecting later.
+    private func flushPendingDelete() {
+        guard case .deleting(.pending) = mutationState else { return }
+        pendingDeleteTask?.cancel()
+        pendingDeleteTask = nil
+        commitPendingDelete()
+    }
+
+    /// Flushes a pending delete and waits for the commit to reach the store.
+    /// Used on iOS before suspension tears the container down.
+    public func flushPendingDeleteAndWait() async {
+        flushPendingDelete()
+        await deleteCommitTask?.value
+    }
+
+    /// `.deleting(.committing)` must survive resets: the commit task resets to
+    /// `.idle` itself, and `restoreDeleteFailure` matches on it.
+    private func resetMutationStateUnlessCommitting() {
+        if case .deleting(.committing) = mutationState { return }
+        mutationState = .idle
     }
 
     public func handleContentRevisionChange(_ contentRevision: Int, isPanelVisible: Bool) {
@@ -444,8 +481,9 @@ public final class BrowserViewModel {
 
     private func scheduleDeleteCommit() {
         pendingDeleteTask?.cancel()
+        let delay = deleteCommitDelay
         pendingDeleteTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(3))
+            try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 self?.commitPendingDelete()
@@ -559,12 +597,11 @@ public final class BrowserViewModel {
             editSession = .inactive
             return
         }
-        editSession = .inactive
 
-        guard let selectedItemState else {
-            showSnackbarNotification(.passive(message: String(localized: "Saved"), iconSystemName: "checkmark.circle.fill"), nil)
-            return
-        }
+        // Without a selected item there is nothing to write; claiming "Saved"
+        // here would be a lie, and clearing the draft would lose the edit.
+        guard let selectedItemState else { return }
+        editSession = .inactive
 
         let currentItem = selectedItemState.item
         let updatedContent = ClipboardContent.text(value: editedText)
@@ -597,15 +634,29 @@ public final class BrowserViewModel {
         resolvedMatchedExcerptsByItemId.removeValue(forKey: id)
         previewPayloadsByItemId[id] = PreviewPayload(item: updatedItem, decoration: nil)
 
-        showSnackbarNotification(.passive(message: String(localized: "Saved"), iconSystemName: "checkmark.circle.fill"), nil)
-
+        // The rows above update optimistically, but "Saved" only shows once the
+        // write actually lands; on failure the draft is restored and the rows
+        // return to DB truth.
         Task { [weak self] in
             guard let self else { return }
-            _ = await self.client.updateTextItem(itemId: id, text: editedText)
-            // Resubmit the active search so Rust re-evaluates whether this item
-            // still matches, re-ranks it, and emits fresh highlight ranges.
-            if !self.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                self.submitSearch(text: self.searchText, filter: self.contentState.request.filter)
+            switch await self.client.updateTextItem(itemId: id, text: editedText) {
+            case .success:
+                self.showSnackbarNotification(.passive(message: String(localized: "Saved"), iconSystemName: "checkmark.circle.fill"), nil)
+                // Resubmit the active search so Rust re-evaluates whether this item
+                // still matches, re-ranks it, and emits fresh highlight ranges.
+                if !self.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    self.submitSearch(text: self.searchText, filter: self.contentState.request.filter)
+                }
+            case .failure:
+                self.showSnackbarNotification(.passive(message: String(localized: "Couldn’t save"), iconSystemName: "exclamationmark.triangle.fill"), nil)
+                // Restore the draft unless the user already started a new edit.
+                if case .inactive = self.editSession {
+                    self.editSession = .dirty(itemId: id, draft: editedText)
+                }
+                self.previewPayloadsByItemId.removeValue(forKey: id)
+                // Resubmit even an empty query so the optimistic rows return
+                // to what the database actually holds.
+                self.submitSearch(request: self.contentState.request, targetContentRevision: self.latestKnownContentRevision)
             }
         }
     }
@@ -1286,8 +1337,10 @@ public final class BrowserViewModel {
         guard case let .deleting(.pending(transaction)) = mutationState else { return }
         pendingDeleteTask = nil
         mutationState = .deleting(.committing(transaction))
+        // The undo window is over; the Undo button must not outlive it.
+        dismissSnackbarNotification()
 
-        Task { [weak self] in
+        deleteCommitTask = Task { [weak self] in
             guard let self else { return }
             var lastError: ClipboardError?
             for itemId in transaction.deletedItemIds {

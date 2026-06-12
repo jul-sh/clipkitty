@@ -44,7 +44,11 @@ struct ContentView: View {
         let contentRevision = store.contentRevision
         let isPanelVisible = store.isPanelVisible
 
-        return BrowserView(viewModel: viewModel, displayVersion: displayVersion)
+        return BrowserView(
+            viewModel: viewModel,
+            displayVersion: displayVersion,
+            isPanelVisible: { store.isPanelVisible }
+        )
             .onAppear {
                 viewModel.onAppear(
                     initialSearchQuery: initialSearchQuery,
