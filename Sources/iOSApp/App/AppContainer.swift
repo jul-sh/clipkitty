@@ -113,8 +113,8 @@ final class AppContainer {
             repository: repository,
             previewLoader: previewLoader
         )
-        let clipboardService = iOSClipboardService()
         let settings = iOSSettingsStore()
+        let clipboardService = iOSClipboardService(settings: settings)
         let haptics = HapticsClient(settings: settings)
 
         return .success(AppContainer(

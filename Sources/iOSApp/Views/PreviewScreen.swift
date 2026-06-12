@@ -349,8 +349,9 @@ struct PreviewScreen: View {
                         .glassEffect(.regular.interactive(), in: .capsule)
 
                         Button {
+                            // The view model toasts Saved itself once the
+                            // write actually lands.
                             viewModel.commitCurrentEdit()
-                            appState.showToast(.saved)
                         } label: {
                             Text(String(localized: "Save"))
                                 .font(.body.weight(.semibold))
