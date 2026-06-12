@@ -775,7 +775,8 @@ final class BrowserViewModelTests: XCTestCase {
             client: client,
             onSelect: { _, _ in },
             onCopyOnly: { _, _ in },
-            onDismiss: {}
+            onDismiss: {},
+            deleteCommitDelay: 0.05
         )
 
         viewModel.onAppear(initialSearchQuery: "")
@@ -785,7 +786,7 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.deleteSelectedItem()
         await flushMainActor()
-        try? await Task.sleep(for: .milliseconds(3100))
+        try? await Task.sleep(for: .milliseconds(300))
         await flushMainActor()
 
         XCTAssertEqual(viewModel.itemIds, ["1", "2"])
@@ -1037,6 +1038,118 @@ final class BrowserViewModelTests: XCTestCase {
         guard case .idle = viewModel.mutationState else {
             return XCTFail("Expected idle mutation after undo")
         }
+    }
+
+    func testDeleteCommitDismissesUndoSnackbarWhenWindowEnds() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstPreviewPayload: nil,
+            totalCount: 2
+        ))
+
+        var dismissCount = 0
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {},
+            dismissSnackbarNotification: { dismissCount += 1 },
+            deleteCommitDelay: 0.05
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
+        await flushMainActor()
+
+        viewModel.deleteSelectedItem()
+        await flushMainActor()
+
+        XCTAssertEqual(dismissCount, 0)
+
+        try? await Task.sleep(for: .milliseconds(300))
+        await flushMainActor()
+
+        XCTAssertEqual(dismissCount, 1)
+        XCTAssertEqual(client.deletedItemIds, ["1"])
+        guard case .idle = viewModel.mutationState else {
+            return XCTFail("Expected idle mutation after commit")
+        }
+    }
+
+    func testHandleDisplayResetCommitsPendingDelete() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstPreviewPayload: nil,
+            totalCount: 2
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
+        await flushMainActor()
+
+        viewModel.deleteSelectedItem()
+        await flushMainActor()
+        guard case .deleting(.pending) = viewModel.mutationState else {
+            return XCTFail("Expected pending delete before reset")
+        }
+
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "2", excerpt: "two")],
+            firstPreviewPayload: nil,
+            totalCount: 1
+        ))
+        viewModel.handleDisplayReset(initialSearchQuery: "")
+        await flushMainActor()
+
+        XCTAssertEqual(client.deletedItemIds, ["1"])
+        XCTAssertFalse(viewModel.itemIds.contains("1"))
+    }
+
+    func testPrepareForSuspensionCommitsPendingDelete() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstPreviewPayload: nil,
+            totalCount: 2
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
+        await flushMainActor()
+
+        viewModel.deleteSelectedItem()
+        await flushMainActor()
+        guard case .deleting(.pending) = viewModel.mutationState else {
+            return XCTFail("Expected pending delete before suspension")
+        }
+
+        viewModel.prepareForSuspension()
+        await flushMainActor()
+
+        XCTAssertEqual(client.deletedItemIds, ["1"])
     }
 
     func testDeleteLastItemClearsSelection() async {
@@ -1513,7 +1626,8 @@ final class BrowserViewModelTests: XCTestCase {
             client: client,
             onSelect: { _, _ in },
             onCopyOnly: { _, _ in },
-            onDismiss: {}
+            onDismiss: {},
+            deleteCommitDelay: 0.05
         )
 
         viewModel.onAppear(initialSearchQuery: "")
@@ -1522,7 +1636,7 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
 
         viewModel.deleteSelectedItem()
-        try? await Task.sleep(for: .seconds(4))
+        try? await Task.sleep(for: .milliseconds(300))
         await flushMainActor()
 
         XCTAssertNotNil(viewModel.mutationFailureMessage)
@@ -1649,6 +1763,7 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
     var addTagResult: Result<Void, ClipboardError> = .success(())
     var removeTagResult: Result<Void, ClipboardError> = .success(())
     var deleteResult: Result<Void, ClipboardError> = .success(())
+    var deletedItemIds: [String] = []
     var clearResult: Result<Void, ClipboardError> = .success(())
     var updateTextResult: Result<Void, ClipboardError> = .success(())
     var updatedTexts: [(itemId: String, text: String)] = []
@@ -1746,8 +1861,9 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
         removeTagResult
     }
 
-    func delete(itemId _: String) async -> Result<Void, ClipboardError> {
-        deleteResult
+    func delete(itemId: String) async -> Result<Void, ClipboardError> {
+        deletedItemIds.append(itemId)
+        return deleteResult
     }
 
     func clear() async -> Result<Void, ClipboardError> {

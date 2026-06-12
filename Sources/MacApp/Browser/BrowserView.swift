@@ -8,6 +8,7 @@ import SwiftUI
 struct BrowserView: View {
     @Bindable var viewModel: BrowserViewModel
     let displayVersion: Int
+    let isPanelVisible: () -> Bool
 
     @ObservedObject private var settings = AppSettings.shared
     @State private var commandKeyEventMonitor: Any?
@@ -229,6 +230,8 @@ struct BrowserView: View {
     private func installCommandKeyEventMonitor() {
         guard commandKeyEventMonitor == nil else { return }
         commandKeyEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard isPanelVisible() else { return event }
+
             if let number = commandNumber(from: event) {
                 return handleCommandNumberShortcut(number) ? nil : event
             }
@@ -236,11 +239,25 @@ struct BrowserView: View {
             // Configurable delete-item shortcut (default ⌘-)
             let deleteHotKey = AppSettings.shared.deleteHotKey
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if modifiers == deleteHotKey.modifierMask, UInt32(event.keyCode) == deleteHotKey.keyCode {
+            if modifiers == deleteHotKey.modifierMask,
+               UInt32(event.keyCode) == deleteHotKey.keyCode,
+               !event.isARepeat
+            {
                 if viewModel.selectedItem != nil {
                     viewModel.deleteSelectedItem()
                     return nil
                 }
+            }
+
+            // While a delete is pending, Cmd+Z intentionally undoes the item
+            // delete instead of text undo; otherwise the event passes through
+            // unchanged so the field editor keeps its text undo.
+            if modifiers == .command,
+               event.charactersIgnoringModifiers == "z",
+               case .deleting(.pending) = viewModel.mutationState
+            {
+                viewModel.undoPendingDelete()
+                return nil
             }
 
             return event

@@ -15,6 +15,9 @@ public final class BrowserViewModel {
     private let onDismiss: () -> Void
     private let showSnackbarNotification: (NotificationKind, (() -> Void)?) -> Void
     private let dismissSnackbarNotification: () -> Void
+    /// How long a pending delete stays undoable before committing; injectable
+    /// so tests don't have to wait out the real undo window.
+    private let deleteCommitDelay: TimeInterval
 
     private enum SearchExecution {
         case idle
@@ -107,7 +110,8 @@ public final class BrowserViewModel {
         onCopyOnly: @escaping (String, ClipboardContent) -> Void,
         onDismiss: @escaping () -> Void,
         showSnackbarNotification: @escaping (NotificationKind, (() -> Void)?) -> Void = { _, _ in },
-        dismissSnackbarNotification: @escaping () -> Void = {}
+        dismissSnackbarNotification: @escaping () -> Void = {},
+        deleteCommitDelay: TimeInterval = NotificationKind.undoWindow
     ) {
         self.client = client
         self.shouldGenerateLinkPreviews = shouldGenerateLinkPreviews
@@ -116,6 +120,7 @@ public final class BrowserViewModel {
         self.onDismiss = onDismiss
         self.showSnackbarNotification = showSnackbarNotification
         self.dismissSnackbarNotification = dismissSnackbarNotification
+        self.deleteCommitDelay = deleteCommitDelay
     }
 
     public var searchText: String {
@@ -203,15 +208,16 @@ public final class BrowserViewModel {
     }
 
     public func handleDisplayReset(initialSearchQuery: String, contentRevision: Int = 0) {
+        flushPendingDelete()
         cancelInFlightWork()
-        latestKnownContentRevision = contentRevision
+        latestKnownContentRevision = max(latestKnownContentRevision, contentRevision)
         lastLoadedContentRevision = nil
         hasUserNavigated = false
         prefetchCache.removeAll()
         previewPayloadsByItemId.removeAll()
         resolvedMatchedExcerptsByItemId.removeAll()
         overlayState = .none
-        mutationState = .idle
+        resetMutationStateUnlessCommitting()
         editSession = .inactive
         // Clear selection so the fresh search lands on the top item rather
         // than carrying the prior highlight across a hide/show cycle.
@@ -223,12 +229,30 @@ public final class BrowserViewModel {
     }
 
     public func prepareForSuspension() {
+        flushPendingDelete()
         cancelInFlightWork()
         dismissSnackbarNotification()
         overlayState = .none
-        mutationState = .idle
+        resetMutationStateUnlessCommitting()
         editSession = .inactive
         hasUserNavigated = false
+    }
+
+    /// Commits any still-pending delete immediately. Called when the UI is
+    /// about to reset or suspend, so an optimistic delete is never dropped on
+    /// the floor with the item silently resurrecting later.
+    private func flushPendingDelete() {
+        guard case .deleting(.pending) = mutationState else { return }
+        pendingDeleteTask?.cancel()
+        pendingDeleteTask = nil
+        commitPendingDelete()
+    }
+
+    /// `.deleting(.committing)` must survive resets: the commit task resets to
+    /// `.idle` itself, and `restoreDeleteFailure` matches on it.
+    private func resetMutationStateUnlessCommitting() {
+        if case .deleting(.committing) = mutationState { return }
+        mutationState = .idle
     }
 
     public func handleContentRevisionChange(_ contentRevision: Int, isPanelVisible: Bool) {
@@ -444,8 +468,9 @@ public final class BrowserViewModel {
 
     private func scheduleDeleteCommit() {
         pendingDeleteTask?.cancel()
+        let delay = deleteCommitDelay
         pendingDeleteTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(3))
+            try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 self?.commitPendingDelete()
@@ -1286,6 +1311,8 @@ public final class BrowserViewModel {
         guard case let .deleting(.pending(transaction)) = mutationState else { return }
         pendingDeleteTask = nil
         mutationState = .deleting(.committing(transaction))
+        // The undo window is over; the Undo button must not outlive it.
+        dismissSnackbarNotification()
 
         Task { [weak self] in
             guard let self else { return }

@@ -15,6 +15,16 @@ enum PasteboardContent {
 
 @MainActor
 final class iOSClipboardService {
+    private let settings: iOSSettingsStore
+
+    init(settings: iOSSettingsStore) {
+        self.settings = settings
+    }
+
+    /// The current pasteboard generation. Reading `changeCount` never triggers
+    /// the system paste-consent alert, unlike reading the pasteboard contents.
+    var pasteboardChangeCount: Int { UIPasteboard.general.changeCount }
+
     func copy(content: ClipboardContent) {
         let pasteboard = UIPasteboard.general
         switch content {
@@ -37,6 +47,9 @@ final class iOSClipboardService {
                 pasteboard.string = first.filename
             }
         }
+        // Record our own write as already-ingested so auto-add never re-reads
+        // it back on the next foreground (mirrors the Mac acknowledgeLocalWrite).
+        settings.lastIngestedPasteboardChangeCount = pasteboard.changeCount
     }
 
     func readCurrentClipboard() -> PasteboardContent? {
