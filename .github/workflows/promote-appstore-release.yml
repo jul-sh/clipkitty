@@ -29,6 +29,11 @@ jobs:
       OVERRIDE_VERSION: ${{ inputs.app_store_version }}
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
       - name: Resolve live App Store version
         id: app-store
         shell: bash
@@ -151,3 +156,165 @@ jobs:
             "${ASSET_DIR}/ClipKitty-Hardened.zip"
 
           echo "Promoted ${BETA_TAG} to stable release ${STABLE_TAG}."
+
+      - name: Update Sparkle stable appcast
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ steps.app-store.outputs.version }}"
+          STABLE_TAG="v${VERSION}"
+          REPO="${GITHUB_REPOSITORY}"
+          STABLE_URL="https://github.com/${REPO}/releases/download/${STABLE_TAG}/ClipKitty.dmg"
+
+          STABLE_ASSET_LENGTH="$(
+            gh release view "$STABLE_TAG" \
+              --repo "$REPO" \
+              --json assets \
+              --jq '.assets[] | select(.name == "ClipKitty.dmg") | .size' \
+              | head -n 1
+          )"
+
+          if [ -z "$STABLE_ASSET_LENGTH" ]; then
+            echo "::error::Stable release ${STABLE_TAG} is missing ClipKitty.dmg."
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local --unset-all "http.https://github.com/.extraheader" || true
+          git config --global --unset-all "http.https://github.com/.extraheader" || true
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+
+          git fetch origin gh-pages
+          rm -rf /tmp/gh-pages
+          git worktree add /tmp/gh-pages origin/gh-pages
+          trap 'cd "$GITHUB_WORKSPACE"; git worktree remove /tmp/gh-pages --force' EXIT
+
+          cd /tmp/gh-pages
+          git switch -C gh-pages
+
+          VERSION="$VERSION" \
+          STABLE_URL="$STABLE_URL" \
+          STABLE_ASSET_LENGTH="$STABLE_ASSET_LENGTH" \
+          python3 <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+          from datetime import datetime, timezone
+          from email.utils import format_datetime
+          from html import escape
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          stable_url = os.environ["STABLE_URL"]
+          stable_asset_length = int(os.environ["STABLE_ASSET_LENGTH"])
+          state_path = Path("appcast-state.json")
+
+          def read_json_at(commit):
+              try:
+                  raw = subprocess.check_output(
+                      ["git", "show", f"{commit}:appcast-state.json"],
+                      text=True,
+                      stderr=subprocess.DEVNULL,
+                  )
+              except subprocess.CalledProcessError:
+                  return None
+              return json.loads(raw)
+
+          commits = subprocess.check_output(
+              ["git", "log", "--format=%H", "--", "appcast-state.json"],
+              text=True,
+          ).splitlines()
+
+          beta_release = None
+          for commit in commits:
+              state_at_commit = read_json_at(commit)
+              if not state_at_commit:
+                  continue
+              beta = state_at_commit.get("beta") or {}
+              if beta.get("version") == version:
+                  beta_release = beta
+                  break
+
+          if beta_release is None:
+              print(f"::error::No beta appcast metadata found for {version}.", file=sys.stderr)
+              sys.exit(1)
+
+          if int(beta_release["length"]) != stable_asset_length:
+              print(
+                  "::error::Stable ClipKitty.dmg length does not match "
+                  f"the signed beta appcast metadata for {version}: "
+                  f"{stable_asset_length} != {beta_release['length']}.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          state = json.loads(state_path.read_text()) if state_path.exists() else {}
+          stable_release = {
+              "version": version,
+              "build_number": beta_release.get("build_number") or version.rsplit(".", 1)[-1],
+              "url": stable_url,
+              "signature": beta_release["signature"],
+              "length": stable_asset_length,
+              "published_at": datetime.now(timezone.utc).isoformat(),
+          }
+          state["stable"] = stable_release
+          state_path.write_text(json.dumps(state, indent=2) + "\n")
+
+          def appcast_build_number(release):
+              build_number = release.get("build_number")
+              if build_number:
+                  return str(build_number)
+              candidate = str(release["version"]).rsplit(".", 1)[-1]
+              if not candidate.isdigit():
+                  raise ValueError(f"appcast release version `{release['version']}` does not contain an inferable build number")
+              return candidate
+
+          def pub_date(value):
+              dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+              return format_datetime(dt.astimezone(timezone.utc), usegmt=True)
+
+          def push_item(lines, channel, release):
+              title = f"ClipKitty {release['version']} Beta" if channel == "beta" else f"ClipKitty {release['version']}"
+              lines.append("    <item>")
+              lines.append(f"      <title>{escape(title)}</title>")
+              lines.append(f"      <sparkle:version>{escape(appcast_build_number(release))}</sparkle:version>")
+              lines.append(f"      <sparkle:shortVersionString>{escape(release['version'])}</sparkle:shortVersionString>")
+              lines.append("      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>")
+              if channel == "beta":
+                  lines.append("      <sparkle:channel>beta</sparkle:channel>")
+              lines.append(f"      <pubDate>{escape(pub_date(release['published_at']))}</pubDate>")
+              lines.append(
+                  "      <enclosure "
+                  f"url=\"{escape(release['url'], quote=True)}\" "
+                  "type=\"application/octet-stream\" "
+                  f"sparkle:edSignature=\"{escape(release['signature'], quote=True)}\" "
+                  f"length=\"{release['length']}\" />"
+              )
+              lines.append("    </item>")
+
+          lines = [
+              '<?xml version="1.0" encoding="utf-8"?>',
+              '<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">',
+              "  <channel>",
+              "    <title>ClipKitty Updates</title>",
+              "    <link>https://jul-sh.github.io/clipkitty/appcast.xml</link>",
+              "    <language>en</language>",
+          ]
+          if state.get("beta"):
+              push_item(lines, "beta", state["beta"])
+          if state.get("stable"):
+              push_item(lines, "stable", state["stable"])
+          lines.extend(["  </channel>", "</rss>"])
+          Path("appcast.xml").write_text("\n".join(lines) + "\n")
+          PY
+
+          git add appcast-state.json appcast.xml
+          if git diff --cached --quiet; then
+            echo "Sparkle stable appcast already matches ${VERSION}."
+          else
+            git commit --no-verify -m "Promote Sparkle appcast stable ${VERSION} [skip ci]"
+            git push origin gh-pages
+          fi
