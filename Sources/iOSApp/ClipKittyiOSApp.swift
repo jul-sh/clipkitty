@@ -51,9 +51,11 @@ final class AppState {
         let toastBox = ToastCallbackBox()
         let clipboardService = container.clipboardService
         let haptics = container.haptics
+        let settings = container.settings
 
         viewModel = BrowserViewModel(
             client: container.storeClient,
+            shouldGenerateLinkPreviews: { settings.generateLinkPreviews },
             onSelect: { _, content in
                 clipboardService.copy(content: content)
                 haptics.fire(.copy)

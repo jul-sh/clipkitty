@@ -14,21 +14,31 @@ struct GeneralSettingsSection: View {
             Toggle(String(localized: "Auto-Add from Clipboard"), isOn: $settings.autoAddFromClipboard)
         }
 
-        Section(String(localized: "Permissions")) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(String(localized: "To streamline operations, you can allow ClipKitty to always read the clipboard."))
-                    .foregroundStyle(.primary)
+        if !settings.permissionHintDismissed {
+            Section(String(localized: "Permissions")) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(String(localized: "To streamline operations, you can allow ClipKitty to always read the clipboard."))
+                        .foregroundStyle(.primary)
 
-                Text(String(localized: "Open ClipKitty in the Settings app, tap \"Paste from Other Apps\", then choose \"Allow\"."))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .fixedSize(horizontal: false, vertical: true)
+                    Text(String(localized: "Open ClipKitty in the Settings app, tap \"Paste from Other Apps\", then choose \"Allow\"."))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .fixedSize(horizontal: false, vertical: true)
 
-            Button {
-                openAppSettings()
-            } label: {
-                Label(String(localized: "Open ClipKitty Settings"), systemImage: "gearshape")
+                Button {
+                    openAppSettings()
+                } label: {
+                    Label(String(localized: "Open ClipKitty Settings"), systemImage: "gearshape")
+                }
+
+                Button(role: .cancel) {
+                    withAnimation(.bouncy) {
+                        settings.permissionHintDismissed = true
+                    }
+                } label: {
+                    Label(String(localized: "Dismiss"), systemImage: "xmark")
+                }
             }
         }
     }

@@ -12,9 +12,29 @@ struct TextPreviewView: UIViewRepresentable {
     var highlights: [Utf16HighlightRange] = []
     var initialScrollHighlightIndex: UInt64?
     var isEditable: Bool = true
+    var fontPreference: AppFontPreference = .iosevkaCharon
+    var previewStyle: PreviewFontPreference = .coding
 
     var onTextChange: ((String) -> Void)?
     var onEditingStateChange: ((Bool) -> Void)?
+
+    /// PostScript name of the preview font for the active typeface + spacing
+    /// preference (monospace vs proportional), matching the macOS preview pane.
+    private var previewFontName: String {
+        switch previewStyle {
+        case .coding:
+            return FontManager.monoName(for: fontPreference)
+        case .proportional:
+            return FontManager.sansSerifName(for: fontPreference)
+        }
+    }
+
+    /// The UIFont for the active preview preferences, falling back to the system
+    /// monospaced font when the custom face is unavailable.
+    private var previewFont: UIFont {
+        UIFont(name: previewFontName, size: 16)
+            ?? UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+    }
 
     func makeUIView(context: Context) -> UITextView {
         let textView = UITextView(usingTextLayoutManager: true)
@@ -22,8 +42,7 @@ struct TextPreviewView: UIViewRepresentable {
         textView.isSelectable = true
         textView.backgroundColor = .clear
         textView.textContainerInset = UIEdgeInsets(top: 16, left: 12, bottom: 16, right: 12)
-        textView.font = UIFont(name: FontManager.mono, size: 16)
-            ?? UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+        textView.font = previewFont
         textView.textColor = .label
         textView.alwaysBounceVertical = true
         textView.keyboardDismissMode = .interactive
@@ -57,8 +76,11 @@ struct TextPreviewView: UIViewRepresentable {
 
         let textChanged = itemChanged || (!coordinator.isEditing && textView.text != text)
         let highlightsChanged = coordinator.lastHighlights != highlights
+        // The font picker can change the preview typeface/spacing while a preview
+        // is open; re-apply the font live, mirroring the macOS preview pane.
+        let fontChanged = coordinator.lastFontName != previewFontName
 
-        guard itemChanged || textChanged || highlightsChanged else { return }
+        guard itemChanged || textChanged || highlightsChanged || fontChanged else { return }
 
         // Clear previous highlights
         if let tlm = textView.textLayoutManager, !coordinator.currentMatchRanges.isEmpty {
@@ -66,8 +88,8 @@ struct TextPreviewView: UIViewRepresentable {
         }
 
         if textChanged {
-            let font = UIFont(name: FontManager.mono, size: 16)
-                ?? UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+            let font = previewFont
+            coordinator.lastFontName = previewFontName
             let paragraphStyle = NSMutableParagraphStyle()
             paragraphStyle.lineBreakMode = .byWordWrapping
             let attributed = NSAttributedString(string: text, attributes: [
@@ -81,6 +103,17 @@ struct TextPreviewView: UIViewRepresentable {
                 textView.setContentOffset(.zero, animated: false)
                 textView.selectedRange = NSRange(location: 0, length: 0)
             }
+        } else if fontChanged {
+            // Font-only change (e.g. the typeface picker) with the text and item
+            // unchanged: restyle the existing content in place so we never clobber
+            // an in-progress edit or move the caret. Highlights are re-applied below.
+            let font = previewFont
+            coordinator.lastFontName = previewFontName
+            let selectedRange = textView.selectedRange
+            let fullRange = NSRange(location: 0, length: (textView.text as NSString).length)
+            textView.textStorage.addAttribute(.font, value: font, range: fullRange)
+            textView.typingAttributes[.font] = font
+            textView.selectedRange = selectedRange
         }
 
         // Resolve and apply new highlights
@@ -90,7 +123,7 @@ struct TextPreviewView: UIViewRepresentable {
         applyHighlightAttributes(matchRanges: newMatchRanges, to: textView)
 
         // Scroll to initial highlight
-        if (itemChanged || highlightsChanged), !highlights.isEmpty {
+        if itemChanged || highlightsChanged, !highlights.isEmpty {
             let targetHighlight: Utf16HighlightRange
             if let initialScrollHighlightIndex {
                 let index = Int(initialScrollHighlightIndex)
@@ -197,16 +230,17 @@ struct TextPreviewView: UIViewRepresentable {
         var lastHighlights: [Utf16HighlightRange] = []
         var currentMatchRanges: [MatchRange] = []
         var currentItemId: String = ""
+        var lastFontName: String = ""
         var isEditing = false
         var onTextChange: ((String) -> Void)?
         var onEditingStateChange: ((Bool) -> Void)?
 
-        func textViewDidBeginEditing(_ textView: UITextView) {
+        func textViewDidBeginEditing(_: UITextView) {
             isEditing = true
             onEditingStateChange?(true)
         }
 
-        func textViewDidEndEditing(_ textView: UITextView) {
+        func textViewDidEndEditing(_: UITextView) {
             isEditing = false
             onEditingStateChange?(false)
         }

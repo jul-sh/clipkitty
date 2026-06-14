@@ -11,8 +11,25 @@ struct CardView: View {
     @Environment(BrowserViewModel.self) private var viewModel
     @Environment(AppState.self) private var appState
     @Environment(HapticsClient.self) private var haptics
+    @Environment(iOSSettingsStore.self) private var settings
 
     @State private var isShareLoading = false
+
+    /// Sans-serif card font honouring the user's typeface preference.
+    private func sansFont(size: CGFloat, weight: Font.Weight? = nil) -> Font {
+        AppFont.ui(settings.fontPreference, size: size, weight: weight)
+    }
+
+    /// Preview-text card font honouring the user's typeface + spacing
+    /// preferences (used for raw values like text bodies, URLs, and colors).
+    private func monoFont(size: CGFloat, weight: Font.Weight? = nil) -> Font {
+        AppFont.preview(
+            typeface: settings.fontPreference,
+            style: settings.previewFontPreference,
+            size: size,
+            weight: weight
+        )
+    }
 
     private static let relativeDateFormatter: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
@@ -84,6 +101,8 @@ struct CardView: View {
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
 
+            sourceAppBadge
+
             Text(relativeTime)
                 .font(.caption)
                 .foregroundStyle(.tertiary)
@@ -95,6 +114,38 @@ struct CardView: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
+        }
+    }
+
+    /// A small glyph badge showing the app this item was copied from, matching
+    /// the Mac's source-app badge. iOS can't render another app's real icon the
+    /// way the Mac does (no NSWorkspace), so we map the synced bundle id to a
+    /// representative SF Symbol; see `SourceAppIcon`. Items captured on iOS carry
+    /// no bundle id and so show no badge.
+    ///
+    /// Like the Mac (`showsSourceAppBadge`), links and files are excluded: their
+    /// content-type icon already signals the origin, so a source badge is noise.
+    @ViewBuilder
+    private var sourceAppBadge: some View {
+        if showsSourceAppBadge,
+           let symbol = SourceAppIcon.symbolName(forBundleID: metadata.sourceAppBundleId)
+        {
+            Image(systemName: symbol)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .accessibilityLabel(metadata.sourceApp.map { String(localized: "From \($0)") } ?? "")
+        }
+    }
+
+    /// Whether this item's type should carry a source-app badge. Mirrors the
+    /// Mac's `showsSourceAppBadge`: text/image/color yes, links no. (Files are
+    /// filtered out of the iOS feed entirely.)
+    private var showsSourceAppBadge: Bool {
+        switch metadata.icon {
+        case let .symbol(iconType):
+            return iconType != .link && iconType != .file
+        case .thumbnail, .colorSwatch:
+            return true
         }
     }
 
@@ -131,24 +182,24 @@ struct CardView: View {
     private func symbolContentPreview(iconType: IconType) -> some View {
         switch iconType {
         case .text:
-            highlightedText(displayExcerpt.text, highlights: displayExcerpt.highlights, font: .custom(FontManager.mono, size: 15))
+            highlightedText(displayExcerpt.text, highlights: displayExcerpt.highlights, font: monoFont(size: 15))
                 .lineLimit(8)
 
         case .link:
-            HStack(spacing: 8) {
-                Image(systemName: "globe")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
-                highlightedText(displayExcerpt.text, highlights: displayExcerpt.highlights, font: .custom(FontManager.sansSerif, size: 15))
-                    .lineLimit(2)
-            }
+            CardLinkPreview(
+                itemId: metadata.itemId,
+                url: displayExcerpt.text,
+                highlights: displayExcerpt.highlights,
+                sansFont: sansFont,
+                monoFont: monoFont
+            )
 
         case .image:
             HStack(spacing: 8) {
                 Image(systemName: "photo")
                     .font(.title3)
                     .foregroundStyle(.secondary)
-                highlightedText(displayExcerpt.text, highlights: displayExcerpt.highlights, font: .custom(FontManager.sansSerif, size: 15))
+                highlightedText(displayExcerpt.text, highlights: displayExcerpt.highlights, font: sansFont(size: 15))
                     .lineLimit(2)
             }
 
@@ -158,7 +209,7 @@ struct CardView: View {
 
         case .color:
             // Fallback for symbol-based color (shouldn't normally hit this path)
-            highlightedText(displayExcerpt.text, highlights: displayExcerpt.highlights, font: .custom(FontManager.mono, size: 15))
+            highlightedText(displayExcerpt.text, highlights: displayExcerpt.highlights, font: monoFont(size: 15))
         }
     }
 
@@ -175,12 +226,11 @@ struct CardView: View {
             highlightedText(
                 displayExcerpt.highlights.isEmpty ? hexStringFromRGBA(rgba) : displayExcerpt.text,
                 highlights: displayExcerpt.highlights,
-                font: .custom(FontManager.mono, size: 15)
+                font: monoFont(size: 15)
             )
         }
     }
 
-    @ViewBuilder
     private func thumbnailPreview(bytes: Data) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             CardImagePreview(itemId: metadata.itemId, thumbnailBytes: bytes)
@@ -188,7 +238,7 @@ struct CardView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             if !displayExcerpt.text.isEmpty {
-                highlightedText(displayExcerpt.text, highlights: displayExcerpt.highlights, font: .custom(FontManager.sansSerif, size: 15))
+                highlightedText(displayExcerpt.text, highlights: displayExcerpt.highlights, font: sansFont(size: 15))
                     .lineLimit(2)
             }
         }
@@ -356,6 +406,119 @@ private struct CardImagePreview: View {
             if case let .image(data, _, _) = item.content {
                 fullImageBytes = data
             }
+        }
+    }
+}
+
+/// A rich link card for the feed, mirroring how the Mac surfaces links in its
+/// preview pane (title + preview image) rather than the bare `globe + URL` the
+/// iOS feed used before.
+///
+/// The feed's `DisplayRow` only carries the URL string, not the link's fetched
+/// `metadataState`, so — like `CardImagePreview` — we fetch the persisted item
+/// (`fetchItem`, which returns the stored `.loaded` payload when previews have
+/// been generated) and upgrade the card in place. We render the loaded title and
+/// image data directly with `Text` + `DecodedImageView` instead of embedding the
+/// heavyweight `LPLinkView` per row, which would churn UIKit views while
+/// scrolling. The detail screen keeps the native `LinkPreviewView`.
+private struct CardLinkPreview: View {
+    let itemId: String
+    let url: String
+    let highlights: [Utf16HighlightRange]
+    let sansFont: (CGFloat, Font.Weight?) -> Font
+    let monoFont: (CGFloat, Font.Weight?) -> Font
+
+    @Environment(AppContainer.self) private var container
+
+    @State private var metadataState: LinkMetadataState = .pending
+
+    private var loadedPayload: LinkMetadataPayload? {
+        if case let .loaded(payload) = metadataState { return payload }
+        return nil
+    }
+
+    private var host: String {
+        URL(string: url)?.host ?? url
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let imageData = previewImageData {
+                DecodedImageView(
+                    namespace: "card-link",
+                    itemId: itemId,
+                    data: imageData,
+                    contentMode: .fill
+                ) {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(.secondary.opacity(0.1))
+                        .frame(height: 140)
+                }
+                .frame(maxWidth: .infinity, maxHeight: 180)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+
+            if let title = previewTitle, !title.isEmpty {
+                Text(title)
+                    .font(sansFont(15, .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+            }
+
+            HStack(spacing: 6) {
+                Image(systemName: "globe")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(host)
+                    .font(sansFont(13, .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            highlightedURL
+                .lineLimit(loadedPayload == nil ? 2 : 1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: itemId) {
+            // The card already renders host + URL immediately; this fills in the
+            // title/image when the persisted item carries loaded metadata.
+            guard case .pending = metadataState else { return }
+            guard let item = await container.storeClient.fetchItem(id: itemId) else { return }
+            guard !Task.isCancelled else { return }
+            if case let .link(_, state) = item.content {
+                metadataState = state
+            }
+        }
+    }
+
+    private var previewTitle: String? {
+        switch loadedPayload {
+        case let .titleOnly(title, _), let .titleAndImage(title, _, _):
+            return title
+        case .imageOnly, .none:
+            return nil
+        }
+    }
+
+    private var previewImageData: Data? {
+        switch loadedPayload {
+        case let .imageOnly(imageData, _), let .titleAndImage(_, imageData, _):
+            return imageData
+        case .titleOnly, .none:
+            return nil
+        }
+    }
+
+    @ViewBuilder
+    private var highlightedURL: some View {
+        if highlights.isEmpty {
+            Text(url)
+                .font(monoFont(12, nil))
+                .foregroundStyle(.tertiary)
+        } else {
+            Text(HighlightAttributedStringBuilder.attributedText(url, highlights: highlights))
+                .font(monoFont(12, nil))
+                .foregroundStyle(.tertiary)
         }
     }
 }
