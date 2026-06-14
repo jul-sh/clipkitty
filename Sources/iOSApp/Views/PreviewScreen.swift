@@ -11,7 +11,13 @@ struct PreviewScreen: View {
     @Environment(BrowserViewModel.self) private var viewModel
     @Environment(AppState.self) private var appState
     @Environment(HapticsClient.self) private var haptics
+    @Environment(iOSSettingsStore.self) private var settings
     @Environment(\.dismiss) private var dismiss
+
+    /// Preview-text font honouring the user's typeface + spacing preferences.
+    private func previewFont(size: CGFloat) -> Font {
+        AppFont.preview(typeface: settings.fontPreference, style: settings.previewFontPreference, size: size)
+    }
 
     @State private var showDeleteConfirmation = false
 
@@ -152,6 +158,8 @@ struct PreviewScreen: View {
                 highlights: decoration?.highlights ?? [],
                 initialScrollHighlightIndex: decoration?.initialScrollHighlightIndex,
                 isEditable: true,
+                fontPreference: settings.fontPreference,
+                previewStyle: settings.previewFontPreference,
                 onTextChange: { newText in
                     viewModel.onTextEdit(newText, for: item.itemMetadata.itemId, originalText: value)
                 },
@@ -175,7 +183,9 @@ struct PreviewScreen: View {
                     text: value,
                     highlights: decoration?.highlights ?? [],
                     initialScrollHighlightIndex: decoration?.initialScrollHighlightIndex,
-                    isEditable: false
+                    isEditable: false,
+                    fontPreference: settings.fontPreference,
+                    previewStyle: settings.previewFontPreference
                 )
             }
         case let .link(url, metadataState):
@@ -254,13 +264,13 @@ struct PreviewScreen: View {
 
             if highlights.isEmpty {
                 Text(url)
-                    .font(.custom(FontManager.mono, size: 12))
+                    .font(previewFont(size: 12))
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Text(HighlightAttributedStringBuilder.attributedText(url, highlights: highlights))
-                    .font(.custom(FontManager.mono, size: 12))
+                    .font(previewFont(size: 12))
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -308,7 +318,15 @@ struct PreviewScreen: View {
             LabeledContent(String(localized: "Type"), value: navigationTitle)
 
             if let sourceApp = item.itemMetadata.sourceApp {
-                LabeledContent(String(localized: "Source"), value: sourceApp)
+                LabeledContent(String(localized: "Source")) {
+                    HStack(spacing: 6) {
+                        if let symbol = SourceAppIcon.symbolName(forBundleID: item.itemMetadata.sourceAppBundleId) {
+                            Image(systemName: symbol)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(sourceApp)
+                    }
+                }
             }
 
             LabeledContent(String(localized: "Time")) {

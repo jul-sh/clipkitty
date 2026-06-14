@@ -18,6 +18,22 @@ final class iOSSettingsStore {
         didSet { save() }
     }
 
+    /// The UI typeface used across the app. Mirrors the macOS `fontPreference`.
+    var fontPreference: AppFontPreference {
+        didSet { save() }
+    }
+
+    /// Character spacing for preview text — monospaced vs proportional.
+    /// Mirrors the macOS `previewFontPreference`.
+    var previewFontPreference: PreviewFontPreference {
+        didSet { save() }
+    }
+
+    /// Whether the user has dismissed the clipboard-permission hint in Settings.
+    var permissionHintDismissed: Bool {
+        didSet { save() }
+    }
+
     /// Maximum database size in gigabytes; oldest items are pruned beyond it.
     /// Matches the macOS default of 7 GB.
     var maxDatabaseSizeGB: Double {
@@ -48,6 +64,9 @@ final class iOSSettingsStore {
     private let generateLinkPreviewsKey = "iOSGenerateLinkPreviews"
     private let autoAddFromClipboardKey = "iOSAutoAddFromClipboard"
     private let maxDatabaseSizeGBKey = "iOSMaxDatabaseSizeGB"
+    private let fontPreferenceKey = "iOSFontPreference"
+    private let previewFontPreferenceKey = "iOSPreviewFontPreference"
+    private let permissionHintDismissedKey = "iOSPermissionHintDismissed"
     private let lastIngestedPasteboardChangeCountKey = "iOSLastIngestedPasteboardChangeCount"
     #if ENABLE_ICLOUD_SYNC
         private let syncEnabledKey = "iOSSyncEnabled"
@@ -68,6 +87,11 @@ final class iOSSettingsStore {
         generateLinkPreviews = defaults.object(forKey: generateLinkPreviewsKey) as? Bool ?? true
         autoAddFromClipboard = defaults.object(forKey: autoAddFromClipboardKey) as? Bool ?? false
         maxDatabaseSizeGB = defaults.object(forKey: maxDatabaseSizeGBKey) as? Double ?? 7.0
+        fontPreference = defaults.string(forKey: fontPreferenceKey)
+            .flatMap(AppFontPreference.init(rawValue:)) ?? .iosevkaCharon
+        previewFontPreference = defaults.string(forKey: previewFontPreferenceKey)
+            .flatMap(PreviewFontPreference.init(rawValue:)) ?? .coding
+        permissionHintDismissed = defaults.object(forKey: permissionHintDismissedKey) as? Bool ?? false
         lastIngestedPasteboardChangeCount = defaults.object(forKey: lastIngestedPasteboardChangeCountKey) as? Int ?? 0
 
         #if ENABLE_ICLOUD_SYNC
@@ -83,6 +107,9 @@ final class iOSSettingsStore {
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
         defaults.set(autoAddFromClipboard, forKey: autoAddFromClipboardKey)
         defaults.set(maxDatabaseSizeGB, forKey: maxDatabaseSizeGBKey)
+        defaults.set(fontPreference.rawValue, forKey: fontPreferenceKey)
+        defaults.set(previewFontPreference.rawValue, forKey: previewFontPreferenceKey)
+        defaults.set(permissionHintDismissed, forKey: permissionHintDismissedKey)
         #if ENABLE_ICLOUD_SYNC
             defaults.set(syncEnabled, forKey: syncEnabledKey)
         #endif
