@@ -117,11 +117,10 @@ struct CardView: View {
         }
     }
 
-    /// A small glyph badge showing the app this item was copied from, matching
-    /// the Mac's source-app badge. iOS can't render another app's real icon the
-    /// way the Mac does (no NSWorkspace), so we map the synced bundle id to a
-    /// representative SF Symbol; see `SourceAppIcon`. Items captured on iOS carry
-    /// no bundle id and so show no badge.
+    /// A small glyph badge showing the app this item was copied from when iOS
+    /// has a useful representative SF Symbol. iOS can't render another app's
+    /// real icon the way the Mac does (no NSWorkspace), so unmapped sources show
+    /// no badge.
     ///
     /// Like the Mac (`showsSourceAppBadge`), links and files are excluded: their
     /// content-type icon already signals the origin, so a source badge is noise.

@@ -9,14 +9,12 @@ import SwiftUI
 /// icon, and a sandboxed app can't introspect other installed apps. Items
 /// captured on iOS also carry no bundle id at all.
 ///
-/// So on iOS we approximate the macOS badge: items synced from a Mac carry a
-/// real bundle id (e.g. `com.apple.Safari`), which we map to a representative
-/// SF Symbol. Anything unknown falls back to a generic app glyph. This keeps the
-/// "where did this come from" cue the Mac provides without pretending we have
-/// the real artwork.
+/// So on iOS we approximate the macOS badge only when we have a recognizable
+/// bundle id (e.g. `com.apple.Safari`) that can map to a representative SF
+/// Symbol. Unknown apps show no badge rather than an empty generic outline.
 enum SourceAppIcon {
     /// The SF Symbol that best represents the given source app bundle id, or
-    /// `nil` when there's nothing useful to show (no bundle id).
+    /// `nil` when there's nothing useful to show.
     static func symbolName(forBundleID bundleID: String?) -> String? {
         guard let bundleID, !bundleID.isEmpty else { return nil }
 
@@ -31,11 +29,8 @@ enum SourceAppIcon {
             return symbol
         }
 
-        return genericSymbol
+        return nil
     }
-
-    /// Generic glyph for a known-but-unmapped source app.
-    static let genericSymbol = "app.dashed"
 
     /// Exact bundle-id → SF Symbol mapping for common macOS sources.
     private static let exactMatches: [String: String] = [
