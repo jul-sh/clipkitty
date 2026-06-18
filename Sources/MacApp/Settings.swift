@@ -32,52 +32,15 @@ enum PasteMode {
 }
 
 #if ENABLE_SPARKLE_UPDATES
-    /// State of update checking
-    enum UpdateCheckState: Codable, Equatable {
+    /// State of update checking. Held only in memory (drives the live Updates
+    /// status row); never persisted, so no Codable conformance is needed.
+    enum UpdateCheckState: Equatable {
         case idle
         case checking
         case downloading
         case installing
         case available
         case checkFailed(errorMessage: String)
-
-        /// Tag used for Codable round-tripping
-        private enum Tag: String, Codable {
-            case idle, checking, downloading, installing, available, checkFailed
-        }
-
-        private enum CodingKeys: String, CodingKey {
-            case tag, errorMessage
-        }
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            let tag = try container.decode(Tag.self, forKey: .tag)
-            switch tag {
-            case .idle: self = .idle
-            case .checking: self = .checking
-            case .downloading: self = .downloading
-            case .installing: self = .installing
-            case .available: self = .available
-            case .checkFailed:
-                let message = try container.decodeIfPresent(String.self, forKey: .errorMessage) ?? ""
-                self = .checkFailed(errorMessage: message)
-            }
-        }
-
-        func encode(to encoder: Encoder) throws {
-            var container = encoder.container(keyedBy: CodingKeys.self)
-            switch self {
-            case .idle: try container.encode(Tag.idle, forKey: .tag)
-            case .checking: try container.encode(Tag.checking, forKey: .tag)
-            case .downloading: try container.encode(Tag.downloading, forKey: .tag)
-            case .installing: try container.encode(Tag.installing, forKey: .tag)
-            case .available: try container.encode(Tag.available, forKey: .tag)
-            case let .checkFailed(message):
-                try container.encode(Tag.checkFailed, forKey: .tag)
-                try container.encode(message, forKey: .errorMessage)
-            }
-        }
     }
 #endif
 
@@ -146,13 +109,6 @@ final class AppSettings: ObservableObject {
 
     #if ENABLE_SPARKLE_UPDATES
         @Published var updateCheckState: UpdateCheckState = .idle
-        @Published var lastUpdateCheckDate: Date? {
-            didSet { save() }
-        }
-
-        @Published var lastUpdateCheckResult: UpdateCheckState = .idle {
-            didSet { save() }
-        }
 
         @Published var autoInstallUpdates: Bool {
             didSet { save() }
@@ -271,8 +227,6 @@ final class AppSettings: ObservableObject {
     #if ENABLE_SPARKLE_UPDATES
         private let autoInstallUpdatesKey = "autoInstallUpdates"
         private let updateChannelKey = "updateChannel"
-        private let lastUpdateCheckDateKey = "lastUpdateCheckDate"
-        private let lastUpdateCheckResultKey = "lastUpdateCheckResult"
     #endif
 
     /// Flag to prevent save() calls during initialization (didSet triggers before init completes)
@@ -315,14 +269,6 @@ final class AppSettings: ObservableObject {
             autoInstallUpdates = defaults.object(forKey: autoInstallUpdatesKey) as? Bool ?? true
             let storedUpdateChannel = defaults.string(forKey: updateChannelKey)
             updateChannel = storedUpdateChannel.flatMap(UpdateChannel.init(rawValue:)) ?? .stable
-            lastUpdateCheckDate = defaults.object(forKey: lastUpdateCheckDateKey) as? Date
-            if let resultData = defaults.data(forKey: lastUpdateCheckResultKey),
-               let decoded = try? JSONDecoder().decode(UpdateCheckState.self, from: resultData)
-            {
-                lastUpdateCheckResult = decoded
-            } else {
-                lastUpdateCheckResult = .idle
-            }
         #endif
 
         launchAtLoginPromptDismissed = defaults.bool(forKey: launchAtLoginPromptDismissedKey)
@@ -435,10 +381,6 @@ final class AppSettings: ObservableObject {
         #if ENABLE_SPARKLE_UPDATES
             defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)
             defaults.set(updateChannel.rawValue, forKey: updateChannelKey)
-            defaults.set(lastUpdateCheckDate, forKey: lastUpdateCheckDateKey)
-            if let resultData = try? JSONEncoder().encode(lastUpdateCheckResult) {
-                defaults.set(resultData, forKey: lastUpdateCheckResultKey)
-            }
         #endif
     }
 
