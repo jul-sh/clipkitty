@@ -51,16 +51,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         private var updater: SparkleAppUpdater?
     #endif
 
+    /// The activation policy the app rests at when no window is being shown.
+    /// Production honours the user's "Show app in Dock" choice (`.regular` shows
+    /// a Dock icon, `.accessory` is menu-bar-only); simulated-database runs are
+    /// always `.regular` so XCUITest can drive them.
+    private var restingActivationPolicy: NSApplication.ActivationPolicy {
+        switch launchMode {
+        case .production:
+            return AppSettings.shared.showInDock ? .regular : .accessory
+        case .simulatedDatabase:
+            return .regular
+        }
+    }
+
+    /// Restore the resting activation policy. Settings/Welcome windows flip the
+    /// app to `.regular` while open and call this once they close.
+    private func applyRestingActivationPolicy() {
+        NSApp.setActivationPolicy(restingActivationPolicy)
+    }
+
     /// Set activation policy before the app finishes launching.
     /// Without LSUIElement in Info.plist, we must set the policy at runtime.
     /// This fires early enough for XCUITest to see the app as non-"Disabled".
     func applicationWillFinishLaunching(_: Notification) {
-        switch launchMode {
-        case .production:
-            NSApp.setActivationPolicy(.accessory)
-        case .simulatedDatabase:
-            NSApp.setActivationPolicy(.regular)
-        }
+        applyRestingActivationPolicy()
     }
 
     func applicationDidFinishLaunching(_: Notification) {
@@ -150,6 +164,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
                 .store(in: &cancellables)
         #endif
+
+        // React to the "Show app in Dock" toggle live. Turning it on always
+        // shows the Dock icon immediately; turning it off drops to accessory
+        // only when no app window is open (an open Settings/Welcome window keeps
+        // the app .regular, and its close handler restores the resting policy).
+        AppSettings.shared.$showInDock
+            .dropFirst()
+            .sink { [weak self] _ in
+                guard let self, case .production = self.launchMode else { return }
+                if self.settingsWindow == nil, self.welcomeWindowController == nil {
+                    self.applyRestingActivationPolicy()
+                } else {
+                    NSApp.setActivationPolicy(.regular)
+                }
+            }
+            .store(in: &cancellables)
 
         // Show welcome screen on first launch
         if !AppSettings.shared.hasCompletedOnboarding, case .production = launchMode {
@@ -317,7 +347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // Also dismiss the launch-at-login prompt since onboarding covers it
             AppSettings.shared.launchAtLoginPromptDismissed = true
             self?.welcomeWindowController = nil
-            NSApp.setActivationPolicy(.accessory)
+            self?.applyRestingActivationPolicy()
             self?.panelController.show()
         }
         controller.onHotKeyChanged = { [weak self] hotKey in
@@ -344,7 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 // Settings window closed
                 self.settingsWindow = nil
             }
-            NSApp.setActivationPolicy(.accessory)
+            self.applyRestingActivationPolicy()
         }
     }
 

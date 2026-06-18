@@ -1,6 +1,41 @@
 import ClipKittyMacPlatform
 import SwiftUI
 
+/// "Appearance" section body: the app typeface and preview character spacing
+/// choosers stacked under one section, each with its own captioned sub-header.
+struct AppearanceSettingsBody: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            AppearanceSubgroup(title: String(localized: "App Typeface")) {
+                AppTypefaceSettingView()
+            }
+
+            Divider()
+
+            AppearanceSubgroup(title: String(localized: "Preview Character Spacing")) {
+                PreviewSpacingSettingView()
+            }
+        }
+    }
+}
+
+/// A captioned sub-header above a chooser, used to separate the choosers that
+/// share the consolidated "Appearance" section.
+private struct AppearanceSubgroup<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.callout)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+            content()
+        }
+    }
+}
+
 /// "App Typeface" section body: choose the typeface used across ClipKitty's UI,
 /// with a live specimen on the right. Radio rows mirror `PasteItemsSettingView`.
 struct AppTypefaceSettingView: View {
@@ -266,9 +301,12 @@ private struct PreviewStylePreview: View {
             .frame(height: 6)
     }
 
-    /// The wide preview pane, with text rendered in the chosen style so the font is visible.
+    /// The wide preview pane. Two rows of equal character count but contrasting
+    /// glyph widths: in monospace both columns line up into clean vertical edges,
+    /// while in proportional spacing the rows stagger — making the difference
+    /// between the two styles immediately legible.
     private var previewPane: some View {
-        Text(verbatim: "Ii.  Ww\n012 il")
+        Text(verbatim: "WWWW 123\niiii 456")
             .font(AppFontSpecimen.previewFont(typeface: typeface, style: style, size: 12, weight: .medium))
             .foregroundStyle(.primary.opacity(0.85))
             .lineLimit(2)
@@ -279,11 +317,8 @@ private struct PreviewStylePreview: View {
 
 #Preview {
     Form {
-        Section("App Typeface") {
-            AppTypefaceSettingView()
-        }
-        Section("Preview Character Spacing") {
-            PreviewSpacingSettingView()
+        Section("Appearance") {
+            AppearanceSettingsBody()
         }
     }
     .formStyle(.grouped)

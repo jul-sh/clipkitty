@@ -5,19 +5,16 @@ import ClipKittyShared
 #if ENABLE_ICLOUD_SYNC
     import CloudKit
 #endif
-import OSLog
 import SwiftUI
 
 struct GeneralSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
-    @State private var showClearConfirmation = false
     #if ENABLE_BUILD_ATTESTATION_LINK
         @State private var attestationURL: URL?
     #endif
     @State private var isICloudAvailable = true
     @State private var iCloudStatusMessage: String? = nil
-    @State private var logsCopied = false
     @State private var committedLimitGB: Double?
     @State private var showShrinkConfirmation = false
 
@@ -26,12 +23,6 @@ struct GeneralSettingsView: View {
         var onInstallUpdate: (() -> Void)? = nil
         var onCheckForUpdates: (() -> Void)? = nil
     #endif
-
-    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter
-    }()
 
     private let limitScale = StorageLimitScale()
 
@@ -79,16 +70,10 @@ struct GeneralSettingsView: View {
                         .font(.subheadline)
                     }
                 }
-            }
 
-            #if ENABLE_SYNTHETIC_PASTE
-                Section(String(localized: "Paste Items")) {
-                    PasteItemsSettingView()
-                }
-            #endif
+                Toggle(String(localized: "Show app in Dock"), isOn: $settings.showInDock)
 
-            #if ENABLE_ICLOUD_SYNC
-                Section(String(localized: "iCloud Sync")) {
+                #if ENABLE_ICLOUD_SYNC
                     Toggle(String(localized: "Sync clipboard history across devices"), isOn: $settings.syncEnabled)
                         .disabled(!isICloudAvailable)
 
@@ -97,24 +82,17 @@ struct GeneralSettingsView: View {
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
+                #endif
+            }
 
-                    if settings.syncEnabled {
-                        HStack {
-                            syncStatusIcon
-                            Text(syncStatusText)
-                                .foregroundStyle(.secondary)
-                        }
-                        .font(.subheadline)
-                    }
+            #if ENABLE_SYNTHETIC_PASTE
+                Section(String(localized: "Paste Items")) {
+                    PasteItemsSettingView()
                 }
             #endif
 
-            Section(String(localized: "App Typeface")) {
-                AppTypefaceSettingView()
-            }
-
-            Section(String(localized: "Preview Character Spacing")) {
-                PreviewSpacingSettingView()
+            Section(String(localized: "Appearance")) {
+                AppearanceSettingsBody()
             }
 
             Section(String(localized: "History")) {
@@ -158,27 +136,6 @@ struct GeneralSettingsView: View {
                             "History already uses more space than the new limit. The oldest items will be removed to fit."
                         )
                     )
-                }
-
-                Button(role: .destructive) {
-                    showClearConfirmation = true
-                } label: {
-                    HStack {
-                        Image(systemName: "trash")
-                        Text(String(localized: "Clear History"))
-                    }
-                }
-                .confirmationDialog(
-                    String(localized: "Clear History"),
-                    isPresented: $showClearConfirmation,
-                    titleVisibility: .visible
-                ) {
-                    Button(String(localized: "Clear All"), role: .destructive) {
-                        store.clear()
-                    }
-                    Button(String(localized: "Cancel"), role: .cancel) {}
-                } message: {
-                    Text(String(localized: "Delete all clipboard history? This cannot be undone."))
                 }
             }
 
@@ -239,29 +196,6 @@ struct GeneralSettingsView: View {
                         }
                     }
 
-                    if let lastChecked = settings.lastUpdateCheckDate {
-                        HStack(spacing: 4) {
-                            switch settings.lastUpdateCheckResult {
-                            case .idle:
-                                Text(String(localized: "Up to date, as of"))
-                            case .available:
-                                Text(String(localized: "Update available, as of"))
-                            case .downloading:
-                                Text(String(localized: "Downloading update, as of"))
-                            case .installing:
-                                Text(String(localized: "Installing update, as of"))
-                            case .checkFailed:
-                                Text(String(localized: "Update check failed, as of"))
-                            case .checking:
-                                EmptyView()
-                            }
-
-                            Text(lastChecked, style: .date)
-                            Text(lastChecked, style: .time)
-                        }
-                        .foregroundStyle(.secondary)
-                    }
-
                     Toggle(
                         String(localized: "Automatically install updates"),
                         isOn: $settings.autoInstallUpdates
@@ -315,11 +249,6 @@ struct GeneralSettingsView: View {
                                 )
                             }
                         }
-
-                        Button(logsCopied ? String(localized: "Logs Copied!") : String(localized: "Copy Recent Logs")) {
-                            copyRecentLogs()
-                        }
-                        .disabled(logsCopied)
                     }
                 }
             #endif
@@ -382,53 +311,6 @@ struct GeneralSettingsView: View {
     }
 
     #if ENABLE_ICLOUD_SYNC
-        @ViewBuilder
-        private var syncStatusIcon: some View {
-            if let engine = store.syncEngine {
-                switch engine.status {
-                case .idle:
-                    Image(systemName: "icloud").foregroundStyle(.secondary)
-                case .connecting:
-                    ProgressView().controlSize(.small)
-                case .syncing:
-                    ProgressView().controlSize(.small)
-                case .synced:
-                    Image(systemName: "checkmark.icloud").foregroundStyle(.green)
-                case .error:
-                    Image(systemName: "exclamationmark.icloud").foregroundStyle(.orange)
-                case .temporarilyUnavailable:
-                    Image(systemName: "clock.badge.exclamationmark").foregroundStyle(.orange)
-                case .unavailable:
-                    Image(systemName: "xmark.icloud").foregroundStyle(.red)
-                }
-            } else {
-                Image(systemName: "icloud.slash").foregroundStyle(.secondary)
-            }
-        }
-
-        private var syncStatusText: String {
-            guard let engine = store.syncEngine else {
-                return String(localized: "Not running")
-            }
-            switch engine.status {
-            case .idle:
-                return String(localized: "Waiting to sync")
-            case .connecting:
-                return String(localized: "Connecting to iCloud…")
-            case let .syncing(activity):
-                return activity.statusDescription
-            case let .synced(lastSync):
-                let relative = Self.relativeDateFormatter.localizedString(for: lastSync, relativeTo: Date())
-                return String(localized: "Synced \(relative)")
-            case let .error(message):
-                return String(localized: "Error: \(message)")
-            case .temporarilyUnavailable:
-                return String(localized: "iCloud temporarily unavailable")
-            case .unavailable:
-                return String(localized: "iCloud not available")
-            }
-        }
-
         private func checkICloudAccountStatus() async {
             // CKContainer.default() throws an unrecoverable ObjC exception when
             // the com.apple.application-identifier entitlement is missing (e.g.
@@ -485,28 +367,6 @@ struct GeneralSettingsView: View {
             return entitlements["com.apple.application-identifier"] != nil
         }()
     #endif
-
-    private func copyRecentLogs() {
-        do {
-            let store = try OSLogStore(scope: .currentProcessIdentifier)
-            let since = store.position(date: Date().addingTimeInterval(-3600))
-            let entries = try store.getEntries(at: since)
-                .compactMap { $0 as? OSLogEntryLog }
-                .map { "[\($0.date.formatted(.iso8601))] [\($0.category)] \($0.composedMessage)" }
-                .joined(separator: "\n")
-
-            let header = "ClipKitty \(appVersion) (\(buildNumber)) \(buildChannel) — logs from last hour"
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString("\(header)\n\n\(entries)", forType: .string)
-            logsCopied = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                logsCopied = false
-            }
-        } catch {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString("Failed to read logs: \(error.localizedDescription)", forType: .string)
-        }
-    }
 
     #if ENABLE_BUILD_ATTESTATION_LINK
         private func checkAttestation() async {
