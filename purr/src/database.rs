@@ -398,6 +398,26 @@ impl Database {
             [],
         );
 
+        // Migration: bake the "Image: " label into existing image descriptions
+        // so older rows match the form new images are stored in (see
+        // `format_image_description`). Skips the bare "Image" placeholder and any
+        // row already prefixed, so it is safe to re-run. The description is
+        // denormalized into both `items.content` and `image_items.description`,
+        // so both are updated.
+        conn.execute(
+            "UPDATE items SET content = 'Image: ' || content
+             WHERE contentType = 'image'
+               AND content <> 'Image'
+               AND content NOT LIKE 'Image: %'",
+            [],
+        )?;
+        conn.execute(
+            "UPDATE image_items SET description = 'Image: ' || description
+             WHERE description <> 'Image'
+               AND description NOT LIKE 'Image: %'",
+            [],
+        )?;
+
         // Migration: Add item_id column to existing items tables
         let _ = conn.execute("ALTER TABLE items ADD COLUMN item_id TEXT", []);
 
@@ -1771,6 +1791,71 @@ mod tests {
         let items = db.fetch_items_by_item_ids(&item_ids).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].content.text_content(), "legacy text");
+    }
+
+    #[test]
+    fn test_legacy_image_descriptions_are_prefixed() {
+        let temp = NamedTempFile::new().unwrap();
+        {
+            let conn = rusqlite::Connection::open(temp.path()).unwrap();
+            conn.execute_batch(
+                r#"
+                PRAGMA foreign_keys=ON;
+                CREATE TABLE items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    contentType TEXT NOT NULL,
+                    contentHash TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    sourceApp TEXT,
+                    sourceAppBundleId TEXT,
+                    thumbnail BLOB,
+                    colorRgba INTEGER
+                );
+                CREATE TABLE image_items (
+                    itemId INTEGER PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+                    data BLOB NOT NULL,
+                    description TEXT NOT NULL DEFAULT 'Image'
+                );
+                -- A titled image (gets the prefix), an untitled one (left bare),
+                -- and one already prefixed (must not be doubled).
+                INSERT INTO items (id, contentType, contentHash, content, timestamp) VALUES
+                    (1, 'image', 'hash-titled', 'a red bicycle', '2026-01-01 00:00:00'),
+                    (2, 'image', 'hash-untitled', 'Image', '2026-01-01 00:00:01'),
+                    (3, 'image', 'hash-prefixed', 'Image: a cat', '2026-01-01 00:00:02');
+                INSERT INTO image_items (itemId, data, description) VALUES
+                    (1, X'89504E47', 'a red bicycle'),
+                    (2, X'89504E47', 'Image'),
+                    (3, X'89504E47', 'Image: a cat');
+                "#,
+            )
+            .unwrap();
+        }
+
+        let db = Database::open(temp.path()).unwrap();
+        let conn = db.get_conn().unwrap();
+
+        let content = |id: i64| -> String {
+            conn.query_row("SELECT content FROM items WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap()
+        };
+        let description = |id: i64| -> String {
+            conn.query_row(
+                "SELECT description FROM image_items WHERE itemId = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+
+        assert_eq!(content(1), "Image: a red bicycle");
+        assert_eq!(description(1), "Image: a red bicycle");
+        assert_eq!(content(2), "Image");
+        assert_eq!(description(2), "Image");
+        assert_eq!(content(3), "Image: a cat");
+        assert_eq!(description(3), "Image: a cat");
     }
 
     #[test]

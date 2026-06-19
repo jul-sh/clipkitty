@@ -547,6 +547,9 @@ impl ClipboardStoreApi for ClipboardStore {
         description: String,
     ) -> Result<(), ClipKittyError> {
         let row_id = self.require_row_id(&item_id)?;
+        // Bake in the "Image: " label once, up front, so the sync event and the
+        // local store record the identical prefixed description across devices.
+        let description = crate::interface::format_image_description(&description);
         #[cfg(feature = "sync")]
         self.sync_emitter
             .emit_image_description_updated(&item_id, &description)?;
@@ -1468,13 +1471,14 @@ mod tests {
     }
 
     #[test]
-    fn index_version_v7_dir_name() {
-        // Pins the v7 migration trigger (diacritic folding analyzers): a
-        // revert of INDEX_VERSION would silently reuse a stale-fold index.
+    fn index_version_v8_dir_name() {
+        // Pins the v8 migration trigger ("Image: " prefix baked into image
+        // descriptions): a revert of INDEX_VERSION would silently reuse an index
+        // built from the un-prefixed descriptions.
         let path = ClipboardStore::index_path_for_database(Path::new("/tmp/clipkitty/test.db"));
         assert!(
-            path.ends_with("tantivy_index_v7"),
-            "expected v7 index dir, got {path:?}"
+            path.ends_with("tantivy_index_v8"),
+            "expected v8 index dir, got {path:?}"
         );
     }
 

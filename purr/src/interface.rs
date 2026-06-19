@@ -473,6 +473,39 @@ impl ClipboardContent {
     }
 }
 
+/// The bare label stored for an image with no meaningful description.
+pub const UNTITLED_IMAGE_DESCRIPTION: &str = "Image";
+
+/// Format a raw image description into the form stored in `description`, the way
+/// File items bake their "File:" label into `display_name`. This makes the
+/// "Image: " prefix the single source of truth: it flows through `text_content`,
+/// the search index, list rows, and previews alike.
+///
+/// Untitled images keep the bare `"Image"` label; any real description is
+/// prefixed with `"Image: "`. Idempotent: a value already in stored form is
+/// returned unchanged, so re-running it (e.g. on update) never doubles the prefix.
+pub fn format_image_description(raw: &str) -> String {
+    let trimmed = raw.trim();
+
+    // Already in labeled form ("Image: something"): keep the meaningful tail and
+    // re-label it, so the function is idempotent and never doubles the prefix.
+    // A label with an empty tail collapses to the bare untitled label.
+    if let Some(tail) = trimmed.strip_prefix("Image:") {
+        let tail = tail.trim();
+        if tail.is_empty() {
+            return UNTITLED_IMAGE_DESCRIPTION.to_string();
+        }
+        return format!("Image: {}", tail);
+    }
+
+    // The bare untitled placeholder or an empty description: no real title.
+    if trimmed.is_empty() || trimmed == UNTITLED_IMAGE_DESCRIPTION {
+        return UNTITLED_IMAGE_DESCRIPTION.to_string();
+    }
+
+    format!("Image: {}", trimmed)
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // RECORDS (Structs)
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -959,5 +992,53 @@ impl From<purr_sync::SyncError> for ClipKittyError {
             purr_sync::SyncError::InconsistentData(msg) => ClipKittyError::DataInconsistency(msg),
             other => ClipKittyError::DatabaseError(other.to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_image_description, UNTITLED_IMAGE_DESCRIPTION};
+
+    #[test]
+    fn real_description_gets_image_prefix() {
+        assert_eq!(
+            format_image_description("a red bicycle"),
+            "Image: a red bicycle"
+        );
+    }
+
+    #[test]
+    fn untitled_image_keeps_bare_label() {
+        assert_eq!(
+            format_image_description("Image"),
+            UNTITLED_IMAGE_DESCRIPTION
+        );
+    }
+
+    #[test]
+    fn blank_description_collapses_to_bare_label() {
+        assert_eq!(format_image_description(""), UNTITLED_IMAGE_DESCRIPTION);
+        assert_eq!(format_image_description("   "), UNTITLED_IMAGE_DESCRIPTION);
+    }
+
+    #[test]
+    fn already_prefixed_description_is_not_doubled() {
+        assert_eq!(
+            format_image_description("Image: a red bicycle"),
+            "Image: a red bicycle"
+        );
+    }
+
+    #[test]
+    fn prefix_only_value_collapses_to_bare_label() {
+        assert_eq!(
+            format_image_description("Image: "),
+            UNTITLED_IMAGE_DESCRIPTION
+        );
+    }
+
+    #[test]
+    fn surrounding_whitespace_is_trimmed_before_prefixing() {
+        assert_eq!(format_image_description("  sunset  "), "Image: sunset");
     }
 }

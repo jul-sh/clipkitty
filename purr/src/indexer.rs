@@ -28,8 +28,9 @@ use tokio_util::sync::CancellationToken;
 /// Index version - bump this when schema changes to trigger automatic rebuild.
 /// History: v3 = initial trigram, v4 = content_words WithFreqsAndPositions,
 ///          v5 = previous i64 item_id, v6 = string item_id,
-///          v7 = diacritic folding in trigram + content_words analyzers
-pub const INDEX_VERSION: &str = "v7";
+///          v7 = diacritic folding in trigram + content_words analyzers,
+///          v8 = "Image: " prefix baked into image descriptions
+pub const INDEX_VERSION: &str = "v8";
 
 const CHUNK_TARGET_BYTES: usize = 16 * 1024;
 const CHUNK_OVERLAP_BYTES: usize = 2 * 1024;

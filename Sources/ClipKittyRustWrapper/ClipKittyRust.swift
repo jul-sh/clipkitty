@@ -63,11 +63,10 @@ public extension ClipboardContent {
         case let .link(url, _):
             return url
         case let .image(_, description, _):
-            // Avoid "Image: Image" when using the default description
-            if description == "Image" {
-                return String(localized: "Image")
-            }
-            return "\(String(localized: "Image:")) \(description)"
+            // The "Image: " prefix is baked into `description` by the Rust layer
+            // (see `format_image_description`), the same way File items carry
+            // their "File:" label, so it is returned verbatim here.
+            return description
         case let .file(displayName, _):
             return displayName
         }

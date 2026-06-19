@@ -2239,6 +2239,13 @@ mod write_path_audit_tests {
             .filter(|e| e.payload_type == "image_description_updated")
             .collect();
         assert_eq!(desc_events.len(), 1);
+        // The emitted event carries the prefixed description, so every device
+        // records the same "Image: " label.
+        assert!(
+            desc_events[0].payload_data.contains("Image: A nice photo"),
+            "expected prefixed description in payload, got {:?}",
+            desc_events[0].payload_data
+        );
     }
 
     #[test]

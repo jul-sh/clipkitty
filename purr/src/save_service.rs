@@ -249,6 +249,9 @@ pub(crate) fn update_image_description(
     item_id: i64,
     description: String,
 ) -> Result<ReindexOutcome, ClipKittyError> {
+    // `description` arrives already in stored form (see
+    // `format_image_description`), carrying the "Image: " label the way File
+    // items carry "File:". It is persisted and indexed verbatim.
     db.update_image_description(item_id, &description)?;
     if let Some(item) = get_stored_item(db, item_id)? {
         if indexer
