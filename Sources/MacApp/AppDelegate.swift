@@ -52,13 +52,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     #endif
 
     /// The activation policy the app rests at when no window is being shown.
-    /// Production honours the user's "Show app in Dock" choice (`.regular` shows
-    /// a Dock icon, `.accessory` is menu-bar-only); simulated-database runs are
+    /// Production is menu-bar-only (`.accessory`); simulated-database runs are
     /// always `.regular` so XCUITest can drive them.
     private var restingActivationPolicy: NSApplication.ActivationPolicy {
         switch launchMode {
         case .production:
-            return AppSettings.shared.showInDock ? .regular : .accessory
+            return .accessory
         case .simulatedDatabase:
             return .regular
         }
@@ -158,22 +157,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
                 .store(in: &cancellables)
         #endif
-
-        // React to the "Show app in Dock" toggle live. Turning it on always
-        // shows the Dock icon immediately; turning it off drops to accessory
-        // only when no app window is open (an open Settings/Welcome window keeps
-        // the app .regular, and its close handler restores the resting policy).
-        AppSettings.shared.$showInDock
-            .dropFirst()
-            .sink { [weak self] _ in
-                guard let self, case .production = self.launchMode else { return }
-                if self.settingsWindow == nil, self.welcomeWindowController == nil {
-                    self.applyRestingActivationPolicy()
-                } else {
-                    NSApp.setActivationPolicy(.regular)
-                }
-            }
-            .store(in: &cancellables)
 
         // Show welcome screen on first launch
         if !AppSettings.shared.hasCompletedOnboarding, case .production = launchMode {

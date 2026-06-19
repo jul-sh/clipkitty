@@ -126,12 +126,6 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
 
-    /// Whether the app shows a Dock icon. When false, ClipKitty runs as a
-    /// menu-bar-only (accessory) app. Defaults to false.
-    @Published var showInDock: Bool {
-        didSet { save() }
-    }
-
     @Published var fontPreference: AppFontPreference {
         didSet { save() }
     }
@@ -203,7 +197,6 @@ final class AppSettings: ObservableObject {
     private let deleteHotKeyKey = "deleteHotKey"
     private let maxDbSizeKey = "maxDatabaseSizeGB"
     private let launchAtLoginKey = "launchAtLogin"
-    private let showInDockKey = "showInDock"
     private let fontPreferenceKey = "fontPreference"
     private let previewFontPreferenceKey = "previewFontPreference"
     #if ENABLE_SYNTHETIC_PASTE
@@ -257,7 +250,6 @@ final class AppSettings: ObservableObject {
         }
 
         launchAtLoginEnabled = defaults.bool(forKey: launchAtLoginKey)
-        showInDock = defaults.bool(forKey: showInDockKey)
         fontPreference = defaults.string(forKey: fontPreferenceKey)
             .flatMap(AppFontPreference.init(rawValue:)) ?? .iosevkaCharon
         previewFontPreference = defaults.string(forKey: previewFontPreferenceKey)
@@ -358,7 +350,6 @@ final class AppSettings: ObservableObject {
         }
         defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
         defaults.set(launchAtLoginEnabled, forKey: launchAtLoginKey)
-        defaults.set(showInDock, forKey: showInDockKey)
         defaults.set(fontPreference.rawValue, forKey: fontPreferenceKey)
         defaults.set(previewFontPreference.rawValue, forKey: previewFontPreferenceKey)
         #if ENABLE_SYNTHETIC_PASTE
