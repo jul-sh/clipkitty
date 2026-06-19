@@ -299,9 +299,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     },
                     onInstallUpdate: { [weak self] in
                         self?.updater?.installUpdate()
-                    },
-                    onCheckForUpdates: { [weak self] in
-                        self?.updater?.checkForUpdates()
                     }
                 )
             #else

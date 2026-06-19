@@ -21,7 +21,6 @@ struct GeneralSettingsView: View {
     let store: ClipboardStore
     #if ENABLE_SPARKLE_UPDATES
         var onInstallUpdate: (() -> Void)? = nil
-        var onCheckForUpdates: (() -> Void)? = nil
     #endif
 
     private let limitScale = StorageLimitScale()
@@ -46,7 +45,7 @@ struct GeneralSettingsView: View {
 
     var body: some View {
         Form {
-            Section(String(localized: "Startup")) {
+            Section(String(localized: "Behavior")) {
                 Toggle(String(localized: "Launch at login"), isOn: launchAtLoginBinding)
                     .disabled(!launchAtLogin.state.canToggle)
 
@@ -71,10 +70,8 @@ struct GeneralSettingsView: View {
                     }
                 }
 
-                Toggle(String(localized: "Show app in Dock"), isOn: $settings.showInDock)
-
                 #if ENABLE_ICLOUD_SYNC
-                    Toggle(String(localized: "Sync clipboard history across devices"), isOn: $settings.syncEnabled)
+                    Toggle(String(localized: "Sync clipboard history across devices via iCloud"), isOn: $settings.syncEnabled)
                         .disabled(!isICloudAvailable)
 
                     if !isICloudAvailable, let message = iCloudStatusMessage {
@@ -141,65 +138,17 @@ struct GeneralSettingsView: View {
 
             #if ENABLE_SPARKLE_UPDATES
                 Section(String(localized: "Updates")) {
-                    HStack {
-                        Text(String(localized: "Status:"))
-                        Spacer()
-                        switch settings.updateCheckState {
-                        case .idle:
-                            Text(String(localized: "Up to date"))
-                                .foregroundStyle(.secondary)
-                        case .checking:
-                            HStack(spacing: 6) {
-                                ProgressView()
-                                    .controlSize(.small)
-                                Text(String(localized: "Checking…"))
-                                    .foregroundStyle(.secondary)
-                            }
-                        case .downloading:
-                            Text(String(localized: "Downloading update…"))
-                                .foregroundStyle(.secondary)
-                        case .installing:
-                            Text(String(localized: "Installing update…"))
-                                .foregroundStyle(.secondary)
-                        case .available:
-                            HStack(spacing: 6) {
-                                Text(String(localized: "Update available"))
-                                    .fontWeight(.semibold)
-                                Button(String(localized: "Install")) {
-                                    onInstallUpdate?()
-                                }
-                                .buttonStyle(.borderedProminent)
-                            }
-                        case let .checkFailed(errorMessage):
-                            VStack(alignment: .trailing, spacing: 6) {
-                                Label(
-                                    String(localized: "Update check failed"),
-                                    systemImage: "exclamationmark.triangle"
-                                )
-                                .foregroundStyle(.orange)
-
-                                Text(errorMessage)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.trailing)
-
-                                Button(String(localized: "View Releases on GitHub")) {
-                                    NSWorkspace.shared.open(
-                                        URL(
-                                            string:
-                                            "https://github.com/jul-sh/clipkitty/releases/latest"
-                                        )!
-                                    )
-                                }
-                                .font(.subheadline)
-                            }
-                        }
-                    }
-
                     Toggle(
                         String(localized: "Automatically install updates"),
                         isOn: $settings.autoInstallUpdates
                     )
+
+                    if !settings.autoInstallUpdates, settings.updateCheckState == .available {
+                        Button(String(localized: "Install Update")) {
+                            onInstallUpdate?()
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
 
                     VStack(alignment: .leading, spacing: 8) {
                         Toggle(
@@ -225,11 +174,6 @@ struct GeneralSettingsView: View {
                     }
 
                     if case .beta = settings.updateChannel {
-                        Button(String(localized: "Check for Updates")) {
-                            onCheckForUpdates?()
-                        }
-                        .disabled(settings.updateCheckState != .idle)
-
                         VStack(alignment: .leading, spacing: 8) {
                             Text(
                                 String(
