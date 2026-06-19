@@ -16,20 +16,8 @@
       "layers" : [
         {
           "glass" : true,
-          "image-name" : "Generated Image May 27, 2026 - 6_44PM-2.png",
-          "name" : "Generated Image May 27, 2026 - 6_44PM-2"
-        },
-        {
-          "hidden" : true,
-          "image-name" : "cat.png",
-          "name" : "cat",
-          "position" : {
-            "scale" : 1,
-            "translation-in-points" : [
-              55.36343511492521,
-              -39.64316106500246
-            ]
-          }
+          "image-name" : "icon.png",
+          "name" : "icon.png"
         }
       ],
       "lighting" : "individual",
@@ -41,47 +29,6 @@
       "translucency" : {
         "enabled" : false,
         "value" : 0.5
-      }
-    },
-    {
-      "blur-material" : 1,
-      "hidden" : false,
-      "layers" : [
-        {
-          "glass" : true,
-          "hidden" : true,
-          "image-name" : "clipboard-2.png",
-          "name" : "clipboard-2",
-          "position" : {
-            "scale" : 0.62,
-            "translation-in-points" : [
-              0,
-              0
-            ]
-          }
-        },
-        {
-          "hidden" : true,
-          "image-name" : "clip.png",
-          "name" : "clip",
-          "position" : {
-            "scale" : 1.03,
-            "translation-in-points" : [
-              -57.60343511492533,
-              95.55375915944785
-            ]
-          }
-        }
-      ],
-      "lighting" : "combined",
-      "shadow" : {
-        "kind" : "neutral",
-        "opacity" : 0.5
-      },
-      "specular" : true,
-      "translucency" : {
-        "enabled" : true,
-        "value" : 0.2
       }
     }
   ],

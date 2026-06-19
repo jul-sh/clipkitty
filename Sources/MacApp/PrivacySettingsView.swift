@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Represents an app that can be ignored
 struct IgnoredApp: Identifiable, Hashable {
-    let id: String // bundle ID
+    let id: String  // bundle ID
     let name: String
     let icon: NSImage?
 
@@ -16,9 +16,10 @@ struct IgnoredApp: Identifiable, Hashable {
     /// Create from a bundle ID by looking up app info
     static func fromBundleId(_ bundleId: String) -> IgnoredApp {
         if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId),
-           let bundle = Bundle(url: appURL)
+            let bundle = Bundle(url: appURL)
         {
-            let name = bundle.object(forInfoDictionaryKey: "CFBundleName") as? String
+            let name =
+                bundle.object(forInfoDictionaryKey: "CFBundleName") as? String
                 ?? bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
                 ?? appURL.deletingPathExtension().lastPathComponent
             let icon = NSWorkspace.shared.icon(forFile: appURL.path)
@@ -58,10 +59,9 @@ struct PrivacySettingsView: View {
                     Text(String(localized: "Content from these apps won't be saved."))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                    IgnoredAppsListView()
                 }
                 .padding(.bottom, 4)
-
-                IgnoredAppsListView()
             }
 
             #if ENABLE_LINK_PREVIEWS
@@ -69,9 +69,12 @@ struct PrivacySettingsView: View {
                     Toggle(isOn: $settings.generateLinkPreviews) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(String(localized: "Show link previews"))
-                            Text(String(localized: "Downloads web content. May trigger tracking links."))
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
+                            Text(
+                                String(
+                                    localized: "Downloads web content. May trigger tracking links.")
+                            )
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -92,14 +95,14 @@ struct IgnoredAppsListView: View {
         var apps: [IgnoredApp] {
             switch self {
             case .empty: return []
-            case let .populated(apps, _): return apps
+            case .populated(let apps, _): return apps
             }
         }
 
         var selectedId: String? {
             switch self {
             case .empty: return nil
-            case let .populated(_, id): return id
+            case .populated(_, let id): return id
             }
         }
 
@@ -115,7 +118,7 @@ struct IgnoredAppsListView: View {
         }
 
         mutating func select(_ id: String?) {
-            guard case let .populated(apps, _) = self else { return }
+            guard case .populated(let apps, _) = self else { return }
             self = .populated(apps: apps, selectedId: id)
         }
     }
@@ -135,7 +138,7 @@ struct IgnoredAppsListView: View {
                 Text(String(localized: "No apps excluded"))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 60)
-            case let .populated(apps, _):
+            case .populated(let apps, _):
                 List(selection: selectedIdBinding) {
                     ForEach(apps) { app in
                         HStack(spacing: 10) {
@@ -177,10 +180,11 @@ struct IgnoredAppsListView: View {
                 }
                 .buttonStyle(.borderless)
                 .accessibilityLabel(String(localized: "Remove selected app"))
-                .disabled({
-                    if case .populated(_, .some) = listState { return false }
-                    return true
-                }())
+                .disabled(
+                    {
+                        if case .populated(_, .some) = listState { return false }
+                        return true
+                    }())
 
                 Spacer()
             }
@@ -223,7 +227,7 @@ struct IgnoredAppsListView: View {
 
         for url in panel.urls {
             if let bundle = Bundle(url: url),
-               let bundleId = bundle.bundleIdentifier
+                let bundleId = bundle.bundleIdentifier
             {
                 settings.addIgnoredApp(bundleId: bundleId)
             }
@@ -231,7 +235,7 @@ struct IgnoredAppsListView: View {
     }
 
     private func removeSelectedApp() {
-        guard case let .populated(_, selectedId?) = listState else { return }
+        guard case .populated(_, let selectedId?) = listState else { return }
         settings.removeIgnoredApp(bundleId: selectedId)
         listState.select(nil)
     }
