@@ -17,6 +17,7 @@ struct GeneralSettingsView: View {
     @State private var iCloudStatusMessage: String? = nil
     @State private var committedLimitGB: Double?
     @State private var showShrinkConfirmation = false
+    @State private var isAdvancedExpanded = false
 
     let store: ClipboardStore
     #if ENABLE_SPARKLE_UPDATES
@@ -92,126 +93,14 @@ struct GeneralSettingsView: View {
                 AppearanceSettingsBody()
             }
 
-            Section(String(localized: "History")) {
-                VStack(spacing: 10) {
-                    StorageBarView(
-                        limitGB: $settings.maxDatabaseSizeGB,
-                        usedBytes: store.databaseSizeBytes,
-                        scale: limitScale,
-                        onEditingEnded: handleStorageLimitEdit
-                    )
-
-                    Text(
-                        String(
-                            localized:
-                            "Drag the handle to set how much space history can use. When it fills, the oldest items are overwritten."
-                        )
-                    )
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            Section {
+                DisclosureGroup(String(localized: "Advanced"), isExpanded: $isAdvancedExpanded) {
+                    historySettings
+                    #if ENABLE_SPARKLE_UPDATES
+                        updatesSettings
+                    #endif
+                    aboutSettings
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-                .alert(
-                    String(localized: "Reduce Storage Limit?"),
-                    isPresented: $showShrinkConfirmation
-                ) {
-                    Button(String(localized: "Remove Oldest Items"), role: .destructive) {
-                        committedLimitGB = settings.maxDatabaseSizeGB
-                        Task { await store.pruneToLimit() }
-                    }
-                    Button(String(localized: "Cancel"), role: .cancel) {
-                        if let committed = committedLimitGB {
-                            settings.maxDatabaseSizeGB = committed
-                        }
-                    }
-                } message: {
-                    Text(
-                        String(
-                            localized:
-                            "History already uses more space than the new limit. The oldest items will be removed to fit."
-                        )
-                    )
-                }
-            }
-
-            #if ENABLE_SPARKLE_UPDATES
-                Section(String(localized: "Updates")) {
-                    Toggle(
-                        String(localized: "Automatically install updates"),
-                        isOn: $settings.autoInstallUpdates
-                    )
-
-                    if !settings.autoInstallUpdates, settings.updateCheckState == .available {
-                        Button(String(localized: "Install Update")) {
-                            onInstallUpdate?()
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Toggle(
-                            String(localized: "Get beta updates"),
-                            isOn: Binding(
-                                get: {
-                                    switch settings.updateChannel {
-                                    case .stable:
-                                        return false
-                                    case .beta:
-                                        return true
-                                    }
-                                },
-                                set: { isBetaEnabled in
-                                    settings.updateChannel = isBetaEnabled ? .beta : .stable
-                                }
-                            )
-                        )
-
-                        Text(String(localized: "Test new features before release."))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if case .beta = settings.updateChannel {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(
-                                String(
-                                    localized:
-                                    "Found a bug? Report it on GitHub with steps to reproduce."
-                                )
-                            )
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-
-                            Button(String(localized: "Report a Bug")) {
-                                NSWorkspace.shared.open(
-                                    URL(
-                                        string:
-                                        "https://github.com/jul-sh/clipkitty/issues/new/choose"
-                                    )!
-                                )
-                            }
-                        }
-                    }
-                }
-            #endif
-
-            Section(String(localized: "About")) {
-                LabeledContent(String(localized: "Version")) {
-                    Text("\(appVersion) (\(buildNumber)) \(buildChannel)")
-                        .foregroundStyle(.secondary)
-                }
-
-                #if ENABLE_BUILD_ATTESTATION_LINK
-                    if let url = attestationURL {
-                        LabeledContent(String(localized: "Build Attestation")) {
-                            Link(destination: url) {
-                                Label(String(localized: "Verify"), systemImage: "checkmark.seal")
-                            }
-                        }
-                    }
-                #endif
             }
             .task {
                 #if ENABLE_BUILD_ATTESTATION_LINK
@@ -230,6 +119,149 @@ struct GeneralSettingsView: View {
             }
             committedLimitGB = settings.maxDatabaseSizeGB
         }
+    }
+
+    // MARK: - Advanced subsections
+
+    @ViewBuilder
+    private var historySettings: some View {
+        advancedHeader(String(localized: "History"))
+
+        VStack(spacing: 10) {
+            StorageBarView(
+                limitGB: $settings.maxDatabaseSizeGB,
+                usedBytes: store.databaseSizeBytes,
+                scale: limitScale,
+                onEditingEnded: handleStorageLimitEdit
+            )
+
+            Text(
+                String(
+                    localized:
+                    "Drag the handle to set how much space history can use. When it fills, the oldest items are overwritten."
+                )
+            )
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+        .alert(
+            String(localized: "Reduce Storage Limit?"),
+            isPresented: $showShrinkConfirmation
+        ) {
+            Button(String(localized: "Remove Oldest Items"), role: .destructive) {
+                committedLimitGB = settings.maxDatabaseSizeGB
+                Task { await store.pruneToLimit() }
+            }
+            Button(String(localized: "Cancel"), role: .cancel) {
+                if let committed = committedLimitGB {
+                    settings.maxDatabaseSizeGB = committed
+                }
+            }
+        } message: {
+            Text(
+                String(
+                    localized:
+                    "History already uses more space than the new limit. The oldest items will be removed to fit."
+                )
+            )
+        }
+    }
+
+    #if ENABLE_SPARKLE_UPDATES
+        @ViewBuilder
+        private var updatesSettings: some View {
+            advancedHeader(String(localized: "Updates"))
+
+            Toggle(
+                String(localized: "Automatically install updates"),
+                isOn: $settings.autoInstallUpdates
+            )
+
+            if !settings.autoInstallUpdates, settings.updateCheckState == .available {
+                Button(String(localized: "Install Update")) {
+                    onInstallUpdate?()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle(
+                    String(localized: "Get beta updates"),
+                    isOn: Binding(
+                        get: {
+                            switch settings.updateChannel {
+                            case .stable:
+                                return false
+                            case .beta:
+                                return true
+                            }
+                        },
+                        set: { isBetaEnabled in
+                            settings.updateChannel = isBetaEnabled ? .beta : .stable
+                        }
+                    )
+                )
+
+                Text(String(localized: "Test new features before release."))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if case .beta = settings.updateChannel {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(
+                        String(
+                            localized:
+                            "Found a bug? Report it on GitHub with steps to reproduce."
+                        )
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                    Button(String(localized: "Report a Bug")) {
+                        NSWorkspace.shared.open(
+                            URL(
+                                string:
+                                "https://github.com/jul-sh/clipkitty/issues/new/choose"
+                            )!
+                        )
+                    }
+                }
+            }
+        }
+    #endif
+
+    @ViewBuilder
+    private var aboutSettings: some View {
+        advancedHeader(String(localized: "About"))
+
+        LabeledContent(String(localized: "Version")) {
+            Text("\(appVersion) (\(buildNumber)) \(buildChannel)")
+                .foregroundStyle(.secondary)
+        }
+
+        #if ENABLE_BUILD_ATTESTATION_LINK
+            if let url = attestationURL {
+                LabeledContent(String(localized: "Build Attestation")) {
+                    Link(destination: url) {
+                        Label(String(localized: "Verify"), systemImage: "checkmark.seal")
+                    }
+                }
+            }
+        #endif
+    }
+
+    /// Section label shown inside the Advanced disclosure group, styled like a
+    /// grouped-form section header so each subsection stays distinct.
+    private func advancedHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 6)
     }
 
     /// Called when the user releases the dial knob. Shrinking the limit below

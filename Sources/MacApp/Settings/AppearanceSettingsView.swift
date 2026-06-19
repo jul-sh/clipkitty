@@ -246,32 +246,41 @@ private struct TypefacePreview: View {
 
 // MARK: - Preview-style preview
 
-/// Mirrors the app's layout: a simplified list row on the left and the preview
-/// pane on the right. Only the preview-pane font (monospaced vs proportional)
-/// changes between Code and Prose, so that difference is what stands out.
+/// Mirrors the app's layout: a horizontal search bar across the top, then a
+/// simplified list row on the left and the preview pane on the right. Only the
+/// preview-pane font (monospaced vs proportional) changes between Code and
+/// Prose, so that difference is what stands out.
 private struct PreviewStylePreview: View {
     let style: PreviewFontPreference
     let typeface: AppFontPreference
 
     var body: some View {
-        HStack(spacing: 0) {
-            miniList
-                .frame(width: 30)
-                .padding(.vertical, 6)
-                .padding(.horizontal, 4)
-                .frame(maxHeight: .infinity, alignment: .top)
-                .background(Color.primary.opacity(0.05))
+        VStack(spacing: 0) {
+            searchBar
 
             Rectangle()
                 .fill(Color.primary.opacity(0.1))
-                .frame(width: 1)
+                .frame(height: 1)
 
-            previewPane
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(.leading, 5)
-                .padding(.trailing, 6)
-                .padding(.top, 4)
-                .padding(.bottom, 6)
+            HStack(spacing: 0) {
+                miniList
+                    .frame(width: 30)
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 4)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .background(Color.primary.opacity(0.05))
+
+                Rectangle()
+                    .fill(Color.primary.opacity(0.1))
+                    .frame(width: 1)
+
+                previewPane
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(.leading, 5)
+                    .padding(.trailing, 6)
+                    .padding(.top, 4)
+                    .padding(.bottom, 6)
+            }
         }
         .background(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
@@ -282,6 +291,28 @@ private struct PreviewStylePreview: View {
                 .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+    }
+
+    /// The full-width search bar across the top: a magnifying-glass glyph, a
+    /// placeholder query bar, and a trailing filter chip.
+    private var searchBar: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 7, weight: .semibold))
+                .foregroundStyle(.primary.opacity(0.4))
+
+            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                .fill(Color.primary.opacity(0.16))
+                .frame(width: 34, height: 6)
+
+            Spacer(minLength: 0)
+
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(Color.primary.opacity(0.12))
+                .frame(width: 18, height: 9)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
     }
 
     /// A simplified clipboard list: solid rows stacked under each other, first selected.
