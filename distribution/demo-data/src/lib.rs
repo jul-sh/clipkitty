@@ -149,7 +149,7 @@ pub const DEMO_ITEMS: &[DemoItem] = &[
         offset: -40,
     },
     DemoItem {
-        content: "ClipKitty\n• Copy it once, find it forever\n• Unlimited clipboard history\n• Search that forgives typos\n• Preview before pasting\n• Private by default",
+        content: "ClipKitty",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -10,

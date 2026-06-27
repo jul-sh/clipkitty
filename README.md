@@ -4,32 +4,6 @@
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty clipboard history" width="820">
 
-## Why ClipKitty
-
-Most clipboard managers work fine when your history is small. Then the thing you need is from last week, from another device, or buried under a hundred other clips.
-
-ClipKitty is built around a simple idea: your clipboard can remember more without asking more from you.
-
-## Features
-
-- **Copy it once; find it forever.**
-  Keep a deep history of text, links, images, files, code, and colors without turning your clipboard into another thing to manage.
-
-- **Search what you remember:**
-  Type a few words, fragments, or even a typo. ClipKitty helps you find the right item fast, even when your search is incomplete or misspelled.
-
-- **Preview before you paste:**
-  See full text, code, images, colors, links, and files before using them. No guessing from tiny cut-off snippets.
-
-- **Pick up from any device:**
-  Turn on iCloud Sync and your clipboard history follows you across Mac, iPhone, and iPad. Copy on one device, search on another, and keep the clips you rely on wherever you work.
-
-- **Private by default:**
-  No accounts. No telemetry. No third-party servers. Your clipboard history stays on-device unless you enable iCloud Sync; synced clips use Apple's private CloudKit database, with no developer access.
-
-- **Don’t take our word for it:**
-  ClipKitty is open source, empowering anyone to verify its privacy and behavior claims against the public code. Build attestations cryptographically [link each release](VERIFY.md) back to the public source code.
-
 ## Installation
 
 ### Mac App Store
@@ -41,14 +15,6 @@ ClipKitty is built around a simple idea: your clipboard can remember more withou
 1. Download the latest DMG from [GitHub Releases](https://github.com/jul-sh/clipkitty/releases).
 2. Drag ClipKitty to your Applications folder.
 3. Open ClipKitty and grant clipboard/accessibility permissions if prompted.
-
-## Alternatives
-
-| | ClipKitty |
-|---|---|
-| **vs Maccy** | Same simplicity, no limits. Maccy caps at 200 items and makes you wait on tooltips to view your history. ClipKitty scales to millions, comes with instant live preview, and syncs securely via iCloud. |
-| **vs Raycast** | Same speed, better search, no expiration. Raycast doesn't save long clips and offers limited search only. Its free tier expires after 3 months; sync requires a paid subscription. ClipKitty preserves everything forever, syncs via iCloud for free, and finds items more reliably with smarter, typo tolerant search. |
-| **vs Paste** | Same utility, no subscription. Paste charges $30/year. You own ClipKitty outright. Plus ClipKitty ships with an intuitive list with instant live preview, vs paste's horizontal carousel. |
 
 # Behind the Scenes
 

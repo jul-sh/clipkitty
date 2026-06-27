@@ -66,7 +66,7 @@ const LANDING_PAGE_HEAD: &str = r#"<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ClipKitty — Clipboard Manager for macOS</title>
-<meta name="description" content="Unlimited clipboard history with instant fuzzy search and multi-line previews. Private, fast, keyboard-driven. Free and open source for macOS.">
+<meta name="description" content="ClipKitty clipboard manager for macOS.">
 <style>
   :root { color-scheme: light dark; }
   * { margin: 0; padding: 0; box-sizing: border-box; }

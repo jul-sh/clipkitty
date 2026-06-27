@@ -14,7 +14,7 @@ pub const SCENE_WELCOME: DemoItem = DemoItem {
 };
 
 pub const SCENE_FIND_FOREVER: DemoItem = DemoItem {
-    content: "Copy it once, find it forever.\n\n\u{2022} Unlimited history\n\u{2022} Search that forgives typos",
+    content: "ClipKitty clipboard history",
     source_app: "Notes",
     bundle_id: "com.apple.Notes",
     // Smallest offset of any demo item so this sits at the top of history
@@ -31,7 +31,7 @@ pub const SCENE_MULTILINE: DemoItem = DemoItem {
 };
 
 pub const SCENE_SECURE_PRIVATE: DemoItem = DemoItem {
-    content: "\u{2022} Private by default\n\u{2022} No accounts, no telemetry\n\u{2022} Open Source",
+    content: "ClipKitty settings",
     source_app: "Safari",
     bundle_id: "com.apple.Safari",
     offset: -500,

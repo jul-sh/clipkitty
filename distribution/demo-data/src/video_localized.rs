@@ -1838,7 +1838,7 @@ pub const VIDEO_ITEMS_FR: &[DemoItem] = &[
         offset: -300,
     },
     DemoItem {
-        content: "\u{2022} Privé par défaut\n\u{2022} Zéro télémétrie, zéro compte\n\u{2022} Open Source",
+        content: "ClipKitty",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,
@@ -2188,7 +2188,7 @@ pub const VIDEO_ITEMS_DE: &[DemoItem] = &[
         offset: -300,
     },
     DemoItem {
-        content: "\u{2022} Privat ab Werk\n\u{2022} Keine Telemetrie, keine Konten\n\u{2022} Open Source",
+        content: "ClipKitty",
         source_app: "Safari",
         bundle_id: "com.apple.Safari",
         offset: -500,

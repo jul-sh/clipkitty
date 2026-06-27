@@ -13,7 +13,7 @@ const APP_STORE_DESCRIPTION_PATH: &str = "distribution/metadata/en-US/descriptio
 const APP_STORE_INTRO: &[&str] = &[
     "ClipKitty is built around a simple idea: your clipboard can remember more without asking more from you.",
 ];
-const APP_STORE_BODY_EXCEPTIONS: &[&str] = &["Sync only when you want it", "Private by default"];
+const APP_STORE_BODY_EXCEPTIONS: &[&str] = &["Sync only when you want it", "Privacy"];
 
 pub(crate) fn check_synced(repo: &RepoRoot, reporter: &Reporter) -> Result<()> {
     let readme = read_to_string(repo, README_PATH)?;
@@ -280,8 +280,8 @@ mod tests {
 
     #[test]
     fn permits_sync_and_privacy_body_exceptions() {
-        let readme = "# App\n\n## Features\n\n- **Sync only when you want it**  \n  README sync copy.\n\n- **Private by default**  \n  README privacy copy.\n\n- **Search**  \n  Find clips quickly.\n\n## Install\n";
-        let app_store = "ClipKitty is built around a simple idea: your clipboard can remember more without asking more from you.\n\nSync only when you want it\nApp Store sync copy.\n\nPrivate by default\nApp Store privacy copy.\n\nSearch\nFind clips quickly.\n";
+        let readme = "# App\n\n## Features\n\n- **Sync only when you want it**  \n  README sync copy.\n\n- **Privacy**  \n  README privacy copy.\n\n- **Search**  \n  Find clips quickly.\n\n## Install\n";
+        let app_store = "ClipKitty is built around a simple idea: your clipboard can remember more without asking more from you.\n\nSync only when you want it\nApp Store sync copy.\n\nPrivacy\nApp Store privacy copy.\n\nSearch\nFind clips quickly.\n";
 
         check_alignment(readme, app_store).unwrap();
     }

@@ -526,7 +526,7 @@ fn delete_english_demo_items(db_path: &str) -> Result<()> {
     // Also delete by pattern for items that might have slightly different content
     // (e.g., older versions of ClipKitty bullet points with different wording)
     let patterns = [
-        "ClipKitty\n• Copy it once%",                  // ClipKitty bullet points
+        "ClipKitty\n%",                                // ClipKitty demo item
         "Apartment walkthrough notes:%",               // Apartment notes
         "# Deploy API server to production%",          // Deploy command
         "The quick brown fox jumps over the lazy dog", // Greeting text
