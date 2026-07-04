@@ -36,7 +36,12 @@ struct BrowserView: View {
                 onMoveSelection: viewModel.moveSelection(by:),
                 onConfirm: viewModel.confirmSelection,
                 onDismiss: viewModel.dismiss,
-                onClearFilter: viewModel.clearAppliedFilter,
+                // Removing the chip must keep the keyboard in the search
+                // field, matching the other button-driven flows.
+                onClearFilter: {
+                    viewModel.clearAppliedFilter()
+                    focusSearchField()
+                },
                 onOpenActions: openActionsOverlay,
                 onDelete: viewModel.deleteSelectedItem,
                 onDiscardEdit: viewModel.discardCurrentEdit,

@@ -31,6 +31,18 @@ struct BrowserResultsList: View {
             resultsList
         }
         .animation(.easeOut(duration: 0.15), value: viewModel.pendingFilterSuggestion?.kind)
+        // Locale-invariant automation signal: which filter's results are on
+        // screen and whether they are settled. Screenshot and video capture
+        // wait on the "loaded" form instead of racing row labels.
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("ResultsState_\(viewModel.activeFilterKind.rawValue)_\(contentPhaseIdentifier)")
+    }
+
+    private var contentPhaseIdentifier: String {
+        if case .loaded = viewModel.contentState {
+            return "loaded"
+        }
+        return "loading"
     }
 
     private var resultsList: some View {

@@ -357,11 +357,12 @@ public final class BrowserViewModel {
             switch keyboardTarget {
             case .suggestion:
                 // The chip sits above the list: Up stays put, Down hands the
-                // keyboard to the results without advancing past the first row.
+                // keyboard to the FIRST row — a nonzero selection preserved
+                // across the query transition must not swallow the handoff.
                 guard offset > 0 else { return }
                 pendingFilterState = .suggested(suggestion, keyboardTarget: .results)
                 hasUserNavigated = true
-                if selectedIndex == nil, let firstItemId = itemIds.first {
+                if selectedIndex != 0, let firstItemId = itemIds.first {
                     select(itemId: firstItemId, origin: .keyboard)
                 }
                 return

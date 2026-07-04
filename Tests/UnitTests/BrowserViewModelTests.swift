@@ -1787,6 +1787,46 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedIndex, 0, "Returning to the chip must not disturb the selection")
     }
 
+    func testDownFromChipLandsOnFirstRowEvenWithPreservedSelection() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstPreviewPayload: nil,
+            totalCount: 2
+        ))
+        let viewModel = makeTypedFilterViewModel(client: client)
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
+        await flushMainActor()
+
+        // Park the selection on the SECOND row before typing the trigger.
+        viewModel.moveSelection(by: 1)
+        await flushMainActor()
+        client.resumeFetch(id: "2", with: makeItem(id: "2", text: "second"))
+        await flushMainActor()
+        XCTAssertEqual(viewModel.selectedIndex, 1)
+
+        // Same items survive the query transition, so the row-2 selection is
+        // intentionally preserved underneath the suggestion.
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "image", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstPreviewPayload: nil,
+            totalCount: 2
+        ))
+        viewModel.updateSearchText("image")
+        try? await Task.sleep(for: .milliseconds(120))
+        await awaitPendingFilterSurface()
+        XCTAssertTrue(viewModel.isPendingFilterKeyboardTarget)
+
+        viewModel.moveSelection(by: 1)
+
+        XCTAssertFalse(viewModel.isPendingFilterKeyboardTarget)
+        XCTAssertEqual(viewModel.selectedIndex, 0, "Down from the chip must land on the first row")
+    }
+
     func testEnterOnChipAppliesFilterAndConsumesOnlyTriggerToken() async {
         let viewModel = makeTypedFilterViewModel(client: MockBrowserStoreClient())
         viewModel.onAppear(initialSearchQuery: "")

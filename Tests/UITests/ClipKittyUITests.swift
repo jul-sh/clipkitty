@@ -579,9 +579,10 @@ final class ClipKittyUITests: XCTestCase {
     // MARK: - Typed Filter Flow
 
     /// Types a category trigger, asserts the pending suggestion chip appears
-    /// selected by default, and applies it with Return. Leaves the applied
-    /// chip visible in the search bar.
-    private func applyTypedFilter(trigger: String) {
+    /// selected by default, and applies it with Return. Waits for both the
+    /// applied chip and the FILTERED results to finish loading (via the
+    /// locale-invariant `ResultsState_<kind>_loaded` signal) before returning.
+    private func applyTypedFilter(trigger: String, kindIdentifier: String) {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
         searchField.click()
@@ -595,6 +596,9 @@ final class ClipKittyUITests: XCTestCase {
         let removeControl = app.buttons["AppliedFilterChipRemove"]
         XCTAssertTrue(removeControl.waitForExistence(timeout: 3), "Applied chip should appear in the search bar after Return")
         XCTAssertFalse(pendingChip.exists, "Pending chip should disappear once the filter is applied")
+
+        let loadedResults = app.descendants(matching: .any)["ResultsState_\(kindIdentifier)_loaded"]
+        XCTAssertTrue(loadedResults.waitForExistence(timeout: 5), "Filtered \(kindIdentifier) results should finish loading")
     }
 
     /// Tests the typed-filter suggestion flow end to end: typing a category
@@ -602,7 +606,7 @@ final class ClipKittyUITests: XCTestCase {
     /// chip, and the close control removes it.
     func testTypedFilterSuggestionFlow() {
         saveScreenshot(name: "filter_before")
-        applyTypedFilter(trigger: "links")
+        applyTypedFilter(trigger: "links", kindIdentifier: "links")
         saveScreenshot(name: "filter_applied")
 
         // The trigger token is consumed, not left in the query.
@@ -641,7 +645,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that Backspace in the empty search field removes the applied
     /// filter chip.
     func testBackspaceRemovesAppliedFilterChip() {
-        applyTypedFilter(trigger: "image")
+        applyTypedFilter(trigger: "image", kindIdentifier: "images")
 
         let searchField = app.textFields["SearchField"]
         searchField.typeKey(.delete, modifierFlags: [])
@@ -1045,6 +1049,8 @@ final class ClipKittyUITests: XCTestCase {
         app.typeKey(.return, modifierFlags: [])
         let appliedChipRemove = app.buttons["AppliedFilterChipRemove"]
         XCTAssertTrue(appliedChipRemove.waitForExistence(timeout: 3), "Applied chip should appear in video scene 3")
+        let loadedImageResults = app.descendants(matching: .any)["ResultsState_images_loaded"]
+        XCTAssertTrue(loadedImageResults.waitForExistence(timeout: 5), "Filtered image results should finish loading in video scene 3")
         Thread.sleep(forTimeInterval: 0.5)
 
         typeSlowly(queries["fast"] ?? "fast", scene: "fast")
@@ -1189,6 +1195,8 @@ final class ClipKittyUITests: XCTestCase {
         app.typeKey(.return, modifierFlags: [])
         let appliedChipRemove = app.buttons["AppliedFilterChipRemove"]
         XCTAssertTrue(appliedChipRemove.waitForExistence(timeout: 3), "Applied chip should appear in the search bar")
+        let loadedImageResults = app.descendants(matching: .any)["ResultsState_images_loaded"]
+        XCTAssertTrue(loadedImageResults.waitForExistence(timeout: 5), "Filtered image results should finish loading before capture")
         Thread.sleep(forTimeInterval: 0.5)
         saveScreenshot(name: "marketing_3_filter")
     }
@@ -1291,7 +1299,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that images show an image preview, not an editable text view.
     /// Filters to images through the typed-filter flow.
     func testImagePreviewNotEditable() {
-        applyTypedFilter(trigger: "image")
+        applyTypedFilter(trigger: "image", kindIdentifier: "images")
 
         // Wait for filter to apply and outline to update
         Thread.sleep(forTimeInterval: ciTimeout)
@@ -1313,7 +1321,7 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that links show a link preview, not an editable text view.
     /// Filters to links through the typed-filter flow.
     func testLinkPreviewNotEditable() {
-        applyTypedFilter(trigger: "links")
+        applyTypedFilter(trigger: "links", kindIdentifier: "links")
 
         // Wait for filter to apply and outline to update
         Thread.sleep(forTimeInterval: ciTimeout)
