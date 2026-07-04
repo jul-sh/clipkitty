@@ -36,17 +36,6 @@ private enum SpinnerState: Equatable {
     }
 }
 
-private enum FilterPopoverState: Equatable {
-    case hidden
-    case visible(highlightedIndex: Int)
-}
-
-private enum ActionsPopoverState: Equatable {
-    case hidden
-    case showingActions(highlightedIndex: Int)
-    case showingDeleteConfirm(highlightedIndex: Int)
-}
-
 private extension View {
     @ViewBuilder
     func clipKittyGlassBackground() -> some View {

@@ -43,22 +43,25 @@ public struct BrowserFilterDescriptor: Equatable, Sendable {
 /// that flag is not defined for this shared module, so availability is data:
 /// each platform constructs the catalog with its own capability.
 public struct BrowserFilterCatalog: Sendable {
-    public let includesFileItems: Bool
+    /// Filters a user can actively select, in display order.
+    /// Excludes `all` (the no-filter state); `files` is gated on availability.
+    public let selectableFilters: [BrowserFilterDescriptor]
 
     public init(includesFileItems: Bool) {
-        self.includesFileItems = includesFileItems
-    }
-
-    /// Filters a user can actively select, in display order.
-    /// Excludes `all` (the no-filter state) and gates `files` on availability.
-    public var selectableFilters: [BrowserFilterDescriptor] {
         var descriptors: [BrowserFilterDescriptor] = [
             Self.bookmarks, Self.text, Self.images, Self.links, Self.colors,
         ]
         if includesFileItems {
             descriptors.append(Self.files)
         }
-        return descriptors
+        self.init(selectableFilters: descriptors)
+    }
+
+    /// Test seam: lets unit tests exercise resolver rules — most importantly
+    /// ambiguity, which the shipping English alias set deliberately cannot
+    /// produce — with synthetic descriptor sets.
+    init(selectableFilters: [BrowserFilterDescriptor]) {
+        self.selectableFilters = selectableFilters
     }
 
     public func descriptor(for kind: BrowserFilterKind) -> BrowserFilterDescriptor {

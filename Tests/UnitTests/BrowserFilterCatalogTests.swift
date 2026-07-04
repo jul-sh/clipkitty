@@ -86,6 +86,38 @@ final class BrowserFilterCatalogTests: XCTestCase {
 
     // MARK: - Typed suggestion resolution
 
+    /// Exercises the ambiguity rule directly. The shipping English alias set
+    /// deliberately has no cross-kind prefix collisions (guarded above), so
+    /// this uses the internal test seam with synthetic descriptors — the rule
+    /// still matters for localized titles, which can collide in any locale.
+    func testAmbiguousPrefixDoesNotSurfaceASuggestion() {
+        let tags = BrowserFilterDescriptor(
+            kind: .links,
+            queryFilter: .contentType(contentType: .links),
+            title: "Tags",
+            identifierSuffix: "tags",
+            symbolName: "tag",
+            searchAliases: ["tags"]
+        )
+        let tables = BrowserFilterDescriptor(
+            kind: .colors,
+            queryFilter: .contentType(contentType: .colors),
+            title: "Tables",
+            identifierSuffix: "tables",
+            symbolName: "tablecells",
+            searchAliases: ["tables"]
+        )
+        let ambiguous = BrowserFilterCatalog(selectableFilters: [tags, tables])
+
+        XCTAssertNil(
+            ambiguous.typedSuggestion(searchText: "ta", appliedFilter: .all),
+            "A prefix matching aliases of two filter kinds must surface nothing"
+        )
+        // One more character disambiguates and the suggestion returns.
+        XCTAssertEqual(ambiguous.typedSuggestion(searchText: "tag", appliedFilter: .all)?.kind, .links)
+        XCTAssertEqual(ambiguous.typedSuggestion(searchText: "tab", appliedFilter: .all)?.kind, .colors)
+    }
+
     func testUniquePrefixSurfacesSuggestion() {
         let suggestion = catalog.typedSuggestion(searchText: "ima", appliedFilter: .all)
         XCTAssertEqual(suggestion?.kind, .images)

@@ -132,6 +132,9 @@ struct BrowserView: View {
     }
 
     private func handleCommandNumberShortcut(_ number: Int) -> Bool {
+        // Item activation is a result-only shortcut: it must not fire while
+        // the pending filter chip is the keyboard target.
+        guard !viewModel.isPendingFilterKeyboardTarget else { return false }
         let index = number - 1
         guard viewModel.itemIds.indices.contains(index) else { return false }
         let itemId = viewModel.itemIds[index]
