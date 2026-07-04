@@ -278,7 +278,7 @@ private struct PreviewStylePreview: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .padding(.leading, 5)
                     .padding(.trailing, 6)
-                    .padding(.top, 4)
+                    .padding(.top, 1)
                     .padding(.bottom, 6)
             }
         }
@@ -293,26 +293,18 @@ private struct PreviewStylePreview: View {
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
-    /// The full-width search bar across the top: a magnifying-glass glyph, a
-    /// placeholder query bar, and a trailing filter chip.
+    /// The full-width search bar across the top: just a magnifying-glass glyph,
+    /// with the query field left empty.
     private var searchBar: some View {
         HStack(spacing: 5) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 7, weight: .semibold))
                 .foregroundStyle(.primary.opacity(0.4))
 
-            RoundedRectangle(cornerRadius: 2.5, style: .continuous)
-                .fill(Color.primary.opacity(0.16))
-                .frame(width: 34, height: 6)
-
             Spacer(minLength: 0)
-
-            RoundedRectangle(cornerRadius: 3, style: .continuous)
-                .fill(Color.primary.opacity(0.12))
-                .frame(width: 18, height: 9)
         }
         .padding(.horizontal, 6)
-        .padding(.vertical, 5)
+        .padding(.vertical, 4)
     }
 
     /// A simplified clipboard list: solid rows stacked under each other, first selected.
