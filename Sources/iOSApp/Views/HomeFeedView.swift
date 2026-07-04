@@ -225,9 +225,7 @@ struct HomeFeedView: View {
     }
 
     private var isSearchOrFilterActive: Bool {
-        !viewModel.searchText.isEmpty
-            || viewModel.contentTypeFilter != .all
-            || viewModel.selectedTagFilter != nil
+        !viewModel.searchText.isEmpty || viewModel.activeFilterKind != .all
     }
 }
 

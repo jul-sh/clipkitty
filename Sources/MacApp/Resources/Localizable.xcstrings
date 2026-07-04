@@ -7229,6 +7229,7 @@
     "Rebuilding index…": {
       "comment": "Snackbar message shown during index rebuild"
     },
+    "Remove filter": {},
     "Remove selected app": {
       "localizations": {
         "de": {
@@ -9809,6 +9810,7 @@
     },
     "You can also click the menu bar icon to open ClipKitty.": {},
     "Your Clipboard, Supercharged": {},
+    "filter:": {},
     "iCloud Sync": {
       "localizations": {
         "de": {

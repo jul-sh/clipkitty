@@ -352,10 +352,7 @@ struct BrowserPreviewPane: View {
     }
 
     private var emptyStateMessage: String {
-        if viewModel.searchText.isEmpty,
-           viewModel.contentTypeFilter == .all,
-           viewModel.selectedTagFilter == nil
-        {
+        if viewModel.searchText.isEmpty, viewModel.activeFilterKind == .all {
             return String(localized: "No clipboard history")
         }
         return String(localized: "No results")

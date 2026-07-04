@@ -12,6 +12,28 @@ struct BrowserResultsList: View {
     @State private var contextMenuItemId: String?
 
     var body: some View {
+        VStack(spacing: 0) {
+            if let suggestion = viewModel.pendingFilterSuggestion {
+                PendingFilterChip(
+                    title: viewModel.filterDescriptor(for: suggestion.kind).title,
+                    isKeyboardTarget: viewModel.isPendingFilterKeyboardTarget,
+                    onActivate: {
+                        viewModel.applyPendingFilterSuggestion()
+                        focusSearchField()
+                    }
+                )
+                .padding(.horizontal, 10)
+                .padding(.top, 8)
+                .padding(.bottom, 2)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            resultsList
+        }
+        .animation(.easeOut(duration: 0.15), value: viewModel.pendingFilterSuggestion?.kind)
+    }
+
+    private var resultsList: some View {
         ScrollViewReader { proxy in
             List {
                 ForEach(viewModel.displayRows) { row in
@@ -19,7 +41,11 @@ struct BrowserResultsList: View {
                     ItemRow(
                         metadata: row.metadata,
                         presentation: row.presentation,
-                        isSelected: row.metadata.itemId == viewModel.selectedItemId,
+                        // While the pending chip is the keyboard target, no row
+                        // may read as the active selection even though one stays
+                        // selected underneath to drive the preview pane.
+                        isSelected: row.metadata.itemId == viewModel.selectedItemId
+                            && !viewModel.isPendingFilterKeyboardTarget,
                         isContextMenuTargeted: row.metadata.itemId == contextMenuItemId,
                         hasUserNavigated: viewModel.hasUserNavigated,
                         hasPendingEdit: {
@@ -118,5 +144,52 @@ struct BrowserResultsList: View {
             viewModel.itemIds.indices.contains(idx) ? viewModel.itemIds[idx] : nil
         }
         viewModel.loadMatchedExcerptsForItems(idsToLoad)
+    }
+}
+
+/// The typed-filter suggestion chip revealed above the result rows. It is the
+/// default keyboard target while visible: Enter applies the filter, Down moves
+/// into the results, and clicking commits directly.
+///
+/// Deliberately neutral in both states — an accent fill would read as an
+/// already-active filter. The keyboard-target state is a slightly stronger
+/// border plus a Return hint.
+private struct PendingFilterChip: View {
+    @ObservedObject private var settings = AppSettings.shared
+    let title: String
+    let isKeyboardTarget: Bool
+    let onActivate: () -> Void
+
+    var body: some View {
+        Button(action: onActivate) {
+            HStack(spacing: 5) {
+                Text(String(localized: "filter:"))
+                    .font(settings.appFont(size: settings.scaled(11)))
+                    .foregroundStyle(Color.secondary)
+                Text(title)
+                    .font(settings.appFont(size: settings.scaled(12), weight: .semibold))
+                    .foregroundStyle(isKeyboardTarget ? Color.primary : Color.secondary)
+                if isKeyboardTarget {
+                    Text(verbatim: "⏎")
+                        .font(settings.appFont(size: settings.scaled(10)))
+                        .foregroundStyle(Color.secondary.opacity(0.7))
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.primary.opacity(isKeyboardTarget ? 0.08 : 0.04))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(isKeyboardTarget ? 0.25 : 0.1), lineWidth: 1)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier("PendingFilterChip")
+        .accessibilityAddTraits(isKeyboardTarget ? .isSelected : [])
     }
 }

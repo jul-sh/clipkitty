@@ -210,18 +210,42 @@ public enum SelectionState {
 
 public enum OverlayState {
     case none
-    case filter(FilterOverlayState)
     case actions(MenuHighlightState)
-}
-
-public enum FilterOverlayState {
-    case none
-    case index(Int)
 }
 
 public enum MenuHighlightState {
     case none
     case index(Int)
+}
+
+/// The typed-filter suggestion surfaced above the results list, together with
+/// the current keyboard target. The target is modeled here — not as list
+/// selection — so the pending chip can own Enter without disturbing which item
+/// is selected for the preview pane.
+public enum PendingFilterState: Equatable {
+    case none
+    case suggested(TypedFilterSuggestion, keyboardTarget: PendingFilterKeyboardTarget)
+
+    public var suggestion: TypedFilterSuggestion? {
+        guard case let .suggested(suggestion, _) = self else { return nil }
+        return suggestion
+    }
+
+    /// True when Enter/arrow keys currently address the suggestion chip
+    /// rather than the result list.
+    public var isSuggestionKeyboardTarget: Bool {
+        guard case .suggested(_, keyboardTarget: .suggestion) = self else { return false }
+        return true
+    }
+}
+
+/// What the keyboard currently addresses while a filter suggestion is visible.
+public enum PendingFilterKeyboardTarget: Equatable {
+    /// The suggestion chip: Enter applies the filter, Down moves to results.
+    case suggestion
+    /// The result list: keys behave as if no suggestion were showing, except
+    /// Up from the first row returns to the chip.
+    case results
 }
 
 public enum MutationState {

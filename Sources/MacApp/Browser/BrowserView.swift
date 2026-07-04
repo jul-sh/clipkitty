@@ -16,23 +16,8 @@ struct BrowserView: View {
 
     enum FocusTarget: Hashable {
         case search
-        case filterDropdown
         case actionsDropdown
     }
-
-    private static let filterOptions: [(ContentTypeFilter, String)] = {
-        var options: [(ContentTypeFilter, String)] = [
-            (.all, String(localized: "All")),
-            (.text, String(localized: "Text")),
-            (.images, String(localized: "Images")),
-            (.links, String(localized: "Links")),
-            (.colors, String(localized: "Colors")),
-        ]
-        #if ENABLE_FILE_CLIPBOARD_ITEMS
-            options.append((.files, String(localized: "Files")))
-        #endif
-        return options
-    }()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,28 +26,17 @@ struct BrowserView: View {
                     get: { viewModel.searchText },
                     set: { viewModel.updateSearchText($0) }
                 ),
-                filterLabel: filterLabel,
+                appliedFilter: viewModel.appliedFilterDescriptor,
                 searchSpinnerVisible: viewModel.searchSpinnerVisible,
-                selectedItemAvailable: viewModel.selectedItem != nil,
+                // Row-only shortcuts (Cmd+K, delete item) must not fire while
+                // the pending filter chip is the keyboard target.
+                selectedItemAvailable: viewModel.selectedItem != nil && !viewModel.isPendingFilterKeyboardTarget,
                 hasPendingEdit: { if case .dirty = viewModel.editSession { return true }; return false }(),
-                isFilterPopoverPresented: Binding(
-                    get: {
-                        if case .filter = viewModel.overlayState {
-                            return true
-                        }
-                        return false
-                    },
-                    set: { isPresented in
-                        if !isPresented {
-                            viewModel.closeOverlay()
-                        }
-                    }
-                ),
                 focusTarget: $focusTarget,
                 onMoveSelection: viewModel.moveSelection(by:),
                 onConfirm: viewModel.confirmSelection,
                 onDismiss: viewModel.dismiss,
-                onOpenFilter: openFilterOverlay,
+                onClearFilter: viewModel.clearAppliedFilter,
                 onOpenActions: openActionsOverlay,
                 onDelete: viewModel.deleteSelectedItem,
                 onDiscardEdit: viewModel.discardCurrentEdit,
@@ -71,14 +45,7 @@ struct BrowserView: View {
                     focusSearchField()
                 },
                 onHandleNumberKey: handleNumberKey
-            ) {
-                BrowserFilterOverlay(
-                    viewModel: viewModel,
-                    options: Self.filterOptions,
-                    focusTarget: $focusTarget,
-                    focusSearchField: focusSearchField
-                )
-            }
+            )
 
             Divider()
 
@@ -111,14 +78,6 @@ struct BrowserView: View {
         }
     }
 
-    private var filterLabel: String {
-        if viewModel.selectedTagFilter == .bookmark {
-            return String(localized: "Bookmarks")
-        }
-        return Self.filterOptions.first(where: { $0.0 == viewModel.contentTypeFilter })?.1
-            ?? String(localized: "All")
-    }
-
     @ViewBuilder
     private var content: some View {
         switch viewModel.contentState {
@@ -142,32 +101,6 @@ struct BrowserView: View {
                 )
                 .frame(maxWidth: .infinity)
             }
-        }
-    }
-
-    private var currentFilterIndex: Int {
-        if viewModel.selectedTagFilter == .bookmark {
-            return 1 // Bookmarks is at index 1
-        } else if viewModel.contentTypeFilter == .all {
-            return 0 // All is at index 0
-        } else {
-            // Categories start at index 2 (All=0, Bookmarks=1, then categories)
-            // filterOptions[0] is All, filterOptions[1+] are categories
-            // Use enumerated() to get offset within the slice, not the original array index
-            let categoryOffset = Self.filterOptions.dropFirst().enumerated()
-                .first(where: { $0.element.0 == viewModel.contentTypeFilter })?.offset
-            return (categoryOffset ?? 0) + 2
-        }
-    }
-
-    /// Opens filter overlay
-    /// - Parameter viaKeyboard: If true (keyboard trigger), highlights current selection for immediate arrow nav.
-    ///                          If false (mouse trigger), no initial highlight - hover will control it.
-    private func openFilterOverlay(viaKeyboard: Bool) {
-        let highlight: FilterOverlayState = viaKeyboard ? .index(currentFilterIndex) : .none
-        viewModel.openFilterOverlay(highlight: highlight)
-        if viaKeyboard {
-            focusFilterDropdown()
         }
     }
 
@@ -218,10 +151,6 @@ struct BrowserView: View {
         setFocus(to: .search)
     }
 
-    private func focusFilterDropdown() {
-        setFocus(to: .filterDropdown, delay: .milliseconds(50))
-    }
-
     private func focusActionsDropdown() {
         setFocus(to: .actionsDropdown, delay: .milliseconds(50))
     }
@@ -236,14 +165,33 @@ struct BrowserView: View {
                 return handleCommandNumberShortcut(number) ? nil : event
             }
 
-            // Configurable delete-item shortcut (default ⌘-)
+            // Backspace in the empty search field removes the applied filter
+            // chip. Handled here because the field editor consumes the key
+            // before SwiftUI's onKeyPress sees it. The field-editor check
+            // keeps preview-pane editing (a plain NSTextView) unaffected.
+            let plainModifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if plainModifiers.isEmpty,
+               event.keyCode == 51, // ⌫
+               !event.isARepeat,
+               let editor = event.window?.firstResponder as? NSTextView,
+               editor.isFieldEditor,
+               viewModel.searchText.isEmpty,
+               viewModel.appliedFilterDescriptor != nil
+            {
+                viewModel.clearAppliedFilter()
+                return nil
+            }
+
+            // Configurable delete-item shortcut (default ⌘-). Suppressed while
+            // the pending filter chip is the keyboard target — row-only
+            // shortcuts must not fire at the chip.
             let deleteHotKey = AppSettings.shared.deleteHotKey
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             if modifiers == deleteHotKey.modifierMask,
                UInt32(event.keyCode) == deleteHotKey.keyCode,
                !event.isARepeat
             {
-                if viewModel.selectedItem != nil {
+                if viewModel.selectedItem != nil, !viewModel.isPendingFilterKeyboardTarget {
                     viewModel.deleteSelectedItem()
                     return nil
                 }

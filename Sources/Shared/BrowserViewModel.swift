@@ -9,6 +9,7 @@ private let poi = OSLog(subsystem: "com.eviljuliette.clipkitty", category: .poin
 @Observable
 public final class BrowserViewModel {
     private let client: BrowserStoreClient
+    private let filterCatalog: BrowserFilterCatalog
     private let shouldGenerateLinkPreviews: @MainActor () -> Bool
     private let onSelect: (String, ClipboardContent) -> Void
     private let onCopyOnly: (String, ClipboardContent) -> Void
@@ -18,6 +19,9 @@ public final class BrowserViewModel {
     /// How long a pending delete stays undoable before committing; injectable
     /// so tests don't have to wait out the real undo window.
     private let deleteCommitDelay: TimeInterval
+    /// How long the user must pause typing before a new filter suggestion
+    /// surfaces; injectable so tests don't race the real delay.
+    private let pendingFilterSurfaceDelay: TimeInterval
 
     private enum SearchExecution {
         case idle
@@ -78,6 +82,7 @@ public final class BrowserViewModel {
     private var pendingMatchedExcerptItemIds: Set<String> = []
     private var prefetchTask: Task<Void, Never>?
     private var previewSpinnerTask: Task<Void, Never>?
+    private var pendingFilterSurfaceTask: Task<Void, Never>?
     private var pendingDeleteTask: Task<Void, Never>?
     private var pendingTagSettleTask: Task<Void, Never>?
     private var queryGeneration = 0
@@ -92,6 +97,7 @@ public final class BrowserViewModel {
     public private(set) var contentState: BrowserContentState = .idle(request: SearchRequest(text: "", filter: .all))
     public private(set) var selectionState: SelectionState = .none
     public private(set) var overlayState: OverlayState = .none
+    public private(set) var pendingFilterState: PendingFilterState = .none
     public private(set) var mutationState: MutationState = .idle
     public private(set) var editSession: PreviewEditSession = .inactive
     public private(set) var resolvedMatchedExcerptsByItemId: [String: MatchedExcerpt] = [:]
@@ -105,15 +111,18 @@ public final class BrowserViewModel {
 
     public init(
         client: BrowserStoreClient,
+        filterCatalog: BrowserFilterCatalog = BrowserFilterCatalog(includesFileItems: false),
         shouldGenerateLinkPreviews: @escaping @MainActor () -> Bool = { true },
         onSelect: @escaping (String, ClipboardContent) -> Void,
         onCopyOnly: @escaping (String, ClipboardContent) -> Void,
         onDismiss: @escaping () -> Void,
         showSnackbarNotification: @escaping (NotificationKind, (() -> Void)?) -> Void = { _, _ in },
         dismissSnackbarNotification: @escaping () -> Void = {},
-        deleteCommitDelay: TimeInterval = NotificationKind.undoWindow
+        deleteCommitDelay: TimeInterval = NotificationKind.undoWindow,
+        pendingFilterSurfaceDelay: TimeInterval = 0.1
     ) {
         self.client = client
+        self.filterCatalog = filterCatalog
         self.shouldGenerateLinkPreviews = shouldGenerateLinkPreviews
         self.onSelect = onSelect
         self.onCopyOnly = onCopyOnly
@@ -121,26 +130,41 @@ public final class BrowserViewModel {
         self.showSnackbarNotification = showSnackbarNotification
         self.dismissSnackbarNotification = dismissSnackbarNotification
         self.deleteCommitDelay = deleteCommitDelay
+        self.pendingFilterSurfaceDelay = pendingFilterSurfaceDelay
     }
 
     public var searchText: String {
         contentState.request.text
     }
 
-    public var contentTypeFilter: ContentTypeFilter {
-        switch contentState.request.filter {
-        case let .contentType(contentType):
-            return contentType
-        case .all, .tagged:
-            return .all
-        }
+    /// The catalog descriptor for the active filter, or nil when browsing
+    /// unfiltered. Drives the applied chip in the search bar.
+    public var appliedFilterDescriptor: BrowserFilterDescriptor? {
+        filterCatalog.appliedDescriptor(for: contentState.request.filter)
     }
 
-    public var selectedTagFilter: ItemTag? {
-        if case let .tagged(tag) = contentState.request.filter {
-            return tag
-        }
-        return nil
+    /// The semantic kind of the active filter; `.all` when unfiltered.
+    public var activeFilterKind: BrowserFilterKind {
+        appliedFilterDescriptor?.kind ?? .all
+    }
+
+    /// Filters the user can select on this platform, in display order.
+    public var selectableFilters: [BrowserFilterDescriptor] {
+        filterCatalog.selectableFilters
+    }
+
+    public func filterDescriptor(for kind: BrowserFilterKind) -> BrowserFilterDescriptor {
+        filterCatalog.descriptor(for: kind)
+    }
+
+    public var pendingFilterSuggestion: TypedFilterSuggestion? {
+        pendingFilterState.suggestion
+    }
+
+    /// True while Enter and row-only shortcuts should address the pending
+    /// suggestion chip instead of the selected row.
+    public var isPendingFilterKeyboardTarget: Bool {
+        pendingFilterState.isSuggestionKeyboardTarget
     }
 
     public var searchSpinnerVisible: Bool {
@@ -236,6 +260,11 @@ public final class BrowserViewModel {
         resetMutationStateUnlessCommitting()
         editSession = .inactive
         hasUserNavigated = false
+        // A stale `.results` keyboard target must not survive a hide/show
+        // cycle; the suggestion itself stays valid for the request.
+        if case let .suggested(suggestion, _) = pendingFilterState {
+            pendingFilterState = .suggested(suggestion, keyboardTarget: .suggestion)
+        }
     }
 
     /// Commits any still-pending delete immediately. Called when the UI is
@@ -283,18 +312,27 @@ public final class BrowserViewModel {
         submitSearch(text: value, filter: contentState.request.filter)
     }
 
-    public func setContentTypeFilter(_ filter: ContentTypeFilter) {
-        let queryFilter: ItemQueryFilter = filter == .all ? .all : .contentType(contentType: filter)
-        submitSearch(text: searchText, filter: queryFilter)
+    /// Applies a filter directly (e.g. from the iOS filter picker), keeping
+    /// the current search text.
+    public func applyFilter(_ kind: BrowserFilterKind) {
+        submitSearch(text: searchText, filter: filterCatalog.descriptor(for: kind).queryFilter)
     }
 
-    public func setTagFilter(_ tag: ItemTag?) {
-        let queryFilter: ItemQueryFilter = tag.map { .tagged(tag: $0) } ?? .all
-        submitSearch(text: searchText, filter: queryFilter)
+    /// Commits the pending typed-filter suggestion: the trigger token is
+    /// consumed, the rest of the query is preserved, and the filter activates.
+    public func applyPendingFilterSuggestion() {
+        guard case let .suggested(suggestion, _) = pendingFilterState else { return }
+        submitSearch(
+            text: suggestion.remainingSearchText,
+            filter: filterCatalog.descriptor(for: suggestion.kind).queryFilter
+        )
     }
 
-    public func openFilterOverlay(highlight: FilterOverlayState) {
-        overlayState = .filter(highlight)
+    /// Removes the applied filter chip, restoring unfiltered search with the
+    /// current text untouched.
+    public func clearAppliedFilter() {
+        guard contentState.request.filter != .all else { return }
+        submitSearch(text: searchText, filter: .all)
     }
 
     public func openActionsOverlay(highlight: MenuHighlightState) {
@@ -310,15 +348,33 @@ public final class BrowserViewModel {
         mutationState = .idle
     }
 
-    public func setFilterOverlayState(_ highlight: FilterOverlayState) {
-        overlayState = .filter(highlight)
-    }
-
     public func setActionsOverlayState(_ highlight: MenuHighlightState) {
         overlayState = .actions(highlight)
     }
 
     public func moveSelection(by offset: Int) {
+        if case let .suggested(suggestion, keyboardTarget) = pendingFilterState {
+            switch keyboardTarget {
+            case .suggestion:
+                // The chip sits above the list: Up stays put, Down hands the
+                // keyboard to the results without advancing past the first row.
+                guard offset > 0 else { return }
+                pendingFilterState = .suggested(suggestion, keyboardTarget: .results)
+                hasUserNavigated = true
+                if selectedIndex == nil, let firstItemId = itemIds.first {
+                    select(itemId: firstItemId, origin: .keyboard)
+                }
+                return
+            case .results:
+                // Up from the first row (or from an empty list) hands the
+                // keyboard back to the chip.
+                if offset < 0, selectedIndex == 0 || selectedIndex == nil {
+                    pendingFilterState = .suggested(suggestion, keyboardTarget: .suggestion)
+                    return
+                }
+            }
+        }
+
         hasUserNavigated = true
         guard let currentIndex = selectedIndex else {
             if let firstItemId = itemIds.first {
@@ -352,6 +408,12 @@ public final class BrowserViewModel {
     }
 
     public func confirmSelection() {
+        // While the suggestion chip is the keyboard target, Enter applies the
+        // filter instead of activating the selected item.
+        if pendingFilterState.isSuggestionKeyboardTarget {
+            applyPendingFilterSuggestion()
+            return
+        }
         guard let item = selectedItem else { return }
         let content = effectiveContent(for: item)
         commitCurrentEdit()
@@ -697,6 +759,8 @@ public final class BrowserViewModel {
         prefetchTask = nil
         previewSpinnerTask?.cancel()
         previewSpinnerTask = nil
+        pendingFilterSurfaceTask?.cancel()
+        pendingFilterSurfaceTask = nil
         pendingDeleteTask?.cancel()
         pendingDeleteTask = nil
         pendingTagSettleTask?.cancel()
@@ -707,6 +771,46 @@ public final class BrowserViewModel {
             metadataGeneration += 1
         #endif
         hidePreviewSpinner()
+    }
+
+    /// Re-derives the pending suggestion whenever a search is submitted, so
+    /// the chip always reflects the request the user actually sees.
+    ///
+    /// A suggestion that is already visible for the same filter updates in
+    /// place (keeping the user's keyboard target) so the chip doesn't flicker
+    /// while the trigger token grows ("ima" → "imag"). A NEW suggestion only
+    /// surfaces after the user pauses typing for ``pendingFilterSurfaceDelay``,
+    /// so intermediate prefixes mid-word don't flash the chip; it starts as
+    /// the keyboard target per the interaction contract.
+    private func refreshPendingFilterState(for request: SearchRequest) {
+        pendingFilterSurfaceTask?.cancel()
+        pendingFilterSurfaceTask = nil
+
+        guard let suggestion = filterCatalog.typedSuggestion(
+            searchText: request.text,
+            appliedFilter: request.filter
+        ) else {
+            pendingFilterState = .none
+            return
+        }
+
+        if case let .suggested(current, keyboardTarget) = pendingFilterState,
+           current.kind == suggestion.kind
+        {
+            pendingFilterState = .suggested(suggestion, keyboardTarget: keyboardTarget)
+            return
+        }
+
+        pendingFilterState = .none
+        let delay = pendingFilterSurfaceDelay
+        pendingFilterSurfaceTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self, self.contentState.request == request else { return }
+                self.pendingFilterState = .suggested(suggestion, keyboardTarget: .suggestion)
+            }
+        }
     }
 
     private func startInitialSearch(initialSearchQuery: String, targetContentRevision: Int) {
@@ -727,6 +831,7 @@ public final class BrowserViewModel {
     private func submitSearch(request: SearchRequest, targetContentRevision: Int) {
         queryGeneration += 1
         hasUserNavigated = false
+        refreshPendingFilterState(for: request)
         prefetchCache.removeAll()
         previewPayloadsByItemId.removeAll()
         resolvedMatchedExcerptsByItemId.removeAll()

@@ -988,7 +988,7 @@ final class BrowserViewModelTests: XCTestCase {
             onDismiss: {}
         )
 
-        viewModel.setTagFilter(.bookmark)
+        viewModel.applyFilter(.bookmarks)
         await flushMainActor()
         client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first", tags: [.bookmark]))
         await flushMainActor()
@@ -1680,6 +1680,244 @@ final class BrowserViewModelTests: XCTestCase {
         guard case .idle = viewModel.mutationState else {
             return XCTFail("Expected idle mutation after dismissing failure")
         }
+    }
+
+    // MARK: - Typed Filter Suggestions
+
+    private func makeTypedFilterViewModel(
+        client: MockBrowserStoreClient,
+        includesFileItems: Bool = false,
+        pendingFilterSurfaceDelay: TimeInterval = 0.01
+    ) -> BrowserViewModel {
+        BrowserViewModel(
+            client: client,
+            filterCatalog: BrowserFilterCatalog(includesFileItems: includesFileItems),
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {},
+            pendingFilterSurfaceDelay: pendingFilterSurfaceDelay
+        )
+    }
+
+    /// Waits out the (test-shortened) typing-pause delay before the chip
+    /// surfaces.
+    private func awaitPendingFilterSurface() async {
+        try? await Task.sleep(for: .milliseconds(60))
+        await flushMainActor()
+    }
+
+    func testTypingCategoryPrefixSurfacesChipAsDefaultKeyboardTarget() async {
+        let viewModel = makeTypedFilterViewModel(client: MockBrowserStoreClient())
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.updateSearchText("image")
+        await awaitPendingFilterSurface()
+
+        guard case let .suggested(suggestion, keyboardTarget: .suggestion) = viewModel.pendingFilterState else {
+            return XCTFail("Expected chip-targeted suggestion, got \(viewModel.pendingFilterState)")
+        }
+        XCTAssertEqual(suggestion.kind, .images)
+        XCTAssertTrue(viewModel.isPendingFilterKeyboardTarget)
+    }
+
+    func testPendingChipWaitsForTypingPause() async {
+        let viewModel = makeTypedFilterViewModel(
+            client: MockBrowserStoreClient(),
+            pendingFilterSurfaceDelay: 0.2
+        )
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.updateSearchText("image")
+        XCTAssertEqual(
+            viewModel.pendingFilterState, .none,
+            "The chip must not surface until the user pauses typing"
+        )
+
+        try? await Task.sleep(for: .milliseconds(350))
+        await flushMainActor()
+        XCTAssertEqual(viewModel.pendingFilterSuggestion?.kind, .images)
+    }
+
+    func testArrowKeysMoveBetweenChipAndResults() async {
+        let client = MockBrowserStoreClient()
+        // Resolve the initial empty search so no stale operation is parked on
+        // the mock's response queue when the typed search begins.
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [],
+            firstPreviewPayload: nil,
+            totalCount: 0
+        ))
+        let viewModel = makeTypedFilterViewModel(client: client)
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "image", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstPreviewPayload: nil,
+            totalCount: 2
+        ))
+        viewModel.updateSearchText("image")
+        try? await Task.sleep(for: .milliseconds(120))
+        await flushMainActor()
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
+        await awaitPendingFilterSurface()
+
+        XCTAssertTrue(viewModel.isPendingFilterKeyboardTarget)
+
+        // Down: keyboard moves to the results without skipping the first row.
+        viewModel.moveSelection(by: 1)
+        XCTAssertFalse(viewModel.isPendingFilterKeyboardTarget)
+        XCTAssertEqual(viewModel.selectedIndex, 0)
+        XCTAssertNotNil(viewModel.pendingFilterSuggestion, "Suggestion stays visible while browsing rows")
+
+        // Down again: normal row navigation.
+        viewModel.moveSelection(by: 1)
+        XCTAssertEqual(viewModel.selectedIndex, 1)
+
+        // Up to the first row, then up again returns to the chip.
+        viewModel.moveSelection(by: -1)
+        XCTAssertEqual(viewModel.selectedIndex, 0)
+        XCTAssertFalse(viewModel.isPendingFilterKeyboardTarget)
+        viewModel.moveSelection(by: -1)
+        XCTAssertTrue(viewModel.isPendingFilterKeyboardTarget)
+        XCTAssertEqual(viewModel.selectedIndex, 0, "Returning to the chip must not disturb the selection")
+    }
+
+    func testEnterOnChipAppliesFilterAndConsumesOnlyTriggerToken() async {
+        let viewModel = makeTypedFilterViewModel(client: MockBrowserStoreClient())
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.updateSearchText("docker image")
+        await awaitPendingFilterSurface()
+        XCTAssertTrue(viewModel.isPendingFilterKeyboardTarget)
+
+        viewModel.confirmSelection()
+
+        XCTAssertEqual(
+            viewModel.contentState.request,
+            SearchRequest(text: "docker", filter: .contentType(contentType: .images))
+        )
+        XCTAssertEqual(viewModel.pendingFilterState, .none)
+        XCTAssertEqual(viewModel.appliedFilterDescriptor?.kind, .images)
+        XCTAssertEqual(viewModel.activeFilterKind, .images)
+    }
+
+    func testEnterWhileResultsTargetedConfirmsItemNotFilter() async {
+        let client = MockBrowserStoreClient()
+        var selectedItemIds: [String] = []
+        let viewModel = BrowserViewModel(
+            client: client,
+            filterCatalog: BrowserFilterCatalog(includesFileItems: false),
+            onSelect: { itemId, _ in selectedItemIds.append(itemId) },
+            onCopyOnly: { _, _ in },
+            onDismiss: {},
+            pendingFilterSurfaceDelay: 0.01
+        )
+        // Resolve the initial empty search so no stale operation is parked on
+        // the mock's response queue when the typed search begins.
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [],
+            firstPreviewPayload: nil,
+            totalCount: 0
+        ))
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "image", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one")],
+            firstPreviewPayload: nil,
+            totalCount: 1
+        ))
+        viewModel.updateSearchText("image")
+        try? await Task.sleep(for: .milliseconds(120))
+        await flushMainActor()
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
+        await awaitPendingFilterSurface()
+
+        XCTAssertTrue(viewModel.isPendingFilterKeyboardTarget)
+        viewModel.moveSelection(by: 1)
+        XCTAssertFalse(viewModel.isPendingFilterKeyboardTarget)
+
+        viewModel.confirmSelection()
+
+        XCTAssertEqual(selectedItemIds, ["1"])
+        XCTAssertEqual(viewModel.contentState.request.filter, .all, "Enter on a row must not apply the filter")
+    }
+
+    func testClearAppliedFilterKeepsSearchText() async {
+        let viewModel = makeTypedFilterViewModel(client: MockBrowserStoreClient())
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.updateSearchText("docker image")
+        await awaitPendingFilterSurface()
+        viewModel.applyPendingFilterSuggestion()
+        XCTAssertEqual(
+            viewModel.contentState.request,
+            SearchRequest(text: "docker", filter: .contentType(contentType: .images))
+        )
+
+        viewModel.clearAppliedFilter()
+
+        XCTAssertEqual(viewModel.contentState.request, SearchRequest(text: "docker", filter: .all))
+        XCTAssertNil(viewModel.appliedFilterDescriptor)
+    }
+
+    func testBookmarkTypedFilterMapsToBookmarkTag() async {
+        let viewModel = makeTypedFilterViewModel(client: MockBrowserStoreClient())
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.updateSearchText("book")
+        await awaitPendingFilterSurface()
+        XCTAssertEqual(viewModel.pendingFilterSuggestion?.kind, .bookmarks)
+
+        viewModel.confirmSelection()
+
+        XCTAssertEqual(
+            viewModel.contentState.request,
+            SearchRequest(text: "", filter: .tagged(tag: .bookmark))
+        )
+    }
+
+    func testAppliedFilterIsNotResuggested() async {
+        let viewModel = makeTypedFilterViewModel(client: MockBrowserStoreClient())
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.updateSearchText("image")
+        await awaitPendingFilterSurface()
+        viewModel.applyPendingFilterSuggestion()
+
+        viewModel.updateSearchText("image")
+        await awaitPendingFilterSurface()
+        XCTAssertEqual(
+            viewModel.pendingFilterState, .none,
+            "Typing the active filter's alias must not re-suggest it"
+        )
+    }
+
+    func testFilesTypedFilterRequiresPlatformAvailability() async {
+        let unavailable = makeTypedFilterViewModel(client: MockBrowserStoreClient(), includesFileItems: false)
+        unavailable.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        unavailable.updateSearchText("files")
+        await awaitPendingFilterSurface()
+        XCTAssertEqual(unavailable.pendingFilterState, .none)
+
+        let available = makeTypedFilterViewModel(client: MockBrowserStoreClient(), includesFileItems: true)
+        available.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        available.updateSearchText("files")
+        await awaitPendingFilterSurface()
+        XCTAssertEqual(available.pendingFilterSuggestion?.kind, .files)
     }
 
     private func flushMainActor() async {
