@@ -230,21 +230,28 @@ public enum PendingFilterState: Equatable {
         guard case let .suggested(suggestion, _) = self else { return nil }
         return suggestion
     }
-
-    /// True when Enter/arrow keys currently address the suggestion chip
-    /// rather than the result list.
-    public var isSuggestionKeyboardTarget: Bool {
-        guard case .suggested(_, keyboardTarget: .suggestion) = self else { return false }
-        return true
-    }
 }
 
 /// What the keyboard currently addresses while a filter suggestion is visible.
+/// A fresh suggestion surfaces with `.results`; the chip is opt-in.
 public enum PendingFilterKeyboardTarget: Equatable {
-    /// The suggestion chip: Enter applies the filter, Down moves to results.
+    /// The suggestion chip, reached with Up from the first row: Enter applies
+    /// the filter, Down returns to the results.
     case suggestion
-    /// The result list: keys behave as if no suggestion were showing, except
-    /// Up from the first row returns to the chip.
+    /// The result list (the default): keys behave as if no suggestion were
+    /// showing, except Up from the first row moves to the chip.
+    case results
+}
+
+/// What Enter and row-only shortcuts currently address, derived from
+/// ``PendingFilterState``. Consumers switch on this instead of combining
+/// booleans, so "chip owns the keyboard" and "a row owns the keyboard" stay
+/// mutually exclusive by construction.
+public enum BrowserKeyboardTarget: Equatable {
+    /// The pending filter chip: Enter applies the suggested filter, and the
+    /// preview pane advertises the filter instead of the selected item.
+    case pendingFilterChip(TypedFilterSuggestion)
+    /// The result list: Enter activates the selected row.
     case results
 }
 

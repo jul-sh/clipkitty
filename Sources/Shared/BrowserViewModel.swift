@@ -161,10 +161,13 @@ public final class BrowserViewModel {
         pendingFilterState.suggestion
     }
 
-    /// True while Enter and row-only shortcuts should address the pending
-    /// suggestion chip instead of the selected row.
-    public var isPendingFilterKeyboardTarget: Bool {
-        pendingFilterState.isSuggestionKeyboardTarget
+    /// What Enter and row-only shortcuts currently address. The chip owns the
+    /// keyboard only while the user has arrowed up onto it.
+    public var keyboardTarget: BrowserKeyboardTarget {
+        if case let .suggested(suggestion, keyboardTarget: .suggestion) = pendingFilterState {
+            return .pendingFilterChip(suggestion)
+        }
+        return .results
     }
 
     public var searchSpinnerVisible: Bool {
@@ -260,10 +263,10 @@ public final class BrowserViewModel {
         resetMutationStateUnlessCommitting()
         editSession = .inactive
         hasUserNavigated = false
-        // A stale `.results` keyboard target must not survive a hide/show
+        // A stale `.suggestion` keyboard target must not survive a hide/show
         // cycle; the suggestion itself stays valid for the request.
         if case let .suggested(suggestion, _) = pendingFilterState {
-            pendingFilterState = .suggested(suggestion, keyboardTarget: .suggestion)
+            pendingFilterState = .suggested(suggestion, keyboardTarget: .results)
         }
     }
 
@@ -367,8 +370,8 @@ public final class BrowserViewModel {
                 }
                 return
             case .results:
-                // Up from the first row (or from an empty list) hands the
-                // keyboard back to the chip.
+                // Up from the first row (or from an empty list) moves the
+                // keyboard onto the chip; anywhere else Up is row navigation.
                 if offset < 0, selectedIndex == 0 || selectedIndex == nil {
                     pendingFilterState = .suggested(suggestion, keyboardTarget: .suggestion)
                     return
@@ -393,6 +396,15 @@ public final class BrowserViewModel {
         os_signpost(.begin, log: poi, name: "select", signpostID: signpostID, "itemId=%{public}s origin=%{public}s", itemId, String(describing: origin))
         defer { os_signpost(.end, log: poi, name: "select", signpostID: signpostID) }
 
+        // An explicit row pick (click or keyboard) hands the keyboard back to
+        // the results; the chip must not keep Enter after the user addressed
+        // a specific row.
+        if origin.isUserInitiated,
+           case let .suggested(suggestion, keyboardTarget: .suggestion) = pendingFilterState
+        {
+            pendingFilterState = .suggested(suggestion, keyboardTarget: .results)
+        }
+
         switch editSession {
         case let .focused(focusedId) where focusedId != itemId:
             editSession = .inactive
@@ -409,16 +421,15 @@ public final class BrowserViewModel {
     }
 
     public func confirmSelection() {
-        // While the suggestion chip is the keyboard target, Enter applies the
-        // filter instead of activating the selected item.
-        if pendingFilterState.isSuggestionKeyboardTarget {
+        switch keyboardTarget {
+        case .pendingFilterChip:
             applyPendingFilterSuggestion()
-            return
+        case .results:
+            guard let item = selectedItem else { return }
+            let content = effectiveContent(for: item)
+            commitCurrentEdit()
+            onSelect(item.itemMetadata.itemId, content)
         }
-        guard let item = selectedItem else { return }
-        let content = effectiveContent(for: item)
-        commitCurrentEdit()
-        onSelect(item.itemMetadata.itemId, content)
     }
 
     public func confirmItem(itemId: String) {
@@ -781,8 +792,9 @@ public final class BrowserViewModel {
     /// place (keeping the user's keyboard target) so the chip doesn't flicker
     /// while the trigger token grows ("ima" → "imag"). A NEW suggestion only
     /// surfaces after the user pauses typing for ``pendingFilterSurfaceDelay``,
-    /// so intermediate prefixes mid-word don't flash the chip; it starts as
-    /// the keyboard target per the interaction contract.
+    /// so intermediate prefixes mid-word don't flash the chip; it surfaces
+    /// with the results keeping the keyboard — the user opts into the chip
+    /// with Up from the first row.
     private func refreshPendingFilterState(for request: SearchRequest) {
         pendingFilterSurfaceTask?.cancel()
         pendingFilterSurfaceTask = nil
@@ -809,7 +821,7 @@ public final class BrowserViewModel {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self, self.contentState.request == request else { return }
-                self.pendingFilterState = .suggested(suggestion, keyboardTarget: .suggestion)
+                self.pendingFilterState = .suggested(suggestion, keyboardTarget: .results)
             }
         }
     }

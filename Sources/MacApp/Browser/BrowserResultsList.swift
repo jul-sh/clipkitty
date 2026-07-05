@@ -16,7 +16,12 @@ struct BrowserResultsList: View {
             if let suggestion = viewModel.pendingFilterSuggestion {
                 PendingFilterChip(
                     title: viewModel.filterDescriptor(for: suggestion.kind).title,
-                    isKeyboardTarget: viewModel.isPendingFilterKeyboardTarget,
+                    isKeyboardTarget: {
+                        switch viewModel.keyboardTarget {
+                        case .pendingFilterChip: return true
+                        case .results: return false
+                        }
+                    }(),
                     onActivate: {
                         viewModel.applyPendingFilterSuggestion()
                         focusSearchField()
@@ -55,9 +60,13 @@ struct BrowserResultsList: View {
                         presentation: row.presentation,
                         // While the pending chip is the keyboard target, no row
                         // may read as the active selection even though one stays
-                        // selected underneath to drive the preview pane.
-                        isSelected: row.metadata.itemId == viewModel.selectedItemId
-                            && !viewModel.isPendingFilterKeyboardTarget,
+                        // selected underneath for when the keyboard returns.
+                        isSelected: {
+                            switch viewModel.keyboardTarget {
+                            case .pendingFilterChip: return false
+                            case .results: return row.metadata.itemId == viewModel.selectedItemId
+                            }
+                        }(),
                         isContextMenuTargeted: row.metadata.itemId == contextMenuItemId,
                         hasUserNavigated: viewModel.hasUserNavigated,
                         hasPendingEdit: {
@@ -159,9 +168,10 @@ struct BrowserResultsList: View {
     }
 }
 
-/// The typed-filter suggestion chip revealed above the result rows. It is the
-/// default keyboard target while visible: Enter applies the filter, Down moves
-/// into the results, and clicking commits directly.
+/// The typed-filter suggestion chip revealed above the result rows. The
+/// results keep the keyboard while it is visible; Up from the first row
+/// addresses the chip, Enter then applies the filter, Down returns to the
+/// results, and clicking commits directly.
 ///
 /// Deliberately neutral in both states — an accent fill would read as an
 /// already-active filter. The keyboard-target state is a slightly stronger

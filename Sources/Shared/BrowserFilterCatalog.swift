@@ -184,15 +184,17 @@ extension BrowserFilterCatalog {
     /// Resolves the pending filter suggestion for the current search state.
     ///
     /// Deterministic rules, in order:
-    /// 1. The trigger token is the LAST whitespace-separated token of the raw
+    /// 1. Only one filter at a time: while ANY filter is applied, nothing is
+    ///    suggested — the user removes the chip before choosing another.
+    /// 2. The trigger token is the LAST whitespace-separated token of the raw
     ///    text; earlier tokens are never consumed.
-    /// 2. The token must be at least ``minimumTriggerLength`` characters.
-    /// 3. Matching is case-insensitive prefix matching over each descriptor's
+    /// 3. The token must be at least ``minimumTriggerLength`` characters.
+    /// 4. Matching is case-insensitive prefix matching over each descriptor's
     ///    ``BrowserFilterDescriptor/searchAliases``.
-    /// 4. The currently applied filter is never re-suggested.
     /// 5. The match must be unambiguous: tokens matching aliases of more than
     ///    one filter kind produce no suggestion.
     public func typedSuggestion(searchText: String, appliedFilter: ItemQueryFilter) -> TypedFilterSuggestion? {
+        guard appliedFilter == .all else { return nil }
         guard let token = searchText.split(whereSeparator: \.isWhitespace).last,
               token.count >= Self.minimumTriggerLength
         else {
@@ -200,8 +202,7 @@ extension BrowserFilterCatalog {
         }
 
         let needle = token.lowercased()
-        let candidates = selectableFilters.filter { $0.queryFilter != appliedFilter }
-        let matches = candidates.filter { descriptor in
+        let matches = selectableFilters.filter { descriptor in
             descriptor.searchAliases.contains { $0.hasPrefix(needle) }
         }
         guard let match = matches.first, matches.count == 1 else { return nil }

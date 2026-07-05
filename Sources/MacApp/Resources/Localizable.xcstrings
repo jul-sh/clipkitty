@@ -4643,6 +4643,8 @@
         }
       }
     },
+    "Filter": {},
+    "Filter by %@": {},
     "Find ClipKitty in the list": {
       "localizations": {
         "de": {

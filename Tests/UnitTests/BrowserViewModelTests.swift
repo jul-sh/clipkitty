@@ -1706,7 +1706,7 @@ final class BrowserViewModelTests: XCTestCase {
         await flushMainActor()
     }
 
-    func testTypingCategoryPrefixSurfacesChipAsDefaultKeyboardTarget() async {
+    func testTypingCategoryPrefixSurfacesChipWithResultsKeyboardTarget() async {
         let viewModel = makeTypedFilterViewModel(client: MockBrowserStoreClient())
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
@@ -1714,11 +1714,11 @@ final class BrowserViewModelTests: XCTestCase {
         viewModel.updateSearchText("image")
         await awaitPendingFilterSurface()
 
-        guard case let .suggested(suggestion, keyboardTarget: .suggestion) = viewModel.pendingFilterState else {
-            return XCTFail("Expected chip-targeted suggestion, got \(viewModel.pendingFilterState)")
+        guard case let .suggested(suggestion, keyboardTarget: .results) = viewModel.pendingFilterState else {
+            return XCTFail("Expected results-targeted suggestion, got \(viewModel.pendingFilterState)")
         }
         XCTAssertEqual(suggestion.kind, .images)
-        XCTAssertTrue(viewModel.isPendingFilterKeyboardTarget)
+        XCTAssertEqual(viewModel.keyboardTarget, .results)
     }
 
     func testPendingChipWaitsForTypingPause() async {
@@ -1766,28 +1766,30 @@ final class BrowserViewModelTests: XCTestCase {
         client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
         await awaitPendingFilterSurface()
 
-        XCTAssertTrue(viewModel.isPendingFilterKeyboardTarget)
-
-        // Down: keyboard moves to the results without skipping the first row.
-        viewModel.moveSelection(by: 1)
-        XCTAssertFalse(viewModel.isPendingFilterKeyboardTarget)
+        // The chip surfaces with the results still owning the keyboard.
+        XCTAssertEqual(viewModel.keyboardTarget, .results)
         XCTAssertEqual(viewModel.selectedIndex, 0)
-        XCTAssertNotNil(viewModel.pendingFilterSuggestion, "Suggestion stays visible while browsing rows")
+
+        // Up from the first row hands the keyboard to the chip without
+        // disturbing the selection.
+        viewModel.moveSelection(by: -1)
+        guard case .pendingFilterChip = viewModel.keyboardTarget else {
+            return XCTFail("Expected chip to own the keyboard after Up, got \(viewModel.keyboardTarget)")
+        }
+        XCTAssertEqual(viewModel.selectedIndex, 0, "Moving to the chip must not disturb the selection")
+        XCTAssertNotNil(viewModel.pendingFilterSuggestion, "Suggestion stays visible at the chip")
+
+        // Down: keyboard returns to the results without skipping the first row.
+        viewModel.moveSelection(by: 1)
+        XCTAssertEqual(viewModel.keyboardTarget, .results)
+        XCTAssertEqual(viewModel.selectedIndex, 0)
 
         // Down again: normal row navigation.
         viewModel.moveSelection(by: 1)
         XCTAssertEqual(viewModel.selectedIndex, 1)
-
-        // Up to the first row, then up again returns to the chip.
-        viewModel.moveSelection(by: -1)
-        XCTAssertEqual(viewModel.selectedIndex, 0)
-        XCTAssertFalse(viewModel.isPendingFilterKeyboardTarget)
-        viewModel.moveSelection(by: -1)
-        XCTAssertTrue(viewModel.isPendingFilterKeyboardTarget)
-        XCTAssertEqual(viewModel.selectedIndex, 0, "Returning to the chip must not disturb the selection")
     }
 
-    func testDownFromChipLandsOnFirstRowEvenWithPreservedSelection() async {
+    func testUpWalksRowsBeforeReachingChipFromPreservedSelection() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
@@ -1819,12 +1821,93 @@ final class BrowserViewModelTests: XCTestCase {
         viewModel.updateSearchText("image")
         try? await Task.sleep(for: .milliseconds(120))
         await awaitPendingFilterSurface()
-        XCTAssertTrue(viewModel.isPendingFilterKeyboardTarget)
+        XCTAssertEqual(viewModel.keyboardTarget, .results)
 
-        viewModel.moveSelection(by: 1)
+        // Up from the second row is normal row navigation; only Up from the
+        // FIRST row reaches the chip.
+        viewModel.moveSelection(by: -1)
+        XCTAssertEqual(viewModel.keyboardTarget, .results)
+        XCTAssertEqual(viewModel.selectedIndex, 0)
 
-        XCTAssertFalse(viewModel.isPendingFilterKeyboardTarget)
-        XCTAssertEqual(viewModel.selectedIndex, 0, "Down from the chip must land on the first row")
+        viewModel.moveSelection(by: -1)
+        guard case .pendingFilterChip = viewModel.keyboardTarget else {
+            return XCTFail("Expected chip to own the keyboard, got \(viewModel.keyboardTarget)")
+        }
+
+        // Up at the chip stays put; the chip is the top of the keyboard path.
+        viewModel.moveSelection(by: -1)
+        guard case .pendingFilterChip = viewModel.keyboardTarget else {
+            return XCTFail("Expected chip to keep the keyboard on repeated Up, got \(viewModel.keyboardTarget)")
+        }
+        XCTAssertEqual(viewModel.selectedIndex, 0)
+    }
+
+    func testUserRowSelectionWhileChipTargetedReturnsKeyboardToResults() async {
+        let client = MockBrowserStoreClient()
+        var selectedItemIds: [String] = []
+        let viewModel = BrowserViewModel(
+            client: client,
+            filterCatalog: BrowserFilterCatalog(includesFileItems: false),
+            onSelect: { itemId, _ in selectedItemIds.append(itemId) },
+            onCopyOnly: { _, _ in },
+            onDismiss: {},
+            pendingFilterSurfaceDelay: 0.01
+        )
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [],
+            firstPreviewPayload: nil,
+            totalCount: 0
+        ))
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "image", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstPreviewPayload: nil,
+            totalCount: 2
+        ))
+        viewModel.updateSearchText("image")
+        try? await Task.sleep(for: .milliseconds(120))
+        await flushMainActor()
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
+        await awaitPendingFilterSurface()
+
+        viewModel.moveSelection(by: -1)
+        guard case .pendingFilterChip = viewModel.keyboardTarget else {
+            return XCTFail("Expected chip to own the keyboard, got \(viewModel.keyboardTarget)")
+        }
+
+        // A direct row pick (Cmd+number, click) while the chip is targeted
+        // hands the keyboard back, so the confirm activates the row.
+        viewModel.select(itemId: "2", origin: .keyboard)
+        await flushMainActor()
+        client.resumeFetch(id: "2", with: makeItem(id: "2", text: "second"))
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.keyboardTarget, .results)
+        viewModel.confirmSelection()
+        XCTAssertEqual(selectedItemIds, ["2"])
+        XCTAssertEqual(viewModel.contentState.request.filter, .all, "The row pick must not apply the filter")
+    }
+
+    func testSuspensionResetsChipKeyboardTargetToResults() async {
+        let viewModel = makeTypedFilterViewModel(client: MockBrowserStoreClient())
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.updateSearchText("image")
+        await awaitPendingFilterSurface()
+        viewModel.moveSelection(by: -1)
+        guard case .pendingFilterChip = viewModel.keyboardTarget else {
+            return XCTFail("Expected chip to own the keyboard, got \(viewModel.keyboardTarget)")
+        }
+
+        viewModel.prepareForSuspension()
+
+        XCTAssertEqual(viewModel.keyboardTarget, .results, "A hide/show cycle must not resurrect the chip target")
+        XCTAssertEqual(viewModel.pendingFilterSuggestion?.kind, .images, "The suggestion itself stays valid")
     }
 
     func testEnterOnChipAppliesFilterAndConsumesOnlyTriggerToken() async {
@@ -1834,8 +1917,13 @@ final class BrowserViewModelTests: XCTestCase {
 
         viewModel.updateSearchText("docker image")
         await awaitPendingFilterSurface()
-        XCTAssertTrue(viewModel.isPendingFilterKeyboardTarget)
+        XCTAssertEqual(viewModel.keyboardTarget, .results)
 
+        // The chip is opt-in: Up addresses it, then Enter applies the filter.
+        viewModel.moveSelection(by: -1)
+        guard case .pendingFilterChip = viewModel.keyboardTarget else {
+            return XCTFail("Expected chip to own the keyboard after Up, got \(viewModel.keyboardTarget)")
+        }
         viewModel.confirmSelection()
 
         XCTAssertEqual(
@@ -1881,9 +1969,10 @@ final class BrowserViewModelTests: XCTestCase {
         client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
         await awaitPendingFilterSurface()
 
-        XCTAssertTrue(viewModel.isPendingFilterKeyboardTarget)
-        viewModel.moveSelection(by: 1)
-        XCTAssertFalse(viewModel.isPendingFilterKeyboardTarget)
+        // The results own the keyboard by default, so plain Enter activates
+        // the selected row even though the suggestion is visible.
+        XCTAssertEqual(viewModel.keyboardTarget, .results)
+        XCTAssertNotNil(viewModel.pendingFilterSuggestion)
 
         viewModel.confirmSelection()
 
@@ -1919,6 +2008,7 @@ final class BrowserViewModelTests: XCTestCase {
         await awaitPendingFilterSurface()
         XCTAssertEqual(viewModel.pendingFilterSuggestion?.kind, .bookmarks)
 
+        viewModel.moveSelection(by: -1)
         viewModel.confirmSelection()
 
         XCTAssertEqual(

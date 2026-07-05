@@ -161,19 +161,21 @@ final class BrowserFilterCatalogTests: XCTestCase {
         XCTAssertEqual(catalog.typedSuggestion(searchText: "favorite", appliedFilter: .all)?.kind, .bookmarks)
     }
 
-    func testAppliedFilterIsExcludedFromSuggestions() {
+    func testNoSuggestionSurfacesWhileAnyFilterIsApplied() {
         XCTAssertNil(catalog.typedSuggestion(
             searchText: "images",
             appliedFilter: .contentType(contentType: .images)
         ))
-        // A different filter still suggests, enabling direct switching.
-        XCTAssertEqual(
-            catalog.typedSuggestion(
-                searchText: "links",
-                appliedFilter: .contentType(contentType: .images)
-            )?.kind,
-            .links
-        )
+        // One filter at a time: a DIFFERENT filter's alias is also silent
+        // until the applied chip is removed.
+        XCTAssertNil(catalog.typedSuggestion(
+            searchText: "links",
+            appliedFilter: .contentType(contentType: .images)
+        ))
+        XCTAssertNil(catalog.typedSuggestion(
+            searchText: "links",
+            appliedFilter: .tagged(tag: .bookmark)
+        ))
     }
 
     func testFilesAliasRequiresAvailability() {

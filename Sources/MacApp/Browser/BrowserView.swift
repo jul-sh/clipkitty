@@ -30,7 +30,12 @@ struct BrowserView: View {
                 searchSpinnerVisible: viewModel.searchSpinnerVisible,
                 // Row-only shortcuts (Cmd+K, delete item) must not fire while
                 // the pending filter chip is the keyboard target.
-                selectedItemAvailable: viewModel.selectedItem != nil && !viewModel.isPendingFilterKeyboardTarget,
+                selectedItemAvailable: {
+                    switch viewModel.keyboardTarget {
+                    case .pendingFilterChip: return false
+                    case .results: return viewModel.selectedItem != nil
+                    }
+                }(),
                 hasPendingEdit: { if case .dirty = viewModel.editSession { return true }; return false }(),
                 focusTarget: $focusTarget,
                 onMoveSelection: viewModel.moveSelection(by:),
@@ -137,9 +142,9 @@ struct BrowserView: View {
     }
 
     private func handleCommandNumberShortcut(_ number: Int) -> Bool {
-        // Item activation is a result-only shortcut: it must not fire while
-        // the pending filter chip is the keyboard target.
-        guard !viewModel.isPendingFilterKeyboardTarget else { return false }
+        // Numbers always address rows, even while the pending filter chip is
+        // the keyboard target: selecting a row hands the keyboard back to the
+        // results, so the confirm activates the item, not the filter.
         let index = number - 1
         guard viewModel.itemIds.indices.contains(index) else { return false }
         let itemId = viewModel.itemIds[index]
@@ -199,7 +204,7 @@ struct BrowserView: View {
                UInt32(event.keyCode) == deleteHotKey.keyCode,
                !event.isARepeat
             {
-                if viewModel.selectedItem != nil, !viewModel.isPendingFilterKeyboardTarget {
+                if viewModel.selectedItem != nil, case .results = viewModel.keyboardTarget {
                     viewModel.deleteSelectedItem()
                     return nil
                 }

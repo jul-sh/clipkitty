@@ -579,9 +579,10 @@ final class ClipKittyUITests: XCTestCase {
     // MARK: - Typed Filter Flow
 
     /// Types a category trigger, asserts the pending suggestion chip appears
-    /// selected by default, and applies it with Return. Waits for both the
-    /// applied chip and the FILTERED results to finish loading (via the
-    /// locale-invariant `ResultsState_<kind>_loaded` signal) before returning.
+    /// with the results still targeted, selects the chip with Up, and applies
+    /// it with Return. Waits for both the applied chip and the FILTERED
+    /// results to finish loading (via the locale-invariant
+    /// `ResultsState_<kind>_loaded` signal) before returning.
     private func applyTypedFilter(trigger: String, kindIdentifier: String) {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
@@ -590,7 +591,11 @@ final class ClipKittyUITests: XCTestCase {
 
         let pendingChip = app.buttons["PendingFilterChip"]
         XCTAssertTrue(pendingChip.waitForExistence(timeout: 3), "Pending filter chip should appear after typing '\(trigger)'")
-        XCTAssertTrue(pendingChip.isSelected, "Pending chip should be the default keyboard target")
+        XCTAssertFalse(pendingChip.isSelected, "The results keep the keyboard when the chip surfaces")
+
+        app.typeKey(.upArrow, modifierFlags: [])
+        XCTAssertTrue(waitForCondition(timeout: 3) { pendingChip.isSelected },
+                      "Up from the first row should select the pending chip")
 
         app.typeKey(.return, modifierFlags: [])
         let removeControl = app.buttons["AppliedFilterChipRemove"]
@@ -620,8 +625,10 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(removeControl.waitForNonExistence(timeout: 3), "Applied chip should disappear after clicking its close control")
     }
 
-    /// Tests arrow-key handoff between the pending chip and the result list:
-    /// Down moves to the first row, Up returns to the chip.
+    /// Tests arrow-key handoff between the result list and the pending chip:
+    /// the results keep the keyboard when the chip surfaces, Up from the
+    /// first row selects the chip (swapping the preview for the filter
+    /// advertisement), and Down returns to the results.
     func testTypedFilterArrowNavigation() {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
@@ -630,16 +637,24 @@ final class ClipKittyUITests: XCTestCase {
 
         let pendingChip = app.buttons["PendingFilterChip"]
         XCTAssertTrue(pendingChip.waitForExistence(timeout: 3), "Pending chip should appear")
-        XCTAssertTrue(pendingChip.isSelected, "Chip starts as the keyboard target")
+        XCTAssertFalse(pendingChip.isSelected, "The results keep the keyboard when the chip surfaces")
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First row should hold the selection under the chip")
 
-        app.typeKey(.downArrow, modifierFlags: [])
-        XCTAssertTrue(waitForCondition(timeout: 3) { !pendingChip.isSelected },
-                      "Down should hand the keyboard to the result list")
-        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First row should hold the selection after Down")
+        let filterPreview = app.descendants(matching: .any)["PendingFilterPreview"]
+        XCTAssertFalse(filterPreview.exists, "The preview shows the selected item while the results are targeted")
 
         app.typeKey(.upArrow, modifierFlags: [])
         XCTAssertTrue(waitForCondition(timeout: 3) { pendingChip.isSelected },
-                      "Up from the first row should return the keyboard to the chip")
+                      "Up from the first row should select the chip")
+        XCTAssertTrue(filterPreview.waitForExistence(timeout: 3),
+                      "The preview pane should advertise the filter while the chip is selected")
+
+        app.typeKey(.downArrow, modifierFlags: [])
+        XCTAssertTrue(waitForCondition(timeout: 3) { !pendingChip.isSelected },
+                      "Down should hand the keyboard back to the result list")
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First row should hold the selection after Down")
+        XCTAssertTrue(waitForCondition(timeout: 3) { !filterPreview.exists },
+                      "The item preview should return once the results are targeted again")
     }
 
     /// Tests that Backspace in the empty search field removes the applied
@@ -1046,6 +1061,8 @@ final class ClipKittyUITests: XCTestCase {
         let pendingChip = app.buttons["PendingFilterChip"]
         XCTAssertTrue(pendingChip.waitForExistence(timeout: 3), "Pending filter chip should appear in video scene 3")
         Thread.sleep(forTimeInterval: 0.6)
+        app.typeKey(.upArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.6)
         app.typeKey(.return, modifierFlags: [])
         let appliedChipRemove = app.buttons["AppliedFilterChipRemove"]
         XCTAssertTrue(appliedChipRemove.waitForExistence(timeout: 3), "Applied chip should appear in video scene 3")
@@ -1191,6 +1208,8 @@ final class ClipKittyUITests: XCTestCase {
         searchField.typeText("image")
         let pendingChip = app.buttons["PendingFilterChip"]
         XCTAssertTrue(pendingChip.waitForExistence(timeout: 3), "Pending filter chip should appear")
+        Thread.sleep(forTimeInterval: 0.3)
+        app.typeKey(.upArrow, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.3)
         app.typeKey(.return, modifierFlags: [])
         let appliedChipRemove = app.buttons["AppliedFilterChipRemove"]
