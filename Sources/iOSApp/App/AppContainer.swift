@@ -9,7 +9,7 @@ import os
 @MainActor
 @Observable
 final class AppContainer {
-    private static let logger = Logger(subsystem: "com.clipkitty", category: "iOSBootstrap")
+    private nonisolated static let logger = Logger(subsystem: "com.clipkitty", category: "iOSBootstrap")
 
     let store: ClipKittyRust.ClipboardStore
     let repository: ClipboardRepository
@@ -41,6 +41,16 @@ final class AppContainer {
     }
 
     static func bootstrap(databasePath customPath: String? = nil) -> Result<AppContainer, BootstrapError> {
+        openStore(databasePath: customPath).map(assemble(store:))
+    }
+
+    /// The heavy, blocking half of bootstrap: path resolution, migration,
+    /// index inspection/repair, and opening the Rust store. Deliberately
+    /// nonisolated so a foreground resume can run it off the main actor and
+    /// keep rendering the last known state while the database reconnects.
+    nonisolated static func openStore(
+        databasePath customPath: String? = nil
+    ) -> Result<ClipKittyRust.ClipboardStore, BootstrapError> {
         // Migrate legacy Application Support database to App Group container
         // before resolving the path, so existing users keep their data.
         if customPath == nil {
@@ -110,6 +120,12 @@ final class AppContainer {
             #endif
         }
 
+        return .success(store)
+    }
+
+    /// The cheap, main-actor half of bootstrap: wires the service graph
+    /// around an already-opened store.
+    static func assemble(store: ClipKittyRust.ClipboardStore) -> AppContainer {
         let repository = ClipboardRepository(store: store)
         let previewLoader = PreviewLoader(repository: repository)
         let imageDescriptionUpdater = ImageDescriptionUpdater(repository: repository)
@@ -121,7 +137,7 @@ final class AppContainer {
         let clipboardService = iOSClipboardService(settings: settings)
         let haptics = HapticsClient(settings: settings)
 
-        return .success(AppContainer(
+        return AppContainer(
             store: store,
             repository: repository,
             previewLoader: previewLoader,
@@ -130,7 +146,7 @@ final class AppContainer {
             clipboardService: clipboardService,
             settings: settings,
             haptics: haptics
-        ))
+        )
     }
 
     enum BootstrapError: LocalizedError {
@@ -169,7 +185,7 @@ final class AppContainer {
     }
 
     #if ENABLE_ICLOUD_SYNC
-        private static func logIndexMaintenanceOutcome(
+        private nonisolated static func logIndexMaintenanceOutcome(
             _ outcome: IndexMaintenanceOutcome,
             context: String
         ) {

@@ -59,6 +59,30 @@ final class AppContainerBootstrapTests: XCTestCase {
         XCTAssertTrue(container.settings.generateLinkPreviews)
     }
 
+    /// The resume path opens the store OFF the main actor (so the last known
+    /// state keeps rendering) and assembles the container on it afterwards;
+    /// the split must produce a container that can actually write.
+    func testOpenStoreOffMainThenAssembleProducesWorkingContainer() async {
+        let path = isolatedDbPath()
+
+        let opened = await Task.detached(priority: .userInitiated) {
+            AppContainer.openStore(databasePath: path)
+        }.value
+        guard case let .success(store) = opened else {
+            return XCTFail("openStore should succeed for a fresh database path")
+        }
+
+        let container = AppContainer.assemble(store: store)
+        let saved = await container.repository.saveText(
+            text: "resume smoke",
+            sourceApp: nil,
+            sourceAppBundleId: nil
+        )
+        guard case .success = saved else {
+            return XCTFail("Assembled container should be able to write to the store")
+        }
+    }
+
     func testBootstrapWithInvalidPathFails() {
         let result = AppContainer.bootstrap(databasePath: "/nonexistent/path/to/db")
         switch result {
