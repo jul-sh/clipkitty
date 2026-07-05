@@ -54,6 +54,15 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     /// Whether the Accessibility-permission notice has been shown this launch.
     private var hasShownNoPermissionNotice = false
 
+    /// Provides the window hosting the app's menu bar status item, if any.
+    /// Injected by AppDelegate so resign-key handling can recognize clicks on
+    /// the status item; see windowDidResignKey.
+    var statusItemWindowProvider: () -> NSWindow? = { nil }
+
+    /// Pending safety-net hide armed when a resign-key is attributed to a
+    /// status item interaction; see scheduleStatusItemInteractionFallback.
+    private var statusItemInteractionFallbackTask: Task<Void, Never>?
+
     private var textScaleCancellable: AnyCancellable?
 
     init(
@@ -192,6 +201,43 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             // can interact with it across multiple actions.
             // Safeguard: UI tests explicitly verify panel dismiss behavior via escape key.
             if case .production = mode {
+                if isPointerOverStatusItem {
+                    // Since the macOS 27 menu bar, pressing a status item of an
+                    // accessory app deactivates it at mouse-down, before the
+                    // button's action arrives at mouse-up. Hiding here would
+                    // flip state to .hidden, so the click's toggle() re-shows
+                    // the panel: a hide-show-hide flicker. Leave the transition
+                    // to the status item's action; the fallback covers presses
+                    // that never deliver one (e.g. dragging off the item).
+                    scheduleStatusItemInteractionFallback()
+                    return
+                }
+                hide()
+            }
+        }
+    }
+
+    /// Whether the mouse is currently over the status item's window. The
+    /// causing event is no use for this attribution: the mouse-down resign
+    /// arrives as an appKitDefined system event with no window.
+    private var isPointerOverStatusItem: Bool {
+        guard let statusWindow = statusItemWindowProvider() else { return false }
+        return statusWindow.frame.contains(NSEvent.mouseLocation)
+    }
+
+    /// Hides the panel after a status-item-attributed resign-key if the
+    /// interaction never toggled it: wait for the mouse button to be released,
+    /// give the button action a beat to run, then hide unless a toggle already
+    /// resolved the click (panel hidden) or the panel regained key.
+    private func scheduleStatusItemInteractionFallback() {
+        statusItemInteractionFallbackTask?.cancel()
+        statusItemInteractionFallbackTask = Task { [weak self] in
+            while NSEvent.pressedMouseButtons != 0, !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            try? await Task.sleep(for: .milliseconds(150))
+            guard let self, !Task.isCancelled else { return }
+            if case .visible = panelState, !panel.isKeyWindow {
                 hide()
             }
         }

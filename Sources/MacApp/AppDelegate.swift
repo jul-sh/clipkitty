@@ -207,6 +207,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
+        panelController.statusItemWindowProvider = { [weak self] in
+            self?.statusItem?.button?.window
+        }
+
         let menu = NSMenu()
         let hotKey = AppSettings.shared.hotKey
         showHistoryMenuItem = NSMenuItem(title: NSLocalizedString("Show Clipboard History", comment: "Menu bar item to show clipboard history panel"), action: #selector(showPanel), keyEquivalent: hotKey.keyEquivalent)
