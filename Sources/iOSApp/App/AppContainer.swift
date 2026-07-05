@@ -14,6 +14,7 @@ final class AppContainer {
     let store: ClipKittyRust.ClipboardStore
     let repository: ClipboardRepository
     let previewLoader: PreviewLoader
+    let imageDescriptionUpdater: ImageDescriptionUpdater
     let storeClient: iOSBrowserStoreClient
     let clipboardService: iOSClipboardService
     let settings: iOSSettingsStore
@@ -23,6 +24,7 @@ final class AppContainer {
         store: ClipKittyRust.ClipboardStore,
         repository: ClipboardRepository,
         previewLoader: PreviewLoader,
+        imageDescriptionUpdater: ImageDescriptionUpdater,
         storeClient: iOSBrowserStoreClient,
         clipboardService: iOSClipboardService,
         settings: iOSSettingsStore,
@@ -31,6 +33,7 @@ final class AppContainer {
         self.store = store
         self.repository = repository
         self.previewLoader = previewLoader
+        self.imageDescriptionUpdater = imageDescriptionUpdater
         self.storeClient = storeClient
         self.clipboardService = clipboardService
         self.settings = settings
@@ -109,6 +112,7 @@ final class AppContainer {
 
         let repository = ClipboardRepository(store: store)
         let previewLoader = PreviewLoader(repository: repository)
+        let imageDescriptionUpdater = ImageDescriptionUpdater(repository: repository)
         let storeClient = iOSBrowserStoreClient(
             repository: repository,
             previewLoader: previewLoader
@@ -121,6 +125,7 @@ final class AppContainer {
             store: store,
             repository: repository,
             previewLoader: previewLoader,
+            imageDescriptionUpdater: imageDescriptionUpdater,
             storeClient: storeClient,
             clipboardService: clipboardService,
             settings: settings,
@@ -178,5 +183,4 @@ final class AppContainer {
             }
         }
     #endif
-
 }

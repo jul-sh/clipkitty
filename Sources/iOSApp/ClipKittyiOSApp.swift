@@ -115,6 +115,36 @@ final class AppState {
         viewModel.handlePanelVisibilityChange(true, contentRevision: contentRevision)
     }
 
+    func saveImage(
+        imageData: Data,
+        thumbnail: Data?,
+        sourceApp: String?,
+        sourceAppBundleId: String?,
+        isAnimated: Bool
+    ) async -> Result<String, ClipboardError> {
+        let result = await container.repository.saveImage(
+            imageData: imageData,
+            thumbnail: thumbnail,
+            sourceApp: sourceApp,
+            sourceAppBundleId: sourceAppBundleId,
+            isAnimated: isAnimated
+        )
+        scheduleImageDescriptionUpdate(after: result, imageData: imageData)
+        return result
+    }
+
+    private func scheduleImageDescriptionUpdate(after result: Result<String, ClipboardError>, imageData: Data) {
+        guard case let .success(itemId) = result, !itemId.isEmpty else { return }
+
+        Task { [weak self] in
+            guard let self else { return }
+            let update = await self.container.imageDescriptionUpdater.update(itemId: itemId, imageData: imageData)
+            if case .success(true) = update {
+                self.refreshFeed()
+            }
+        }
+    }
+
     func ingestPendingAndClipboard() async {
         let added = await processPendingShareItems()
         if added > 0 { refreshFeed() }
@@ -148,7 +178,7 @@ final class AppState {
                 )
             case .image:
                 guard let imageData = entry.imageData else { continue }
-                result = await container.repository.saveImage(
+                result = await saveImage(
                     imageData: imageData,
                     thumbnail: entry.thumbnailData,
                     sourceApp: "Share Sheet",
@@ -185,7 +215,7 @@ final class AppState {
             let thumbnail = image.preparingThumbnail(of: CGSize(width: 200, height: 200))?.jpegData(
                 compressionQuality: 0.7
             )
-            result = await container.repository.saveImage(
+            result = await saveImage(
                 imageData: data,
                 thumbnail: thumbnail,
                 sourceApp: "Pasteboard",
