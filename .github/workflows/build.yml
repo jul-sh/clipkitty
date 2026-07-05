@@ -106,20 +106,27 @@ jobs:
           echo "release_url=$RELEASE_URL" >> "$GITHUB_OUTPUT"
           echo "Final release version: $VERSION"
 
-  # Build the repo-specific Rust artifacts (purr-* static libs for every
-  # Apple target, the lipo'd universal lib, and the UniFFI Swift bindings)
-  # exactly once, before the parallel Nix jobs fan out, and push them to the
-  # shared GitHub Actions Nix cache.
+  # Build the shared Nix graph every Apple job depends on — exactly once,
+  # before the parallel jobs fan out — and push it to the shared GitHub
+  # Actions Nix cache.
   #
-  # Why a dedicated job instead of letting the cache sort itself out: the
-  # purr-* graph is a ~30 min cold compile, and every Apple Nix job pulls it
-  # in transitively. When all those jobs start at once they each rebuild it
-  # from source AND hammer the GitHub Actions Cache concurrently, which
-  # throttles the cache API ("GitHub Actions Cache throttled Magic Nix
-  # Cache. Not trying to use it again on this run.") — so nothing is ever
-  # restored and the tightly-timed jobs (iOS smoke) blow their budget. One
-  # uncontended prewarm build populates the cache so the fan-out restores
-  # instead of recompiling.
+  # The target is `.#clipkitty-generated` (the fully generated Tuist
+  # workspace), not just the purr-* Rust overlay: the overlay is a subset,
+  # and the marketing / UI-test / screenshot jobs run `make workspace` /
+  # `make screenshots`, which build the *whole* generated workspace graph —
+  # the purr overlay plus every crate and SwiftPM derivation (askama,
+  # tantivy, GRDB, Sparkle, …). Prewarming only the overlay left those
+  # jobs rebuilding that ~30 min graph themselves; the marketing job blew
+  # its 40 min budget rebuilding it before capturing a single screenshot.
+  #
+  # Why a dedicated job instead of letting the cache sort itself out: this
+  # graph is a ~30 min cold compile that every Apple job pulls in. When all
+  # those jobs start at once they each rebuild it AND hammer the GitHub
+  # Actions Cache concurrently, which throttles the cache API ("GitHub
+  # Actions Cache throttled Magic Nix Cache. Not trying to use it again on
+  # this run.") — so nothing is ever restored and the tightly-timed jobs
+  # blow their budget. One uncontended prewarm build populates the cache so
+  # the fan-out restores instead of recompiling.
   prewarm-nix:
     name: Prewarm Nix Cache
     runs-on: macos-26
@@ -139,9 +146,9 @@ jobs:
       - name: Set up Nix cache
         uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
 
-      - name: Build shared Rust artifacts
+      - name: Build shared workspace graph
         timeout-minutes: 45
-        run: nix build '.#clipkitty-rust-xcode-overlay' -L
+        run: nix build '.#clipkitty-generated' -L
 
   rust-tests:
     name: Rust Tests
