@@ -69,8 +69,10 @@ struct CardView: View {
             contentPreview
         }
         .cardSurface()
-        .padding(.horizontal, 16)
-        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .contentShape(
+            [.interaction, .dragPreview, .contextMenuPreview],
+            RoundedRectangle(cornerRadius: CardSurface.cornerRadius, style: .continuous)
+        )
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityCardLabel)
         .accessibilityHint(String(localized: "Double tap to copy"))
@@ -87,6 +89,7 @@ struct CardView: View {
                 await storeClient.fetchItem(id: id)
             }
         }
+        .padding(.horizontal, 16)
     }
 
     // MARK: - Metadata line

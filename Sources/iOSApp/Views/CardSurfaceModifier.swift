@@ -1,16 +1,18 @@
 import SwiftUI
 
 struct CardSurface: ViewModifier {
+    static let cornerRadius: CGFloat = 14
+
     @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
         content
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
             .overlay {
                 if colorScheme == .dark {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
                         .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
                 }
             }
