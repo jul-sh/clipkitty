@@ -804,7 +804,11 @@ jobs:
           sleep 5
 
       - name: Generate Marketing Screenshots
-        timeout-minutes: 20
+        # 40 min, not 20: on a Nix-cache miss (e.g. the first run after a
+        # Cargo.lock/flake change) this step builds the purr-* Rust libs
+        # (~18 min) before capturing anything. The shared Nix cache makes
+        # that the exception, but the timeout has to survive the cold case.
+        timeout-minutes: 40
         run: |
           SKIP_SIGNING=1 LOCKED=1 make screenshots-macos
           ls -lh marketing/*/screenshot_*.png
