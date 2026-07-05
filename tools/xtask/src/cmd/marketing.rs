@@ -364,12 +364,14 @@ fn run_screenshot_plan(
                 kind.tmp_prefix_stem()
             )),
         };
-        // iOS/iPad simulator launches flake on CI, so retry a wedged capture
-        // after resetting the simulators. macOS captures run once.
+        // Both platforms flake on CI: iOS/iPad simulator launches wedge, and
+        // macOS UI captures occasionally miss a transient element (e.g. the
+        // typed-filter chip not surfacing within its wait window). Retry a
+        // wedged capture on either — resetting simulators first on iOS.
         let max_attempts = if plan.ios_device_kind().is_some() {
             IOS_SCREENSHOT_MAX_ATTEMPTS
         } else {
-            1
+            MACOS_SCREENSHOT_MAX_ATTEMPTS
         };
         clear_screenshot_sources(plan.platform, locale)?;
         let mut status = run_screenshot_xcodebuild(repo, plan, &log_path, reporter)?;
@@ -380,20 +382,19 @@ fn run_screenshot_plan(
                 ScreenshotCopy::Complete { .. } => break,
                 ScreenshotCopy::Incomplete { copied, expected } if attempt < max_attempts => {
                     attempt += 1;
-                    if copied == 0 {
-                        reporter.info(&format!(
-                            "No {:?} screenshots for {locale_code} on attempt {}; resetting simulators and retrying ({attempt}/{max_attempts}).",
-                            plan.platform,
-                            attempt - 1
-                        ));
+                    let progress = if copied == 0 {
+                        format!("No {:?} screenshots", plan.platform)
                     } else {
-                        reporter.info(&format!(
-                            "Only copied {copied}/{expected} {:?} screenshots for {locale_code} on attempt {}; resetting simulators and retrying ({attempt}/{max_attempts}).",
-                            plan.platform,
-                            attempt - 1
-                        ));
+                        format!("Only copied {copied}/{expected} {:?} screenshots", plan.platform)
+                    };
+                    reporter.info(&format!(
+                        "{progress} for {locale_code} on attempt {}; retrying ({attempt}/{max_attempts}).",
+                        attempt - 1
+                    ));
+                    // Simulator resets only apply to iOS; macOS just re-runs.
+                    if plan.ios_device_kind().is_some() {
+                        reset_ios_simulators(reporter);
                     }
-                    reset_ios_simulators(reporter);
                     clear_screenshot_sources(plan.platform, locale)?;
                     status = run_screenshot_xcodebuild(repo, plan, &log_path, reporter)?;
                     copy_result = copy_screenshots(repo, plan, locale, reporter)?;
@@ -459,6 +460,7 @@ fn screenshot_db_name(locale: MarketingLocale, mode: ScreenshotDbMode) -> String
 /// though the build itself is fine. Shutting the simulators down between
 /// attempts clears that state.
 const IOS_SCREENSHOT_MAX_ATTEMPTS: u32 = 3;
+const MACOS_SCREENSHOT_MAX_ATTEMPTS: u32 = 3;
 
 /// Shut down all booted simulators so the next `xcodebuild test` boots a
 /// fresh device. Best-effort: a failure here is logged, not propagated,

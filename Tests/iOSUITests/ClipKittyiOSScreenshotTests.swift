@@ -75,7 +75,7 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         // ship to the App Store unnoticed.
 
         // Screenshot 1: History feed (default state)
-        let feedScreenshot = app.screenshot()
+        let feedScreenshot = captureScreen()
         saveScreenshot(feedScreenshot, index: 1, name: "history")
 
         // Screenshot 2: Fuzzy search in action. "dockr push" has a
@@ -98,7 +98,7 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         searchField.typeText("dockr push")
         sleep(2)
 
-        let searchScreenshot = app.screenshot()
+        let searchScreenshot = captureScreen()
         saveScreenshot(searchScreenshot, index: 2, name: "search")
 
         // Dismiss search
@@ -125,8 +125,27 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         // ship a pixelated thumbnail to the App Store).
         sleep(8)
 
-        let filterScreenshot = app.screenshot()
+        let filterScreenshot = captureScreen()
         saveScreenshot(filterScreenshot, index: 3, name: "filter")
+    }
+
+    // MARK: - Screen capture
+
+    /// Captures the whole display via `XCUIScreen`, deliberately *not*
+    /// `XCUIApplication.screenshot()`.
+    ///
+    /// `app.screenshot()` resolves the app through a UI query that first waits
+    /// for the app to report idle. The packed iPad feed does a burst of layout
+    /// and async image-decode work as cards appear, and on a loaded CI runner
+    /// that burst can outlast the automation idle timeout — the query then
+    /// fails with "Timed out while evaluating UI query" and no screenshot is
+    /// produced at all. `XCUIScreen.main.screenshot()` grabs the display buffer
+    /// directly with no idle query, so once we have given the feed our own
+    /// settle time the capture always succeeds. Callers still drive the UI
+    /// through `app`'s element queries (with their own short waits); only the
+    /// final pixel grab bypasses the app-idle wait.
+    private func captureScreen() -> XCUIScreenshot {
+        XCUIScreen.main.screenshot()
     }
 
     // MARK: - Database Setup
