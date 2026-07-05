@@ -42,21 +42,7 @@ struct CardView: View {
     }
 
     private var displayExcerpt: (text: String, highlights: [Utf16HighlightRange]) {
-        switch row.presentation {
-        case let .baseline(excerpt):
-            return (excerpt.text, [])
-        case let .matched(excerpt):
-            return (excerpt.text, excerpt.highlights)
-        case let .deferred(_, placeholder):
-            switch placeholder {
-            case let .baseline(excerpt), let .provisional(excerpt):
-                return (excerpt.text, [])
-            case let .compatibleCached(_, excerpt):
-                return (excerpt.text, excerpt.highlights)
-            }
-        case let .unavailable(fallback, _):
-            return (fallback.text, [])
-        }
+        row.displayExcerpt
     }
 
     private var isBookmarked: Bool {
@@ -89,7 +75,6 @@ struct CardView: View {
                 await storeClient.fetchItem(id: id)
             }
         }
-        .padding(.horizontal, 16)
     }
 
     // MARK: - Metadata line

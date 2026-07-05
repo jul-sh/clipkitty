@@ -1,6 +1,7 @@
 import ClipKittyRust
 import ClipKittyShared
 import SwiftUI
+import UIKit
 
 struct HomeFeedView: View {
     @Environment(AppState.self) private var appState
@@ -11,6 +12,29 @@ struct HomeFeedView: View {
     @State private var hasAppeared = false
     @State private var showSettings = false
     @State private var searchFocusRequestID = 0
+    @State private var feedLayout: FeedLayout = .singleColumn
+
+    /// How the feed arranges clips, derived from the window geometry. The
+    /// packed case carries the row width it was derived from, so packing can
+    /// never run against a stale or unset width.
+    private enum FeedLayout: Equatable {
+        /// One clip per row: iPhone, and narrow iPad windows.
+        case singleColumn
+        /// Up to `JustifiedCardRow.maxCardsPerRow` clips share each row.
+        /// Reserved for large iPad windows (full screen, or a spacious
+        /// Split View / Stage Manager window).
+        case packedRows(rowWidth: CGFloat)
+
+        init(containerWidth: CGFloat) {
+            if UIDevice.current.userInterfaceIdiom == .pad,
+               containerWidth >= JustifiedCardRow.multiColumnMinimumWidth
+            {
+                self = .packedRows(rowWidth: containerWidth - 2 * HomeFeedView.feedGutter)
+            } else {
+                self = .singleColumn
+            }
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -93,22 +117,48 @@ struct HomeFeedView: View {
 
     private var scrollableFeed: some View {
         List {
-            ForEach(filteredRows) { row in
-                CardView(
-                    row: row,
-                    previewItemId: $previewItemId
-                )
-                .onAppear {
-                    loadMatchedExcerptIfNeeded(for: row)
+            switch feedLayout {
+            case .singleColumn:
+                ForEach(filteredRows) { row in
+                    CardView(
+                        row: row,
+                        previewItemId: $previewItemId
+                    )
+                    .onAppear {
+                        viewModel.loadMatchedExcerptsForItems([row.id])
+                    }
+                    .cardListRow()
                 }
-                .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
-                .listRowBackground(Color.clear)
+
+            case let .packedRows(rowWidth):
+                ForEach(CardRowChunk.pack(filteredRows, rowWidth: rowWidth)) { chunk in
+                    JustifiedCardRow {
+                        ForEach(chunk.rows) { row in
+                            CardView(
+                                row: row,
+                                previewItemId: $previewItemId
+                            )
+                        }
+                    }
+                    .onAppear {
+                        viewModel.loadMatchedExcerptsForItems(chunk.rows.map(\.id))
+                    }
+                    .cardListRow()
+                }
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .onGeometryChange(for: FeedLayout.self) { proxy in
+            FeedLayout(containerWidth: proxy.size.width)
+        } action: { layout in
+            feedLayout = layout
+        }
     }
+
+    /// Horizontal gutter between the feed content and the screen edges,
+    /// applied via list-row insets so multi-clip rows share one gutter.
+    fileprivate static let feedGutter: CGFloat = 16
 
     /// Filter out file items — iPhone app doesn't support file sharing.
     private var filteredRows: [DisplayRow] {
@@ -179,9 +229,20 @@ struct HomeFeedView: View {
             || viewModel.contentTypeFilter != .all
             || viewModel.selectedTagFilter != nil
     }
+}
 
-    private func loadMatchedExcerptIfNeeded(for row: DisplayRow) {
-        viewModel.loadMatchedExcerptsForItems([row.id])
+private extension View {
+    /// Shared list-row chrome for feed rows: no separator, card gutters via
+    /// insets, transparent background.
+    func cardListRow() -> some View {
+        listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(
+                top: 6,
+                leading: HomeFeedView.feedGutter,
+                bottom: 6,
+                trailing: HomeFeedView.feedGutter
+            ))
+            .listRowBackground(Color.clear)
     }
 }
 
