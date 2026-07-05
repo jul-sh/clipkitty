@@ -512,20 +512,44 @@ private final class PreviewTextView: NSTextView {
         CATransaction.commit()
     }
 
-    @objc(textViewportLayoutControllerDidLayout:)
-    func clipKitty_textViewportLayoutControllerDidLayout(
+    #if compiler(>=6.4)
+        // The macOS 27 SDK exposes NSTextView's
+        // `textViewportLayoutControllerDidLayout(_:)` publicly (with
+        // NS_REQUIRES_SUPER), so the @objc shim in the other branch would
+        // collide with the superclass selector. Override it directly, calling
+        // super on 27+ runtimes and keeping the IMP forward for older
+        // runtimes where the superclass implementation is still private.
+        override func textViewportLayoutControllerDidLayout(
+            _ textViewportLayoutController: NSTextViewportLayoutController
+        ) {
+            if #available(macOS 27.0, *) {
+                super.textViewportLayoutControllerDidLayout(textViewportLayoutController)
+            } else {
+                forwardDidLayoutToSuperImplementation(textViewportLayoutController)
+            }
+            onViewportLayoutDidLayout?(self, textViewportLayoutController)
+        }
+    #else
+        @objc(textViewportLayoutControllerDidLayout:)
+        func clipKitty_textViewportLayoutControllerDidLayout(
+            _ textViewportLayoutController: NSTextViewportLayoutController
+        ) {
+            forwardDidLayoutToSuperImplementation(textViewportLayoutController)
+            onViewportLayoutDidLayout?(self, textViewportLayoutController)
+        }
+    #endif
+
+    private func forwardDidLayoutToSuperImplementation(
         _ textViewportLayoutController: NSTextViewportLayoutController
     ) {
-        if let implementation = Self.superDidLayoutImplementation {
-            typealias DidLayoutFunction =
-                @convention(c) (AnyObject, Selector, NSTextViewportLayoutController) -> Void
-            unsafeBitCast(implementation, to: DidLayoutFunction.self)(
-                self,
-                Self.didLayoutSelector,
-                textViewportLayoutController
-            )
-        }
-        onViewportLayoutDidLayout?(self, textViewportLayoutController)
+        guard let implementation = Self.superDidLayoutImplementation else { return }
+        typealias DidLayoutFunction =
+            @convention(c) (AnyObject, Selector, NSTextViewportLayoutController) -> Void
+        unsafeBitCast(implementation, to: DidLayoutFunction.self)(
+            self,
+            Self.didLayoutSelector,
+            textViewportLayoutController
+        )
     }
 }
 

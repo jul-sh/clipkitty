@@ -365,9 +365,17 @@ let
       # AppIcon.icon is the source of truth. The macOS target still consumes
       # an appiconset PNG, so render that asset inside the generated source
       # tree before Tuist snapshots resources into the Xcode project.
-      ICTOOL="/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool"
-      if [ ! -x "$ICTOOL" ]; then
-        echo "error: ictool not found at $ICTOOL; install Xcode with Icon Composer" >&2
+      ICTOOL=""
+      for candidate in \
+        "/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool" \
+        "/Applications/Xcode-beta.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool"; do
+        if [ -x "$candidate" ]; then
+          ICTOOL="$candidate"
+          break
+        fi
+      done
+      if [ -z "$ICTOOL" ]; then
+        echo "error: ictool not found in Xcode.app or Xcode-beta.app; install Xcode with Icon Composer" >&2
         exit 1
       fi
       "$ICTOOL" AppIcon.icon \
