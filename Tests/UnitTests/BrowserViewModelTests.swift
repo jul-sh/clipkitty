@@ -441,16 +441,15 @@ final class BrowserViewModelTests: XCTestCase {
         )
 
         viewModel.updateSearchText("a")
-        try? await Task.sleep(for: .milliseconds(75))
-        await flushMainActor()
-
+        // Queued on the mock until the debounced search starts, then applied.
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "a", filter: .all),
             items: [makeDeferredMatch(id: "1", text: "alpha beta", query: "a")],
             firstItem: item,
             totalCount: 1
         ))
-        await flushMainActor()
+        let selectionSettled = await settle { viewModel.selectedItemState != nil }
+        XCTAssertTrue(selectionSettled, "Selection should become visible once the search response lands")
 
         guard case let .selected(selectedItemState) = viewModel.selection else {
             return XCTFail("Expected selected item to stay visible before preview payload arrives")
@@ -467,8 +466,8 @@ final class BrowserViewModelTests: XCTestCase {
             query: "a",
             with: makePreviewPayload(item: item, decoration: decoration)
         )
-        await flushMainActor()
-        await flushMainActor()
+        let decorationSettled = await settle { viewModel.previewDecoration != nil }
+        XCTAssertTrue(decorationSettled, "The decoration should arrive once the preview payload resumes")
 
         XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, "1")
         XCTAssertEqual(viewModel.previewDecoration, decoration)
@@ -923,9 +922,9 @@ final class BrowserViewModelTests: XCTestCase {
         )
 
         viewModel.onAppear(initialSearchQuery: "")
-        await flushMainActor()
         client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
-        await flushMainActor()
+        let itemSettled = await settle { viewModel.selectedItem != nil }
+        XCTAssertTrue(itemSettled, "The selected item should resolve once its fetch resumes")
 
         viewModel.addTagToSelectedItem(.bookmark)
 
@@ -2126,6 +2125,24 @@ final class BrowserViewModelTests: XCTestCase {
         }
     }
 
+    /// Polls the main actor until `condition` holds or the deadline passes.
+    /// Fixed-count yield flushing loses the race when the test host's main
+    /// actor is contended (e.g. SyncEngine startup work), so asserts that
+    /// depend on async state wait on that state itself.
+    @discardableResult
+    private func settle(
+        timeout: TimeInterval = 2,
+        until condition: () -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            guard Date() < deadline else { return false }
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(2))
+        }
+        return true
+    }
+
     private func makeMatch(id: String, excerpt: String, tags: [ItemTag] = []) -> ItemMatch {
         ItemMatch(
             itemMetadata: ItemMetadata(
@@ -2246,6 +2263,13 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
     private var fetchContinuations: [String: [CheckedContinuation<ClipboardItem?, Never>]] = [:]
     private var matchedExcerptContinuations: [MatchedExcerptRequestKey: [CheckedContinuation<[MatchedExcerptResolution], Never>]] = [:]
     private var previewPayloadContinuations: [PreviewDecorationRequest: [CheckedContinuation<PreviewPayload?, Never>]] = [:]
+    // Results resumed before the view model parked the matching request.
+    // Every resume either resolves a parked continuation or queues here — a
+    // resume must never be silently dropped just because the test won the
+    // race to the mock (the search path already queues; these mirror it).
+    private var queuedFetchResults: [String: ClipboardItem?] = [:]
+    private var queuedMatchedExcerpts: [MatchedExcerptRequestKey: [MatchedExcerptResolution]] = [:]
+    private var queuedPreviewPayloads: [PreviewDecorationRequest: PreviewPayload?] = [:]
 
     func startSearch(request: SearchRequest) -> BrowserSearchOperation {
         startedSearchRequests.append(request)
@@ -2265,7 +2289,10 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
     }
 
     func fetchItem(id: String) async -> ClipboardItem? {
-        await withTaskCancellationHandler {
+        if let queued = queuedFetchResults.removeValue(forKey: id) {
+            return queued
+        }
+        return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 fetchContinuations[id, default: []].append(continuation)
             }
@@ -2292,6 +2319,10 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
             }
         }
 
+        if let queued = queuedMatchedExcerpts.removeValue(forKey: request) {
+            return queued
+        }
+
         return await withCheckedContinuation { continuation in
             matchedExcerptContinuations[request, default: []].append(continuation)
         }
@@ -2307,6 +2338,10 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
 
         if let payloadsByItemId = previewPayloadsByQuery[query] {
             return payloadsByItemId[itemId]
+        }
+
+        if let queued = queuedPreviewPayloads.removeValue(forKey: request) {
+            return queued
         }
 
         if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -2347,17 +2382,29 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
     }
 
     func resumeFetch(id: String, with item: ClipboardItem?) {
-        fetchContinuations.removeValue(forKey: id)?.forEach { $0.resume(returning: item) }
+        if let continuations = fetchContinuations.removeValue(forKey: id) {
+            continuations.forEach { $0.resume(returning: item) }
+        } else {
+            queuedFetchResults[id] = item
+        }
     }
 
     func resumeMatchedExcerpts(itemIds: [String], query: String, with results: [MatchedExcerptResolution]) {
         let request = MatchedExcerptRequestKey(itemIds: itemIds, query: query)
-        matchedExcerptContinuations.removeValue(forKey: request)?.forEach { $0.resume(returning: results) }
+        if let continuations = matchedExcerptContinuations.removeValue(forKey: request) {
+            continuations.forEach { $0.resume(returning: results) }
+        } else {
+            queuedMatchedExcerpts[request] = results
+        }
     }
 
     func resumePreviewPayload(itemId: String, query: String, with payload: PreviewPayload?) {
         let request = PreviewDecorationRequest(itemId: itemId, query: query)
-        previewPayloadContinuations.removeValue(forKey: request)?.forEach { $0.resume(returning: payload) }
+        if let continuations = previewPayloadContinuations.removeValue(forKey: request) {
+            continuations.forEach { $0.resume(returning: payload) }
+        } else {
+            queuedPreviewPayloads[request] = payload
+        }
     }
 
     func enqueueSearchResponse(_ response: BrowserSearchResponse) {
