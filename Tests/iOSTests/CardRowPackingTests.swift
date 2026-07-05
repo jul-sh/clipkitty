@@ -34,6 +34,20 @@ final class CardRowPackingTests: XCTestCase {
         )
     }
 
+    private func linkRow(_ id: String, url: String = "https://developer.apple.com/documentation/swiftui") -> DisplayRow {
+        DisplayRow(
+            metadata: ItemMetadata(
+                itemId: id,
+                icon: .symbol(iconType: .link),
+                sourceApp: nil,
+                sourceAppBundleId: nil,
+                timestampUnix: 0,
+                tags: []
+            ),
+            presentation: .baseline(excerpt: BaselineExcerpt(text: url))
+        )
+    }
+
     /// Flattening the packed rows must always reproduce the feed order
     /// exactly; packing may only insert row breaks, never reorder clips.
     func testPackingPreservesFeedOrder() {
@@ -57,6 +71,21 @@ final class CardRowPackingTests: XCTestCase {
         let chunks = CardRowChunk.pack(rows, rowWidth: rowWidth)
 
         XCTAssertEqual(chunks.map { $0.rows.map(\.id) }, [["i1", "t1"]])
+    }
+
+    /// The iPad-feed scenario that motivated packing slack: a height-capped
+    /// image, a bare link, and a one-line text clip fill one row of three
+    /// instead of stopping at two with visible spare width.
+    func testImageLinkAndShortTextFillOneRow() {
+        let rows = [
+            imageRow("i1"),
+            linkRow("l1"),
+            textRow("t1", text: "The quick brown fox jumps over the lazy dog"),
+        ]
+
+        let chunks = CardRowChunk.pack(rows, rowWidth: rowWidth)
+
+        XCTAssertEqual(chunks.map { $0.rows.map(\.id) }, [["i1", "l1", "t1"]])
     }
 
     /// Rows never exceed the card cap, even when everything would fit width-wise.

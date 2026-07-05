@@ -21,9 +21,16 @@ struct CardRowChunk: Identifiable {
         id = rows.map(\.id).joined(separator: "|")
     }
 
+    /// How far the summed width estimates may exceed the row width and still
+    /// pack together. Estimates are ideal (unwrapped) widths; text absorbs a
+    /// modest squeeze by wrapping a line, so requiring a strict fit leaves
+    /// rows visibly underfilled.
+    private static let packingSlack: CGFloat = 1.15
+
     /// Greedily groups `rows` into feed rows: a clip joins the current row
     /// while the row has fewer than `maxCardsPerRow` clips and the estimated
-    /// widths still fit `rowWidth`; otherwise it starts a new row.
+    /// widths still fit `rowWidth` (with `packingSlack` squeeze); otherwise
+    /// it starts a new row.
     static func pack(_ rows: [DisplayRow], rowWidth: CGFloat) -> [CardRowChunk] {
         guard rowWidth > 0 else {
             return rows.map { CardRowChunk(rows: [$0]) }
@@ -37,7 +44,7 @@ struct CardRowChunk: Identifiable {
             let estimated = estimatedWidth(for: row)
             let joinsCurrentRow = !pending.isEmpty
                 && pending.count < JustifiedCardRow.maxCardsPerRow
-                && pendingWidth + JustifiedCardRow.spacing + estimated <= rowWidth
+                && pendingWidth + JustifiedCardRow.spacing + estimated <= rowWidth * Self.packingSlack
 
             if joinsCurrentRow {
                 pending.append(row)
@@ -64,11 +71,14 @@ struct CardRowChunk: Identifiable {
         case .colorSwatch:
             return 240
         case .thumbnail:
-            return 460
+            // The card image is height-capped (see CardView.thumbnailPreview),
+            // so image cards no longer want the full-bleed widths they did
+            // uncapped.
+            return 360
         case let .symbol(iconType):
             switch iconType {
             case .link:
-                return 420
+                return 340
             case .image, .file:
                 return 340
             case .color:
