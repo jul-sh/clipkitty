@@ -126,19 +126,18 @@ struct JustifiedCardRow: Layout {
         var idealWidths: [CGFloat]
     }
 
+    /// The default `updateCache` re-runs `makeCache` whenever the subviews
+    /// change, which re-measures exactly when card content can have changed —
+    /// no custom `updateCache` is needed.
     func makeCache(subviews: Subviews) -> Cache {
         Cache(idealWidths: subviews.map { $0.sizeThatFits(.unspecified).width })
-    }
-
-    func updateCache(_ cache: inout Cache, subviews: Subviews) {
-        cache.idealWidths = subviews.map { $0.sizeThatFits(.unspecified).width }
     }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         guard !subviews.isEmpty else { return .zero }
         let width = proposal.width
             ?? cache.idealWidths.reduce(CGFloat.zero, +)
-            + Self.spacing * CGFloat(subviews.count - 1)
+            + Self.spacing * CGFloat(max(cache.idealWidths.count - 1, 0))
         let height = zip(subviews, justifiedWidths(totalWidth: width, cache: cache))
             .map { subview, width in
                 subview.sizeThatFits(ProposedViewSize(width: width, height: nil)).height
@@ -202,7 +201,12 @@ struct JustifiedCardRow: Layout {
                 } else {
                     let scaled = ideals[index] / flexibleIdealTotal * flexibleSpace
                     if scaled < floorWidth {
+                        // Write the floor immediately so `widths` stays
+                        // consistent even mid-iteration, rather than relying
+                        // on the next pass's floored branch to overwrite the
+                        // stale proportional value.
                         isFloored[index] = true
+                        widths[index] = floorWidth
                         flooredAnother = true
                     } else {
                         widths[index] = scaled
