@@ -21,8 +21,25 @@ enum AppLaunchState {
     case launching
     case ready(AppSession)
     case suspending(AppSuspensionContext)
-    case suspended
+    /// Database released. Keeps the outgoing session so the next foreground
+    /// can keep rendering the last known state while a fresh container
+    /// bootstraps; nil when the app never reached `.ready`.
+    case suspended(previous: AppSession?)
+    /// Re-bootstrapping after a foreground activation: the previous session
+    /// stays on screen, and the spinner only appears once the resume
+    /// outlasts its grace period.
+    case resuming(previous: AppSession, spinnerVisible: Bool)
     case failed(String)
+}
+
+/// What the window actually renders, derived from ``AppLaunchState``. The
+/// session case is a single structural branch so suspend/resume transitions
+/// of the SAME session never recreate the view tree (identity is keyed per
+/// session), while a rebootstrapped session gets a fresh tree.
+private enum LaunchPresentation {
+    case spinner
+    case session(AppSession)
+    case failure(String)
 }
 
 // MARK: - App State (UI coordinator)
@@ -296,6 +313,9 @@ private final class ToastCallbackBox {
 @main
 struct ClipKittyiOSApp: App {
     @State private var launchState: AppLaunchState = .launching
+    /// The in-flight store open of the current resume, chained so a
+    /// superseded open always releases its store before the next one starts.
+    @State private var resumeOpenTask: Task<Void, Never>?
     @Environment(\.scenePhase) private var scenePhase
 
     #if ENABLE_ICLOUD_SYNC
@@ -319,22 +339,41 @@ struct ClipKittyiOSApp: App {
 
     @ViewBuilder
     private var content: some View {
+        switch presentation {
+        case .spinner:
+            ProgressView("Loading ClipKitty...")
+                .onAppear {
+                    if case .launching = launchState { performBootstrap() }
+                }
+
+        case let .session(session):
+            rootView(container: session.container, appState: session.appState)
+                // Key the tree to the session: suspend/resume of the same
+                // session keeps every @State (scroll position, search text),
+                // while a rebootstrapped session starts a fresh tree.
+                .id(ObjectIdentifier(session.appState))
+
+        case let .failure(message):
+            bootstrapFailureView(message: message)
+        }
+    }
+
+    private var presentation: LaunchPresentation {
         switch launchState {
         case .launching:
-            ProgressView("Loading ClipKitty...")
-                .onAppear { performBootstrap() }
-
+            return .spinner
         case let .ready(session):
-            rootView(container: session.container, appState: session.appState)
-
+            return .session(session)
         case let .suspending(context):
-            rootView(container: context.session.container, appState: context.session.appState)
-
-        case .suspended:
-            ProgressView("Loading ClipKitty...")
-
+            return .session(context.session)
+        case let .suspended(previous):
+            // Rendering the last known state here also keeps the app
+            // switcher snapshot on content instead of a spinner.
+            return previous.map(LaunchPresentation.session) ?? .spinner
+        case let .resuming(previous, spinnerVisible):
+            return spinnerVisible ? .spinner : .session(previous)
         case let .failed(message):
-            bootstrapFailureView(message: message)
+            return .failure(message)
         }
     }
 
@@ -365,38 +404,122 @@ struct ClipKittyiOSApp: App {
         #endif
     }
 
+    private static let resumeSpinnerGrace: Duration = .milliseconds(150)
+    private static let resumeWarmupDeadline: Duration = .seconds(2)
+
     private func performBootstrap() {
         let customPath = ProcessInfo.processInfo.environment["CLIPKITTY_SCREENSHOT_DB"]
         switch AppContainer.bootstrap(databasePath: customPath) {
         case let .success(container):
-            ClipKittyShortcutRuntime.useRepositoryProvider { [weak container] in
-                guard let container else {
-                    return .unavailable("ClipKitty is suspended.")
-                }
-                return container.shortcutRepositoryAvailability()
-            }
-            let appState = AppState(container: container)
-            let session = AppSession(container: container, appState: appState)
-            #if ENABLE_ICLOUD_SYNC
-                let coordinator = iOSSyncCoordinator(
-                    store: container.store,
-                    enabled: container.settings.syncEnabled,
-                    onContentChanged: { [weak appState] in
-                        appState?.refreshFeed()
-                    }
-                )
-                syncCoordinator = coordinator
-                iOSRemoteNotificationBridge.shared.bind(coordinator: coordinator)
-                if container.settings.syncEnabled {
-                    coordinator.handleScenePhaseChange(.active)
-                }
-            #endif
-
+            let session = makeSession(container: container)
             launchState = .ready(session)
             Task { await container.pruneToStorageLimit() }
         case let .failure(error):
             launchState = .failed(error.localizedDescription)
         }
+    }
+
+    /// Wires the service graph around a freshly-bootstrapped container: the
+    /// shortcut runtime, the UI coordinator, and (when enabled) iCloud sync.
+    private func makeSession(container: AppContainer) -> AppSession {
+        ClipKittyShortcutRuntime.useRepositoryProvider { [weak container] in
+            guard let container else {
+                return .unavailable("ClipKitty is suspended.")
+            }
+            return container.shortcutRepositoryAvailability()
+        }
+        let appState = AppState(container: container)
+        #if ENABLE_ICLOUD_SYNC
+            let coordinator = iOSSyncCoordinator(
+                store: container.store,
+                enabled: container.settings.syncEnabled,
+                onContentChanged: { [weak appState] in
+                    appState?.refreshFeed()
+                }
+            )
+            syncCoordinator = coordinator
+            iOSRemoteNotificationBridge.shared.bind(coordinator: coordinator)
+            if container.settings.syncEnabled {
+                coordinator.handleScenePhaseChange(.active)
+            }
+        #endif
+        return AppSession(container: container, appState: appState)
+    }
+
+    /// Re-bootstraps after a foreground activation while the previous
+    /// session stays on screen. The store opens off the main actor; a
+    /// watchdog swaps in the spinner only if the resume outlasts the grace
+    /// period, and the fresh session is adopted only once its feed has
+    /// content, so the UI goes straight from last known state to fresh
+    /// content without an empty flash.
+    private func beginResume(previous: AppSession) {
+        launchState = .resuming(previous: previous, spinnerVisible: false)
+        let customPath = ProcessInfo.processInfo.environment["CLIPKITTY_SCREENSHOT_DB"]
+
+        Task { @MainActor in
+            try? await Task.sleep(for: Self.resumeSpinnerGrace)
+            if case let .resuming(previous, spinnerVisible: false) = launchState {
+                launchState = .resuming(previous: previous, spinnerVisible: true)
+            }
+        }
+
+        // Chain on any superseded resume so its store is released before a
+        // new one opens — two live stores would contend for the index lock.
+        let supersededOpen = resumeOpenTask
+        resumeOpenTask = Task { @MainActor in
+            await supersededOpen?.value
+
+            let outcome = await Task.detached(priority: .userInitiated) {
+                AppContainer.openStore(databasePath: customPath)
+            }.value
+
+            switch outcome {
+            case let .success(store):
+                guard case .resuming = launchState else {
+                    // Backgrounded again mid-open: release the fresh store
+                    // rather than leaving the database locked.
+                    store.prepareForSuspend()
+                    return
+                }
+                await adoptResumedStore(store)
+            case let .failure(error):
+                guard case .resuming = launchState else { return }
+                launchState = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    private func adoptResumedStore(_ store: ClipKittyRust.ClipboardStore) async {
+        let container = AppContainer.assemble(store: store)
+        let session = makeSession(container: container)
+
+        // Warm the fresh feed while the previous state is still showing.
+        session.appState.restoreVisibleFeedAfterForegroundActivation()
+        let deadline = ContinuousClock.now.advanced(by: Self.resumeWarmupDeadline)
+        while session.appState.viewModel.contentState.displayedContent == nil,
+              ContinuousClock.now < deadline
+        {
+            guard case .resuming = launchState else {
+                return discardUnadoptedSession(container: container)
+            }
+            try? await Task.sleep(for: .milliseconds(16))
+        }
+
+        guard case .resuming = launchState else {
+            return discardUnadoptedSession(container: container)
+        }
+
+        launchState = .ready(session)
+        Task { await container.pruneToStorageLimit() }
+    }
+
+    /// Backgrounded again before the fresh session was adopted: release its
+    /// store and tear down the coordinator `makeSession` already installed.
+    private func discardUnadoptedSession(container: AppContainer) {
+        container.prepareForSuspension()
+        #if ENABLE_ICLOUD_SYNC
+            syncCoordinator = nil
+        #endif
     }
 
     private func handleScenePhaseChange(_ phase: ScenePhase) {
@@ -416,15 +539,19 @@ struct ClipKittyiOSApp: App {
 
     private func handleForegroundActivation() {
         switch launchState {
-        case .suspended:
-            performBootstrap()
+        case let .suspended(previous):
+            if let previous {
+                beginResume(previous: previous)
+            } else {
+                performBootstrap()
+            }
         case let .ready(session):
             resumeReadySession(session)
         case let .suspending(context):
             context.task.cancel()
             launchState = .ready(context.session)
             resumeReadySession(context.session)
-        case .launching, .failed:
+        case .launching, .resuming, .failed:
             break
         }
     }
@@ -441,8 +568,16 @@ struct ClipKittyiOSApp: App {
 
     private func prepareForSuspension() {
         guard case let .ready(session) = launchState else {
-            if case .launching = launchState {
-                launchState = .suspended
+            switch launchState {
+            case .launching:
+                launchState = .suspended(previous: nil)
+            case let .resuming(previous, _):
+                // The fresh container was never adopted; the in-flight open
+                // releases its store when it observes this state. The
+                // previous session's store is already suspended.
+                launchState = .suspended(previous: previous)
+            case .ready, .suspending, .suspended, .failed:
+                break
             }
             return
         }
@@ -495,7 +630,10 @@ struct ClipKittyiOSApp: App {
             syncCoordinator = nil
         #endif
 
-        launchState = .suspended
+        // Keep the outgoing session: its store is suspended, but its view
+        // model still holds the last displayed content, which the next
+        // resume renders instead of a spinner.
+        launchState = .suspended(previous: session)
         if scenePhase == .active {
             handleForegroundActivation()
         }

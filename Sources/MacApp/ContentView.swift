@@ -13,6 +13,15 @@ struct ContentView: View {
 
     @State private var viewModel: BrowserViewModel
 
+    // `Files` support is a compile-time capability of this target; the shared
+    // filter catalog receives it as data because the flag is not defined for
+    // `ClipKittyShared`.
+    #if ENABLE_FILE_CLIPBOARD_ITEMS
+        private static let includesFileItems = true
+    #else
+        private static let includesFileItems = false
+    #endif
+
     init(
         store: ClipboardStore,
         onSelect: @escaping (String, ClipboardContent) -> Void,
@@ -31,6 +40,7 @@ struct ContentView: View {
         self.initialSearchQuery = initialSearchQuery
         _viewModel = State(initialValue: BrowserViewModel(
             client: ClipboardStoreBrowserClient(store: store),
+            filterCatalog: BrowserFilterCatalog(includesFileItems: Self.includesFileItems),
             onSelect: onSelect,
             onCopyOnly: onCopyOnly,
             onDismiss: onDismiss,
@@ -49,30 +59,30 @@ struct ContentView: View {
             displayVersion: displayVersion,
             isPanelVisible: { store.isPanelVisible }
         )
-            .onAppear {
-                viewModel.onAppear(
-                    initialSearchQuery: initialSearchQuery,
-                    contentRevision: contentRevision
-                )
-            }
-            .onChange(of: displayVersion) { _, _ in
-                viewModel.handleDisplayReset(
-                    initialSearchQuery: initialSearchQuery,
-                    contentRevision: contentRevision
-                )
-            }
-            .onChange(of: contentRevision) { _, newRevision in
-                viewModel.handleContentRevisionChange(
-                    newRevision,
-                    isPanelVisible: isPanelVisible
-                )
-            }
-            .onChange(of: isPanelVisible) { _, visible in
-                viewModel.handlePanelVisibilityChange(
-                    visible,
-                    initialSearchQuery: initialSearchQuery,
-                    contentRevision: contentRevision
-                )
-            }
+        .onAppear {
+            viewModel.onAppear(
+                initialSearchQuery: initialSearchQuery,
+                contentRevision: contentRevision
+            )
+        }
+        .onChange(of: displayVersion) { _, _ in
+            viewModel.handleDisplayReset(
+                initialSearchQuery: initialSearchQuery,
+                contentRevision: contentRevision
+            )
+        }
+        .onChange(of: contentRevision) { _, newRevision in
+            viewModel.handleContentRevisionChange(
+                newRevision,
+                isPanelVisible: isPanelVisible
+            )
+        }
+        .onChange(of: isPanelVisible) { _, visible in
+            viewModel.handlePanelVisibilityChange(
+                visible,
+                initialSearchQuery: initialSearchQuery,
+                contentRevision: contentRevision
+            )
+        }
     }
 }

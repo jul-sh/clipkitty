@@ -36,17 +36,6 @@ private enum SpinnerState: Equatable {
     }
 }
 
-private enum FilterPopoverState: Equatable {
-    case hidden
-    case visible(highlightedIndex: Int)
-}
-
-private enum ActionsPopoverState: Equatable {
-    case hidden
-    case showingActions(highlightedIndex: Int)
-    case showingDeleteConfirm(highlightedIndex: Int)
-}
-
 private extension View {
     @ViewBuilder
     func clipKittyGlassBackground() -> some View {
@@ -88,20 +77,6 @@ struct SubtleHoverEffect: ViewModifier {
     }
 }
 
-/// A view modifier for capsule buttons with border that changes on hover.
-struct SubtleHoverCapsuleWithBorder: ViewModifier {
-    @State private var isHovered = false
-
-    func body(content: Content) -> some View {
-        content
-            .background(Capsule().fill(isHovered ? Color.primary.opacity(0.04) : Color.clear))
-            .overlay(Capsule().strokeBorder(Color.primary.opacity(isHovered ? 0.25 : 0.15)))
-            .contentShape(Capsule())
-            .animation(.easeInOut(duration: 0.15), value: isHovered)
-            .onHover { isHovered = $0 }
-    }
-}
-
 extension View {
     /// Adds a subtle hover background effect with rounded corners.
     func subtleHover(cornerRadius: CGFloat = 9) -> some View {
@@ -111,11 +86,6 @@ extension View {
     /// Adds a subtle hover background effect with capsule shape.
     func subtleHoverCapsule() -> some View {
         modifier(SubtleHoverEffect(useCapsule: true))
-    }
-
-    /// Adds a subtle hover effect with capsule shape and border.
-    func subtleHoverCapsuleWithBorder() -> some View {
-        modifier(SubtleHoverCapsuleWithBorder())
     }
 }
 

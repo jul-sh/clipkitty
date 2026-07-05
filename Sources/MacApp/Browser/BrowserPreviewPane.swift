@@ -15,41 +15,92 @@ struct BrowserPreviewPane: View {
 
     var body: some View {
         Group {
-            switch viewModel.selection {
-            case let .selected(content):
-                VStack(spacing: 0) {
-                    ZStack {
-                        previewContent(for: content)
-                        if case .loadingDecoration = content.previewState,
-                           viewModel.previewSpinnerVisible
-                        {
-                            ProgressView()
-                        }
-                    }
-                    Divider()
-                    metadataFooter(for: content.item)
-                }
-            case .loading:
-                ZStack {
-                    Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if viewModel.previewSpinnerVisible {
-                        ProgressView()
-                    }
-                }
-            case .failed:
-                Self.error(String(localized: "Unable to load preview"))
-            case .none:
-                if viewModel.itemIds.isEmpty {
-                    emptyState
-                } else {
-                    Text("No item selected")
-                        .font(settings.appFont(size: 16))
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+            switch viewModel.keyboardTarget {
+            case let .pendingFilterChip(suggestion):
+                // The chip owns Enter, so the pane advertises the filter that
+                // Return would apply instead of the still-selected item.
+                pendingFilterPreview(for: suggestion)
+            case .results:
+                selectionPreview
             }
         }
         .background(.black.opacity(0.05))
+    }
+
+    @ViewBuilder
+    private var selectionPreview: some View {
+        switch viewModel.selection {
+        case let .selected(content):
+            VStack(spacing: 0) {
+                ZStack {
+                    previewContent(for: content)
+                    if case .loadingDecoration = content.previewState,
+                       viewModel.previewSpinnerVisible
+                    {
+                        ProgressView()
+                    }
+                }
+                Divider()
+                metadataFooter(for: content.item)
+            }
+        case .loading:
+            ZStack {
+                Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+                if viewModel.previewSpinnerVisible {
+                    ProgressView()
+                }
+            }
+        case .failed:
+            Self.error(String(localized: "Unable to load preview"))
+        case .none:
+            if viewModel.itemIds.isEmpty {
+                emptyState
+            } else {
+                Text("No item selected")
+                    .font(settings.appFont(size: 16))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    private func pendingFilterPreview(for suggestion: TypedFilterSuggestion) -> some View {
+        let descriptor = viewModel.filterDescriptor(for: suggestion.kind)
+        return VStack(spacing: 0) {
+            VStack(spacing: 10) {
+                Image(systemName: descriptor.symbolName)
+                    .font(.largeTitle)
+                    .foregroundStyle(.secondary)
+                Text("Filter by \(descriptor.title)")
+                    .font(settings.appFont(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider()
+
+            HStack(spacing: 12) {
+                Spacer(minLength: 0)
+
+                Button {
+                    viewModel.confirmSelection()
+                } label: {
+                    Text("⏎ \(String(localized: "Filter"))")
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .subtleHover()
+                }
+                .buttonStyle(.plain)
+                .fixedSize()
+            }
+            .font(.system(size: 13))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 17)
+            .padding(.vertical, 11)
+            .background(.black.opacity(0.05))
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("PendingFilterPreview")
     }
 
     static func error(_ message: String) -> some View {
@@ -352,10 +403,7 @@ struct BrowserPreviewPane: View {
     }
 
     private var emptyStateMessage: String {
-        if viewModel.searchText.isEmpty,
-           viewModel.contentTypeFilter == .all,
-           viewModel.selectedTagFilter == nil
-        {
+        if viewModel.searchText.isEmpty, viewModel.activeFilterKind == .all {
             return String(localized: "No clipboard history")
         }
         return String(localized: "No results")

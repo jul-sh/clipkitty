@@ -3,32 +3,35 @@ import ClipKittyRust
 import ClipKittyShared
 import SwiftUI
 
-struct BrowserSearchBar<FilterPopoverContent: View>: View {
+struct BrowserSearchBar: View {
     @ObservedObject private var settings = AppSettings.shared
     @Environment(\.colorScheme) private var colorScheme
     @Binding var searchText: String
-    let filterLabel: String
+    let appliedFilter: BrowserFilterDescriptor?
     let searchSpinnerVisible: Bool
     let selectedItemAvailable: Bool
     let hasPendingEdit: Bool
-    let isFilterPopoverPresented: Binding<Bool>
     let focusTarget: FocusState<BrowserView.FocusTarget?>.Binding
     let onMoveSelection: (Int) -> Void
     let onConfirm: () -> Void
+    let onAcceptPendingFilter: () -> Void
     let onDismiss: () -> Void
-    let onOpenFilter: (_ viaKeyboard: Bool) -> Void
+    let onClearFilter: () -> Void
     let onOpenActions: (_ viaKeyboard: Bool) -> Void
     let onDelete: () -> Void
     let onDiscardEdit: () -> Void
     let onSaveEdit: () -> Void
     let onHandleNumberKey: (KeyPress) -> KeyPress.Result
-    @ViewBuilder let filterPopoverContent: () -> FilterPopoverContent
 
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
                 .font(settings.appFont(size: settings.scaled(17), weight: .medium))
+
+            if let appliedFilter {
+                AppliedFilterChip(descriptor: appliedFilter, onRemove: onClearFilter)
+            }
 
             TextField("Clipboard History Search", text: $searchText)
                 .textFieldStyle(.plain)
@@ -80,7 +83,11 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                     return .handled
                 }
                 .onKeyPress(.tab) {
-                    onOpenFilter(true)
+                    // Tab accepts the visible filter suggestion, autocomplete
+                    // style (a no-op without one). Always handled either way:
+                    // the panel is modal-like, so Tab must not move focus out
+                    // of the search field.
+                    onAcceptPendingFilter()
                     return .handled
                 }
                 .onKeyPress(characters: .decimalDigits, phases: .down) { keyPress in
@@ -102,27 +109,44 @@ struct BrowserSearchBar<FilterPopoverContent: View>: View {
                     .scaleEffect(0.5)
                     .frame(width: 16, height: 16)
             }
-
-            Button(action: { onOpenFilter(false) }) {
-                HStack(spacing: 4) {
-                    Text(filterLabel)
-                        .font(.system(size: 13))
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                }
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .subtleHoverCapsuleWithBorder()
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("FilterDropdown")
-            .popover(isPresented: isFilterPopoverPresented, arrowEdge: .bottom) {
-                filterPopoverContent()
-            }
         }
         .padding(.horizontal, 17)
         .padding(.vertical, 13)
+    }
+}
+
+/// The active filter rendered inside the search bar chrome, removable via its
+/// close control (or Backspace in the empty field).
+private struct AppliedFilterChip: View {
+    @ObservedObject private var settings = AppSettings.shared
+    let descriptor: BrowserFilterDescriptor
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: descriptor.symbolName)
+                .font(.system(size: settings.scaled(10), weight: .semibold))
+            Text(descriptor.title)
+                .font(settings.appFont(size: settings.scaled(12), weight: .semibold))
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.system(size: settings.scaled(8), weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 14, height: 14)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(String(localized: "Remove filter"))
+            .accessibilityIdentifier("AppliedFilterChipRemove")
+        }
+        .foregroundStyle(.primary)
+        .padding(.leading, 9)
+        .padding(.trailing, 5)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(Color.primary.opacity(0.08)))
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("AppliedFilterChip")
     }
 }
 

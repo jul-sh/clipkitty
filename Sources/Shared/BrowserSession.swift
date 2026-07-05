@@ -210,18 +210,52 @@ public enum SelectionState {
 
 public enum OverlayState {
     case none
-    case filter(FilterOverlayState)
     case actions(MenuHighlightState)
-}
-
-public enum FilterOverlayState {
-    case none
-    case index(Int)
 }
 
 public enum MenuHighlightState {
     case none
     case index(Int)
+}
+
+/// The typed-filter suggestion surfaced above the results list, together with
+/// the current keyboard target. The target is modeled here — not as list
+/// selection — so the pending chip can own Enter without disturbing which item
+/// is selected for the preview pane.
+public enum PendingFilterState: Equatable {
+    case none
+    case suggested(TypedFilterSuggestion, keyboardTarget: PendingFilterKeyboardTarget)
+
+    public var suggestion: TypedFilterSuggestion? {
+        guard case let .suggested(suggestion, _) = self else { return nil }
+        return suggestion
+    }
+}
+
+/// What the keyboard currently addresses while a filter suggestion is visible.
+/// A fresh suggestion surfaces with `.results`; the chip is opt-in — except
+/// over an EMPTY result list, where the chip takes the keyboard because Enter
+/// would otherwise be inert.
+public enum PendingFilterKeyboardTarget: Equatable {
+    /// The suggestion chip, reached with Up from the first row (or granted
+    /// automatically over an empty list): Enter applies the filter, Down
+    /// returns to the results.
+    case suggestion
+    /// The result list (the default while rows exist): keys behave as if no
+    /// suggestion were showing, except Up from the first row moves to the chip.
+    case results
+}
+
+/// What Enter and row-only shortcuts currently address, derived from
+/// ``PendingFilterState``. Consumers switch on this instead of combining
+/// booleans, so "chip owns the keyboard" and "a row owns the keyboard" stay
+/// mutually exclusive by construction.
+public enum BrowserKeyboardTarget: Equatable {
+    /// The pending filter chip: Enter applies the suggested filter, and the
+    /// preview pane advertises the filter instead of the selected item.
+    case pendingFilterChip(TypedFilterSuggestion)
+    /// The result list: Enter activates the selected row.
+    case results
 }
 
 public enum MutationState {

@@ -156,17 +156,17 @@ struct BottomControlBar: View {
         VStack(spacing: 8) {
             if isFilterExpanded {
                 VStack(spacing: 12) {
-                    ForEach(sortedFilterOptions, id: \.self) { option in
-                        let isActive = option == activeFilter
+                    ForEach(sortedFilterOptions, id: \.kind) { option in
+                        let isActive = option.kind == viewModel.activeFilterKind
                         Button {
-                            applyFilter(option)
+                            viewModel.applyFilter(option.kind)
                             haptics.fire(.selection)
                             withAnimation(.bouncy) {
                                 isFilterExpanded = false
                             }
                         } label: {
                             HStack(spacing: 8) {
-                                Image(systemName: option.icon)
+                                Image(systemName: option.symbolName)
                                     .font(.subheadline.weight(.medium))
                                     .frame(width: 24)
                                 Text(option.title)
@@ -181,7 +181,7 @@ struct BottomControlBar: View {
                             isActive ? .regular.interactive() : .regular,
                             in: .capsule
                         )
-                        .accessibilityIdentifier("bottomBar.filterOption.\(option.identifier)")
+                        .accessibilityIdentifier("bottomBar.filterOption.\(option.identifierSuffix)")
                     }
                 }
                 .glassEffectID("filter", in: barNamespace)
@@ -193,9 +193,9 @@ struct BottomControlBar: View {
                     }
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: filterIcon)
+                        Image(systemName: activeFilterDescriptor.symbolName)
                             .font(.subheadline.weight(.medium))
-                        Text(filterLabel)
+                        Text(activeFilterDescriptor.title)
                             .font(.subheadline.weight(.semibold))
                         Image(systemName: "chevron.up.chevron.down")
                             .font(.caption2.weight(.medium))
@@ -299,70 +299,23 @@ struct BottomControlBar: View {
 
     // MARK: - Filter state
 
-    private var activeFilter: FilterOption {
-        if viewModel.selectedTagFilter == .bookmark { return .bookmarks }
-        switch viewModel.contentTypeFilter {
-        case .all, .files: return .all
-        case .text: return .text
-        case .images: return .images
-        case .links: return .links
-        case .colors: return .colors
+    /// The picker lists "All" plus every selectable filter from the shared
+    /// catalog, with the active option sorted last (nearest the pill).
+    private var sortedFilterOptions: [BrowserFilterDescriptor] {
+        let allOptions = [allFilterOption] + viewModel.selectableFilters
+        var options = allOptions.filter { $0.kind != viewModel.activeFilterKind }
+        if let active = allOptions.first(where: { $0.kind == viewModel.activeFilterKind }) {
+            options.append(active)
         }
-    }
-
-    private var sortedFilterOptions: [FilterOption] {
-        let active = activeFilter
-        var options = FilterOption.allCases.filter { $0 != active }
-        options.append(active)
         return options
     }
 
-    private func applyFilter(_ option: FilterOption) {
-        switch option {
-        case .all:
-            viewModel.setTagFilter(nil)
-            viewModel.setContentTypeFilter(.all)
-        case .bookmarks:
-            viewModel.setTagFilter(.bookmark)
-        case .text:
-            viewModel.setTagFilter(nil)
-            viewModel.setContentTypeFilter(.text)
-        case .images:
-            viewModel.setTagFilter(nil)
-            viewModel.setContentTypeFilter(.images)
-        case .links:
-            viewModel.setTagFilter(nil)
-            viewModel.setContentTypeFilter(.links)
-        case .colors:
-            viewModel.setTagFilter(nil)
-            viewModel.setContentTypeFilter(.colors)
-        }
+    private var allFilterOption: BrowserFilterDescriptor {
+        viewModel.filterDescriptor(for: .all)
     }
 
-    // MARK: - Filter label
-
-    private var filterLabel: String {
-        if viewModel.selectedTagFilter == .bookmark { return String(localized: "Bookmarks") }
-        switch viewModel.contentTypeFilter {
-        case .all: return String(localized: "All")
-        case .text: return String(localized: "Text")
-        case .images: return String(localized: "Images")
-        case .links: return String(localized: "Links")
-        case .colors: return String(localized: "Colors")
-        case .files: return String(localized: "Files")
-        }
-    }
-
-    private var filterIcon: String {
-        if viewModel.selectedTagFilter == .bookmark { return "bookmark.fill" }
-        switch viewModel.contentTypeFilter {
-        case .all: return "clock.arrow.trianglehead.counterclockwise.rotate.90"
-        case .text: return "doc.text"
-        case .images: return "photo"
-        case .links: return "link"
-        case .colors: return "paintpalette"
-        case .files: return "folder"
-        }
+    private var activeFilterDescriptor: BrowserFilterDescriptor {
+        viewModel.appliedFilterDescriptor ?? allFilterOption
     }
 
     private var searchTextBinding: Binding<String> {
@@ -462,43 +415,6 @@ struct BottomControlBar: View {
         case let .failure(error):
             haptics.fire(.destructive)
             appState.showToast(.addFailed(error.localizedDescription))
-        }
-    }
-}
-
-private enum FilterOption: CaseIterable, Hashable {
-    case all, bookmarks, text, images, links, colors
-
-    var title: String {
-        switch self {
-        case .all: return String(localized: "All")
-        case .bookmarks: return String(localized: "Bookmarks")
-        case .text: return String(localized: "Text")
-        case .images: return String(localized: "Images")
-        case .links: return String(localized: "Links")
-        case .colors: return String(localized: "Colors")
-        }
-    }
-
-    var identifier: String {
-        switch self {
-        case .all: return "all"
-        case .bookmarks: return "bookmarks"
-        case .text: return "text"
-        case .images: return "images"
-        case .links: return "links"
-        case .colors: return "colors"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .all: return "clock.arrow.trianglehead.counterclockwise.rotate.90"
-        case .bookmarks: return "bookmark.fill"
-        case .text: return "doc.text"
-        case .images: return "photo"
-        case .links: return "link"
-        case .colors: return "paintpalette"
         }
     }
 }

@@ -4643,6 +4643,34 @@
         }
       }
     },
+    "Filter": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Filtern" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Filter" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Filtrar" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Filtrer" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "絞り込む" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "필터" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Filtrar" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Фильтр" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "筛选" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "篩選" } }
+      }
+    },
+    "Filter by %@": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Filtern nach: %@" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Filter by %@" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Filtrar por %@" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Filtrer par %@" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "%@で絞り込む" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "%@ 필터 적용" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Filtrar por %@" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Фильтр: %@" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "按%@筛选" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "依%@篩選" } }
+      }
+    },
     "Find ClipKitty in the list": {
       "localizations": {
         "de": {
@@ -7229,6 +7257,7 @@
     "Rebuilding index…": {
       "comment": "Snackbar message shown during index rebuild"
     },
+    "Remove filter": {},
     "Remove selected app": {
       "localizations": {
         "de": {
@@ -9809,6 +9838,20 @@
     },
     "You can also click the menu bar icon to open ClipKitty.": {},
     "Your Clipboard, Supercharged": {},
+    "filter:": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "filter:" } },
+        "en": { "stringUnit": { "state": "translated", "value": "filter:" } },
+        "es": { "stringUnit": { "state": "translated", "value": "filtro:" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "filtre :" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "フィルタ:" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "필터:" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "filtro:" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "фильтр:" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "筛选：" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "篩選：" } }
+      }
+    },
     "iCloud Sync": {
       "localizations": {
         "de": {

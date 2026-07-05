@@ -153,11 +153,11 @@ final class iOSBrowserIntegrationTests: XCTestCase {
             totalCount: 1
         ))
 
-        viewModel.setTagFilter(.bookmark)
+        viewModel.applyFilter(.bookmarks)
         await flushMainActor()
 
         XCTAssertEqual(viewModel.itemIds, ["1"])
-        XCTAssertEqual(viewModel.selectedTagFilter, .bookmark)
+        XCTAssertEqual(viewModel.activeFilterKind, .bookmarks)
 
         // Clear bookmark filter
         client.enqueueSearchResponse(BrowserSearchResponse(
@@ -170,7 +170,7 @@ final class iOSBrowserIntegrationTests: XCTestCase {
             totalCount: 2
         ))
 
-        viewModel.setTagFilter(nil)
+        viewModel.clearAppliedFilter()
         await flushMainActor()
 
         XCTAssertEqual(viewModel.itemIds, ["1", "2"])

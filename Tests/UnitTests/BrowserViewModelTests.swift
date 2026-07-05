@@ -441,16 +441,15 @@ final class BrowserViewModelTests: XCTestCase {
         )
 
         viewModel.updateSearchText("a")
-        try? await Task.sleep(for: .milliseconds(75))
-        await flushMainActor()
-
+        // Queued on the mock until the debounced search starts, then applied.
         client.resumeSearch(with: BrowserSearchResponse(
             request: SearchRequest(text: "a", filter: .all),
             items: [makeDeferredMatch(id: "1", text: "alpha beta", query: "a")],
             firstItem: item,
             totalCount: 1
         ))
-        await flushMainActor()
+        let selectionSettled = await settle { viewModel.selectedItemState != nil }
+        XCTAssertTrue(selectionSettled, "Selection should become visible once the search response lands")
 
         guard case let .selected(selectedItemState) = viewModel.selection else {
             return XCTFail("Expected selected item to stay visible before preview payload arrives")
@@ -467,8 +466,8 @@ final class BrowserViewModelTests: XCTestCase {
             query: "a",
             with: makePreviewPayload(item: item, decoration: decoration)
         )
-        await flushMainActor()
-        await flushMainActor()
+        let decorationSettled = await settle { viewModel.previewDecoration != nil }
+        XCTAssertTrue(decorationSettled, "The decoration should arrive once the preview payload resumes")
 
         XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, "1")
         XCTAssertEqual(viewModel.previewDecoration, decoration)
@@ -923,9 +922,9 @@ final class BrowserViewModelTests: XCTestCase {
         )
 
         viewModel.onAppear(initialSearchQuery: "")
-        await flushMainActor()
         client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
-        await flushMainActor()
+        let itemSettled = await settle { viewModel.selectedItem != nil }
+        XCTAssertTrue(itemSettled, "The selected item should resolve once its fetch resumes")
 
         viewModel.addTagToSelectedItem(.bookmark)
 
@@ -988,7 +987,7 @@ final class BrowserViewModelTests: XCTestCase {
             onDismiss: {}
         )
 
-        viewModel.setTagFilter(.bookmark)
+        viewModel.applyFilter(.bookmarks)
         await flushMainActor()
         client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first", tags: [.bookmark]))
         await flushMainActor()
@@ -1682,10 +1681,468 @@ final class BrowserViewModelTests: XCTestCase {
         }
     }
 
+    // MARK: - Typed Filter Suggestions
+
+    private func makeTypedFilterViewModel(
+        client: MockBrowserStoreClient,
+        includesFileItems: Bool = false,
+        pendingFilterSurfaceDelay: TimeInterval = 0.01
+    ) -> BrowserViewModel {
+        BrowserViewModel(
+            client: client,
+            filterCatalog: BrowserFilterCatalog(includesFileItems: includesFileItems),
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {},
+            pendingFilterSurfaceDelay: pendingFilterSurfaceDelay
+        )
+    }
+
+    /// Waits out the (test-shortened) typing-pause delay before the chip
+    /// surfaces.
+    private func awaitPendingFilterSurface() async {
+        try? await Task.sleep(for: .milliseconds(60))
+        await flushMainActor()
+    }
+
+    func testTypingCategoryPrefixSurfacesChipWithResultsKeyboardTarget() async {
+        let viewModel = makeTypedFilterViewModel(client: MockBrowserStoreClient())
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.updateSearchText("image")
+        await awaitPendingFilterSurface()
+
+        guard case let .suggested(suggestion, keyboardTarget: .results) = viewModel.pendingFilterState else {
+            return XCTFail("Expected results-targeted suggestion, got \(viewModel.pendingFilterState)")
+        }
+        XCTAssertEqual(suggestion.kind, .images)
+        XCTAssertEqual(viewModel.keyboardTarget, .results)
+    }
+
+    func testChipSurfacesAsKeyboardTargetOverLoadedEmptyResults() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [],
+            firstPreviewPayload: nil,
+            totalCount: 0
+        ))
+        // The surface delay outlasts the search, so the empty result is
+        // LOADED by the time the suggestion surfaces.
+        let viewModel = makeTypedFilterViewModel(client: client, pendingFilterSurfaceDelay: 0.2)
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "links", filter: .all),
+            items: [],
+            firstPreviewPayload: nil,
+            totalCount: 0
+        ))
+        viewModel.updateSearchText("links")
+        try? await Task.sleep(for: .milliseconds(350))
+        await flushMainActor()
+
+        // With nothing to select, the chip is granted the keyboard, so a
+        // plain Return applies the filter without an Up first.
+        guard case .pendingFilterChip = viewModel.keyboardTarget else {
+            return XCTFail("Expected chip to own the keyboard over empty results, got \(viewModel.keyboardTarget)")
+        }
+        XCTAssertFalse(viewModel.hasUserNavigated, "An automatic grant is not user navigation, so no accent")
+        viewModel.confirmSelection()
+        XCTAssertEqual(
+            viewModel.contentState.request,
+            SearchRequest(text: "", filter: .contentType(contentType: .links))
+        )
+    }
+
+    func testEmptyResultsArrivingAfterSurfacePromoteChipToKeyboardTarget() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one")],
+            firstPreviewPayload: nil,
+            totalCount: 1
+        ))
+        let viewModel = makeTypedFilterViewModel(client: client)
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
+        await flushMainActor()
+
+        // The suggestion surfaces before the search resolves (the previous
+        // non-empty list is still displayed), so the results keep the
+        // keyboard at first.
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "links", filter: .all),
+            items: [],
+            firstPreviewPayload: nil,
+            totalCount: 0
+        ))
+        viewModel.updateSearchText("links")
+        try? await Task.sleep(for: .milliseconds(120))
+        await flushMainActor()
+
+        // Once the load comes up empty, the chip is promoted to the target.
+        guard case .pendingFilterChip = viewModel.keyboardTarget else {
+            return XCTFail("Expected chip to be promoted over empty results, got \(viewModel.keyboardTarget)")
+        }
+        XCTAssertNil(viewModel.selectedItemId)
+    }
+
+    func testPendingChipWaitsForTypingPause() async {
+        let viewModel = makeTypedFilterViewModel(
+            client: MockBrowserStoreClient(),
+            pendingFilterSurfaceDelay: 0.2
+        )
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.updateSearchText("image")
+        XCTAssertEqual(
+            viewModel.pendingFilterState, .none,
+            "The chip must not surface until the user pauses typing"
+        )
+
+        try? await Task.sleep(for: .milliseconds(350))
+        await flushMainActor()
+        XCTAssertEqual(viewModel.pendingFilterSuggestion?.kind, .images)
+    }
+
+    func testArrowKeysMoveBetweenChipAndResults() async {
+        let client = MockBrowserStoreClient()
+        // Resolve the initial empty search so no stale operation is parked on
+        // the mock's response queue when the typed search begins.
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [],
+            firstPreviewPayload: nil,
+            totalCount: 0
+        ))
+        let viewModel = makeTypedFilterViewModel(client: client)
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "image", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstPreviewPayload: nil,
+            totalCount: 2
+        ))
+        viewModel.updateSearchText("image")
+        try? await Task.sleep(for: .milliseconds(120))
+        await flushMainActor()
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
+        await awaitPendingFilterSurface()
+
+        // The chip surfaces with the results still owning the keyboard.
+        XCTAssertEqual(viewModel.keyboardTarget, .results)
+        XCTAssertEqual(viewModel.selectedIndex, 0)
+
+        // Up from the first row hands the keyboard to the chip without
+        // disturbing the selection.
+        viewModel.moveSelection(by: -1)
+        guard case .pendingFilterChip = viewModel.keyboardTarget else {
+            return XCTFail("Expected chip to own the keyboard after Up, got \(viewModel.keyboardTarget)")
+        }
+        XCTAssertEqual(viewModel.selectedIndex, 0, "Moving to the chip must not disturb the selection")
+        XCTAssertNotNil(viewModel.pendingFilterSuggestion, "Suggestion stays visible at the chip")
+        XCTAssertTrue(viewModel.hasUserNavigated, "Up onto the chip is user navigation, which earns the accent")
+
+        // Down: keyboard returns to the results without skipping the first row.
+        viewModel.moveSelection(by: 1)
+        XCTAssertEqual(viewModel.keyboardTarget, .results)
+        XCTAssertEqual(viewModel.selectedIndex, 0)
+
+        // Down again: normal row navigation.
+        viewModel.moveSelection(by: 1)
+        XCTAssertEqual(viewModel.selectedIndex, 1)
+    }
+
+    func testUpWalksRowsBeforeReachingChipFromPreservedSelection() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstPreviewPayload: nil,
+            totalCount: 2
+        ))
+        let viewModel = makeTypedFilterViewModel(client: client)
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
+        await flushMainActor()
+
+        // Park the selection on the SECOND row before typing the trigger.
+        viewModel.moveSelection(by: 1)
+        await flushMainActor()
+        client.resumeFetch(id: "2", with: makeItem(id: "2", text: "second"))
+        await flushMainActor()
+        XCTAssertEqual(viewModel.selectedIndex, 1)
+
+        // Same items survive the query transition, so the row-2 selection is
+        // intentionally preserved underneath the suggestion.
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "image", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstPreviewPayload: nil,
+            totalCount: 2
+        ))
+        viewModel.updateSearchText("image")
+        try? await Task.sleep(for: .milliseconds(120))
+        await awaitPendingFilterSurface()
+        XCTAssertEqual(viewModel.keyboardTarget, .results)
+
+        // Up from the second row is normal row navigation; only Up from the
+        // FIRST row reaches the chip.
+        viewModel.moveSelection(by: -1)
+        XCTAssertEqual(viewModel.keyboardTarget, .results)
+        XCTAssertEqual(viewModel.selectedIndex, 0)
+
+        viewModel.moveSelection(by: -1)
+        guard case .pendingFilterChip = viewModel.keyboardTarget else {
+            return XCTFail("Expected chip to own the keyboard, got \(viewModel.keyboardTarget)")
+        }
+
+        // Up at the chip stays put; the chip is the top of the keyboard path.
+        viewModel.moveSelection(by: -1)
+        guard case .pendingFilterChip = viewModel.keyboardTarget else {
+            return XCTFail("Expected chip to keep the keyboard on repeated Up, got \(viewModel.keyboardTarget)")
+        }
+        XCTAssertEqual(viewModel.selectedIndex, 0)
+    }
+
+    func testUserRowSelectionWhileChipTargetedReturnsKeyboardToResults() async {
+        let client = MockBrowserStoreClient()
+        var selectedItemIds: [String] = []
+        let viewModel = BrowserViewModel(
+            client: client,
+            filterCatalog: BrowserFilterCatalog(includesFileItems: false),
+            onSelect: { itemId, _ in selectedItemIds.append(itemId) },
+            onCopyOnly: { _, _ in },
+            onDismiss: {},
+            pendingFilterSurfaceDelay: 0.01
+        )
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [],
+            firstPreviewPayload: nil,
+            totalCount: 0
+        ))
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "image", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstPreviewPayload: nil,
+            totalCount: 2
+        ))
+        viewModel.updateSearchText("image")
+        try? await Task.sleep(for: .milliseconds(120))
+        await flushMainActor()
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
+        await awaitPendingFilterSurface()
+
+        viewModel.moveSelection(by: -1)
+        guard case .pendingFilterChip = viewModel.keyboardTarget else {
+            return XCTFail("Expected chip to own the keyboard, got \(viewModel.keyboardTarget)")
+        }
+
+        // A direct row pick (Cmd+number, click) while the chip is targeted
+        // hands the keyboard back, so the confirm activates the row.
+        viewModel.select(itemId: "2", origin: .keyboard)
+        await flushMainActor()
+        client.resumeFetch(id: "2", with: makeItem(id: "2", text: "second"))
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.keyboardTarget, .results)
+        viewModel.confirmSelection()
+        XCTAssertEqual(selectedItemIds, ["2"])
+        XCTAssertEqual(viewModel.contentState.request.filter, .all, "The row pick must not apply the filter")
+    }
+
+    func testSuspensionResetsChipKeyboardTargetToResults() async {
+        let viewModel = makeTypedFilterViewModel(client: MockBrowserStoreClient())
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.updateSearchText("image")
+        await awaitPendingFilterSurface()
+        viewModel.moveSelection(by: -1)
+        guard case .pendingFilterChip = viewModel.keyboardTarget else {
+            return XCTFail("Expected chip to own the keyboard, got \(viewModel.keyboardTarget)")
+        }
+
+        viewModel.prepareForSuspension()
+
+        XCTAssertEqual(viewModel.keyboardTarget, .results, "A hide/show cycle must not resurrect the chip target")
+        XCTAssertEqual(viewModel.pendingFilterSuggestion?.kind, .images, "The suggestion itself stays valid")
+    }
+
+    func testEnterOnChipAppliesFilterAndConsumesOnlyTriggerToken() async {
+        let viewModel = makeTypedFilterViewModel(client: MockBrowserStoreClient())
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.updateSearchText("docker image")
+        await awaitPendingFilterSurface()
+        XCTAssertEqual(viewModel.keyboardTarget, .results)
+
+        // The chip is opt-in: Up addresses it, then Enter applies the filter.
+        viewModel.moveSelection(by: -1)
+        guard case .pendingFilterChip = viewModel.keyboardTarget else {
+            return XCTFail("Expected chip to own the keyboard after Up, got \(viewModel.keyboardTarget)")
+        }
+        viewModel.confirmSelection()
+
+        XCTAssertEqual(
+            viewModel.contentState.request,
+            SearchRequest(text: "docker", filter: .contentType(contentType: .images))
+        )
+        XCTAssertEqual(viewModel.pendingFilterState, .none)
+        XCTAssertEqual(viewModel.appliedFilterDescriptor?.kind, .images)
+        XCTAssertEqual(viewModel.activeFilterKind, .images)
+    }
+
+    func testEnterWhileResultsTargetedConfirmsItemNotFilter() async {
+        let client = MockBrowserStoreClient()
+        var selectedItemIds: [String] = []
+        let viewModel = BrowserViewModel(
+            client: client,
+            filterCatalog: BrowserFilterCatalog(includesFileItems: false),
+            onSelect: { itemId, _ in selectedItemIds.append(itemId) },
+            onCopyOnly: { _, _ in },
+            onDismiss: {},
+            pendingFilterSurfaceDelay: 0.01
+        )
+        // Resolve the initial empty search so no stale operation is parked on
+        // the mock's response queue when the typed search begins.
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [],
+            firstPreviewPayload: nil,
+            totalCount: 0
+        ))
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "image", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one")],
+            firstPreviewPayload: nil,
+            totalCount: 1
+        ))
+        viewModel.updateSearchText("image")
+        try? await Task.sleep(for: .milliseconds(120))
+        await flushMainActor()
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
+        await awaitPendingFilterSurface()
+
+        // The results own the keyboard by default, so plain Enter activates
+        // the selected row even though the suggestion is visible.
+        XCTAssertEqual(viewModel.keyboardTarget, .results)
+        XCTAssertNotNil(viewModel.pendingFilterSuggestion)
+
+        viewModel.confirmSelection()
+
+        XCTAssertEqual(selectedItemIds, ["1"])
+        XCTAssertEqual(viewModel.contentState.request.filter, .all, "Enter on a row must not apply the filter")
+    }
+
+    func testClearAppliedFilterKeepsSearchText() async {
+        let viewModel = makeTypedFilterViewModel(client: MockBrowserStoreClient())
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.updateSearchText("docker image")
+        await awaitPendingFilterSurface()
+        viewModel.applyPendingFilterSuggestion()
+        XCTAssertEqual(
+            viewModel.contentState.request,
+            SearchRequest(text: "docker", filter: .contentType(contentType: .images))
+        )
+
+        viewModel.clearAppliedFilter()
+
+        XCTAssertEqual(viewModel.contentState.request, SearchRequest(text: "docker", filter: .all))
+        XCTAssertNil(viewModel.appliedFilterDescriptor)
+    }
+
+    func testBookmarkTypedFilterMapsToBookmarkTag() async {
+        let viewModel = makeTypedFilterViewModel(client: MockBrowserStoreClient())
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.updateSearchText("book")
+        await awaitPendingFilterSurface()
+        XCTAssertEqual(viewModel.pendingFilterSuggestion?.kind, .bookmarks)
+
+        viewModel.moveSelection(by: -1)
+        viewModel.confirmSelection()
+
+        XCTAssertEqual(
+            viewModel.contentState.request,
+            SearchRequest(text: "", filter: .tagged(tag: .bookmark))
+        )
+    }
+
+    func testAppliedFilterIsNotResuggested() async {
+        let viewModel = makeTypedFilterViewModel(client: MockBrowserStoreClient())
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.updateSearchText("image")
+        await awaitPendingFilterSurface()
+        viewModel.applyPendingFilterSuggestion()
+
+        viewModel.updateSearchText("image")
+        await awaitPendingFilterSurface()
+        XCTAssertEqual(
+            viewModel.pendingFilterState, .none,
+            "Typing the active filter's alias must not re-suggest it"
+        )
+    }
+
+    func testFilesTypedFilterRequiresPlatformAvailability() async {
+        let unavailable = makeTypedFilterViewModel(client: MockBrowserStoreClient(), includesFileItems: false)
+        unavailable.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        unavailable.updateSearchText("files")
+        await awaitPendingFilterSurface()
+        XCTAssertEqual(unavailable.pendingFilterState, .none)
+
+        let available = makeTypedFilterViewModel(client: MockBrowserStoreClient(), includesFileItems: true)
+        available.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        available.updateSearchText("files")
+        await awaitPendingFilterSurface()
+        XCTAssertEqual(available.pendingFilterSuggestion?.kind, .files)
+    }
+
     private func flushMainActor() async {
         for _ in 0 ..< 5 {
             await Task.yield()
         }
+    }
+
+    /// Polls the main actor until `condition` holds or the deadline passes.
+    /// Fixed-count yield flushing loses the race when the test host's main
+    /// actor is contended (e.g. SyncEngine startup work), so asserts that
+    /// depend on async state wait on that state itself.
+    @discardableResult
+    private func settle(
+        timeout: TimeInterval = 2,
+        until condition: () -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            guard Date() < deadline else { return false }
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(2))
+        }
+        return true
     }
 
     private func makeMatch(id: String, excerpt: String, tags: [ItemTag] = []) -> ItemMatch {
@@ -1808,6 +2265,13 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
     private var fetchContinuations: [String: [CheckedContinuation<ClipboardItem?, Never>]] = [:]
     private var matchedExcerptContinuations: [MatchedExcerptRequestKey: [CheckedContinuation<[MatchedExcerptResolution], Never>]] = [:]
     private var previewPayloadContinuations: [PreviewDecorationRequest: [CheckedContinuation<PreviewPayload?, Never>]] = [:]
+    // Results resumed before the view model parked the matching request.
+    // Every resume either resolves a parked continuation or queues here — a
+    // resume must never be silently dropped just because the test won the
+    // race to the mock (the search path already queues; these mirror it).
+    private var queuedFetchResults: [String: ClipboardItem?] = [:]
+    private var queuedMatchedExcerpts: [MatchedExcerptRequestKey: [MatchedExcerptResolution]] = [:]
+    private var queuedPreviewPayloads: [PreviewDecorationRequest: PreviewPayload?] = [:]
 
     func startSearch(request: SearchRequest) -> BrowserSearchOperation {
         startedSearchRequests.append(request)
@@ -1827,7 +2291,10 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
     }
 
     func fetchItem(id: String) async -> ClipboardItem? {
-        await withTaskCancellationHandler {
+        if let queued = queuedFetchResults.removeValue(forKey: id) {
+            return queued
+        }
+        return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 fetchContinuations[id, default: []].append(continuation)
             }
@@ -1854,6 +2321,10 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
             }
         }
 
+        if let queued = queuedMatchedExcerpts.removeValue(forKey: request) {
+            return queued
+        }
+
         return await withCheckedContinuation { continuation in
             matchedExcerptContinuations[request, default: []].append(continuation)
         }
@@ -1869,6 +2340,10 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
 
         if let payloadsByItemId = previewPayloadsByQuery[query] {
             return payloadsByItemId[itemId]
+        }
+
+        if let queued = queuedPreviewPayloads.removeValue(forKey: request) {
+            return queued
         }
 
         if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -1909,17 +2384,29 @@ private final class MockBrowserStoreClient: BrowserStoreClient {
     }
 
     func resumeFetch(id: String, with item: ClipboardItem?) {
-        fetchContinuations.removeValue(forKey: id)?.forEach { $0.resume(returning: item) }
+        if let continuations = fetchContinuations.removeValue(forKey: id) {
+            continuations.forEach { $0.resume(returning: item) }
+        } else {
+            queuedFetchResults[id] = item
+        }
     }
 
     func resumeMatchedExcerpts(itemIds: [String], query: String, with results: [MatchedExcerptResolution]) {
         let request = MatchedExcerptRequestKey(itemIds: itemIds, query: query)
-        matchedExcerptContinuations.removeValue(forKey: request)?.forEach { $0.resume(returning: results) }
+        if let continuations = matchedExcerptContinuations.removeValue(forKey: request) {
+            continuations.forEach { $0.resume(returning: results) }
+        } else {
+            queuedMatchedExcerpts[request] = results
+        }
     }
 
     func resumePreviewPayload(itemId: String, query: String, with payload: PreviewPayload?) {
         let request = PreviewDecorationRequest(itemId: itemId, query: query)
-        previewPayloadContinuations.removeValue(forKey: request)?.forEach { $0.resume(returning: payload) }
+        if let continuations = previewPayloadContinuations.removeValue(forKey: request) {
+            continuations.forEach { $0.resume(returning: payload) }
+        } else {
+            queuedPreviewPayloads[request] = payload
+        }
     }
 
     func enqueueSearchResponse(_ response: BrowserSearchResponse) {

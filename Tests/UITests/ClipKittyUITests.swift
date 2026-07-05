@@ -576,41 +576,121 @@ final class ClipKittyUITests: XCTestCase {
                        "Window Y position should not change when clicking preview text")
     }
 
-    /// Tests that the content-type filter dropdown is visible and functional.
-    /// The dropdown capsule must be hittable (rendered with nonzero frame and sufficient contrast),
-    /// open a popover with filter options, and allow selecting a filter.
-    func testFilterDropdownVisible() {
-        // 1. Find the filter dropdown button by accessibility identifier
-        let filterButton = app.buttons["FilterDropdown"]
-        XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter dropdown button should exist")
-        XCTAssertTrue(filterButton.isHittable, "Filter dropdown button should be hittable (visible with nonzero frame)")
+    // MARK: - Typed Filter Flow
 
-        // Screenshot: dropdown closed
-        saveScreenshot(name: "filter_closed")
+    /// Types a category trigger, asserts the pending suggestion chip appears
+    /// with the results still targeted, selects the chip with Up, and applies
+    /// it with Return. Waits for both the applied chip and the FILTERED
+    /// results to finish loading (via the locale-invariant
+    /// `ResultsState_<kind>_loaded` signal) before returning.
+    private func applyTypedFilter(trigger: String, kindIdentifier: String) {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+        searchField.click()
+        searchField.typeText(trigger)
 
-        // 2. Click to open the popover
-        filterButton.click()
-        Thread.sleep(forTimeInterval: 0.5)
+        let pendingChip = app.buttons["PendingFilterChip"]
+        XCTAssertTrue(pendingChip.waitForExistence(timeout: 3), "Pending filter chip should appear after typing '\(trigger)'")
 
-        // 3. Verify popover content appears with filter options
-        // FilterOptionRow uses Button, so options appear as buttons in the accessibility tree
-        let linksOption = app.buttons["Links"]
-        XCTAssertTrue(linksOption.waitForExistence(timeout: 3), "Popover should show 'Links' option")
+        // With rows present the chip is opt-in and Up selects it; over an
+        // empty result list it is granted the keyboard automatically.
+        if !pendingChip.isSelected {
+            app.typeKey(.upArrow, modifierFlags: [])
+            XCTAssertTrue(waitForCondition(timeout: 3) { pendingChip.isSelected },
+                          "Up from the first row should select the pending chip")
+        }
 
-        // Screenshot: dropdown open
-        saveScreenshot(name: "filter_open")
+        app.typeKey(.return, modifierFlags: [])
+        let removeControl = app.buttons["AppliedFilterChipRemove"]
+        XCTAssertTrue(removeControl.waitForExistence(timeout: 3), "Applied chip should appear in the search bar after Return")
+        XCTAssertFalse(pendingChip.exists, "Pending chip should disappear once the filter is applied")
 
-        // 4. Select "Links Only" and verify the button label changes
-        linksOption.click()
-        Thread.sleep(forTimeInterval: 0.5)
+        let loadedResults = app.descendants(matching: .any)["ResultsState_\(kindIdentifier)_loaded"]
+        XCTAssertTrue(loadedResults.waitForExistence(timeout: 5), "Filtered \(kindIdentifier) results should finish loading")
+    }
 
-        // After selecting, the button label should reflect the new filter
-        let updatedButton = app.buttons["FilterDropdown"]
-        XCTAssertTrue(updatedButton.waitForExistence(timeout: 3), "Filter button should still exist after selection")
-        XCTAssertTrue(updatedButton.isHittable, "Filter button should remain hittable after selection")
+    /// Tests the typed-filter suggestion flow end to end: typing a category
+    /// prefix reveals the pending chip, Return applies it as a search-bar
+    /// chip, and the close control removes it.
+    func testTypedFilterSuggestionFlow() {
+        saveScreenshot(name: "filter_before")
+        applyTypedFilter(trigger: "links", kindIdentifier: "links")
+        saveScreenshot(name: "filter_applied")
 
-        // The button label should now say "Links" instead of "All Types"
-        XCTAssertTrue(updatedButton.label.contains("Links"), "Filter button should show 'Links' after selecting Links Only, got: '\(updatedButton.label)'")
+        // The trigger token is consumed, not left in the query.
+        let searchField = app.textFields["SearchField"]
+        let fieldValue = searchField.value as? String ?? ""
+        XCTAssertTrue(fieldValue.isEmpty, "Applying the filter should consume the trigger token, got '\(fieldValue)'")
+
+        // Remove via the chip's close control.
+        let removeControl = app.buttons["AppliedFilterChipRemove"]
+        removeControl.click()
+        XCTAssertTrue(removeControl.waitForNonExistence(timeout: 3), "Applied chip should disappear after clicking its close control")
+    }
+
+    /// Tests arrow-key handoff between the result list and the pending chip:
+    /// the results keep the keyboard when the chip surfaces, Up from the
+    /// first row selects the chip (swapping the preview for the filter
+    /// advertisement), and Down returns to the results.
+    func testTypedFilterArrowNavigation() {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+        searchField.click()
+        searchField.typeText("image")
+
+        let pendingChip = app.buttons["PendingFilterChip"]
+        XCTAssertTrue(pendingChip.waitForExistence(timeout: 3), "Pending chip should appear")
+        XCTAssertFalse(pendingChip.isSelected, "The results keep the keyboard when the chip surfaces")
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First row should hold the selection under the chip")
+
+        let filterPreview = app.descendants(matching: .any)["PendingFilterPreview"]
+        XCTAssertFalse(filterPreview.exists, "The preview shows the selected item while the results are targeted")
+
+        app.typeKey(.upArrow, modifierFlags: [])
+        XCTAssertTrue(waitForCondition(timeout: 3) { pendingChip.isSelected },
+                      "Up from the first row should select the chip")
+        XCTAssertTrue(filterPreview.waitForExistence(timeout: 3),
+                      "The preview pane should advertise the filter while the chip is selected")
+
+        app.typeKey(.downArrow, modifierFlags: [])
+        XCTAssertTrue(waitForCondition(timeout: 3) { !pendingChip.isSelected },
+                      "Down should hand the keyboard back to the result list")
+        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First row should hold the selection after Down")
+        XCTAssertTrue(waitForCondition(timeout: 3) { !filterPreview.exists },
+                      "The item preview should return once the results are targeted again")
+    }
+
+    /// Tests that Tab accepts the visible filter suggestion directly,
+    /// autocomplete style, without selecting the chip first.
+    func testTabAcceptsPendingFilter() {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+        searchField.click()
+        searchField.typeText("image")
+
+        let pendingChip = app.buttons["PendingFilterChip"]
+        XCTAssertTrue(pendingChip.waitForExistence(timeout: 3), "Pending chip should appear")
+
+        app.typeKey(.tab, modifierFlags: [])
+
+        let removeControl = app.buttons["AppliedFilterChipRemove"]
+        XCTAssertTrue(removeControl.waitForExistence(timeout: 3), "Tab should apply the suggested filter")
+        XCTAssertFalse(pendingChip.exists, "Pending chip should disappear once the filter is applied")
+
+        let fieldValue = searchField.value as? String ?? ""
+        XCTAssertTrue(fieldValue.isEmpty, "Applying via Tab should consume the trigger token, got '\(fieldValue)'")
+    }
+
+    /// Tests that Backspace in the empty search field removes the applied
+    /// filter chip.
+    func testBackspaceRemovesAppliedFilterChip() {
+        applyTypedFilter(trigger: "image", kindIdentifier: "images")
+
+        let searchField = app.textFields["SearchField"]
+        searchField.typeKey(.delete, modifierFlags: [])
+
+        let removeControl = app.buttons["AppliedFilterChipRemove"]
+        XCTAssertTrue(removeControl.waitForNonExistence(timeout: 3), "Backspace in the empty field should remove the applied chip")
     }
 
     // MARK: - Actions Menu
@@ -992,13 +1072,28 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.5)
 
         // ============================================================
-        // SCENE 3: Image Search + Bookmark — type the (possibly localized)
-        // "fast" query to find the cat image, then bookmark it. CJK locales
-        // override the query to ASCII "fast" in video_localized.rs; the
-        // image keywords include "fast" for those locales so search still
-        // matches.
+        // SCENE 3: Typed Images filter + search + bookmark — type the
+        // locale-invariant English trigger "image" (the filter catalog
+        // guarantees English aliases in every locale), apply the suggestion
+        // chip with Return, then find the cat with the (possibly localized)
+        // "fast" query and bookmark it. CJK locales override the query to
+        // ASCII "fast" in video_localized.rs; the image keywords include
+        // "fast" for those locales so search still matches.
         // ============================================================
         clearSearch()
+        typeSlowly("image", scene: "filter_trigger")
+        let pendingChip = app.buttons["PendingFilterChip"]
+        XCTAssertTrue(pendingChip.waitForExistence(timeout: 3), "Pending filter chip should appear in video scene 3")
+        Thread.sleep(forTimeInterval: 0.6)
+        app.typeKey(.upArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.6)
+        app.typeKey(.return, modifierFlags: [])
+        let appliedChipRemove = app.buttons["AppliedFilterChipRemove"]
+        XCTAssertTrue(appliedChipRemove.waitForExistence(timeout: 3), "Applied chip should appear in video scene 3")
+        let loadedImageResults = app.descendants(matching: .any)["ResultsState_images_loaded"]
+        XCTAssertTrue(loadedImageResults.waitForExistence(timeout: 5), "Filtered image results should finish loading in video scene 3")
+        Thread.sleep(forTimeInterval: 0.5)
+
         typeSlowly(queries["fast"] ?? "fast", scene: "fast")
         Thread.sleep(forTimeInterval: 0.3)
 
@@ -1011,9 +1106,14 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.5)
 
         // ============================================================
-        // OUTRO
+        // OUTRO — clear the query, then pop the applied filter chip with
+        // Backspace so the video closes on the default unfiltered view
+        // (and demonstrates chip removal).
         // ============================================================
         clearSearch()
+        Thread.sleep(forTimeInterval: 0.4)
+        searchField.typeKey(.delete, modifierFlags: [])
+        XCTAssertTrue(appliedChipRemove.waitForNonExistence(timeout: 3), "Backspace should remove the applied chip in the outro")
         Thread.sleep(forTimeInterval: 0.5)
 
         writeTypingLatencyReport(
@@ -1123,25 +1223,24 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.5)
         saveScreenshot(name: "marketing_2_search")
 
-        // Screenshot 3: Images filter applied with dropdown open, Images row highlighted
+        // Screenshot 3: Images filter applied through the typed-filter flow —
+        // the applied chip sits in the search bar with filtered results below.
+        // The English trigger is locale-invariant by catalog contract.
         searchField.typeKey("a", modifierFlags: .command)
         searchField.typeKey(.delete, modifierFlags: [])
         Thread.sleep(forTimeInterval: 0.3)
-        let filterButton = app.buttons["FilterDropdown"]
-        // Apply the Images filter (use accessibility identifier, not localized label)
-        filterButton.click()
-        Thread.sleep(forTimeInterval: 0.5)
-        let imagesOption = app.buttons["Filter_images"]
-        XCTAssertTrue(imagesOption.waitForExistence(timeout: 3), "Images option should appear in dropdown")
-        imagesOption.click()
-        Thread.sleep(forTimeInterval: 0.5)
-        // Re-open dropdown, then hover over Images to get highlight
-        filterButton.click()
-        Thread.sleep(forTimeInterval: 0.5)
-        let imagesOptionAgain = app.buttons["Filter_images"]
-        XCTAssertTrue(imagesOptionAgain.waitForExistence(timeout: 3), "Images option should appear in dropdown")
-        imagesOptionAgain.hover()
+        searchField.typeText("image")
+        let pendingChip = app.buttons["PendingFilterChip"]
+        XCTAssertTrue(pendingChip.waitForExistence(timeout: 3), "Pending filter chip should appear")
         Thread.sleep(forTimeInterval: 0.3)
+        app.typeKey(.upArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.3)
+        app.typeKey(.return, modifierFlags: [])
+        let appliedChipRemove = app.buttons["AppliedFilterChipRemove"]
+        XCTAssertTrue(appliedChipRemove.waitForExistence(timeout: 3), "Applied chip should appear in the search bar")
+        let loadedImageResults = app.descendants(matching: .any)["ResultsState_images_loaded"]
+        XCTAssertTrue(loadedImageResults.waitForExistence(timeout: 5), "Filtered image results should finish loading before capture")
+        Thread.sleep(forTimeInterval: 0.5)
         saveScreenshot(name: "marketing_3_filter")
     }
 
@@ -1241,20 +1340,9 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     /// Tests that images show an image preview, not an editable text view.
+    /// Filters to images through the typed-filter flow.
     func testImagePreviewNotEditable() {
-        let filterButton = app.buttons["FilterDropdown"]
-        XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter button not found")
-
-        // Filter to images only
-        clickAndWait(filterButton, timeout: ciTimeout)
-
-        let imagesOption = app.buttons["Images"]
-        guard imagesOption.waitForExistence(timeout: 3) else {
-            // Skip if no images filter option (may not have images in test data)
-            return
-        }
-
-        clickAndWait(imagesOption, timeout: ciTimeout)
+        applyTypedFilter(trigger: "image", kindIdentifier: "images")
 
         // Wait for filter to apply and outline to update
         Thread.sleep(forTimeInterval: ciTimeout)
@@ -1274,20 +1362,9 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     /// Tests that links show a link preview, not an editable text view.
+    /// Filters to links through the typed-filter flow.
     func testLinkPreviewNotEditable() {
-        let filterButton = app.buttons["FilterDropdown"]
-        XCTAssertTrue(filterButton.waitForExistence(timeout: 5), "Filter button not found")
-
-        // Filter to links only
-        clickAndWait(filterButton, timeout: ciTimeout)
-
-        let linksOption = app.buttons["Links"]
-        guard linksOption.waitForExistence(timeout: 3) else {
-            // Skip if no links filter option
-            return
-        }
-
-        clickAndWait(linksOption, timeout: ciTimeout)
+        applyTypedFilter(trigger: "links", kindIdentifier: "links")
 
         // Wait for filter to apply and outline to update
         Thread.sleep(forTimeInterval: ciTimeout)
