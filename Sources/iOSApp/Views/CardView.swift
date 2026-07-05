@@ -220,11 +220,12 @@ struct CardView: View {
 
     private func thumbnailPreview(bytes: Data) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            // The height cap keeps image cards from producing very tall feed
-            // rows (most visible on iPad, where packed neighbors stretch to
-            // the row height); the full image lives in the preview screen.
+            // The height cap keeps image cards near typical text-card
+            // heights so packed iPad rows mixing images and text stay
+            // balanced (packed neighbors stretch to the row height); the
+            // full image lives in the preview screen.
             CardImagePreview(itemId: metadata.itemId, thumbnailBytes: bytes)
-                .frame(maxWidth: .infinity, maxHeight: 340)
+                .frame(maxWidth: .infinity, maxHeight: 240)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             if !displayExcerpt.text.isEmpty {

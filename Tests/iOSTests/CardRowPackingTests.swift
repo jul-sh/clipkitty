@@ -50,38 +50,22 @@ final class CardRowPackingTests: XCTestCase {
         )
     }
 
-    /// An image clip surrounded by text gets its own row rather than being
-    /// pulled next to a distant image (which would reorder the feed).
-    func testImageBetweenTextsBecomesSoloRow() {
-        let rows = [textRow("t1"), imageRow("i1"), textRow("t2")]
+    /// Image clips pack next to adjacent text clips like any other card.
+    func testImageSharesRowWithAdjacentText() {
+        let rows = [imageRow("i1"), textRow("t1")]
 
         let chunks = CardRowChunk.pack(rows, rowWidth: rowWidth)
 
-        XCTAssertEqual(chunks.map { $0.rows.map(\.id) }, [["t1"], ["i1"], ["t2"]])
+        XCTAssertEqual(chunks.map { $0.rows.map(\.id) }, [["i1", "t1"]])
     }
 
-    /// Adjacent image clips share a media row.
-    func testAdjacentImagesShareARow() {
-        let rows = [imageRow("i1"), imageRow("i2"), textRow("t1")]
+    /// Rows never exceed the card cap, even when everything would fit width-wise.
+    func testRowsRespectMaxCardsPerRow() {
+        let rows = (1 ... 7).map { textRow("t\($0)", text: "hi") }
 
-        let chunks = CardRowChunk.pack(rows, rowWidth: rowWidth)
+        let chunks = CardRowChunk.pack(rows, rowWidth: 10000)
 
-        XCTAssertEqual(chunks.map { $0.rows.map(\.id) }, [["i1", "i2"], ["t1"]])
-    }
-
-    /// Rows never mix media and text cards, and never exceed the cap.
-    func testRowsAreFamilyHomogeneousAndCapped() {
-        let rows = [
-            textRow("t1"), textRow("t2"), textRow("t3"), textRow("t4"),
-            imageRow("i1"), imageRow("i2"), imageRow("i3"), imageRow("i4"),
-        ]
-
-        let chunks = CardRowChunk.pack(rows, rowWidth: rowWidth)
-
-        for chunk in chunks {
-            XCTAssertLessThanOrEqual(chunk.rows.count, JustifiedCardRow.maxCardsPerRow)
-            let families = Set(chunk.rows.map { CardRowFamily(row: $0) == .media })
-            XCTAssertEqual(families.count, 1, "row mixes media and text cards")
-        }
+        XCTAssertTrue(chunks.allSatisfy { $0.rows.count <= JustifiedCardRow.maxCardsPerRow })
+        XCTAssertEqual(chunks.flatMap { $0.rows.map(\.id) }, rows.map(\.id))
     }
 }
