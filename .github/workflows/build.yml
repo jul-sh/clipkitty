@@ -1,5 +1,26 @@
 name: Build and Release
 
+# Job graph is deliberately wide: every check job starts immediately and runs
+# in parallel so failures surface as fast as possible. Only the publishing
+# jobs (release, gh-pages, appstore, ios-appstore) fan in, because publishing
+# is the only work that genuinely depends on everything else being green.
+#
+#   version ─────────────┐
+#   rust-tests ──────────┤
+#   macos-build ─────────┤   (parallel checks / artifact producers)
+#   ios-smoke ───────────┤
+#   ios-build ───────────┤
+#   ios-screenshots ─────┤   (matrix: iphone, ipad)
+#   macos-uitests ───────┤
+#   macos-marketing ─────┤
+#   intro-videos ────────┘
+#         │
+#         ├─ build         (aggregate status check; required by branch protection)
+#         ├─ release       (GitHub release + Homebrew tap)
+#         ├─ gh-pages      (site, appcast, screenshot tag)
+#         ├─ appstore      (macOS App Store Connect upload)
+#         └─ ios-appstore  (iOS App Store Connect upload)
+
 on:
   push:
     branches: [main, release]
@@ -12,6 +33,13 @@ permissions:
   id-token: write
   attestations: write
 
+# Superseded PR runs are cancelled to free runners for the newest commit.
+# Push/dispatch runs are never cancelled: they publish releases and sites,
+# and killing one mid-publish leaves half-finished state.
+concurrency:
+  group: build-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # Authenticate Nix's GitHub fetches (flake inputs like rust-overlay are pulled
 # via api.github.com). Without a token these hit unauthenticated rate limits and
 # fail intermittently with "HTTP error 401", breaking jobs at "Install CI tools
@@ -23,81 +51,24 @@ env:
     access-tokens = github.com=${{ github.token }}
 
 jobs:
-  rust-tests:
-    name: Rust Tests
-    runs-on: macos-26
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          lfs: true
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      - name: Verify lockfile integrity
-        run: make check
-
-      - name: Run Rust supply chain scan
-        run: nix develop --no-update-lock-file --experimental-features 'nix-command flakes' .#default --command cargo deny check
-
-      - name: Run Rust library tests
-        run: nix develop --no-update-lock-file --experimental-features 'nix-command flakes' .#default --command cargo test --manifest-path purr/Cargo.toml --lib --locked
-
-  build:
-    needs: rust-tests
-    runs-on: macos-26
+  # Cheap and instant: every job that needs version metadata reads it from
+  # here instead of resolving it inline on an expensive macOS runner.
+  version:
+    name: Resolve Version
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.resolve-version.outputs.version }}
+      build_number: ${{ steps.resolve-version.outputs.build_number }}
+      channel: ${{ steps.resolve-version.outputs.channel }}
+      release_tag: ${{ steps.resolve-version.outputs.release_tag }}
+      release_title: ${{ steps.resolve-version.outputs.release_title }}
+      release_url: ${{ steps.resolve-version.outputs.release_url }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          lfs: true
           fetch-depth: 0 # Full history for commit count versioning
-
-      - name: Configure macOS scrollbar behavior
-        run: |
-          defaults write -g AppleShowScrollBars -string WhenScrolling
-          killall cfprefsd || true
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      - name: Install CI tools from Nix
-        run: |
-          # Install tools from flake-locked nixpkgs (pinned via flake.lock)
-          nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
-          nix profile install --no-update-lock-file --inputs-from . nixpkgs#cmark-gfm
-          nix profile install --no-update-lock-file .#tuist
-          tuist version
-
-      - name: Decrypt secrets
-        id: secrets
-        run: |
-          echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
-          chmod 600 /tmp/age-key.txt
-          for f in secrets/*.age; do
-            name=$(basename "$f" .age)
-            value=$(age -d -i /tmp/age-key.txt "$f")
-            echo "::add-mask::$value"
-            {
-              echo "${name}<<AGEDELIM"
-              echo "$value"
-              echo "AGEDELIM"
-            } >> "$GITHUB_OUTPUT"
-          done
-          rm -f /tmp/age-key.txt
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Resolve Release Version
         id: resolve-version
@@ -127,8 +98,6 @@ jobs:
             RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/ClipKitty.dmg"
           fi
 
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "BUILD_NUMBER=$COMMIT_COUNT" >> "$GITHUB_ENV"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "build_number=$COMMIT_COUNT" >> "$GITHUB_OUTPUT"
           echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
@@ -136,6 +105,85 @@ jobs:
           echo "release_title=$RELEASE_TITLE" >> "$GITHUB_OUTPUT"
           echo "release_url=$RELEASE_URL" >> "$GITHUB_OUTPUT"
           echo "Final release version: $VERSION"
+
+  rust-tests:
+    name: Rust Tests
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          lfs: true
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
+          flakehub: false
+
+      - name: Verify lockfile integrity
+        run: make check
+
+      - name: Run Rust supply chain scan
+        run: nix develop --no-update-lock-file --experimental-features 'nix-command flakes' .#default --command cargo deny check
+
+      - name: Run Rust library tests
+        run: nix develop --no-update-lock-file --experimental-features 'nix-command flakes' .#default --command cargo test --manifest-path purr/Cargo.toml --lib --locked
+
+  # macOS release artifacts: App Store archive, hardened archive, and the
+  # notarized Sparkle DMG, plus provenance attestation. This is the longest
+  # chain and everything in it genuinely is sequential (build → sign →
+  # notarize → staple → attest).
+  macos-build:
+    name: macOS Build
+    needs: version
+    runs-on: macos-26
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
+    outputs:
+      ed_signature: ${{ steps.eddsa-sign.outputs.ed_signature }}
+      file_length: ${{ steps.eddsa-sign.outputs.file_length }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          lfs: true
+          fetch-depth: 0 # Full history for commit count versioning
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
+          flakehub: false
+
+      - name: Install CI tools from Nix
+        run: |
+          # Install tools from flake-locked nixpkgs (pinned via flake.lock)
+          nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
+          nix profile install --no-update-lock-file .#tuist
+          tuist version
+
+      - name: Decrypt secrets
+        id: secrets
+        run: |
+          echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
+          chmod 600 /tmp/age-key.txt
+          for f in secrets/*.age; do
+            name=$(basename "$f" .age)
+            value=$(age -d -i /tmp/age-key.txt "$f")
+            echo "::add-mask::$value"
+            {
+              echo "${name}<<AGEDELIM"
+              echo "$value"
+              echo "AGEDELIM"
+            } >> "$GITHUB_OUTPUT"
+          done
+          rm -f /tmp/age-key.txt
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Setup Swift
         uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
@@ -165,17 +213,6 @@ jobs:
 
       - name: Verify repo invariants
         run: make check
-
-      - name: Prepare Xcode Authentication
-        id: xcode-auth
-        run: |
-          mkdir -p .make/keys
-          make secrets-asc-auth FIELD=private-key-b64 | base64 --decode > .make/keys/AuthKey.p8
-          echo "key_id=$(make secrets-asc-auth FIELD=key-id)" >> "$GITHUB_OUTPUT"
-          echo "issuer_id=$(make secrets-asc-auth FIELD=issuer-id)" >> "$GITHUB_OUTPUT"
-          echo "key_path=$(pwd)/.make/keys/AuthKey.p8" >> "$GITHUB_OUTPUT"
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build App (AppStore)
         timeout-minutes: 90
@@ -308,103 +345,10 @@ jobs:
 
           echo "Hardened feature surface verified."
 
-      - name: Build iOS Smoke Test
-        timeout-minutes: 15
-        run: nix build '.#checks.aarch64-darwin.clipkitty-ios-smoke-build' -L
-
+      # The Sparkle DMG archive builds through the generated workspace
+      # (xtask errors with "workspace not found" otherwise).
       - name: Generate Xcode Workspace
         run: make workspace
-
-      - name: Build iOS App (AppStore)
-        timeout-minutes: 20
-        run: |
-          xcodebuild build \
-            -workspace ClipKitty.xcworkspace \
-            -scheme ClipKittyiOS-AppStore \
-            -derivedDataPath DerivedData \
-            -destination "generic/platform=iOS" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath ${{ steps.xcode-auth.outputs.key_path }} \
-            -authenticationKeyID ${{ steps.xcode-auth.outputs.key_id }} \
-            -authenticationKeyIssuerID ${{ steps.xcode-auth.outputs.issuer_id }} \
-            MARKETING_VERSION="$VERSION" \
-            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-            CODE_SIGNING_ALLOWED=NO
-
-      - name: Generate iOS Marketing Screenshots
-        if: github.event_name != 'pull_request'
-        run: |
-          unset TOOLCHAINS
-          make screenshots-ios
-
-      - name: Generate iPad Marketing Screenshots
-        if: github.event_name != 'pull_request'
-        run: |
-          unset TOOLCHAINS
-          make screenshots-ipad
-
-      - name: Run UI Tests
-        timeout-minutes: 45
-        env:
-          LOCKED: "1"
-        run: |
-          set +e
-          xcodebuild test \
-            -workspace ClipKitty.xcworkspace \
-            -scheme ClipKittyUITests \
-            -destination "platform=macOS" \
-            -destination-timeout 120 \
-            -test-timeouts-enabled YES \
-            -maximum-test-execution-time-allowance 600 \
-            -derivedDataPath DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            -skip-testing:ClipKittyUITests/ClipKittyUITests/testRecordIntroVideo \
-            -skip-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots \
-            -resultBundlePath TestResults.xcresult \
-            2>&1 | tee xcodebuild-test.log
-          TEST_EXIT=$?
-          echo "::group::Test Summary"
-          grep -E "(Test Case|Test Suite|passed|failed|error:|Failing tests:)" xcodebuild-test.log || true
-          echo "::endgroup::"
-          if [ -d TestResults.xcresult ]; then
-            echo "::group::xcresulttool Summary"
-            xcrun xcresulttool get test-results summary --path TestResults.xcresult 2>/dev/null || true
-            echo "::endgroup::"
-          fi
-          exit $TEST_EXIT
-
-      - name: Upload Test Results
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: TestResults
-          path: |
-            TestResults.xcresult
-            xcodebuild-test.log
-          if-no-files-found: ignore
-
-      - name: Create Virtual Retina Display
-        run: |
-          xcrun clang -framework CoreGraphics -framework Foundation \
-            -o /tmp/create-retina-display distribution/create-retina-display.m
-          /tmp/create-retina-display &
-          echo "$!" > /tmp/retina-display.pid
-          sleep 5
-
-      - name: Generate Marketing Screenshots
-        timeout-minutes: 20
-        run: |
-          SKIP_SIGNING=1 LOCKED=1 make screenshots-macos
-          ls -lh marketing/*/screenshot_*.png
-        env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
-
-      - name: Teardown Virtual Display
-        if: always()
-        run: kill "$(cat /tmp/retina-display.pid 2>/dev/null)" 2>/dev/null || true
-
-      - name: Generate Icon PNG
-        run: make site-icon
 
       - name: Build and Sign DMG
         timeout-minutes: 30
@@ -463,7 +407,6 @@ jobs:
           NOTARY_KEY_ID: ${{ steps.secrets.outputs.NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}
 
-
       - name: Clean up Notary Key
         if: always()
         run: rm -f auth_key.p8
@@ -511,84 +454,6 @@ jobs:
             DerivedData/Build/Products/SparkleRelease/ClipKitty.app/Contents/MacOS/ClipKitty
             ClipKitty-Hardened.zip
 
-      - name: Create Channel Release
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
-        run: |
-          gh release delete "${{ steps.resolve-version.outputs.release_tag }}" --yes --cleanup-tag 2>/dev/null || true
-
-          cat > /tmp/release-notes-prepend.md <<'EOF'
-          ## Downloads
-
-          - **`ClipKitty.dmg`** — the standard build. Install this one.
-          - **`ClipKitty-Hardened.zip`** — a stripped-down build for particularly security sensitive enviroments.
-
-          ## About the hardened build
-
-          The hardened build is a separate ClipKitty binary with features that touches the network or filesystem compiled out — no auto-updates, no iCloud sync, no link previews, no file clipboard items, etc. What remains runs under a macOS App Sandbox that further restricts access to the network and filesystem.
-
-          It ships as a separate app (`com.eviljuliette.clipkitty.hardened`) with its own sandbox container, so it coexists with the standard build without sharing data. Because auto-updates are compiled out, you update it by downloading the next release yourself.
-
-          Every release is built on GitHub's infrastructure and cryptographically attested — see [VERIFY.md](https://github.com/jul-sh/clipkitty/blob/main/VERIFY.md) for how to check that a download matches its source commit.
-
-          ---
-
-          EOF
-
-          args=(
-            release create "${{ steps.resolve-version.outputs.release_tag }}"
-            --title "${{ steps.resolve-version.outputs.release_title }}"
-            --notes-file /tmp/release-notes-prepend.md
-            --generate-notes
-            --target "$GITHUB_SHA"
-            ClipKitty.dmg
-            ClipKitty-Hardened.zip
-          )
-
-          if [ "${{ steps.resolve-version.outputs.channel }}" = "beta" ]; then
-            args+=(--prerelease)
-          fi
-
-          gh "${args[@]}"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Update Homebrew Tap
-        if: github.event_name == 'push' && github.ref == 'refs/heads/release'
-        run: |
-          TAG="v$VERSION"
-          SHA256=$(shasum -a 256 ClipKitty.dmg | cut -d' ' -f1)
-
-          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/jul-sh/homebrew-clipkitty.git /tmp/homebrew-tap
-          cd /tmp/homebrew-tap
-
-          mkdir -p Casks
-          printf '%s\n' \
-            'cask "clipkitty" do' \
-            "  version \"$VERSION\"" \
-            "  sha256 \"$SHA256\"" \
-            '' \
-            "  url \"https://github.com/jul-sh/clipkitty/releases/download/$TAG/ClipKitty.dmg\"" \
-            '  name "ClipKitty"' \
-            '  desc "Clipboard history manager with instant fuzzy search"' \
-            '  homepage "https://github.com/jul-sh/clipkitty"' \
-            '' \
-            '  app "ClipKitty.app"' \
-            '' \
-            '  postflight do' \
-            '    system_command "/usr/sbin/chown",' \
-            '                   args: ["-R", "#{ENV["USER"]}:staff", "#{appdir}/ClipKitty.app"],' \
-            '                   sudo: true' \
-            '  end' \
-            'end' > Casks/clipkitty.rb
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/clipkitty.rb
-          git diff --cached --quiet || git commit -m "Update ClipKitty to $VERSION"
-          git push origin main
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ steps.secrets.outputs.HOMEBREW_TAP_TOKEN }}
-
       - name: Upload Artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -607,6 +472,289 @@ jobs:
           name: ClipKitty-Hardened
           path: ClipKitty-Hardened.zip
 
+  # Hermetic nix build proving the iOS target compiles; no signing, no
+  # workspace, so it gives the fastest iOS compile feedback we have.
+  ios-smoke:
+    name: iOS Smoke Build
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          lfs: true
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
+          flakehub: false
+
+      - name: Build iOS Smoke Test
+        timeout-minutes: 15
+        run: nix build '.#checks.aarch64-darwin.clipkitty-ios-smoke-build' -L
+
+  # Release-configuration iOS build with App Store provisioning; catches
+  # signing/config breakage without waiting for the full publish job.
+  ios-build:
+    name: iOS Build
+    needs: version
+    runs-on: macos-26
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          lfs: true
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
+          flakehub: false
+
+      - name: Install CI tools from Nix
+        run: |
+          # age decrypts the ASC auth key below
+          nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
+          nix profile install --no-update-lock-file .#tuist
+          tuist version
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
+        with:
+          swift-version: "6.2"
+
+      - name: Prepare Xcode Authentication
+        id: xcode-auth
+        run: |
+          mkdir -p .make/keys
+          make secrets-asc-auth FIELD=private-key-b64 | base64 --decode > .make/keys/AuthKey.p8
+          echo "key_id=$(make secrets-asc-auth FIELD=key-id)" >> "$GITHUB_OUTPUT"
+          echo "issuer_id=$(make secrets-asc-auth FIELD=issuer-id)" >> "$GITHUB_OUTPUT"
+          echo "key_path=$(pwd)/.make/keys/AuthKey.p8" >> "$GITHUB_OUTPUT"
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
+      - name: Generate Xcode Workspace
+        run: make workspace
+
+      - name: Build iOS App (AppStore)
+        timeout-minutes: 20
+        run: |
+          xcodebuild build \
+            -workspace ClipKitty.xcworkspace \
+            -scheme ClipKittyiOS-AppStore \
+            -derivedDataPath DerivedData \
+            -destination "generic/platform=iOS" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ${{ steps.xcode-auth.outputs.key_path }} \
+            -authenticationKeyID ${{ steps.xcode-auth.outputs.key_id }} \
+            -authenticationKeyIssuerID ${{ steps.xcode-auth.outputs.issuer_id }} \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            CODE_SIGNING_ALLOWED=NO
+
+  # iPhone and iPad marketing screenshots run as independent simulator jobs so
+  # a failure on one device surfaces without waiting for the other.
+  ios-screenshots:
+    name: iOS Screenshots (${{ matrix.device }})
+    if: github.event_name != 'pull_request'
+    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - device: iphone
+            target: screenshots-ios
+            outdir: marketing-ios
+          - device: ipad
+            target: screenshots-ipad
+            outdir: marketing-ipad
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          lfs: true
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
+          flakehub: false
+
+      - name: Install CI tools from Nix
+        run: |
+          nix profile install --no-update-lock-file .#tuist
+          tuist version
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
+        with:
+          swift-version: "6.2"
+
+      - name: Generate Xcode Workspace
+        run: make workspace
+
+      - name: Generate Marketing Screenshots
+        run: |
+          unset TOOLCHAINS
+          make ${{ matrix.target }}
+
+      - name: Upload Screenshot Artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ios-assets-${{ matrix.device }}
+          path: ${{ matrix.outdir }}/*/screenshot_*.png
+          if-no-files-found: error
+
+      - name: Upload Failure Logs
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: screenshot-logs-${{ matrix.device }}
+          path: /tmp/clipkitty_*_screenshot_test.log
+          if-no-files-found: ignore
+
+  macos-uitests:
+    name: macOS UI Tests
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          lfs: true
+
+      - name: Configure macOS scrollbar behavior
+        run: |
+          defaults write -g AppleShowScrollBars -string WhenScrolling
+          killall cfprefsd || true
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
+          flakehub: false
+
+      - name: Install CI tools from Nix
+        run: |
+          nix profile install --no-update-lock-file .#tuist
+          tuist version
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
+        with:
+          swift-version: "6.2"
+
+      - name: Generate Xcode Workspace
+        run: make workspace
+
+      - name: Run UI Tests
+        timeout-minutes: 45
+        env:
+          LOCKED: "1"
+        run: |
+          set +e
+          xcodebuild test \
+            -workspace ClipKitty.xcworkspace \
+            -scheme ClipKittyUITests \
+            -destination "platform=macOS" \
+            -destination-timeout 120 \
+            -test-timeouts-enabled YES \
+            -maximum-test-execution-time-allowance 600 \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            -skip-testing:ClipKittyUITests/ClipKittyUITests/testRecordIntroVideo \
+            -skip-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots \
+            -resultBundlePath TestResults.xcresult \
+            2>&1 | tee xcodebuild-test.log
+          TEST_EXIT=$?
+          echo "::group::Test Summary"
+          grep -E "(Test Case|Test Suite|passed|failed|error:|Failing tests:)" xcodebuild-test.log || true
+          echo "::endgroup::"
+          if [ -d TestResults.xcresult ]; then
+            echo "::group::xcresulttool Summary"
+            xcrun xcresulttool get test-results summary --path TestResults.xcresult 2>/dev/null || true
+            echo "::endgroup::"
+          fi
+          exit $TEST_EXIT
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: TestResults
+          path: |
+            TestResults.xcresult
+            xcodebuild-test.log
+          if-no-files-found: ignore
+
+  # macOS marketing screenshots and the site icon; consumed by gh-pages and
+  # the App Store upload.
+  macos-marketing:
+    name: macOS Marketing Assets
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          lfs: true
+
+      - name: Configure macOS scrollbar behavior
+        run: |
+          defaults write -g AppleShowScrollBars -string WhenScrolling
+          killall cfprefsd || true
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
+          flakehub: false
+
+      - name: Install CI tools from Nix
+        run: |
+          # age decrypts the screenshot fixtures consumed via AGE_SECRET_KEY
+          nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
+          nix profile install --no-update-lock-file .#tuist
+          tuist version
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
+        with:
+          swift-version: "6.2"
+
+      - name: Verify repo invariants
+        run: make check
+
+      - name: Create Virtual Retina Display
+        run: |
+          xcrun clang -framework CoreGraphics -framework Foundation \
+            -o /tmp/create-retina-display distribution/create-retina-display.m
+          /tmp/create-retina-display &
+          echo "$!" > /tmp/retina-display.pid
+          sleep 5
+
+      - name: Generate Marketing Screenshots
+        timeout-minutes: 20
+        run: |
+          SKIP_SIGNING=1 LOCKED=1 make screenshots-macos
+          ls -lh marketing/*/screenshot_*.png
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
+      - name: Teardown Virtual Display
+        if: always()
+        run: kill "$(cat /tmp/retina-display.pid 2>/dev/null)" 2>/dev/null || true
+
+      - name: Generate Icon PNG
+        run: make site-icon
+
       - name: Upload Screenshot Artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -614,98 +762,7 @@ jobs:
           path: |
             icon.png
             marketing/*/screenshot_*.png
-
-      - name: Upload iOS Screenshot Artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: ios-assets
-          path: |
-            marketing-ios/*/screenshot_*.png
-            marketing-ipad/*/screenshot_*.png
-          if-no-files-found: ignore
-
-      - name: Deploy to gh-pages
-        if: always() && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Authenticate git over HTTPS with the job token explicitly. The
-          # runner has no credential helper ("could not read Username ...
-          # Device not configured"), so put the token in the remote URL. The
-          # checkout step also injects a global http.<host>.extraheader
-          # Authorization; combined with a URL credential that yields
-          # `remote: Duplicate header: "Authorization"` (HTTP 400), so drop the
-          # inherited extraheader and let the URL alone carry the credential.
-          git config --local --unset-all "http.https://github.com/.extraheader" || true
-          git config --global --unset-all "http.https://github.com/.extraheader" || true
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-
-          git fetch origin gh-pages || true
-          rm -rf /tmp/gh-pages
-          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
-            git worktree add /tmp/gh-pages gh-pages
-            cd /tmp/gh-pages
-            git pull origin gh-pages || true
-          else
-            git worktree add --detach /tmp/gh-pages
-            cd /tmp/gh-pages
-            git checkout --orphan gh-pages
-            git reset --hard
-          fi
-
-          cp "$GITHUB_WORKSPACE/icon.png" .
-          cp "$GITHUB_WORKSPACE/privacy.html" .
-          cp "$GITHUB_WORKSPACE/marketing/en/screenshot_1.png" marketing_1.png
-          cp "$GITHUB_WORKSPACE/marketing/en/screenshot_2.png" marketing_2.png
-          cp "$GITHUB_WORKSPACE/marketing/en/screenshot_3.png" marketing_3.png
-
-          if [ -n "${{ steps.eddsa-sign.outputs.ed_signature }}" ] && [ -n "${{ steps.eddsa-sign.outputs.file_length }}" ]; then
-            [ -f appcast-state.json ] || printf '{}\n' > appcast-state.json
-
-            make -C "$GITHUB_WORKSPACE" release-appcast-update \
-              STATE_PATH="$(pwd)/appcast-state.json" \
-              CHANNEL="${{ steps.resolve-version.outputs.channel }}" \
-              VERSION="${{ steps.resolve-version.outputs.version }}" \
-              BUILD_NUMBER="${{ steps.resolve-version.outputs.build_number }}" \
-              URL="${{ steps.resolve-version.outputs.release_url }}" \
-              SIGNATURE="${{ steps.eddsa-sign.outputs.ed_signature }}" \
-              LENGTH="${{ steps.eddsa-sign.outputs.file_length }}"
-
-            make -C "$GITHUB_WORKSPACE" release-appcast-generate \
-              STATE_PATH="$(pwd)/appcast-state.json" \
-              OUTPUT_PATH="$(pwd)/appcast.xml"
-
-            xmllint --noout appcast.xml
-          else
-            echo "Skipping appcast update because the signed update metadata was not produced."
-          fi
-
-          # Generate landing page from README.md (cmark-gfm installed via Nix)
-          make -C "$GITHUB_WORKSPACE" site-landing-page > index.html
-
-          git add icon.png privacy.html marketing_1.png marketing_2.png marketing_3.png index.html
-          git add appcast.xml appcast-state.json 2>/dev/null || true
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-          else
-            git commit --no-verify -m "Update site, screenshots and icon [skip ci]"
-          fi
-          git push origin gh-pages
-
-          git tag "screenshots/${GITHUB_SHA::7}"
-          git push origin "screenshots/${GITHUB_SHA::7}"
-
-          cd -
-          git worktree remove /tmp/gh-pages --force
-
-          REPO="${{ github.repository }}"
-          echo "Icon: https://raw.githubusercontent.com/$REPO/gh-pages/icon.png"
-          echo "Marketing 1: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_1.png"
-          echo "Marketing 2: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_2.png"
-          echo "Marketing 3: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_3.png"
+          if-no-files-found: error
 
   # Generate localized intro videos for App Store previews.
   # Runs only on pushes to main/release or manual dispatch (not on PRs).
@@ -713,7 +770,6 @@ jobs:
   # does not require TCC Screen Recording permission.
   intro-videos:
     runs-on: macos-26
-    needs: build
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
     steps:
@@ -792,10 +848,277 @@ jobs:
             marketing/*/intro_video.mov
             marketing/*/intro_video_typing.json
 
+  # Aggregate status check: branch protection requires a check named "build",
+  # and PR authors get one canonical pass/fail without enumerating jobs.
+  # Skipped jobs are fine (screenshots don't run on PRs); failures and
+  # cancellations are not.
+  build:
+    needs: [rust-tests, macos-build, ios-smoke, ios-build, ios-screenshots, macos-uitests, macos-marketing]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Check job results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          if echo "$RESULTS" | jq -e '[.[] | select(.result == "failure" or .result == "cancelled")] | length > 0' >/dev/null; then
+            echo "::error::One or more required jobs failed"
+            exit 1
+          fi
+
+  # Publish the GitHub release. Gated on every check job because a release is
+  # the one thing we never want to cut from a red commit.
+  release:
+    name: Create Release
+    needs: [version, rust-tests, macos-build, ios-smoke, ios-build, ios-screenshots, macos-uitests, macos-marketing]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
+    runs-on: macos-26
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
+          flakehub: false
+
+      - name: Install CI tools from Nix
+        run: nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
+
+      - name: Decrypt secrets
+        id: secrets
+        run: |
+          echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
+          chmod 600 /tmp/age-key.txt
+          for f in secrets/*.age; do
+            name=$(basename "$f" .age)
+            value=$(age -d -i /tmp/age-key.txt "$f")
+            echo "::add-mask::$value"
+            {
+              echo "${name}<<AGEDELIM"
+              echo "$value"
+              echo "AGEDELIM"
+            } >> "$GITHUB_OUTPUT"
+          done
+          rm -f /tmp/age-key.txt
+        env:
+          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+
+      - name: Download DMG
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ClipKitty-Builds
+          path: .
+
+      - name: Download Hardened Build
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ClipKitty-Hardened
+          path: .
+
+      - name: Create Channel Release
+        run: |
+          gh release delete "${{ needs.version.outputs.release_tag }}" --yes --cleanup-tag 2>/dev/null || true
+
+          cat > /tmp/release-notes-prepend.md <<'EOF'
+          ## Downloads
+
+          - **`ClipKitty.dmg`** — the standard build. Install this one.
+          - **`ClipKitty-Hardened.zip`** — a stripped-down build for particularly security sensitive enviroments.
+
+          ## About the hardened build
+
+          The hardened build is a separate ClipKitty binary with features that touches the network or filesystem compiled out — no auto-updates, no iCloud sync, no link previews, no file clipboard items, etc. What remains runs under a macOS App Sandbox that further restricts access to the network and filesystem.
+
+          It ships as a separate app (`com.eviljuliette.clipkitty.hardened`) with its own sandbox container, so it coexists with the standard build without sharing data. Because auto-updates are compiled out, you update it by downloading the next release yourself.
+
+          Every release is built on GitHub's infrastructure and cryptographically attested — see [VERIFY.md](https://github.com/jul-sh/clipkitty/blob/main/VERIFY.md) for how to check that a download matches its source commit.
+
+          ---
+
+          EOF
+
+          args=(
+            release create "${{ needs.version.outputs.release_tag }}"
+            --title "${{ needs.version.outputs.release_title }}"
+            --notes-file /tmp/release-notes-prepend.md
+            --generate-notes
+            --target "$GITHUB_SHA"
+            ClipKitty.dmg
+            ClipKitty-Hardened.zip
+          )
+
+          if [ "${{ needs.version.outputs.channel }}" = "beta" ]; then
+            args+=(--prerelease)
+          fi
+
+          gh "${args[@]}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Update Homebrew Tap
+        if: github.ref == 'refs/heads/release'
+        run: |
+          TAG="v$VERSION"
+          SHA256=$(shasum -a 256 ClipKitty.dmg | cut -d' ' -f1)
+
+          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/jul-sh/homebrew-clipkitty.git /tmp/homebrew-tap
+          cd /tmp/homebrew-tap
+
+          mkdir -p Casks
+          printf '%s\n' \
+            'cask "clipkitty" do' \
+            "  version \"$VERSION\"" \
+            "  sha256 \"$SHA256\"" \
+            '' \
+            "  url \"https://github.com/jul-sh/clipkitty/releases/download/$TAG/ClipKitty.dmg\"" \
+            '  name "ClipKitty"' \
+            '  desc "Clipboard history manager with instant fuzzy search"' \
+            '  homepage "https://github.com/jul-sh/clipkitty"' \
+            '' \
+            '  app "ClipKitty.app"' \
+            '' \
+            '  postflight do' \
+            '    system_command "/usr/sbin/chown",' \
+            '                   args: ["-R", "#{ENV["USER"]}:staff", "#{appdir}/ClipKitty.app"],' \
+            '                   sudo: true' \
+            '  end' \
+            'end' > Casks/clipkitty.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/clipkitty.rb
+          git diff --cached --quiet || git commit -m "Update ClipKitty to $VERSION"
+          git push origin main
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ steps.secrets.outputs.HOMEBREW_TAP_TOKEN }}
+
+  # Deploy the site even when other jobs failed (matching the old always()
+  # behavior), but only when the marketing assets actually exist — the
+  # previous mono-job version died on a missing icon.png whenever an earlier
+  # step had failed. The appcast is skipped gracefully when macos-build
+  # produced no signature (its outputs read as empty strings).
+  gh-pages:
+    name: Deploy to gh-pages
+    needs: [version, macos-build, macos-marketing]
+    if: >-
+      !cancelled()
+      && needs.macos-marketing.result == 'success'
+      && github.event_name == 'push'
+      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+        with:
+          source-tag: v3.17.3
+          flakehub: false
+
+      - name: Install CI tools from Nix
+        run: nix profile install --no-update-lock-file --inputs-from . nixpkgs#cmark-gfm
+
+      - name: Download marketing assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: assets
+          path: .
+
+      - name: Deploy to gh-pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Authenticate git over HTTPS with the job token explicitly. The
+          # runner has no credential helper ("could not read Username ...
+          # Device not configured"), so put the token in the remote URL. The
+          # checkout step also injects a global http.<host>.extraheader
+          # Authorization; combined with a URL credential that yields
+          # `remote: Duplicate header: "Authorization"` (HTTP 400), so drop the
+          # inherited extraheader and let the URL alone carry the credential.
+          git config --local --unset-all "http.https://github.com/.extraheader" || true
+          git config --global --unset-all "http.https://github.com/.extraheader" || true
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+
+          git fetch origin gh-pages || true
+          rm -rf /tmp/gh-pages
+          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
+            git worktree add /tmp/gh-pages gh-pages
+            cd /tmp/gh-pages
+            git pull origin gh-pages || true
+          else
+            git worktree add --detach /tmp/gh-pages
+            cd /tmp/gh-pages
+            git checkout --orphan gh-pages
+            git reset --hard
+          fi
+
+          cp "$GITHUB_WORKSPACE/icon.png" .
+          cp "$GITHUB_WORKSPACE/privacy.html" .
+          cp "$GITHUB_WORKSPACE/marketing/en/screenshot_1.png" marketing_1.png
+          cp "$GITHUB_WORKSPACE/marketing/en/screenshot_2.png" marketing_2.png
+          cp "$GITHUB_WORKSPACE/marketing/en/screenshot_3.png" marketing_3.png
+
+          if [ -n "${{ needs.macos-build.outputs.ed_signature }}" ] && [ -n "${{ needs.macos-build.outputs.file_length }}" ]; then
+            [ -f appcast-state.json ] || printf '{}\n' > appcast-state.json
+
+            make -C "$GITHUB_WORKSPACE" release-appcast-update \
+              STATE_PATH="$(pwd)/appcast-state.json" \
+              CHANNEL="${{ needs.version.outputs.channel }}" \
+              VERSION="${{ needs.version.outputs.version }}" \
+              BUILD_NUMBER="${{ needs.version.outputs.build_number }}" \
+              URL="${{ needs.version.outputs.release_url }}" \
+              SIGNATURE="${{ needs.macos-build.outputs.ed_signature }}" \
+              LENGTH="${{ needs.macos-build.outputs.file_length }}"
+
+            make -C "$GITHUB_WORKSPACE" release-appcast-generate \
+              STATE_PATH="$(pwd)/appcast-state.json" \
+              OUTPUT_PATH="$(pwd)/appcast.xml"
+
+            xmllint --noout appcast.xml
+          else
+            echo "Skipping appcast update because the signed update metadata was not produced."
+          fi
+
+          # Generate landing page from README.md (cmark-gfm installed via Nix)
+          make -C "$GITHUB_WORKSPACE" site-landing-page > index.html
+
+          git add icon.png privacy.html marketing_1.png marketing_2.png marketing_3.png index.html
+          git add appcast.xml appcast-state.json 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit --no-verify -m "Update site, screenshots and icon [skip ci]"
+          fi
+          git push origin gh-pages
+
+          git tag "screenshots/${GITHUB_SHA::7}"
+          git push origin "screenshots/${GITHUB_SHA::7}"
+
+          cd -
+          git worktree remove /tmp/gh-pages --force
+
+          REPO="${{ github.repository }}"
+          echo "Icon: https://raw.githubusercontent.com/$REPO/gh-pages/icon.png"
+          echo "Marketing 1: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_1.png"
+          echo "Marketing 2: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_2.png"
+          echo "Marketing 3: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_3.png"
+
   # Upload to App Store Connect via ASC CLI
   appstore:
     runs-on: macos-26
-    needs: [build, intro-videos]
+    needs: [rust-tests, macos-build, macos-uitests, macos-marketing, intro-videos]
     if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'release')
 
     steps:
@@ -931,7 +1254,7 @@ jobs:
   # Upload iOS app to App Store Connect
   ios-appstore:
     runs-on: macos-26
-    needs: build
+    needs: [rust-tests, ios-build, ios-screenshots]
     if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'release')
 
     steps:
@@ -1005,11 +1328,21 @@ jobs:
           APP_PROFILE: ${{ steps.secrets.outputs.IOS_APPSTORE_PROFILE_BASE64 }}
           SHARE_PROFILE: ${{ steps.secrets.outputs.IOS_SHARE_PROFILE_BASE64 }}
 
-      - name: Download iOS screenshots
+      # actions/upload-artifact@v4 strips the common path prefix (here the
+      # `marketing-ios/` / `marketing-ipad/` roots), so each artifact holds
+      # `<locale>/screenshot_N.png`. Download into explicit directories to
+      # restore the expected layout.
+      - name: Download iPhone screenshots
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: ios-assets
-          path: .
+          name: ios-assets-iphone
+          path: marketing-ios
+
+      - name: Download iPad screenshots
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ios-assets-ipad
+          path: marketing-ipad
 
       - name: Verify iOS screenshots present
         run: |
