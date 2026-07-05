@@ -122,6 +122,15 @@ jobs:
           source-tag: v3.17.3
           flakehub: false
 
+      # Share the Nix store across jobs via the GitHub Actions cache. The
+      # repo-specific purr-* Rust static libs (~18 min from a cold store)
+      # are built once by whichever job reaches them first; every other job
+      # restores them instead of recompiling. Before the build graph was
+      # split into parallel jobs, a single monolithic job warmed its own
+      # store; now each job starts cold and needs this shared cache.
+      - name: Set up Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+
       - name: Verify lockfile integrity
         run: make check
 
@@ -158,6 +167,15 @@ jobs:
         with:
           source-tag: v3.17.3
           flakehub: false
+
+      # Share the Nix store across jobs via the GitHub Actions cache. The
+      # repo-specific purr-* Rust static libs (~18 min from a cold store)
+      # are built once by whichever job reaches them first; every other job
+      # restores them instead of recompiling. Before the build graph was
+      # split into parallel jobs, a single monolithic job warmed its own
+      # store; now each job starts cold and needs this shared cache.
+      - name: Set up Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
 
       - name: Install CI tools from Nix
         run: |
@@ -490,6 +508,15 @@ jobs:
           source-tag: v3.17.3
           flakehub: false
 
+      # Share the Nix store across jobs via the GitHub Actions cache. The
+      # repo-specific purr-* Rust static libs (~18 min from a cold store)
+      # are built once by whichever job reaches them first; every other job
+      # restores them instead of recompiling. Before the build graph was
+      # split into parallel jobs, a single monolithic job warmed its own
+      # store; now each job starts cold and needs this shared cache.
+      - name: Set up Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+
       - name: Build iOS Smoke Test
         timeout-minutes: 15
         run: nix build '.#checks.aarch64-darwin.clipkitty-ios-smoke-build' -L
@@ -515,6 +542,15 @@ jobs:
         with:
           source-tag: v3.17.3
           flakehub: false
+
+      # Share the Nix store across jobs via the GitHub Actions cache. The
+      # repo-specific purr-* Rust static libs (~18 min from a cold store)
+      # are built once by whichever job reaches them first; every other job
+      # restores them instead of recompiling. Before the build graph was
+      # split into parallel jobs, a single monolithic job warmed its own
+      # store; now each job starts cold and needs this shared cache.
+      - name: Set up Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
 
       - name: Install CI tools from Nix
         run: |
@@ -587,6 +623,15 @@ jobs:
           source-tag: v3.17.3
           flakehub: false
 
+      # Share the Nix store across jobs via the GitHub Actions cache. The
+      # repo-specific purr-* Rust static libs (~18 min from a cold store)
+      # are built once by whichever job reaches them first; every other job
+      # restores them instead of recompiling. Before the build graph was
+      # split into parallel jobs, a single monolithic job warmed its own
+      # store; now each job starts cold and needs this shared cache.
+      - name: Set up Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+
       - name: Install CI tools from Nix
         run: |
           nix profile install --no-update-lock-file .#tuist
@@ -640,6 +685,15 @@ jobs:
         with:
           source-tag: v3.17.3
           flakehub: false
+
+      # Share the Nix store across jobs via the GitHub Actions cache. The
+      # repo-specific purr-* Rust static libs (~18 min from a cold store)
+      # are built once by whichever job reaches them first; every other job
+      # restores them instead of recompiling. Before the build graph was
+      # split into parallel jobs, a single monolithic job warmed its own
+      # store; now each job starts cold and needs this shared cache.
+      - name: Set up Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
 
       - name: Install CI tools from Nix
         run: |
@@ -717,6 +771,15 @@ jobs:
           source-tag: v3.17.3
           flakehub: false
 
+      # Share the Nix store across jobs via the GitHub Actions cache. The
+      # repo-specific purr-* Rust static libs (~18 min from a cold store)
+      # are built once by whichever job reaches them first; every other job
+      # restores them instead of recompiling. Before the build graph was
+      # split into parallel jobs, a single monolithic job warmed its own
+      # store; now each job starts cold and needs this shared cache.
+      - name: Set up Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+
       - name: Install CI tools from Nix
         run: |
           # age decrypts the screenshot fixtures consumed via AGE_SECRET_KEY
@@ -784,6 +847,15 @@ jobs:
         with:
           source-tag: v3.17.3
           flakehub: false
+
+      # Share the Nix store across jobs via the GitHub Actions cache. The
+      # repo-specific purr-* Rust static libs (~18 min from a cold store)
+      # are built once by whichever job reaches them first; every other job
+      # restores them instead of recompiling. Before the build graph was
+      # split into parallel jobs, a single monolithic job warmed its own
+      # store; now each job starts cold and needs this shared cache.
+      - name: Set up Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
 
       - name: Install CI tools from Nix
         run: |
@@ -887,6 +959,15 @@ jobs:
         with:
           source-tag: v3.17.3
           flakehub: false
+
+      # Share the Nix store across jobs via the GitHub Actions cache. The
+      # repo-specific purr-* Rust static libs (~18 min from a cold store)
+      # are built once by whichever job reaches them first; every other job
+      # restores them instead of recompiling. Before the build graph was
+      # split into parallel jobs, a single monolithic job warmed its own
+      # store; now each job starts cold and needs this shared cache.
+      - name: Set up Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
 
       - name: Install CI tools from Nix
         run: nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
@@ -1024,6 +1105,15 @@ jobs:
           source-tag: v3.17.3
           flakehub: false
 
+      # Share the Nix store across jobs via the GitHub Actions cache. The
+      # repo-specific purr-* Rust static libs (~18 min from a cold store)
+      # are built once by whichever job reaches them first; every other job
+      # restores them instead of recompiling. Before the build graph was
+      # split into parallel jobs, a single monolithic job warmed its own
+      # store; now each job starts cold and needs this shared cache.
+      - name: Set up Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+
       - name: Install CI tools from Nix
         run: nix profile install --no-update-lock-file --inputs-from . nixpkgs#cmark-gfm
 
@@ -1132,6 +1222,15 @@ jobs:
         with:
           source-tag: v3.17.3
           flakehub: false
+
+      # Share the Nix store across jobs via the GitHub Actions cache. The
+      # repo-specific purr-* Rust static libs (~18 min from a cold store)
+      # are built once by whichever job reaches them first; every other job
+      # restores them instead of recompiling. Before the build graph was
+      # split into parallel jobs, a single monolithic job warmed its own
+      # store; now each job starts cold and needs this shared cache.
+      - name: Set up Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
 
       - name: Install CI tools from Nix
         run: |
@@ -1268,6 +1367,15 @@ jobs:
         with:
           source-tag: v3.17.3
           flakehub: false
+
+      # Share the Nix store across jobs via the GitHub Actions cache. The
+      # repo-specific purr-* Rust static libs (~18 min from a cold store)
+      # are built once by whichever job reaches them first; every other job
+      # restores them instead of recompiling. Before the build graph was
+      # split into parallel jobs, a single monolithic job warmed its own
+      # store; now each job starts cold and needs this shared cache.
+      - name: Set up Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
 
       - name: Install CI tools from Nix
         run: |
