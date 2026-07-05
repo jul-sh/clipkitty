@@ -846,6 +846,17 @@ jobs:
       - name: Verify repo invariants
         run: make check
 
+      # Materialize the generated workspace in its own unbounded step, the
+      # way ios-build / macos-uitests do. `make screenshots-macos` also
+      # generates it internally, but building it here keeps the heavy Nix
+      # graph out of the timed screenshot budget: when the shared cache is
+      # throttled (all gated jobs restore the same graph at once, which can
+      # trip the GitHub Actions Cache rate limit), this step rebuilds it
+      # from source without racing a clock. `make screenshots-macos` then
+      # finds the store path already present and re-links it instantly.
+      - name: Generate Xcode Workspace
+        run: make workspace
+
       - name: Create Virtual Retina Display
         run: |
           xcrun clang -framework CoreGraphics -framework Foundation \
@@ -855,10 +866,9 @@ jobs:
           sleep 5
 
       - name: Generate Marketing Screenshots
-        # 40 min, not 20: on a Nix-cache miss (e.g. the first run after a
-        # Cargo.lock/flake change) this step builds the purr-* Rust libs
-        # (~18 min) before capturing anything. The shared Nix cache makes
-        # that the exception, but the timeout has to survive the cold case.
+        # With the workspace already materialized above, this budget only has
+        # to cover the cargo rust-data-gen build (~6 min, a dev-shell binary
+        # Nix can't cache) plus the 10-locale screenshot capture.
         timeout-minutes: 40
         run: |
           SKIP_SIGNING=1 LOCKED=1 make screenshots-macos
