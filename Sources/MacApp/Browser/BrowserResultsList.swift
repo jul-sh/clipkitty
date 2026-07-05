@@ -171,7 +171,8 @@ struct BrowserResultsList: View {
 /// The typed-filter suggestion chip revealed above the result rows. The
 /// results keep the keyboard while it is visible; Up from the first row
 /// addresses the chip, Enter then applies the filter, Down returns to the
-/// results, and clicking commits directly.
+/// results, and clicking commits directly. Over an EMPTY result list the
+/// chip takes the keyboard automatically so Return isn't inert.
 ///
 /// Deliberately neutral in both states — an accent fill would read as an
 /// already-active filter. The keyboard-target state is a slightly stronger

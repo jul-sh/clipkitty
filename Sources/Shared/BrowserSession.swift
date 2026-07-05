@@ -233,13 +233,16 @@ public enum PendingFilterState: Equatable {
 }
 
 /// What the keyboard currently addresses while a filter suggestion is visible.
-/// A fresh suggestion surfaces with `.results`; the chip is opt-in.
+/// A fresh suggestion surfaces with `.results`; the chip is opt-in — except
+/// over an EMPTY result list, where the chip takes the keyboard because Enter
+/// would otherwise be inert.
 public enum PendingFilterKeyboardTarget: Equatable {
-    /// The suggestion chip, reached with Up from the first row: Enter applies
-    /// the filter, Down returns to the results.
+    /// The suggestion chip, reached with Up from the first row (or granted
+    /// automatically over an empty list): Enter applies the filter, Down
+    /// returns to the results.
     case suggestion
-    /// The result list (the default): keys behave as if no suggestion were
-    /// showing, except Up from the first row moves to the chip.
+    /// The result list (the default while rows exist): keys behave as if no
+    /// suggestion were showing, except Up from the first row moves to the chip.
     case results
 }
 

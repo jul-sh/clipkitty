@@ -591,11 +591,14 @@ final class ClipKittyUITests: XCTestCase {
 
         let pendingChip = app.buttons["PendingFilterChip"]
         XCTAssertTrue(pendingChip.waitForExistence(timeout: 3), "Pending filter chip should appear after typing '\(trigger)'")
-        XCTAssertFalse(pendingChip.isSelected, "The results keep the keyboard when the chip surfaces")
 
-        app.typeKey(.upArrow, modifierFlags: [])
-        XCTAssertTrue(waitForCondition(timeout: 3) { pendingChip.isSelected },
-                      "Up from the first row should select the pending chip")
+        // With rows present the chip is opt-in and Up selects it; over an
+        // empty result list it is granted the keyboard automatically.
+        if !pendingChip.isSelected {
+            app.typeKey(.upArrow, modifierFlags: [])
+            XCTAssertTrue(waitForCondition(timeout: 3) { pendingChip.isSelected },
+                          "Up from the first row should select the pending chip")
+        }
 
         app.typeKey(.return, modifierFlags: [])
         let removeControl = app.buttons["AppliedFilterChipRemove"]

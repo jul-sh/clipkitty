@@ -1721,6 +1721,76 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.keyboardTarget, .results)
     }
 
+    func testChipSurfacesAsKeyboardTargetOverLoadedEmptyResults() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [],
+            firstPreviewPayload: nil,
+            totalCount: 0
+        ))
+        // The surface delay outlasts the search, so the empty result is
+        // LOADED by the time the suggestion surfaces.
+        let viewModel = makeTypedFilterViewModel(client: client, pendingFilterSurfaceDelay: 0.2)
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "links", filter: .all),
+            items: [],
+            firstPreviewPayload: nil,
+            totalCount: 0
+        ))
+        viewModel.updateSearchText("links")
+        try? await Task.sleep(for: .milliseconds(350))
+        await flushMainActor()
+
+        // With nothing to select, the chip is granted the keyboard, so a
+        // plain Return applies the filter without an Up first.
+        guard case .pendingFilterChip = viewModel.keyboardTarget else {
+            return XCTFail("Expected chip to own the keyboard over empty results, got \(viewModel.keyboardTarget)")
+        }
+        viewModel.confirmSelection()
+        XCTAssertEqual(
+            viewModel.contentState.request,
+            SearchRequest(text: "", filter: .contentType(contentType: .links))
+        )
+    }
+
+    func testEmptyResultsArrivingAfterSurfacePromoteChipToKeyboardTarget() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one")],
+            firstPreviewPayload: nil,
+            totalCount: 1
+        ))
+        let viewModel = makeTypedFilterViewModel(client: client)
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
+        await flushMainActor()
+
+        // The suggestion surfaces before the search resolves (the previous
+        // non-empty list is still displayed), so the results keep the
+        // keyboard at first.
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "links", filter: .all),
+            items: [],
+            firstPreviewPayload: nil,
+            totalCount: 0
+        ))
+        viewModel.updateSearchText("links")
+        try? await Task.sleep(for: .milliseconds(120))
+        await flushMainActor()
+
+        // Once the load comes up empty, the chip is promoted to the target.
+        guard case .pendingFilterChip = viewModel.keyboardTarget else {
+            return XCTFail("Expected chip to be promoted over empty results, got \(viewModel.keyboardTarget)")
+        }
+        XCTAssertNil(viewModel.selectedItemId)
+    }
+
     func testPendingChipWaitsForTypingPause() async {
         let viewModel = makeTypedFilterViewModel(
             client: MockBrowserStoreClient(),

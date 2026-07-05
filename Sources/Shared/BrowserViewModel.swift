@@ -162,10 +162,24 @@ public final class BrowserViewModel {
     }
 
     /// What Enter and row-only shortcuts currently address. The chip owns the
-    /// keyboard only while the user has arrowed up onto it.
+    /// keyboard only while the user has arrowed up onto it — or while the
+    /// result list is empty, where Enter would otherwise be inert.
     public var keyboardTarget: BrowserKeyboardTarget {
         if case let .suggested(suggestion, keyboardTarget: .suggestion) = pendingFilterState {
             return .pendingFilterChip(suggestion)
+        }
+        return .results
+    }
+
+    /// The keyboard target a suggestion receives when no explicit user choice
+    /// applies: with rows to select the chip is opt-in; over an empty list
+    /// Enter would be inert, so the chip takes the keyboard. Only a LOADED
+    /// empty list grants the chip — while a search is still running the
+    /// outcome is unknown, and ``applySearchResponse`` promotes the chip if
+    /// the load comes up empty.
+    private var restingPendingFilterKeyboardTarget: PendingFilterKeyboardTarget {
+        if case .loaded = contentState, itemIds.isEmpty {
+            return .suggestion
         }
         return .results
     }
@@ -263,10 +277,10 @@ public final class BrowserViewModel {
         resetMutationStateUnlessCommitting()
         editSession = .inactive
         hasUserNavigated = false
-        // A stale `.suggestion` keyboard target must not survive a hide/show
-        // cycle; the suggestion itself stays valid for the request.
+        // A stale user-chosen `.suggestion` keyboard target must not survive a
+        // hide/show cycle; the suggestion itself stays valid for the request.
         if case let .suggested(suggestion, _) = pendingFilterState {
-            pendingFilterState = .suggested(suggestion, keyboardTarget: .results)
+            pendingFilterState = .suggested(suggestion, keyboardTarget: restingPendingFilterKeyboardTarget)
         }
     }
 
@@ -794,7 +808,8 @@ public final class BrowserViewModel {
     /// surfaces after the user pauses typing for ``pendingFilterSurfaceDelay``,
     /// so intermediate prefixes mid-word don't flash the chip; it surfaces
     /// with the results keeping the keyboard — the user opts into the chip
-    /// with Up from the first row.
+    /// with Up from the first row — unless the list is empty, in which case
+    /// the chip takes the keyboard so Return isn't inert.
     private func refreshPendingFilterState(for request: SearchRequest) {
         pendingFilterSurfaceTask?.cancel()
         pendingFilterSurfaceTask = nil
@@ -821,7 +836,10 @@ public final class BrowserViewModel {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self, self.contentState.request == request else { return }
-                self.pendingFilterState = .suggested(suggestion, keyboardTarget: .results)
+                self.pendingFilterState = .suggested(
+                    suggestion,
+                    keyboardTarget: self.restingPendingFilterKeyboardTarget
+                )
             }
         }
     }
@@ -961,6 +979,12 @@ public final class BrowserViewModel {
         let newOrder = response.items.map { $0.itemMetadata.itemId }
         guard !newOrder.isEmpty else {
             setDisplayedSelection(.none)
+            // The results came up empty after the suggestion surfaced: with
+            // nothing to select, Enter would be inert, so the chip takes the
+            // keyboard. Only then — with rows present the chip stays opt-in.
+            if case let .suggested(suggestion, keyboardTarget: .results) = pendingFilterState {
+                pendingFilterState = .suggested(suggestion, keyboardTarget: .suggestion)
+            }
             clearInactiveEdits()
             finishTagMutationSettleIfNeeded()
             return
