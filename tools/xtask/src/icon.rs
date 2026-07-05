@@ -12,8 +12,24 @@ use crate::output::Reporter;
 use crate::process::Runner;
 use crate::repo::RepoRoot;
 
-const ICTOOL_PATH: &str =
-    "/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool";
+/// Candidate ictool locations, preferring stable Xcode over the beta.
+const ICTOOL_PATHS: [&str; 2] = [
+    "/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool",
+    "/Applications/Xcode-beta.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool",
+];
+
+fn ictool_path() -> Result<&'static str> {
+    ICTOOL_PATHS
+        .iter()
+        .copied()
+        .find(|path| Path::new(path).is_file())
+        .ok_or_else(|| {
+            anyhow!(
+                "ictool not found at any of: {}; install Xcode with Icon Composer",
+                ICTOOL_PATHS.join(", ")
+            )
+        })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AppIconRenderTarget {
@@ -44,16 +60,12 @@ pub(crate) fn render_app_icon(
         return Ok(());
     }
 
-    if !Path::new(ICTOOL_PATH).is_file() {
-        return Err(anyhow!(
-            "ictool not found at {ICTOOL_PATH}; install Xcode with Icon Composer"
-        ));
-    }
+    let ictool = ictool_path()?;
     if !icon_bundle.as_std_path().is_dir() {
         return Err(anyhow!("icon bundle not found: {icon_bundle}"));
     }
 
-    Runner::new(reporter, ICTOOL_PATH)
+    Runner::new(reporter, ictool)
         .arg(icon_bundle.as_std_path())
         .args(["--export-image", "--output-file"])
         .arg(output.as_std_path())

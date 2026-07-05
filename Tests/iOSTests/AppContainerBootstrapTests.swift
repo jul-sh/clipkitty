@@ -42,6 +42,7 @@ final class AppContainerBootstrapTests: XCTestCase {
 
         XCTAssertNotNil(container.repository)
         XCTAssertNotNil(container.previewLoader)
+        XCTAssertNotNil(container.imageDescriptionUpdater)
         XCTAssertNotNil(container.storeClient)
         XCTAssertNotNil(container.clipboardService)
         XCTAssertNotNil(container.settings)

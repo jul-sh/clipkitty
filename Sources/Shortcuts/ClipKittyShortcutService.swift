@@ -1,3 +1,4 @@
+import ClipKittyAppleServices
 import ClipKittyRust
 import ClipKittyShared
 import Foundation
@@ -53,7 +54,7 @@ private final class ShortcutServiceRegistry: @unchecked Sendable {
     }
 }
 
-struct ShortcutPasteboardClient: Sendable {
+struct ShortcutPasteboardClient {
     let read: @Sendable () async -> ShortcutPasteboardRead
 
     static let live = ShortcutPasteboardClient(
@@ -63,7 +64,7 @@ struct ShortcutPasteboardClient: Sendable {
     )
 }
 
-enum ClipKittyShortcutError: Equatable, LocalizedError, Sendable {
+enum ClipKittyShortcutError: Equatable, LocalizedError {
     case emptyText
     case emptyClipboard
     case unsupportedClipboardContent(String)
@@ -89,12 +90,12 @@ enum ClipKittyShortcutError: Equatable, LocalizedError, Sendable {
     }
 }
 
-enum ShortcutSavedClip: Equatable, Sendable {
+enum ShortcutSavedClip: Equatable {
     case inserted(id: String)
     case duplicate
 }
 
-private enum ShortcutTextExtraction: Sendable {
+private enum ShortcutTextExtraction {
     case value(String)
     case unsupported
 
@@ -108,7 +109,7 @@ private enum ShortcutTextExtraction: Sendable {
     }
 }
 
-private enum ShortcutRepositorySource: Sendable {
+private enum ShortcutRepositorySource {
     case appRepository(@MainActor @Sendable () async -> ClipKittyShortcutRepositoryAvailability)
     case databasePath(@Sendable () throws -> String)
 }
@@ -116,27 +117,46 @@ private enum ShortcutRepositorySource: Sendable {
 final class ClipKittyShortcutService: ClipKittyShortcutServicing {
     private let repositorySource: ShortcutRepositorySource
     private let pasteboardClient: ShortcutPasteboardClient
+    private let imageDescriptionGenerator: (Data) async -> String?
 
     init(
         databasePathProvider: @escaping @Sendable () throws -> String = {
             try ShortcutDatabasePath.resolve()
         },
-        pasteboardClient: ShortcutPasteboardClient = .live
+        pasteboardClient: ShortcutPasteboardClient = .live,
+        imageDescriptionGenerator: @escaping (Data) async -> String? = { data in
+            await ImageDescriptionGenerator.generateDescription(from: data)
+        }
     ) {
         repositorySource = .databasePath(databasePathProvider)
         self.pasteboardClient = pasteboardClient
+        self.imageDescriptionGenerator = imageDescriptionGenerator
     }
 
     init(
         repositoryProvider: @escaping @MainActor @Sendable () async -> ClipKittyShortcutRepositoryAvailability,
-        pasteboardClient: ShortcutPasteboardClient = .live
+        pasteboardClient: ShortcutPasteboardClient = .live,
+        imageDescriptionGenerator: @escaping (Data) async -> String? = { data in
+            await ImageDescriptionGenerator.generateDescription(from: data)
+        }
     ) {
         repositorySource = .appRepository(repositoryProvider)
         self.pasteboardClient = pasteboardClient
+        self.imageDescriptionGenerator = imageDescriptionGenerator
     }
 
-    convenience init(databasePath: String, pasteboardClient: ShortcutPasteboardClient = .live) {
-        self.init(databasePathProvider: { databasePath }, pasteboardClient: pasteboardClient)
+    convenience init(
+        databasePath: String,
+        pasteboardClient: ShortcutPasteboardClient = .live,
+        imageDescriptionGenerator: @escaping (Data) async -> String? = { data in
+            await ImageDescriptionGenerator.generateDescription(from: data)
+        }
+    ) {
+        self.init(
+            databasePathProvider: { databasePath },
+            pasteboardClient: pasteboardClient,
+            imageDescriptionGenerator: imageDescriptionGenerator
+        )
     }
 
     func saveText(_ text: String) async throws -> ShortcutSavedClip {
@@ -186,6 +206,12 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
                 sourceAppBundleId: "com.apple.shortcuts",
                 isAnimated: isAnimated
             )
+            if case let .success(itemId) = result, !itemId.isEmpty {
+                _ = await ImageDescriptionUpdater(
+                    repository: repository,
+                    generator: imageDescriptionGenerator
+                ).update(itemId: itemId, imageData: data)
+            }
             return try savedClip(from: result)
         }
     }

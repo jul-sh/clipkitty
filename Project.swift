@@ -753,6 +753,7 @@ let project = Project(
             dependencies: [
                 .target(name: "ClipKittyRust"),
                 .target(name: "ClipKittyShared"),
+                .target(name: "ClipKittyAppleServices"),
             ],
             settings: .settings(
                 base: [

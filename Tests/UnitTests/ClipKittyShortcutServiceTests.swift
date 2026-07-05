@@ -91,6 +91,32 @@ final class ClipKittyShortcutServiceTests: XCTestCase {
         XCTAssertEqual(values, ["existing app repository"])
     }
 
+    func testSaveCurrentClipboardImageGeneratesDescription() async throws {
+        let path = dbPath()
+        let pasteboardClient = ShortcutPasteboardClient(read: {
+            .content(.image(data: Data([0x10]), thumbnail: nil, isAnimated: false))
+        })
+        let service = ClipKittyShortcutService(
+            databasePath: path,
+            pasteboardClient: pasteboardClient,
+            imageDescriptionGenerator: { _ in "shortcut image" }
+        )
+
+        let saved = try await service.saveCurrentClipboard()
+        guard case let .inserted(itemId) = saved else {
+            XCTFail("Image clipboard save should insert a new clip")
+            return
+        }
+
+        let repository = try ClipboardRepository(store: ClipKittyRust.ClipboardStore(dbPath: path))
+        let item = await repository.fetchItem(id: itemId)
+        guard case let .image(_, description, _) = item?.content else {
+            XCTFail("Expected saved item to be an image")
+            return
+        }
+        XCTAssertEqual(description, "Image: shortcut image")
+    }
+
     private func dbPath() -> String {
         tempDir.appendingPathComponent("clipboard.sqlite").path
     }

@@ -42,21 +42,7 @@ struct CardView: View {
     }
 
     private var displayExcerpt: (text: String, highlights: [Utf16HighlightRange]) {
-        switch row.presentation {
-        case let .baseline(excerpt):
-            return (excerpt.text, [])
-        case let .matched(excerpt):
-            return (excerpt.text, excerpt.highlights)
-        case let .deferred(_, placeholder):
-            switch placeholder {
-            case let .baseline(excerpt), let .provisional(excerpt):
-                return (excerpt.text, [])
-            case let .compatibleCached(_, excerpt):
-                return (excerpt.text, excerpt.highlights)
-            }
-        case let .unavailable(fallback, _):
-            return (fallback.text, [])
-        }
+        row.displayExcerpt
     }
 
     private var isBookmarked: Bool {
@@ -89,7 +75,6 @@ struct CardView: View {
                 await storeClient.fetchItem(id: id)
             }
         }
-        .padding(.horizontal, 16)
     }
 
     // MARK: - Metadata line
@@ -235,8 +220,12 @@ struct CardView: View {
 
     private func thumbnailPreview(bytes: Data) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            // The height cap keeps image cards near typical text-card
+            // heights so packed iPad rows mixing images and text stay
+            // balanced (packed neighbors stretch to the row height); the
+            // full image lives in the preview screen.
             CardImagePreview(itemId: metadata.itemId, thumbnailBytes: bytes)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: 240)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             if !displayExcerpt.text.isEmpty {

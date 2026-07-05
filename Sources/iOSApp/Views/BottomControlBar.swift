@@ -399,7 +399,7 @@ struct BottomControlBar: View {
             let thumbnail = image.preparingThumbnail(of: CGSize(width: 200, height: 200))?.jpegData(
                 compressionQuality: 0.7
             )
-            result = await container.repository.saveImage(
+            result = await appState.saveImage(
                 imageData: data,
                 thumbnail: thumbnail,
                 sourceApp: "Pasteboard",
@@ -446,7 +446,7 @@ struct BottomControlBar: View {
             )
         }()
 
-        let result = await container.repository.saveImage(
+        let result = await appState.saveImage(
             imageData: data,
             thumbnail: thumbnail,
             sourceApp: "Photos",

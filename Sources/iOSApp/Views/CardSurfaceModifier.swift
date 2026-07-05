@@ -8,7 +8,11 @@ struct CardSurface: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // maxHeight fills the height a parent proposes so cards packed
+            // into a JustifiedCardRow all reach the full row height. List
+            // rows and ScrollViews propose nil height, so the card hugs its
+            // content there as before.
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous))
             .overlay {
                 if colorScheme == .dark {
