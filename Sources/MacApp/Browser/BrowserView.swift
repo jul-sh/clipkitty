@@ -40,6 +40,10 @@ struct BrowserView: View {
                 focusTarget: $focusTarget,
                 onMoveSelection: viewModel.moveSelection(by:),
                 onConfirm: viewModel.confirmSelection,
+                onAcceptPendingFilter: {
+                    viewModel.applyPendingFilterSuggestion()
+                    focusSearchField()
+                },
                 onDismiss: viewModel.dismiss,
                 // Removing the chip must keep the keyboard in the search
                 // field, matching the other button-driven flows.

@@ -388,6 +388,9 @@ public final class BrowserViewModel {
                 // keyboard onto the chip; anywhere else Up is row navigation.
                 if offset < 0, selectedIndex == 0 || selectedIndex == nil {
                     pendingFilterState = .suggested(suggestion, keyboardTarget: .suggestion)
+                    // Reaching the chip is user navigation, so it earns the
+                    // accent — an automatic grant over an empty list does not.
+                    hasUserNavigated = true
                     return
                 }
             }

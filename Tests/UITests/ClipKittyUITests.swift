@@ -660,6 +660,27 @@ final class ClipKittyUITests: XCTestCase {
                       "The item preview should return once the results are targeted again")
     }
 
+    /// Tests that Tab accepts the visible filter suggestion directly,
+    /// autocomplete style, without selecting the chip first.
+    func testTabAcceptsPendingFilter() {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+        searchField.click()
+        searchField.typeText("image")
+
+        let pendingChip = app.buttons["PendingFilterChip"]
+        XCTAssertTrue(pendingChip.waitForExistence(timeout: 3), "Pending chip should appear")
+
+        app.typeKey(.tab, modifierFlags: [])
+
+        let removeControl = app.buttons["AppliedFilterChipRemove"]
+        XCTAssertTrue(removeControl.waitForExistence(timeout: 3), "Tab should apply the suggested filter")
+        XCTAssertFalse(pendingChip.exists, "Pending chip should disappear once the filter is applied")
+
+        let fieldValue = searchField.value as? String ?? ""
+        XCTAssertTrue(fieldValue.isEmpty, "Applying via Tab should consume the trigger token, got '\(fieldValue)'")
+    }
+
     /// Tests that Backspace in the empty search field removes the applied
     /// filter chip.
     func testBackspaceRemovesAppliedFilterChip() {

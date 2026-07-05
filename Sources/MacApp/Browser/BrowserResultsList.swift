@@ -16,10 +16,12 @@ struct BrowserResultsList: View {
             if let suggestion = viewModel.pendingFilterSuggestion {
                 PendingFilterChip(
                     title: viewModel.filterDescriptor(for: suggestion.kind).title,
-                    isKeyboardTarget: {
+                    selection: {
                         switch viewModel.keyboardTarget {
-                        case .pendingFilterChip: return true
-                        case .results: return false
+                        case .pendingFilterChip:
+                            return viewModel.hasUserNavigated ? .accentSelected : .selected
+                        case .results:
+                            return .unselected
                         }
                     }(),
                     onActivate: {
@@ -174,13 +176,23 @@ struct BrowserResultsList: View {
 /// results, and clicking commits directly. Over an EMPTY result list the
 /// chip takes the keyboard automatically so Return isn't inert.
 ///
-/// Deliberately neutral in both states — an accent fill would read as an
-/// already-active filter. The keyboard-target state is a slightly stronger
-/// border plus a Return hint.
+/// Selection mirrors the row rule: the accent fill is earned by user
+/// navigation (Up onto the chip), while an automatic keyboard grant over an
+/// empty list renders the neutral selected gray — exactly how a selected row
+/// shows accent only once the user has navigated.
 private struct PendingFilterChip: View {
+    /// How the chip renders relative to the keyboard, mirroring row
+    /// selection: `selected` is the automatic grant (gray), `accentSelected`
+    /// is user navigation onto the chip.
+    enum Selection {
+        case unselected
+        case selected
+        case accentSelected
+    }
+
     @ObservedObject private var settings = AppSettings.shared
     let title: String
-    let isKeyboardTarget: Bool
+    let selection: Selection
     let onActivate: () -> Void
 
     var body: some View {
@@ -188,31 +200,76 @@ private struct PendingFilterChip: View {
             HStack(spacing: 5) {
                 Text(String(localized: "filter:"))
                     .font(settings.appFont(size: settings.scaled(11)))
-                    .foregroundStyle(Color.secondary)
+                    .foregroundStyle(prefixColor)
                 Text(title)
                     .font(settings.appFont(size: settings.scaled(12), weight: .semibold))
-                    .foregroundStyle(isKeyboardTarget ? Color.primary : Color.secondary)
-                if isKeyboardTarget {
+                    .foregroundStyle(titleColor)
+                switch selection {
+                case .unselected:
+                    EmptyView()
+                case .selected, .accentSelected:
                     Text(verbatim: "⏎")
                         .font(settings.appFont(size: settings.scaled(10)))
-                        .foregroundStyle(Color.secondary.opacity(0.7))
+                        .foregroundStyle(hintColor)
                 }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .background {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.primary.opacity(isKeyboardTarget ? 0.08 : 0.04))
+                    .fill(fillColor)
             }
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(isKeyboardTarget ? 0.25 : 0.1), lineWidth: 1)
+                    .strokeBorder(borderColor, lineWidth: 1)
             }
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier("PendingFilterChip")
-        .accessibilityAddTraits(isKeyboardTarget ? .isSelected : [])
+        .accessibilityAddTraits({
+            switch selection {
+            case .unselected: return []
+            case .selected, .accentSelected: return .isSelected
+            }
+        }())
+    }
+
+    private var fillColor: Color {
+        switch selection {
+        case .unselected: return Color.primary.opacity(0.04)
+        case .selected: return Color.primary.opacity(0.225)
+        case .accentSelected: return Color.selectionBackground
+        }
+    }
+
+    private var borderColor: Color {
+        switch selection {
+        case .unselected: return Color.primary.opacity(0.1)
+        case .selected, .accentSelected: return Color.clear
+        }
+    }
+
+    private var titleColor: Color {
+        switch selection {
+        case .unselected: return .secondary
+        case .selected: return .primary
+        case .accentSelected: return .white
+        }
+    }
+
+    private var prefixColor: Color {
+        switch selection {
+        case .unselected, .selected: return .secondary
+        case .accentSelected: return Color.white.opacity(0.7)
+        }
+    }
+
+    private var hintColor: Color {
+        switch selection {
+        case .unselected, .selected: return Color.secondary.opacity(0.7)
+        case .accentSelected: return Color.white.opacity(0.7)
+        }
     }
 }

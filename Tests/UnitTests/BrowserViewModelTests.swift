@@ -1749,6 +1749,7 @@ final class BrowserViewModelTests: XCTestCase {
         guard case .pendingFilterChip = viewModel.keyboardTarget else {
             return XCTFail("Expected chip to own the keyboard over empty results, got \(viewModel.keyboardTarget)")
         }
+        XCTAssertFalse(viewModel.hasUserNavigated, "An automatic grant is not user navigation, so no accent")
         viewModel.confirmSelection()
         XCTAssertEqual(
             viewModel.contentState.request,
@@ -1847,6 +1848,7 @@ final class BrowserViewModelTests: XCTestCase {
         }
         XCTAssertEqual(viewModel.selectedIndex, 0, "Moving to the chip must not disturb the selection")
         XCTAssertNotNil(viewModel.pendingFilterSuggestion, "Suggestion stays visible at the chip")
+        XCTAssertTrue(viewModel.hasUserNavigated, "Up onto the chip is user navigation, which earns the accent")
 
         // Down: keyboard returns to the results without skipping the first row.
         viewModel.moveSelection(by: 1)

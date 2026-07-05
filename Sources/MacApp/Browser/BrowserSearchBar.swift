@@ -14,6 +14,7 @@ struct BrowserSearchBar: View {
     let focusTarget: FocusState<BrowserView.FocusTarget?>.Binding
     let onMoveSelection: (Int) -> Void
     let onConfirm: () -> Void
+    let onAcceptPendingFilter: () -> Void
     let onDismiss: () -> Void
     let onClearFilter: () -> Void
     let onOpenActions: (_ viaKeyboard: Bool) -> Void
@@ -82,9 +83,12 @@ struct BrowserSearchBar: View {
                     return .handled
                 }
                 .onKeyPress(.tab) {
-                    // The panel is modal-like: Tab must not move focus out of
-                    // the search field.
-                    .handled
+                    // Tab accepts the visible filter suggestion, autocomplete
+                    // style (a no-op without one). Always handled either way:
+                    // the panel is modal-like, so Tab must not move focus out
+                    // of the search field.
+                    onAcceptPendingFilter()
+                    return .handled
                 }
                 .onKeyPress(characters: .decimalDigits, phases: .down) { keyPress in
                     onHandleNumberKey(keyPress)
