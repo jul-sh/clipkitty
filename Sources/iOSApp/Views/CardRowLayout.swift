@@ -109,12 +109,37 @@ struct JustifiedCardRow: Layout {
     /// Readability floor: no card is squeezed narrower than this.
     static let minCardWidth: CGFloat = 200
 
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache _: inout ()) -> CGSize {
+    /// Per-row measurement cache. The cards' *ideal* (unconstrained) widths
+    /// depend only on their content, not on the size the row is proposed, so
+    /// measuring them is the expensive part (each card carries a material
+    /// background, shadow, and — for image cards — an async-decoded preview).
+    ///
+    /// Without a cache, `justifiedWidths` re-measures every card on each call,
+    /// and it is called on every `sizeThatFits` *and* every `placeSubviews`,
+    /// so a single layout pass measures each heavy card several times over.
+    /// On a busy iPad feed (many packed rows, image decodes constantly
+    /// invalidating layout) that thrash is enough to keep the app off the main
+    /// run loop long enough that UI automation never sees it reach idle — the
+    /// marketing-screenshot capture then times out. Caching the ideal widths
+    /// collapses those repeated measurements into one per subview-set.
+    struct Cache {
+        var idealWidths: [CGFloat]
+    }
+
+    func makeCache(subviews: Subviews) -> Cache {
+        Cache(idealWidths: subviews.map { $0.sizeThatFits(.unspecified).width })
+    }
+
+    func updateCache(_ cache: inout Cache, subviews: Subviews) {
+        cache.idealWidths = subviews.map { $0.sizeThatFits(.unspecified).width }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
         guard !subviews.isEmpty else { return .zero }
         let width = proposal.width
-            ?? subviews.reduce(CGFloat.zero) { $0 + $1.sizeThatFits(.unspecified).width }
+            ?? cache.idealWidths.reduce(CGFloat.zero, +)
             + Self.spacing * CGFloat(subviews.count - 1)
-        let height = zip(subviews, justifiedWidths(totalWidth: width, subviews: subviews))
+        let height = zip(subviews, justifiedWidths(totalWidth: width, cache: cache))
             .map { subview, width in
                 subview.sizeThatFits(ProposedViewSize(width: width, height: nil)).height
             }
@@ -122,9 +147,9 @@ struct JustifiedCardRow: Layout {
         return CGSize(width: width, height: height)
     }
 
-    func placeSubviews(in bounds: CGRect, proposal _: ProposedViewSize, subviews: Subviews, cache _: inout ()) {
+    func placeSubviews(in bounds: CGRect, proposal _: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
         var x = bounds.minX
-        for (subview, width) in zip(subviews, justifiedWidths(totalWidth: bounds.width, subviews: subviews)) {
+        for (subview, width) in zip(subviews, justifiedWidths(totalWidth: bounds.width, cache: cache)) {
             // Proposing the row height stretches every card surface to the
             // tallest card in the row, so short clips don't leave a gap
             // below their card.
@@ -140,24 +165,31 @@ struct JustifiedCardRow: Layout {
     /// Splits `totalWidth` between the cards proportionally to their measured
     /// ideal widths: naturally narrow clips (short text, color swatches) keep
     /// a modest share while long content absorbs the rest, and the shares
-    /// always sum to the full row.
-    private func justifiedWidths(totalWidth: CGFloat, subviews: Subviews) -> [CGFloat] {
-        let available = totalWidth - Self.spacing * CGFloat(subviews.count - 1)
+    /// always sum to the full row. Ideal widths come from `cache` so the heavy
+    /// per-card measurement runs once, not once per layout query.
+    private func justifiedWidths(totalWidth: CGFloat, cache: Cache) -> [CGFloat] {
+        // Everything is sized off the cached ideal-width array so the counts
+        // always agree, even if SwiftUI hands us a momentarily stale cache
+        // during a subview transition.
+        let count = cache.idealWidths.count
+        guard count > 0 else { return [] }
+
+        let available = totalWidth - Self.spacing * CGFloat(count - 1)
         guard available > 0 else {
-            return Array(repeating: 0, count: subviews.count)
+            return Array(repeating: 0, count: count)
         }
 
-        let floorWidth = min(Self.minCardWidth, available / CGFloat(subviews.count))
-        let ideals = subviews.map { subview in
-            min(max(subview.sizeThatFits(.unspecified).width, floorWidth), available)
+        let floorWidth = min(Self.minCardWidth, available / CGFloat(count))
+        let ideals = cache.idealWidths.map { idealWidth in
+            min(max(idealWidth, floorWidth), available)
         }
 
         var widths = ideals
-        var isFloored = Array(repeating: false, count: subviews.count)
+        var isFloored = Array(repeating: false, count: count)
         // Scale the flexible cards proportionally into the space left over by
         // floored ones; each pass either converges or floors one more card,
         // and at least one card always stays above the floor.
-        for _ in subviews.indices {
+        for _ in ideals.indices {
             let flooredCount = isFloored.count(where: { $0 })
             let flexibleSpace = available - floorWidth * CGFloat(flooredCount)
             let flexibleIdealTotal = ideals.indices.reduce(CGFloat.zero) {
