@@ -117,7 +117,7 @@ public struct BrowserFilterCatalog: Sendable {
         title: String(localized: "Images"),
         identifierSuffix: "images",
         symbolName: "photo",
-        searchAliases: aliases(["images", "image", "photos", "photo", "pictures", "picture"], title: String(localized: "Images"))
+        searchAliases: aliases(["images", "image", "photos", "photo", "pictures", "picture", "pics"], title: String(localized: "Images"))
     )
 
     private static let links = BrowserFilterDescriptor(
@@ -126,7 +126,7 @@ public struct BrowserFilterCatalog: Sendable {
         title: String(localized: "Links"),
         identifierSuffix: "links",
         symbolName: "link",
-        searchAliases: aliases(["links", "link", "urls", "url"], title: String(localized: "Links"))
+        searchAliases: aliases(["links", "link", "urls", "url", "https"], title: String(localized: "Links"))
     )
 
     private static let colors = BrowserFilterDescriptor(

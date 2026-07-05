@@ -157,7 +157,10 @@ final class BrowserFilterCatalogTests: XCTestCase {
 
     func testSynonymAliasesResolve() {
         XCTAssertEqual(catalog.typedSuggestion(searchText: "photo", appliedFilter: .all)?.kind, .images)
+        XCTAssertEqual(catalog.typedSuggestion(searchText: "pictures", appliedFilter: .all)?.kind, .images)
+        XCTAssertEqual(catalog.typedSuggestion(searchText: "pics", appliedFilter: .all)?.kind, .images)
         XCTAssertEqual(catalog.typedSuggestion(searchText: "url", appliedFilter: .all)?.kind, .links)
+        XCTAssertEqual(catalog.typedSuggestion(searchText: "https", appliedFilter: .all)?.kind, .links)
         XCTAssertEqual(catalog.typedSuggestion(searchText: "favorite", appliedFilter: .all)?.kind, .bookmarks)
     }
 
