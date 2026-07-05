@@ -12,6 +12,27 @@ import SwiftUI
 /// 2. `JustifiedCardRow` lays out each on-screen row from the cards' real
 ///    measured ideal widths, stretching them proportionally so every row is
 ///    filled edge to edge while naturally short clips stay narrow.
+/// Which kind of row a clip can share. Cards whose height is driven by an
+/// embedded image preview tower over text-height cards, and since packed
+/// cards stretch to the row height, a text card seated next to an image
+/// reads as mostly empty chrome. Rows are therefore packed homogeneously:
+/// media with media, text with text.
+enum CardRowFamily: Equatable {
+    /// Height scales with an image preview (thumbnail cards).
+    case media
+    /// Height scales with a few lines of text (everything else).
+    case text
+
+    init(row: DisplayRow) {
+        switch row.metadata.icon {
+        case .thumbnail:
+            self = .media
+        case .colorSwatch, .symbol:
+            self = .text
+        }
+    }
+}
+
 struct CardRowChunk: Identifiable {
     let id: String
     let rows: [DisplayRow]
@@ -22,8 +43,9 @@ struct CardRowChunk: Identifiable {
     }
 
     /// Greedily groups `rows` into feed rows: a clip joins the current row
-    /// while the row has fewer than `maxCardsPerRow` clips and the estimated
-    /// widths still fit `rowWidth`; otherwise it starts a new row.
+    /// while the row has fewer than `maxCardsPerRow` clips, shares the row's
+    /// family, and the estimated widths still fit `rowWidth`; otherwise it
+    /// starts a new row.
     static func pack(_ rows: [DisplayRow], rowWidth: CGFloat) -> [CardRowChunk] {
         guard rowWidth > 0 else {
             return rows.map { CardRowChunk(rows: [$0]) }
@@ -32,11 +54,14 @@ struct CardRowChunk: Identifiable {
         var chunks: [CardRowChunk] = []
         var pending: [DisplayRow] = []
         var pendingWidth: CGFloat = 0
+        var pendingFamily = CardRowFamily.text
 
         for row in rows {
             let estimated = estimatedWidth(for: row)
+            let family = CardRowFamily(row: row)
             let joinsCurrentRow = !pending.isEmpty
                 && pending.count < JustifiedCardRow.maxCardsPerRow
+                && family == pendingFamily
                 && pendingWidth + JustifiedCardRow.spacing + estimated <= rowWidth
 
             if joinsCurrentRow {
@@ -48,6 +73,7 @@ struct CardRowChunk: Identifiable {
                 }
                 pending = [row]
                 pendingWidth = estimated
+                pendingFamily = family
             }
         }
         if !pending.isEmpty {
