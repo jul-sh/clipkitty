@@ -206,8 +206,15 @@ private struct PendingFilterChip: View {
                     .foregroundStyle(titleColor)
                 switch selection {
                 case .unselected:
-                    EmptyView()
+                    // Resting hint: Tab applies the filter without leaving the
+                    // search field, so surface the Tab-key glyph here; this is
+                    // the state the user sees while typing.
+                    Image(systemName: "arrow.right.to.line")
+                        .font(.system(size: settings.scaled(10), weight: .semibold))
+                        .foregroundStyle(hintColor)
+                        .accessibilityLabel(Text(String(localized: "Press Tab to apply")))
                 case .selected, .accentSelected:
+                    // Once the chip owns the keyboard, Return applies it.
                     Text(verbatim: "⏎")
                         .font(settings.appFont(size: settings.scaled(10)))
                         .foregroundStyle(hintColor)
