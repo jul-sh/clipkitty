@@ -220,12 +220,23 @@ struct CardView: View {
 
     private func thumbnailPreview(bytes: Data) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            // The height cap keeps image cards near typical text-card
-            // heights so packed iPad rows mixing images and text stay
-            // balanced (packed neighbors stretch to the row height); the
-            // full image lives in the preview screen.
+            // A fixed-height, fill-and-crop image box. The fixed height (not a
+            // range) keeps image cards near typical text-card heights so packed
+            // iPad rows mixing images and text stay balanced; the full image
+            // lives in the preview screen.
+            //
+            // `.fill` into a fixed frame is deliberate: an aspect-*fit* image
+            // reports an intrinsic size that depends on the width AND height it
+            // is proposed, and inside `JustifiedCardRow` (which measures each
+            // card's ideal width, then re-proposes the row height to stretch
+            // cards to equal heights) that two-way dependency never settles —
+            // the layout loops and pins the main thread, so screenshot capture
+            // and the app itself hang. A `.fill` image simply fills whatever
+            // frame it is handed and crops the overflow, so its size never
+            // feeds back into the packing math.
             CardImagePreview(itemId: metadata.itemId, thumbnailBytes: bytes)
-                .frame(maxWidth: .infinity, maxHeight: 240)
+                .frame(maxWidth: .infinity)
+                .frame(height: 240)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             if !displayExcerpt.text.isEmpty {
@@ -378,11 +389,17 @@ private struct CardImagePreview: View {
         DecodedImageView(
             namespace: fullImageBytes == nil ? "card-thumbnail" : "card-full",
             itemId: itemId,
-            data: fullImageBytes ?? thumbnailBytes
+            data: fullImageBytes ?? thumbnailBytes,
+            // Fill-and-crop, not fit: the enclosing card gives this a fixed
+            // frame, and a fill image occupies it exactly instead of proposing
+            // its own aspect-derived size back up the tree. See the note in
+            // `thumbnailPreview` on why aspect-fit deadlocks `JustifiedCardRow`.
+            contentMode: .fill
         ) {
+            // Placeholder fills the same fixed frame (no aspect ratio), so the
+            // card's height is identical whether or not the image has decoded.
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(.secondary.opacity(0.1))
-                .aspectRatio(16.0 / 9.0, contentMode: .fit)
                 .overlay(
                     Image(systemName: "photo")
                         .font(.title)
