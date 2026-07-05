@@ -115,10 +115,13 @@ struct JustifiedCardRow: Layout {
     func placeSubviews(in bounds: CGRect, proposal _: ProposedViewSize, subviews: Subviews, cache _: inout ()) {
         var x = bounds.minX
         for (subview, width) in zip(subviews, justifiedWidths(totalWidth: bounds.width, subviews: subviews)) {
+            // Proposing the row height stretches every card surface to the
+            // tallest card in the row, so short clips don't leave a gap
+            // below their card.
             subview.place(
                 at: CGPoint(x: x, y: bounds.minY),
                 anchor: .topLeading,
-                proposal: ProposedViewSize(width: width, height: nil)
+                proposal: ProposedViewSize(width: width, height: bounds.height)
             )
             x += width + Self.spacing
         }
