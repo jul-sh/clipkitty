@@ -763,7 +763,14 @@ jobs:
         run: make workspace
 
       - name: Run UI Tests
-        timeout-minutes: 45
+        # 75, not 45: this step's xcodebuild runs the Xcode pre-build action,
+        # which compiles the whole Rust workspace (libpurr.a) with cargo
+        # before the Swift build even starts — on run 28808214574 that build
+        # phase alone took 42 minutes on a slow runner and the suite timed
+        # out three minutes after its first test. Cold Rust (~20m) + Swift
+        # build (~15m) + full suite (~25m, more with per-test retries) needs
+        # the extra headroom.
+        timeout-minutes: 75
         env:
           LOCKED: "1"
         run: |
