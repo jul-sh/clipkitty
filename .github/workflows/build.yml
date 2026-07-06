@@ -561,12 +561,16 @@ jobs:
         uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
 
       - name: Build iOS Smoke Test
-        # 30 min, not 15: unlike the other Nix jobs, this one has no separate
+        # 50 min, not 15: unlike the other Nix jobs, this one has no separate
         # `make workspace` step to absorb a cold purr-* build — the Rust
-        # cross-compile (~12-15 min from a cold cache) happens inside this
-        # step, on top of the smoke build itself. The shared Nix cache makes
-        # the cold case rare, but the timeout has to survive it.
-        timeout-minutes: 30
+        # cross-compile happens inside this step, on top of the smoke build
+        # itself. The shared Nix cache makes the cold case rare, but when the
+        # GitHub cache API rate-limits (HTTP 418) the substituter is disabled
+        # for the whole job and every purr-* target rebuilds from source
+        # (~19 min each, partially parallel — run 28756804534 was still
+        # building at the old 30-min cutoff). The timeout has to survive a
+        # fully cold, cache-less build.
+        timeout-minutes: 50
         run: nix build '.#checks.aarch64-darwin.clipkitty-ios-smoke-build' -L
 
   # Release-configuration iOS build with App Store provisioning; catches

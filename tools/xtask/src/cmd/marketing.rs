@@ -484,6 +484,98 @@ fn reset_ios_simulators(reporter: &Reporter) {
     }
 }
 
+/// Watches the simulator's ClipKitty app while a screenshot xcodebuild run is
+/// in flight and captures a `sample` stack profile if the app pins a core.
+///
+/// This exists for the iPad packed-rows hang class of failure: the app's main
+/// thread stops servicing accessibility snapshots, every XCUITest query dies
+/// with "Timed out while evaluating UI query", and by the time xcodebuild
+/// exits the app has been torn down — so the only moment the spinning stack
+/// can be captured is while the test is still running. The sample lands in
+/// `/tmp/clipkitty_<device>_hang_sample_<n>_screenshot_test.log`, which rides
+/// the `/tmp/clipkitty_*_screenshot_test.log` glob CI already uploads.
+struct SimHangSampler {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl SimHangSampler {
+    /// CPU threshold and dwell: two consecutive readings ≥90% ten seconds
+    /// apart. Launch and image-decode bursts stay below that dwell; the
+    /// layout hang holds 100% indefinitely.
+    const CPU_THRESHOLD: f32 = 90.0;
+    const MAX_CAPTURES: u32 = 2;
+
+    fn spawn(device_stem: &'static str) -> Self {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_flag = stop.clone();
+        let handle = thread::spawn(move || {
+            let mut consecutive_high = 0u32;
+            let mut captures = 0u32;
+            let mut ticks = 0u32;
+            while !stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                thread::sleep(Duration::from_secs(1));
+                ticks += 1;
+                if ticks % 10 != 0 || captures >= Self::MAX_CAPTURES {
+                    continue;
+                }
+                let Some(pid) = Self::app_pid() else {
+                    consecutive_high = 0;
+                    continue;
+                };
+                if Self::cpu_percent(&pid).is_some_and(|cpu| cpu >= Self::CPU_THRESHOLD) {
+                    consecutive_high += 1;
+                } else {
+                    consecutive_high = 0;
+                }
+                if consecutive_high >= 2 {
+                    captures += 1;
+                    consecutive_high = 0;
+                    let out = format!(
+                        "/tmp/clipkitty_{device_stem}_hang_sample_{captures}_screenshot_test.log"
+                    );
+                    let _ = std::process::Command::new("sample")
+                        .args([&pid, "5", "-f", &out])
+                        .output();
+                }
+            }
+        });
+        Self {
+            stop,
+            handle: Some(handle),
+        }
+    }
+
+    /// Pid of the simulator-hosted iOS app, if running. Simulator app
+    /// processes are ordinary host processes, so `pgrep`/`sample` see them.
+    fn app_pid() -> Option<String> {
+        let output = std::process::Command::new("pgrep")
+            .args(["-f", "ClipKittyiOS.app/ClipKittyiOS"])
+            .output()
+            .ok()?;
+        let pids = String::from_utf8_lossy(&output.stdout);
+        pids.lines().next().map(|line| line.trim().to_string())
+    }
+
+    fn cpu_percent(pid: &str) -> Option<f32> {
+        let output = std::process::Command::new("ps")
+            .args(["-o", "%cpu=", "-p", pid])
+            .output()
+            .ok()?;
+        String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+    }
+}
+
+impl Drop for SimHangSampler {
+    fn drop(&mut self) {
+        self.stop
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 fn run_screenshot_xcodebuild(
     repo: &RepoRoot,
     plan: ScreenshotPlan,
@@ -524,6 +616,9 @@ fn run_screenshot_xcodebuild(
         runner = runner.arg("CODE_SIGNING_ALLOWED=NO");
     }
 
+    let _hang_sampler = plan
+        .ios_device_kind()
+        .map(|kind| SimHangSampler::spawn(kind.tmp_prefix_stem()));
     let output = runner.output_status()?;
     let combined = format!(
         "{}{}",
