@@ -5,6 +5,7 @@
 use std::env;
 use std::io::Write;
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 
 use anyhow::{anyhow, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -28,98 +29,42 @@ fn secret_path(repo: &RepoRoot, name: &str) -> Utf8PathBuf {
     repo.join(format!("secrets/{stem}.age"))
 }
 
-/// Resolve an age-encrypted secret to plaintext, mirroring the keytap +
-/// keychain + `$AGE_SECRET_KEY` fallback used by the existing signing/release
-/// flows.
-pub(crate) fn read_secret(
-    repo: &RepoRoot,
-    secret_path: &Utf8Path,
-    reporter: &Reporter,
-) -> Result<Vec<u8>> {
-    match age_identity_source(repo)? {
-        AgeIdentitySource::EnvVar(key) => age_decrypt(&key, secret_path),
-        AgeIdentitySource::Keychain { account } => match read_keychain(&account) {
-            Some(key) => match age_decrypt(&key, secret_path) {
-                Ok(bytes) => Ok(bytes),
-                Err(_) => fallback_to_keytap(&account, secret_path, reporter),
-            },
-            None => fallback_to_keytap(&account, secret_path, reporter),
-        },
-    }
+/// Resolve an age-encrypted secret to plaintext. The age identity comes from
+/// `$AGE_SECRET_KEY` (CI) or `keytap reveal` (local development). Key
+/// persistence is keytap's job: `keytap remember clipkitty` makes reveals
+/// prompt-free on this machine.
+pub(crate) fn read_secret(secret_path: &Utf8Path, reporter: &Reporter) -> Result<Vec<u8>> {
+    let identity = age_identity(reporter)
+        .with_context(|| format!("resolving age identity to decrypt {secret_path}"))?;
+    age_decrypt(&identity, secret_path)
 }
 
-enum AgeIdentitySource {
-    EnvVar(String),
-    Keychain { account: String },
-}
+/// Key revealed by keytap during this run, so commands that decrypt several
+/// secrets (e.g. signing setup) invoke keytap at most once.
+static REVEALED_KEY: OnceLock<String> = OnceLock::new();
 
-fn age_identity_source(repo: &RepoRoot) -> Result<AgeIdentitySource> {
+fn age_identity(reporter: &Reporter) -> Result<String> {
     if let Ok(key) = env::var("AGE_SECRET_KEY") {
         if !key.is_empty() {
-            return Ok(AgeIdentitySource::EnvVar(key));
+            return Ok(key);
         }
     }
-    let project_name = repo
-        .as_path()
-        .file_name()
-        .ok_or_else(|| anyhow!("repo root has no filename"))?
-        .to_owned();
-    Ok(AgeIdentitySource::Keychain {
-        account: format!("AGE_SECRET_KEY_{project_name}"),
-    })
-}
-
-fn read_keychain(account: &str) -> Option<String> {
-    let output = Command::new("security")
-        .args(["find-generic-password", "-s", "keytap", "-a", account, "-w"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+    if let Some(key) = REVEALED_KEY.get() {
+        return Ok(key.clone());
     }
-    let raw = String::from_utf8(output.stdout).ok()?;
-    let trimmed = raw.trim_end_matches('\n').to_string();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed)
-    }
-}
-
-fn cache_keychain(account: &str, key: &str) {
-    let _ = Command::new("security")
-        .args([
-            "add-generic-password",
-            "-U",
-            "-s",
-            "keytap",
-            "-a",
-            account,
-            "-w",
-            key,
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
-fn fallback_to_keytap(
-    account: &str,
-    secret_path: &Utf8Path,
-    reporter: &Reporter,
-) -> Result<Vec<u8>> {
     if !tool_exists("keytap") {
         return Err(anyhow!(
-            "Neither AGE_SECRET_KEY, keychain, nor keytap available to decrypt {secret_path}"
+            "neither AGE_SECRET_KEY nor the keytap CLI is available"
         ));
     }
     let out = Runner::new(reporter, "keytap")
         .args(["reveal", "clipkitty", "--format", "age"])
         .output()?;
     let key = out.stdout_string()?.trim().to_string();
-    let plaintext = age_decrypt(&key, secret_path)?;
-    cache_keychain(account, &key);
-    Ok(plaintext)
+    if key.is_empty() {
+        return Err(anyhow!("keytap reveal produced an empty key"));
+    }
+    Ok(REVEALED_KEY.get_or_init(|| key).clone())
 }
 
 fn age_decrypt(identity: &str, secret_path: &Utf8Path) -> Result<Vec<u8>> {
@@ -180,7 +125,7 @@ pub(crate) fn resolve_asc_field(
     for name in [primary, fallback] {
         let path = secret_path(repo, name);
         if path.as_std_path().is_file() {
-            let bytes = read_secret(repo, &path, reporter)?;
+            let bytes = read_secret(&path, reporter)?;
             return Ok(String::from_utf8(bytes)
                 .context("ASC secret is not UTF-8")?
                 .trim()

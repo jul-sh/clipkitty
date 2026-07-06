@@ -153,7 +153,7 @@ impl<'a> AppStoreSigningSession<'a> {
 
         self.reporter
             .info("Decrypting provisioning profile from secrets...");
-        let encoded = secrets::read_secret(self.repo, &secret_path, self.reporter)
+        let encoded = secrets::read_secret(&secret_path, self.reporter)
             .with_context(|| format!("decrypting {secret_path}"))?;
         let encoded = std::str::from_utf8(&encoded)
             .context("PROVISION_PROFILE_BASE64 secret is not valid UTF-8")?;
