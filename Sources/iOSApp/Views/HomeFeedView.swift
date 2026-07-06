@@ -1,7 +1,6 @@
 import ClipKittyRust
 import ClipKittyShared
 import SwiftUI
-import UIKit
 
 struct HomeFeedView: View {
     @Environment(AppState.self) private var appState
@@ -17,18 +16,22 @@ struct HomeFeedView: View {
     /// How the feed arranges clips, derived from the window geometry. The
     /// packed case carries the row width it was derived from, so packing can
     /// never run against a stale or unset width.
+    ///
+    /// Chosen purely by window width, never by device idiom: a full-screen
+    /// iPad and a hypothetical extra-wide iPhone (or a landscape Max-class
+    /// one) get the same packed rows, and an iPad squeezed into a narrow
+    /// Split View column reads like an iPhone.
     private enum FeedLayout: Equatable {
-        /// One clip per row: iPhone, and narrow iPad windows.
+        /// One clip per row: windows narrower than
+        /// `JustifiedCardRow.multiColumnMinimumWidth`.
         case singleColumn
-        /// Up to `JustifiedCardRow.maxCardsPerRow` clips share each row.
-        /// Reserved for large iPad windows (full screen, or a spacious
-        /// Split View / Stage Manager window).
+        /// Up to `JustifiedCardRow.maxCardsPerRow` clips share each row:
+        /// full-screen iPads, spacious Split View / Stage Manager windows,
+        /// and any other window at least `multiColumnMinimumWidth` wide.
         case packedRows(rowWidth: CGFloat)
 
         init(containerWidth: CGFloat) {
-            if UIDevice.current.userInterfaceIdiom == .pad,
-               containerWidth >= JustifiedCardRow.multiColumnMinimumWidth
-            {
+            if containerWidth >= JustifiedCardRow.multiColumnMinimumWidth {
                 self = .packedRows(rowWidth: containerWidth - 2 * HomeFeedView.feedGutter)
             } else {
                 self = .singleColumn

@@ -3,7 +3,8 @@ import ClipKittyShared
 import SwiftUI
 
 /// A left-to-right feed row of up to `JustifiedCardRow.maxCardsPerRow` clips,
-/// used on wide iPad layouts. Packing happens in two stages:
+/// used whenever the window is wide enough (see
+/// `JustifiedCardRow.multiColumnMinimumWidth`). Packing happens in two stages:
 ///
 /// 1. `CardRowChunk.pack` groups the flat feed into rows using cheap
 ///    content-based width estimates. Estimation (rather than live
@@ -101,8 +102,10 @@ struct CardRowChunk: Identifiable {
 /// Lays out one feed row's cards left to right, top-aligned, splitting the
 /// full row width between them so the row is always filled edge to edge.
 struct JustifiedCardRow: Layout {
-    /// Feed width at which the iPad feed switches from the single-column
-    /// list to packed multi-clip rows (full screen or a large window).
+    /// Feed width at which the feed switches from the single-column list to
+    /// packed multi-clip rows — a full-screen iPad, a spacious Split View /
+    /// Stage Manager window, or any future device that gets this wide.
+    /// Purely width-based; device idiom never enters into it.
     static let multiColumnMinimumWidth: CGFloat = 700
     static let maxCardsPerRow = 3
     static let spacing: CGFloat = 12
