@@ -100,7 +100,13 @@ struct DecodedImageView<Placeholder: View>: View {
             return
         }
 
-        decodedImage = nil
+        // Deliberately keep the previous image (typically the small
+        // thumbnail) on screen while the replacement decodes: blanking here
+        // regresses the card to the gray placeholder for the whole decode,
+        // and on a loaded CI runner the marketing capture shipped exactly
+        // that — four placeholder cards in the Images-filter screenshot
+        // (run 28795788433). A stale thumbnail is always a better frame
+        // than an empty box, and the decode result overwrites it on arrival.
         let image = await Self.decodeOffPool(data)
         guard !Task.isCancelled, let image else { return }
         DecodedImageCache.setImage(image, forKey: cacheKey, cost: data.count)
@@ -121,9 +127,15 @@ struct DecodedImageView<Placeholder: View>: View {
     /// with "Timed out while evaluating UI query" while the main thread sat
     /// idle. A wedged decode must cost at most one background GCD thread,
     /// with the caller falling back to the placeholder/thumbnail.
+    /// The timeout is a wedge net, not a pacing deadline: it starts when the
+    /// work is *enqueued*, and under a burst (the Images filter realizes a
+    /// screenful of cards at once) later decodes legitimately spend many
+    /// seconds queued behind earlier ones on a few-core CI host. 60s is far
+    /// beyond any real decode+wait, while still eventually reclaiming the
+    /// continuation if a codec parks forever.
     private static func decodeOffPool(
         _ data: Data,
-        timeout: TimeInterval = 15
+        timeout: TimeInterval = 60
     ) async -> UIImage? {
         let once = ResumeOnce()
         return await withCheckedContinuation { continuation in

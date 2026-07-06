@@ -119,11 +119,14 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         XCTAssertTrue(imagesFilter.waitForExistence(timeout: 3),
                       "bottomBar.filterOption.images not found for locale \(locale!)")
         imagesFilter.tap()
-        // Filtering down to images surfaces several full-width image cards
-        // simultaneously; each one async-loads its full-resolution data,
-        // so wait long enough that none capture mid-decode (which would
-        // ship a pixelated thumbnail to the App Store).
-        sleep(8)
+        // Filtering down to images surfaces a screenful of image cards
+        // simultaneously; each one async-loads and decodes its
+        // full-resolution data, and on a loaded few-core CI runner that
+        // burst takes well over 8s end to end (run 28795788433 captured
+        // four cards still undecoded at 8s). Wait long enough that none
+        // capture mid-decode, which would ship a pixelated thumbnail —
+        // or worse, a placeholder — to the App Store.
+        sleep(15)
 
         let filterScreenshot = captureScreen()
         saveScreenshot(filterScreenshot, index: 3, name: "filter")
