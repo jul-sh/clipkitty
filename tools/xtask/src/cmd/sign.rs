@@ -492,11 +492,8 @@ fn temp_p12_secret(
 }
 
 fn decode_secret_base64(repo: &RepoRoot, name: &str, reporter: &Reporter) -> Result<Vec<u8>> {
-    let bytes = crate::cmd::secrets::read_secret(
-        repo,
-        &repo.join(format!("secrets/{name}.age")),
-        reporter,
-    )?;
+    let bytes =
+        crate::cmd::secrets::read_secret(&repo.join(format!("secrets/{name}.age")), reporter)?;
     let text =
         String::from_utf8(bytes).map_err(|err| anyhow!("{name} secret is not UTF-8: {err}"))?;
     // Some secrets are line-wrapped base64 (standard `base64` CLI output wraps
@@ -509,11 +506,8 @@ fn decode_secret_base64(repo: &RepoRoot, name: &str, reporter: &Reporter) -> Res
 }
 
 fn secret_text(repo: &RepoRoot, name: &str, reporter: &Reporter) -> Result<String> {
-    let bytes = crate::cmd::secrets::read_secret(
-        repo,
-        &repo.join(format!("secrets/{name}.age")),
-        reporter,
-    )?;
+    let bytes =
+        crate::cmd::secrets::read_secret(&repo.join(format!("secrets/{name}.age")), reporter)?;
     String::from_utf8(bytes)
         .map(|text| text.trim().to_string())
         .map_err(|err| anyhow!("{name} secret is not UTF-8: {err}"))
