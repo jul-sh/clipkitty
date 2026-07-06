@@ -53,7 +53,7 @@ fn keytap_decrypt(secret_path: &Utf8Path, reporter: &Reporter) -> Result<Vec<u8>
     let file = File::open(secret_path.as_std_path())
         .with_context(|| format!("opening {secret_path}"))?;
     let output = Command::new("keytap")
-        .args(["decrypt", "--key", "clipkitty"])
+        .args(["decrypt", "clipkitty"])
         .stdin(Stdio::from(file))
         .stdout(Stdio::piped())
         // The passkey ceremony (Touch ID notice, nearby-flow QR) renders on

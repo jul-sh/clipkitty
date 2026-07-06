@@ -5,7 +5,7 @@
     nixpkgs.url = "github:NixOS/nixpkgs/832efc09b4caf6b4569fbf9dc01bec3082a00611"; # nixpkgs-unstable
     rust-overlay.url = "github:oxalica/rust-overlay/cc80954a95f6f356c303ed9f08d0b63ca86216ac";
     flake-utils.url = "github:numtide/flake-utils/11707dc2f618dd54ca8739b309ec4fc024de578b";
-    keytap.url = "github:jul-sh/keytap/92154f13235fd8ff26e5d51aa34d63428ae7dfcf";
+    keytap.url = "github:jul-sh/keytap/21881ccd1d880f3703c9db48c210415d88990365";
   };
 
   outputs = { self, nixpkgs, rust-overlay, flake-utils, keytap, ... }:
