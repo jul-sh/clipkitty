@@ -768,6 +768,13 @@ jobs:
           LOCKED: "1"
         run: |
           set +e
+          # -retry-tests-on-failure: individual UI tests flake on loaded
+          # runners with shifting element-appearance timeouts (a different
+          # pair failed on runs 28776936157 and 28795788433 while every
+          # other job stayed green). Screenshot jobs already get 3 attempts
+          # from xtask; this job is the only UI suite with none. Retries
+          # keep assertions strict — only failures that reproduce twice
+          # more fail the job.
           xcodebuild test \
             -workspace ClipKitty.xcworkspace \
             -scheme ClipKittyUITests \
@@ -775,6 +782,8 @@ jobs:
             -destination-timeout 120 \
             -test-timeouts-enabled YES \
             -maximum-test-execution-time-allowance 600 \
+            -retry-tests-on-failure \
+            -test-iterations 3 \
             -derivedDataPath DerivedData \
             CODE_SIGNING_ALLOWED=NO \
             -skip-testing:ClipKittyUITests/ClipKittyUITests/testRecordIntroVideo \
