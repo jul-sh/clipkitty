@@ -2,9 +2,7 @@
 //! release orchestration. Internal release/sign code also calls
 //! [`read_secret`] directly to decrypt other age-encrypted secrets.
 
-use std::env;
 use std::fs::File;
-use std::io::Write;
 use std::process::{Command, Stdio};
 
 use anyhow::{anyhow, Context, Result};
@@ -28,25 +26,18 @@ fn secret_path(repo: &RepoRoot, name: &str) -> Utf8PathBuf {
     repo.join(format!("secrets/{stem}.age"))
 }
 
-/// Resolve an age-encrypted secret to plaintext. With `$AGE_SECRET_KEY` set
-/// (CI), decrypt with the `age` CLI; otherwise hand the whole job to
-/// `keytap decrypt`, so the derived age identity never enters this process.
-/// Prompt-freedom is keytap's job: after a one-time `keytap remember
-/// clipkitty`, decrypts stop prompting on this machine; without it, every
-/// decrypt is its own passkey ceremony.
+/// Resolve an age-encrypted secret to plaintext with `keytap decrypt
+/// clipkitty` — the same command everywhere, so the derived age identity
+/// never enters this process. Prompt-freedom is keytap's job: in CI,
+/// `$KEYTAP_KEY_CLIPKITTY` carries the derived key and keytap never prompts
+/// (it refuses ceremonies under `$CI`); on a dev machine, a one-time
+/// `keytap remember clipkitty` makes decrypts prompt-free, and without it
+/// every decrypt is its own passkey ceremony.
 pub(crate) fn read_secret(secret_path: &Utf8Path, reporter: &Reporter) -> Result<Vec<u8>> {
-    if let Ok(key) = env::var("AGE_SECRET_KEY") {
-        if !key.is_empty() {
-            return age_decrypt(&key, secret_path);
-        }
-    }
-    keytap_decrypt(secret_path, reporter)
-}
-
-fn keytap_decrypt(secret_path: &Utf8Path, reporter: &Reporter) -> Result<Vec<u8>> {
     if !tool_exists("keytap") {
         return Err(anyhow!(
-            "neither AGE_SECRET_KEY nor the keytap CLI is available to decrypt {secret_path}"
+            "the keytap CLI is not available to decrypt {secret_path} (install keytap, then \
+             set $KEYTAP_KEY_CLIPKITTY in CI or run `keytap remember clipkitty` on this machine)"
         ));
     }
     reporter.info(&format!("Decrypting {secret_path} with keytap"));
@@ -63,37 +54,6 @@ fn keytap_decrypt(secret_path: &Utf8Path, reporter: &Reporter) -> Result<Vec<u8>
         .context("spawning keytap decrypt")?;
     if !output.status.success() {
         return Err(anyhow!("keytap decrypt failed for {secret_path}"));
-    }
-    Ok(output.stdout)
-}
-
-fn age_decrypt(identity: &str, secret_path: &Utf8Path) -> Result<Vec<u8>> {
-    let mut child = Command::new("age")
-        .arg("-d")
-        .arg("-i")
-        .arg("-")
-        .arg(secret_path.as_std_path())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("spawning age")?;
-    {
-        let stdin = child
-            .stdin
-            .as_mut()
-            .ok_or_else(|| anyhow!("age stdin closed"))?;
-        stdin
-            .write_all(identity.as_bytes())
-            .context("writing age identity")?;
-    }
-    let output = child.wait_with_output().context("waiting for age")?;
-    if !output.status.success() {
-        return Err(anyhow!(
-            "age -d exited with status {:?}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        ));
     }
     Ok(output.stdout)
 }
