@@ -500,43 +500,103 @@ struct SimHangSampler {
 }
 
 impl SimHangSampler {
-    /// CPU threshold and dwell: two consecutive readings ≥90% ten seconds
-    /// apart. Launch and image-decode bursts stay below that dwell; the
-    /// layout hang holds 100% indefinitely.
+    /// Immediate-capture threshold: two consecutive readings ≥90% ten
+    /// seconds apart mean the app is hot-spinning and worth sampling now.
     const CPU_THRESHOLD: f32 = 90.0;
-    const MAX_CAPTURES: u32 = 2;
+    /// Unconditional captures this long after a pid is first seen. The iPad
+    /// hang wedges the app ~35s into the test and the test gives up around
+    /// 130s, so both land inside the hung window — even if the hang is a
+    /// blocked main thread at 0% CPU that the spin trigger can never see.
+    const TIMED_CAPTURE_SECS: [u32; 2] = [60, 100];
+    const MAX_CAPTURES: u32 = 4;
 
     fn spawn(device_stem: &'static str) -> Self {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stop_flag = stop.clone();
         let handle = thread::spawn(move || {
+            let status_path = format!(
+                "/tmp/clipkitty_{device_stem}_hang_sampler_status_screenshot_test.log"
+            );
             let mut consecutive_high = 0u32;
             let mut captures = 0u32;
             let mut ticks = 0u32;
+            let mut tracked_pid: Option<String> = None;
+            let mut pid_first_seen_tick = 0u32;
+            let mut timed_captures_done = 0usize;
             while !stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
                 thread::sleep(Duration::from_secs(1));
                 ticks += 1;
-                if ticks % 10 != 0 || captures >= Self::MAX_CAPTURES {
+                if ticks % 10 != 0 {
                     continue;
                 }
                 let Some(pid) = Self::app_pid() else {
+                    if tracked_pid.take().is_some() {
+                        Self::log_status(&status_path, &format!("t={ticks}s app exited"));
+                    }
                     consecutive_high = 0;
                     continue;
                 };
-                if Self::cpu_percent(&pid).is_some_and(|cpu| cpu >= Self::CPU_THRESHOLD) {
+                if tracked_pid.as_deref() != Some(pid.as_str()) {
+                    tracked_pid = Some(pid.clone());
+                    pid_first_seen_tick = ticks;
+                    timed_captures_done = 0;
+                    consecutive_high = 0;
+                }
+                let cpu = Self::cpu_percent(&pid);
+                let state = Self::proc_state(&pid);
+                Self::log_status(
+                    &status_path,
+                    &format!(
+                        "t={ticks}s pid={pid} cpu={} state={}",
+                        cpu.map_or_else(|| "?".into(), |c| format!("{c:.1}")),
+                        state.as_deref().unwrap_or("?")
+                    ),
+                );
+
+                if cpu.is_some_and(|cpu| cpu >= Self::CPU_THRESHOLD) {
                     consecutive_high += 1;
                 } else {
                     consecutive_high = 0;
                 }
-                if consecutive_high >= 2 {
+                let spin_detected = consecutive_high >= 2;
+                let alive_secs = ticks - pid_first_seen_tick;
+                let timed_due = Self::TIMED_CAPTURE_SECS
+                    .get(timed_captures_done)
+                    .is_some_and(|&at| alive_secs >= at);
+                if (spin_detected || timed_due) && captures < Self::MAX_CAPTURES {
                     captures += 1;
+                    if timed_due {
+                        timed_captures_done += 1;
+                    }
                     consecutive_high = 0;
+                    let reason = if spin_detected { "spin" } else { "timed" };
                     let out = format!(
                         "/tmp/clipkitty_{device_stem}_hang_sample_{captures}_screenshot_test.log"
                     );
-                    let _ = std::process::Command::new("sample")
+                    Self::log_status(
+                        &status_path,
+                        &format!("t={ticks}s capturing sample #{captures} ({reason}) -> {out}"),
+                    );
+                    let result = std::process::Command::new("/usr/bin/sample")
                         .args([&pid, "5", "-f", &out])
                         .output();
+                    if let Err(err) = result {
+                        Self::log_status(&status_path, &format!("sample failed: {err}"));
+                    }
+                    // On the last capture, also sample the XCUITest runner:
+                    // if the app's threads are all idle, the runner's stack
+                    // shows which AX request "Timed out while evaluating UI
+                    // query" is actually stuck on.
+                    if captures == Self::MAX_CAPTURES || timed_captures_done == Self::TIMED_CAPTURE_SECS.len() {
+                        if let Some(runner_pid) = Self::runner_pid() {
+                            let out = format!(
+                                "/tmp/clipkitty_{device_stem}_hang_sample_runner_screenshot_test.log"
+                            );
+                            let _ = std::process::Command::new("/usr/bin/sample")
+                                .args([&runner_pid, "5", "-f", &out])
+                                .output();
+                        }
+                    }
                 }
             }
         });
@@ -546,10 +606,17 @@ impl SimHangSampler {
         }
     }
 
+    fn log_status(path: &str, line: &str) {
+        use std::io::Write;
+        if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(file, "{line}");
+        }
+    }
+
     /// Pid of the simulator-hosted iOS app, if running. Simulator app
     /// processes are ordinary host processes, so `pgrep`/`sample` see them.
     fn app_pid() -> Option<String> {
-        let output = std::process::Command::new("pgrep")
+        let output = std::process::Command::new("/usr/bin/pgrep")
             .args(["-f", "ClipKittyiOS.app/ClipKittyiOS"])
             .output()
             .ok()?;
@@ -557,12 +624,33 @@ impl SimHangSampler {
         pids.lines().next().map(|line| line.trim().to_string())
     }
 
+    fn runner_pid() -> Option<String> {
+        let output = std::process::Command::new("/usr/bin/pgrep")
+            .args(["-f", "ClipKittyiOSUITests-Runner"])
+            .output()
+            .ok()?;
+        let pids = String::from_utf8_lossy(&output.stdout);
+        pids.lines().next().map(|line| line.trim().to_string())
+    }
+
     fn cpu_percent(pid: &str) -> Option<f32> {
-        let output = std::process::Command::new("ps")
+        let output = std::process::Command::new("/bin/ps")
             .args(["-o", "%cpu=", "-p", pid])
             .output()
             .ok()?;
         String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+    }
+
+    /// Single-letter process state (R runnable, S sleeping, U uninterruptible
+    /// wait, …) — enough to tell a hot spin from a blocked main thread even
+    /// when `sample` itself fails.
+    fn proc_state(pid: &str) -> Option<String> {
+        let output = std::process::Command::new("/bin/ps")
+            .args(["-o", "state=", "-p", pid])
+            .output()
+            .ok()?;
+        let state = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        (!state.is_empty()).then_some(state)
     }
 }
 
