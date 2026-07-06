@@ -3,9 +3,9 @@
 //! [`read_secret`] directly to decrypt other age-encrypted secrets.
 
 use std::env;
+use std::fs::File;
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
 
 use anyhow::{anyhow, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
@@ -13,7 +13,6 @@ use camino::{Utf8Path, Utf8PathBuf};
 use crate::cli::{AscAuthArgs, SecretsCmd};
 use crate::model::{AscAuthField, SideEffectLevel};
 use crate::output::Reporter;
-use crate::process::Runner;
 use crate::repo::RepoRoot;
 
 pub fn run(cmd: &SecretsCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
@@ -29,42 +28,43 @@ fn secret_path(repo: &RepoRoot, name: &str) -> Utf8PathBuf {
     repo.join(format!("secrets/{stem}.age"))
 }
 
-/// Resolve an age-encrypted secret to plaintext. The age identity comes from
-/// `$AGE_SECRET_KEY` (CI) or `keytap reveal` (local development). Key
-/// persistence is keytap's job: `keytap remember clipkitty` makes reveals
-/// prompt-free on this machine.
+/// Resolve an age-encrypted secret to plaintext. With `$AGE_SECRET_KEY` set
+/// (CI), decrypt with the `age` CLI; otherwise hand the whole job to
+/// `keytap decrypt`, so the derived age identity never enters this process.
+/// Prompt-freedom is keytap's job: after a one-time `keytap remember
+/// clipkitty`, decrypts stop prompting on this machine; without it, every
+/// decrypt is its own passkey ceremony.
 pub(crate) fn read_secret(secret_path: &Utf8Path, reporter: &Reporter) -> Result<Vec<u8>> {
-    let identity = age_identity(reporter)
-        .with_context(|| format!("resolving age identity to decrypt {secret_path}"))?;
-    age_decrypt(&identity, secret_path)
-}
-
-/// Key revealed by keytap during this run, so commands that decrypt several
-/// secrets (e.g. signing setup) invoke keytap at most once.
-static REVEALED_KEY: OnceLock<String> = OnceLock::new();
-
-fn age_identity(reporter: &Reporter) -> Result<String> {
     if let Ok(key) = env::var("AGE_SECRET_KEY") {
         if !key.is_empty() {
-            return Ok(key);
+            return age_decrypt(&key, secret_path);
         }
     }
-    if let Some(key) = REVEALED_KEY.get() {
-        return Ok(key.clone());
-    }
+    keytap_decrypt(secret_path, reporter)
+}
+
+fn keytap_decrypt(secret_path: &Utf8Path, reporter: &Reporter) -> Result<Vec<u8>> {
     if !tool_exists("keytap") {
         return Err(anyhow!(
-            "neither AGE_SECRET_KEY nor the keytap CLI is available"
+            "neither AGE_SECRET_KEY nor the keytap CLI is available to decrypt {secret_path}"
         ));
     }
-    let out = Runner::new(reporter, "keytap")
-        .args(["reveal", "clipkitty", "--format", "age"])
-        .output()?;
-    let key = out.stdout_string()?.trim().to_string();
-    if key.is_empty() {
-        return Err(anyhow!("keytap reveal produced an empty key"));
+    reporter.info(&format!("Decrypting {secret_path} with keytap"));
+    let file = File::open(secret_path.as_std_path())
+        .with_context(|| format!("opening {secret_path}"))?;
+    let output = Command::new("keytap")
+        .args(["decrypt", "--key", "clipkitty"])
+        .stdin(Stdio::from(file))
+        .stdout(Stdio::piped())
+        // The passkey ceremony (Touch ID notice, nearby-flow QR) renders on
+        // stderr; it must reach the user.
+        .stderr(Stdio::inherit())
+        .output()
+        .context("spawning keytap decrypt")?;
+    if !output.status.success() {
+        return Err(anyhow!("keytap decrypt failed for {secret_path}"));
     }
-    Ok(REVEALED_KEY.get_or_init(|| key).clone())
+    Ok(output.stdout)
 }
 
 fn age_decrypt(identity: &str, secret_path: &Utf8Path) -> Result<Vec<u8>> {
