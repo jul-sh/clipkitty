@@ -735,7 +735,11 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that Escape closes the actions popover.
     func testEscapeClosesActionsPopover() {
         let actionsButton = app.buttons["ActionsButton"]
-        XCTAssertTrue(actionsButton.waitForExistence(timeout: 5))
+        // 15s to match testActionsPopoverOpensOnClick: on loaded CI runners
+        // the footer can take >5s to appear after launch (observed on run
+        // 28776936157, where the 5s wait here flaked while the 15s sibling
+        // passed the same session).
+        XCTAssertTrue(actionsButton.waitForExistence(timeout: 15))
 
         actionsButton.click()
         Thread.sleep(forTimeInterval: 0.5)
@@ -756,7 +760,12 @@ final class ClipKittyUITests: XCTestCase {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
-        // Record initial item count
+        // Record initial item count — waiting for the first row first, since
+        // counting immediately after launch races the results load on slow
+        // CI runners (run 28776936157 saw 0 rows here while every other test
+        // in the session had items).
+        let firstRow = app.outlines.firstMatch.buttons.firstMatch
+        XCTAssertTrue(firstRow.waitForExistence(timeout: 10), "Results should load before counting items")
         let initialCount = app.outlines.firstMatch.buttons.allElementsBoundByIndex.count
         XCTAssertGreaterThan(initialCount, 0, "Should have items to delete")
 
