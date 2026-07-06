@@ -220,23 +220,23 @@ struct CardView: View {
 
     private func thumbnailPreview(bytes: Data) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            // A fixed-height, fill-and-crop image box. The fixed height (not a
-            // range) keeps image cards near typical text-card heights so packed
-            // iPad rows mixing images and text stay balanced; the full image
-            // lives in the preview screen.
+            // Aspect-fit, height-capped: the card shows the whole image (the
+            // full-resolution copy lives in the preview screen, but cropping
+            // the card thumbnail loses the subject — marketing review flagged
+            // the "FAST" cat card losing its caption to the crop).
             //
-            // `.fill` into a fixed frame is deliberate: an aspect-*fit* image
-            // reports an intrinsic size that depends on the width AND height it
-            // is proposed, and inside `JustifiedCardRow` (which measures each
-            // card's ideal width, then re-proposes the row height to stretch
-            // cards to equal heights) that two-way dependency never settles —
-            // the layout loops and pins the main thread, so screenshot capture
-            // and the app itself hang. A `.fill` image simply fills whatever
-            // frame it is handed and crops the overflow, so its size never
-            // feeds back into the packing math.
+            // Fit, not fill, on purpose: an aspect-fill image reports a size
+            // that COVERS its proposal, so a wide image inside a packed
+            // `JustifiedCardRow` slot reported wider than the slot and drew
+            // past the card edge into the row gutter. A fit image never
+            // exceeds its proposal, so it cannot overflow its slot. (Fill was
+            // originally introduced on the theory that fit's proposal-
+            // dependent sizing deadlocked JustifiedCardRow; the hang sampler
+            // on run 28768712784 disproved that — the freeze was HEIC decodes
+            // wedging the concurrency pool, fixed in DecodedImageView — and
+            // the layout was never the culprit.)
             CardImagePreview(itemId: metadata.itemId, thumbnailBytes: bytes)
-                .frame(maxWidth: .infinity)
-                .frame(height: 240)
+                .frame(maxWidth: .infinity, maxHeight: 240)
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
             if !displayExcerpt.text.isEmpty {
@@ -390,16 +390,15 @@ private struct CardImagePreview: View {
             namespace: fullImageBytes == nil ? "card-thumbnail" : "card-full",
             itemId: itemId,
             data: fullImageBytes ?? thumbnailBytes,
-            // Fill-and-crop, not fit: the enclosing card gives this a fixed
-            // frame, and a fill image occupies it exactly instead of proposing
-            // its own aspect-derived size back up the tree. See the note in
-            // `thumbnailPreview` on why aspect-fit deadlocks `JustifiedCardRow`.
-            contentMode: .fill
+            // Fit shows the whole image and can never report wider than its
+            // packed-row slot; see the note in `thumbnailPreview`.
+            contentMode: .fit
         ) {
-            // Placeholder fills the same fixed frame (no aspect ratio), so the
-            // card's height is identical whether or not the image has decoded.
+            // 16:9 stand-in so the card reserves a plausible image box until
+            // the decode lands, instead of jumping from empty to full height.
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(.secondary.opacity(0.1))
+                .aspectRatio(16.0 / 9.0, contentMode: .fit)
                 .overlay(
                     Image(systemName: "photo")
                         .font(.title)
