@@ -1015,8 +1015,7 @@ fn inject_images_impl(
             continue;
         }
 
-        let image_data =
-            fs::read(image_path.as_std_path()).with_context(|| format!("reading {image_path}"))?;
+        let image_data = injectable_image_bytes(&image_path)?;
         let thumbnail = fs::read(thumb_path.as_std_path()).ok();
         let timestamp =
             base_timestamp + ChronoDuration::seconds(item.offset_seconds.unwrap_or(-3600));
@@ -1057,6 +1056,46 @@ fn inject_images_impl(
         locale.as_code()
     ));
     Ok(())
+}
+
+/// Bytes to inject into the demo DB for a manifest image, transcoding HEIC
+/// sources to JPEG via `sips` (present on every macOS host).
+///
+/// HEIC stills are HEVC-coded, and the iOS simulator on virtualized CI
+/// runners has no working HEVC codec: decoding an injected HEIC wedges
+/// VideoToolbox's `VCPHEVC.videocodec` in a semaphore wait that never
+/// signals (captured by the screenshot hang sampler on run 28768712784).
+/// Each visible image card then permanently occupies a Swift-concurrency
+/// pool thread, the pool starves, and the iPad screenshot test dies with
+/// "Timed out while evaluating UI query". JPEG decodes through ImageIO on
+/// every host and looks identical in the captures, so inject that instead.
+fn injectable_image_bytes(image_path: &Utf8Path) -> Result<Vec<u8>> {
+    let is_heic = image_path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("heic"));
+    if !is_heic {
+        return fs::read(image_path.as_std_path()).with_context(|| format!("reading {image_path}"));
+    }
+
+    let temp_dir = tempfile::tempdir().context("creating transcode temp dir")?;
+    let jpeg_path = temp_dir.path().join("transcoded.jpg");
+    let output = std::process::Command::new("/usr/bin/sips")
+        .arg("-s")
+        .arg("format")
+        .arg("jpeg")
+        .args(["-s", "formatOptions", "92"])
+        .arg(image_path.as_std_path())
+        .arg("--out")
+        .arg(&jpeg_path)
+        .output()
+        .with_context(|| format!("running sips on {image_path}"))?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "sips failed transcoding {image_path}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    fs::read(&jpeg_path).with_context(|| format!("reading transcoded {}", jpeg_path.display()))
 }
 
 #[derive(Debug, Deserialize)]
