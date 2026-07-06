@@ -1072,28 +1072,13 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.5)
 
         // ============================================================
-        // SCENE 3: Typed Images filter + search + bookmark — type the
-        // locale-invariant English trigger "image" (the filter catalog
-        // guarantees English aliases in every locale), apply the suggestion
-        // chip with Return, then find the cat with the (possibly localized)
-        // "fast" query and bookmark it. CJK locales override the query to
-        // ASCII "fast" in video_localized.rs; the image keywords include
-        // "fast" for those locales so search still matches.
+        // SCENE 3: Image search + bookmark — find the cat with the
+        // (possibly localized) "fast" query, no filter needed, then
+        // bookmark it. CJK locales override the query to ASCII "fast" in
+        // video_localized.rs; the image keywords include "fast" for those
+        // locales so search still matches.
         // ============================================================
         clearSearch()
-        typeSlowly("image", scene: "filter_trigger")
-        let pendingChip = app.buttons["PendingFilterChip"]
-        XCTAssertTrue(pendingChip.waitForExistence(timeout: 3), "Pending filter chip should appear in video scene 3")
-        Thread.sleep(forTimeInterval: 0.6)
-        app.typeKey(.upArrow, modifierFlags: [])
-        Thread.sleep(forTimeInterval: 0.6)
-        app.typeKey(.return, modifierFlags: [])
-        let appliedChipRemove = app.buttons["AppliedFilterChipRemove"]
-        XCTAssertTrue(appliedChipRemove.waitForExistence(timeout: 3), "Applied chip should appear in video scene 3")
-        let loadedImageResults = app.descendants(matching: .any)["ResultsState_images_loaded"]
-        XCTAssertTrue(loadedImageResults.waitForExistence(timeout: 5), "Filtered image results should finish loading in video scene 3")
-        Thread.sleep(forTimeInterval: 0.5)
-
         typeSlowly(queries["fast"] ?? "fast", scene: "fast")
         Thread.sleep(forTimeInterval: 0.3)
 
@@ -1106,14 +1091,9 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 1.5)
 
         // ============================================================
-        // OUTRO — clear the query, then pop the applied filter chip with
-        // Backspace so the video closes on the default unfiltered view
-        // (and demonstrates chip removal).
+        // OUTRO — clear the query so the video closes on the default view.
         // ============================================================
         clearSearch()
-        Thread.sleep(forTimeInterval: 0.4)
-        searchField.typeKey(.delete, modifierFlags: [])
-        XCTAssertTrue(appliedChipRemove.waitForNonExistence(timeout: 3), "Backspace should remove the applied chip in the outro")
         Thread.sleep(forTimeInterval: 0.5)
 
         writeTypingLatencyReport(

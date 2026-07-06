@@ -722,6 +722,99 @@ async fn video_scenes_rank_target_first() {
     }
 }
 
+/// Mirrors intro-video Scene 3: typing "fast" with no filter applied must
+/// rank the cat image first, above the "fast" text distractors.
+///
+/// The image mirrors the one xtask injects into the video DB
+/// (distribution/images/manifest.json, fast.heic): its keyword description
+/// and its -50s offset, which make it newer than every "fast" text
+/// distractor (all days old) but older than the top-of-history scene target.
+#[tokio::test]
+async fn video_fast_scene_ranks_image_first_without_filter() {
+    const FAST_IMAGE_OFFSET: i64 = -50;
+    const FAST_IMAGE_KEYWORDS: &str = "Fast, cat, running, 90s cartoon, retro, speed, \
+         Siamese cat, cute, kitten, animation, comic style, motion lines, energetic, \
+         dynamic, clipboard, dash, quick, vintage, hand-drawn, illustration";
+
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir
+        .path()
+        .join("test.db")
+        .to_string_lossy()
+        .to_string();
+    let store = ClipboardStore::new(db_path.clone()).unwrap();
+
+    for item in VIDEO_ITEMS {
+        store
+            .save_text(
+                item.content.to_string(),
+                Some(item.source_app.to_string()),
+                Some(item.bundle_id.to_string()),
+            )
+            .unwrap();
+    }
+    let image_id = store
+        .save_image(
+            vec![0xAB; 64],
+            None,
+            Some("Photos".to_string()),
+            Some("com.apple.Photos".to_string()),
+            false,
+        )
+        .unwrap();
+    store
+        .update_image_description(image_id.clone(), FAST_IMAGE_KEYWORDS.to_string())
+        .unwrap();
+
+    // Backdate timestamps to the real DemoItem offsets the same way
+    // rust-data-gen does (direct SQL), then rebuild the index so tantivy
+    // sees them — day-scale recency gaps are part of what the video's
+    // ranking relies on and cannot be reproduced with insertion delays.
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let base = chrono::Utc::now();
+        let backdate = |content: &str, offset: i64| {
+            let timestamp = (base + chrono::Duration::seconds(offset))
+                .format("%Y-%m-%d %H:%M:%S%.f")
+                .to_string();
+            let updated = conn
+                .execute(
+                    "UPDATE items SET timestamp = ?1 WHERE content = ?2",
+                    rusqlite::params![timestamp, content],
+                )
+                .unwrap();
+            assert_eq!(updated, 1, "expected exactly one row for {content:?}");
+        };
+        for item in VIDEO_ITEMS {
+            backdate(item.content, item.offset);
+        }
+        backdate(
+            &format!("Image: {FAST_IMAGE_KEYWORDS}"),
+            FAST_IMAGE_OFFSET,
+        );
+    }
+    store.rebuild_index().unwrap();
+
+    let result = store
+        .search("fast".to_string(), ListPresentationProfile::CompactRow)
+        .await
+        .unwrap();
+    let top = result
+        .matches
+        .first()
+        .expect("search 'fast' should return results");
+    assert_eq!(
+        top.item_metadata.item_id,
+        image_id,
+        "'fast' with no filter should rank the cat image first, got: {:?}",
+        search_contents(&store, "fast")
+            .await
+            .iter()
+            .take(3)
+            .collect::<Vec<_>>()
+    );
+}
+
 // ============================================================
 // Fuzzy Word Recall Tests
 // ============================================================
