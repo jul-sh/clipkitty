@@ -149,11 +149,29 @@ struct HomeFeedView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .accessibilityIdentifier("feed.\(viewModel.activeFilterKind.rawValue).\(feedLoadPhase)")
         .onGeometryChange(for: FeedLayout.self) { proxy in
             FeedLayout(containerWidth: proxy.size.width)
         } action: { layout in
             feedLayout = layout
         }
+    }
+
+    /// Load-state signal for UI automation, the iOS counterpart of the Mac's
+    /// `ResultsState_<kind>_<phase>` identifier: the feed list is tagged
+    /// `feed.<filterKind>.<loading|settled>`, where `settled` means the
+    /// current filter's query has loaded AND every in-flight card image
+    /// fetch/decode has finished — a capture taken then cannot ship
+    /// placeholder or stale-thumbnail cards. Keying on the filter kind
+    /// matters: right after a filter is applied the feed still shows the
+    /// previous (already settled) rows, and a kind-less signal would read
+    /// "settled" before the filtered content even arrived. Marketing
+    /// screenshot runs wait on this instead of guessing at sleeps.
+    private var feedLoadPhase: String {
+        if case .loaded = viewModel.contentState, ImageLoadActivity.shared.isSettled {
+            return "settled"
+        }
+        return "loading"
     }
 
     /// Horizontal gutter between the feed content and the screen edges,

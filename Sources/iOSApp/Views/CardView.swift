@@ -407,6 +407,11 @@ private struct CardImagePreview: View {
         }
         .task(id: itemId) {
             guard fullImageBytes == nil else { return }
+            // Registered with ImageLoadActivity so the feed's settled signal
+            // spans the whole pipeline: this fetch, then the decode it kicks
+            // off in DecodedImageView.
+            ImageLoadActivity.shared.begin()
+            defer { ImageLoadActivity.shared.end() }
             let storeClient = container.storeClient
             guard let item = await storeClient.fetchItem(id: itemId) else { return }
             guard !Task.isCancelled else { return }
@@ -490,6 +495,8 @@ private struct CardLinkPreview: View {
             // The card already renders host + URL immediately; this fills in the
             // title/image when the persisted item carries loaded metadata.
             guard case .pending = metadataState else { return }
+            ImageLoadActivity.shared.begin()
+            defer { ImageLoadActivity.shared.end() }
             guard let item = await container.storeClient.fetchItem(id: itemId) else { return }
             guard !Task.isCancelled else { return }
             if case let .link(_, state) = item.content {

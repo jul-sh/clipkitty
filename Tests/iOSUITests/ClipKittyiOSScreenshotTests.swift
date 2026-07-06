@@ -59,13 +59,15 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         app.launchArguments += ["-AppleLocale", locale]
         app.launch()
 
-        // Allow the feed to settle and full-width image previews to load.
-        // Card images now resolve their full-resolution data via
-        // `BrowserStoreClient.fetchItem(id:)` (so iPad doesn't ship pixelated
-        // 64px thumbnails); that round-trip plus async decode pushes the
-        // capture-ready point well past three seconds, especially on iPad
-        // where more cards are visible at once.
-        sleep(10)
+        // Let the feed mount and the visible cards kick off their image
+        // fetch/decode tasks (the settled signal below can only be trusted
+        // once loading has actually started), then wait for the app to report
+        // every in-flight image load finished. The signal-based wait replaced
+        // fixed sleeps because no guessed duration survived a loaded CI
+        // runner: 8s and 15s settles both shipped placeholder cards to the
+        // App Store (runs 28795788433 and the iPhone follow-up).
+        sleep(3)
+        waitForFeedSettled(context: "initial feed")
     }
 
     func testTakeMarketingScreenshots() {
@@ -97,6 +99,7 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
                       "bottomBar.searchField not found for locale \(locale!)")
         searchField.typeText("dockr push")
         sleep(2)
+        waitForFeedSettled(context: "search results")
 
         let searchScreenshot = captureScreen()
         saveScreenshot(searchScreenshot, index: 2, name: "search")
@@ -122,14 +125,45 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         // Filtering down to images surfaces a screenful of image cards
         // simultaneously; each one async-loads and decodes its
         // full-resolution data, and on a loaded few-core CI runner that
-        // burst takes well over 8s end to end (run 28795788433 captured
-        // four cards still undecoded at 8s). Wait long enough that none
-        // capture mid-decode, which would ship a pixelated thumbnail —
-        // or worse, a placeholder — to the App Store.
-        sleep(15)
+        // burst takes well over 15s end to end. The settled signal is keyed
+        // to the images filter, so it can't fire off the still-displayed
+        // pre-filter rows; it flips only once the filtered content is loaded
+        // and its image burst has finished — this capture is the one that
+        // ships to the App Store, and it must never ship a placeholder card.
+        sleep(2)
+        waitForFeedSettled(filterKind: "images", context: "images filter")
 
         let filterScreenshot = captureScreen()
         saveScreenshot(filterScreenshot, index: 3, name: "filter")
+    }
+
+    // MARK: - Image-load settling
+
+    /// Blocks until the app reports the feed fully settled for the given
+    /// filter, via the feed's load-state accessibility identifier
+    /// (`feed.<filterKind>.settled`, the iOS counterpart of the Mac's
+    /// `ResultsState_<kind>_loaded` signal): the filter's query has loaded
+    /// and every in-flight card image fetch/decode has finished. Deterministic
+    /// on purpose — fixed sleeps kept shipping mid-decode captures on loaded
+    /// CI runners.
+    ///
+    /// The timeout is a failure backstop, not pacing — the wait returns as
+    /// soon as the app settles. 240s accommodates a cold CI runner decoding a
+    /// screenful of full-resolution marketing images behind a utility-QoS
+    /// queue (each wedge-netted at 60s in `DecodedImageView.decodeOffPool`).
+    private func waitForFeedSettled(
+        filterKind: String = "all",
+        timeout: TimeInterval = 240,
+        context: String
+    ) {
+        let settled = app.descendants(matching: .any)["feed.\(filterKind).settled"]
+        XCTAssertTrue(
+            settled.waitForExistence(timeout: timeout),
+            "Feed did not settle within \(Int(timeout))s (\(context), locale \(locale!)) — capturing would ship placeholder cards"
+        )
+        // One extra beat so the final decoded frame reaches the display
+        // buffer that `XCUIScreen.main.screenshot()` grabs.
+        sleep(1)
     }
 
     // MARK: - Screen capture

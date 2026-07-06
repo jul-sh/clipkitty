@@ -100,6 +100,9 @@ struct DecodedImageView<Placeholder: View>: View {
             return
         }
 
+        ImageLoadActivity.shared.begin()
+        defer { ImageLoadActivity.shared.end() }
+
         // Deliberately keep the previous image (typically the small
         // thumbnail) on screen while the replacement decodes: blanking here
         // regresses the card to the gray placeholder for the whole decode,
@@ -108,9 +111,22 @@ struct DecodedImageView<Placeholder: View>: View {
         // (run 28795788433). A stale thumbnail is always a better frame
         // than an empty box, and the decode result overwrites it on arrival.
         let image = await Self.decodeOffPool(data)
-        guard !Task.isCancelled, let image else { return }
+        guard let image else { return }
         DecodedImageCache.setImage(image, forKey: cacheKey, cost: data.count)
-        decodedImage = image
+
+        // A cancelled task here almost always means the data was re-keyed
+        // mid-decode: CardImagePreview's thumbnail -> full-resolution upgrade
+        // lands, cancelling the thumbnail decode. This result is still the
+        // best frame available until the replacement decode finishes, so
+        // publish it unless a newer image already got there first. Discarding
+        // it is how iPhone captures shipped placeholder cards: the cancelled
+        // 64px thumbnail decode left nothing on screen for the full-res
+        // decode's entire queue-plus-decode latency.
+        if Task.isCancelled {
+            if decodedImage == nil { decodedImage = image }
+        } else {
+            decodedImage = image
+        }
     }
 
     /// Decodes on a GCD queue, never on the Swift Concurrency cooperative
