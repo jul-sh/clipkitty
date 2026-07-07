@@ -222,18 +222,16 @@ jobs:
       - name: Install CI tools from Nix
         run: |
           # Install tools from flake-locked nixpkgs (pinned via flake.lock)
-          nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
+          nix profile install --no-update-lock-file --inputs-from . keytap#default
           nix profile install --no-update-lock-file .#tuist
           tuist version
 
       - name: Decrypt secrets
         id: secrets
         run: |
-          echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
-          chmod 600 /tmp/age-key.txt
           for f in secrets/*.age; do
             name=$(basename "$f" .age)
-            value=$(age -d -i /tmp/age-key.txt "$f")
+            value=$(keytap decrypt clipkitty < "$f")
             echo "::add-mask::$value"
             {
               echo "${name}<<AGEDELIM"
@@ -241,9 +239,8 @@ jobs:
               echo "AGEDELIM"
             } >> "$GITHUB_OUTPUT"
           done
-          rm -f /tmp/age-key.txt
         env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Setup Swift
         uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
@@ -278,13 +275,13 @@ jobs:
         timeout-minutes: 90
         run: make app-app-store
         env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Stage Hardened App
         timeout-minutes: 30
         run: make app-hardened
         env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Create AppStore Archive
         run: |
@@ -416,7 +413,7 @@ jobs:
           make release-dmg
           codesign --force --sign "Developer ID Application" ClipKitty.dmg
         env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       # 2. Notarize with Apple
       - name: Notarize DMG
@@ -607,7 +604,7 @@ jobs:
       - name: Install CI tools from Nix
         run: |
           # age decrypts the ASC auth key below
-          nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
+          nix profile install --no-update-lock-file --inputs-from . keytap#default
           nix profile install --no-update-lock-file .#tuist
           tuist version
 
@@ -625,7 +622,7 @@ jobs:
           echo "issuer_id=$(make secrets-asc-auth FIELD=issuer-id)" >> "$GITHUB_OUTPUT"
           echo "key_path=$(pwd)/.make/keys/AuthKey.p8" >> "$GITHUB_OUTPUT"
         env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Generate Xcode Workspace
         run: make workspace
@@ -853,8 +850,8 @@ jobs:
 
       - name: Install CI tools from Nix
         run: |
-          # age decrypts the screenshot fixtures consumed via AGE_SECRET_KEY
-          nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
+          # keytap decrypts the screenshot fixtures via $KEYTAP_KEY_CLIPKITTY
+          nix profile install --no-update-lock-file --inputs-from . keytap#default
           nix profile install --no-update-lock-file .#tuist
           tuist version
 
@@ -894,7 +891,7 @@ jobs:
           SKIP_SIGNING=1 LOCKED=1 make screenshots-macos
           ls -lh marketing/*/screenshot_*.png
         env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Teardown Virtual Display
         if: always()
@@ -945,18 +942,16 @@ jobs:
 
       - name: Install CI tools from Nix
         run: |
-          nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
+          nix profile install --no-update-lock-file --inputs-from . keytap#default
           nix profile install --no-update-lock-file --inputs-from . nixpkgs#ffmpeg
           nix profile install --no-update-lock-file .#tuist
           tuist version
 
       - name: Decrypt secrets
         run: |
-          echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
-          chmod 600 /tmp/age-key.txt
           for f in secrets/*.age; do
             name=$(basename "$f" .age)
-            value=$(age -d -i /tmp/age-key.txt "$f")
+            value=$(keytap decrypt clipkitty < "$f")
             echo "::add-mask::$value"
             {
               echo "${name}<<AGEDELIM"
@@ -964,9 +959,8 @@ jobs:
               echo "AGEDELIM"
             } >> "$GITHUB_OUTPUT"
           done
-          rm -f /tmp/age-key.txt
         env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Setup Swift
         uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
@@ -989,7 +983,7 @@ jobs:
           unset TOOLCHAINS
           SKIP_SIGNING=1 LOCKED=1 make intro-video
         env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Teardown Virtual Display
         if: always()
@@ -1056,16 +1050,14 @@ jobs:
         uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
 
       - name: Install CI tools from Nix
-        run: nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
+        run: nix profile install --no-update-lock-file --inputs-from . keytap#default
 
       - name: Decrypt secrets
         id: secrets
         run: |
-          echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
-          chmod 600 /tmp/age-key.txt
           for f in secrets/*.age; do
             name=$(basename "$f" .age)
-            value=$(age -d -i /tmp/age-key.txt "$f")
+            value=$(keytap decrypt clipkitty < "$f")
             echo "::add-mask::$value"
             {
               echo "${name}<<AGEDELIM"
@@ -1073,9 +1065,8 @@ jobs:
               echo "AGEDELIM"
             } >> "$GITHUB_OUTPUT"
           done
-          rm -f /tmp/age-key.txt
         env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Download DMG
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -1320,7 +1311,7 @@ jobs:
 
       - name: Install CI tools from Nix
         run: |
-          nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
+          nix profile install --no-update-lock-file --inputs-from . keytap#default
           nix profile install --no-update-lock-file .#tuist
           nix profile install --no-update-lock-file .#asc
           tuist version
@@ -1328,11 +1319,9 @@ jobs:
       - name: Decrypt secrets
         id: secrets
         run: |
-          echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
-          chmod 600 /tmp/age-key.txt
           for f in secrets/*.age; do
             name=$(basename "$f" .age)
-            value=$(age -d -i /tmp/age-key.txt "$f")
+            value=$(keytap decrypt clipkitty < "$f")
             echo "::add-mask::$value"
             {
               echo "${name}<<AGEDELIM"
@@ -1340,9 +1329,8 @@ jobs:
               echo "AGEDELIM"
             } >> "$GITHUB_OUTPUT"
           done
-          rm -f /tmp/age-key.txt
         env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Setup Swift
         uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
@@ -1410,7 +1398,7 @@ jobs:
           mkdir -p .make/keys
           make secrets-asc-auth FIELD=private-key-b64 | base64 --decode > .make/keys/AuthKey.p8
         env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Build and Publish to App Store Connect
         run: |
@@ -1419,7 +1407,7 @@ jobs:
           COMMIT_COUNT=$(make release-version FIELD=build-number)
           make release-macos-appstore VERSION="$VERSION" BUILD_NUMBER="$COMMIT_COUNT"
         env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
           CLIPKITTY_SIGNING_EXTERNAL: "1"
 
       - name: Verify lockfiles unchanged
@@ -1465,7 +1453,7 @@ jobs:
 
       - name: Install CI tools from Nix
         run: |
-          nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
+          nix profile install --no-update-lock-file --inputs-from . keytap#default
           nix profile install --no-update-lock-file .#tuist
           nix profile install --no-update-lock-file .#asc
           tuist version
@@ -1473,11 +1461,9 @@ jobs:
       - name: Decrypt secrets
         id: secrets
         run: |
-          echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
-          chmod 600 /tmp/age-key.txt
           for f in secrets/*.age; do
             name=$(basename "$f" .age)
-            value=$(age -d -i /tmp/age-key.txt "$f")
+            value=$(keytap decrypt clipkitty < "$f")
             echo "::add-mask::$value"
             {
               echo "${name}<<AGEDELIM"
@@ -1485,9 +1471,8 @@ jobs:
               echo "AGEDELIM"
             } >> "$GITHUB_OUTPUT"
           done
-          rm -f /tmp/age-key.txt
         env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Setup Swift
         uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
@@ -1558,7 +1543,7 @@ jobs:
           mkdir -p .make/keys
           make secrets-asc-auth FIELD=private-key-b64 | base64 --decode > .make/keys/AuthKey.p8
         env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Verify repo invariants
         run: make check
@@ -1590,7 +1575,7 @@ jobs:
           COMMIT_COUNT=$(make release-version FIELD=build-number)
           make release-ios-appstore VERSION="$VERSION" BUILD_NUMBER="$COMMIT_COUNT"
         env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Verify lockfiles unchanged after build
         run: make check

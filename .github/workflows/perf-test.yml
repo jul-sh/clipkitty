@@ -44,18 +44,16 @@ jobs:
 
       - name: Install CI tools from Nix
         run: |
-          nix profile install --no-update-lock-file --inputs-from . nixpkgs#age
+          nix profile install --no-update-lock-file --inputs-from . keytap#default
           nix profile install --no-update-lock-file .#tuist
           tuist version
 
       - name: Decrypt secrets
         id: secrets
         run: |
-          echo "$AGE_SECRET_KEY" > /tmp/age-key.txt
-          chmod 600 /tmp/age-key.txt
           for f in secrets/*.age; do
             name=$(basename "$f" .age)
-            value=$(age -d -i /tmp/age-key.txt "$f")
+            value=$(keytap decrypt clipkitty < "$f")
             echo "::add-mask::$value"
             {
               echo "${name}<<AGEDELIM"
@@ -63,9 +61,8 @@ jobs:
               echo "AGEDELIM"
             } >> "$GITHUB_OUTPUT"
           done
-          rm -f /tmp/age-key.txt
         env:
-          AGE_SECRET_KEY: ${{ secrets.AGE_SECRET_KEY }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Setup Swift
         uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
