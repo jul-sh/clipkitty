@@ -54,6 +54,8 @@ screenshot-*.png
 
 # Marketing screenshots (generated in CI by ImageMagick)
 marketing/
+marketing-ios/
+marketing-ipad/
 marketing_*.png
 
 # Generated assets
