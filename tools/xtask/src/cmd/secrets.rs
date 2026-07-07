@@ -33,14 +33,16 @@ fn secret_path(repo: &RepoRoot, name: &str) -> Utf8PathBuf {
 /// (it refuses ceremonies under `$CI`); on a dev machine, a one-time
 /// `keytap remember clipkitty` makes decrypts prompt-free, and without it
 /// every decrypt is its own passkey ceremony.
-pub(crate) fn read_secret(secret_path: &Utf8Path, reporter: &Reporter) -> Result<Vec<u8>> {
+pub(crate) fn read_secret(secret_path: &Utf8Path, _reporter: &Reporter) -> Result<Vec<u8>> {
     if !tool_exists("keytap") {
         return Err(anyhow!(
             "the keytap CLI is not available to decrypt {secret_path} (install keytap, then \
              set $KEYTAP_KEY_CLIPKITTY in CI or run `keytap remember clipkitty` on this machine)"
         ));
     }
-    reporter.info(&format!("Decrypting {secret_path} with keytap"));
+    // stderr, never the Reporter: callers pipe this command's stdout as data
+    // (`secrets-asc-auth | base64 -d`), so stdout must carry only the secret.
+    eprintln!("Decrypting {secret_path} with keytap");
     let file = File::open(secret_path.as_std_path())
         .with_context(|| format!("opening {secret_path}"))?;
     let output = Command::new("keytap")
