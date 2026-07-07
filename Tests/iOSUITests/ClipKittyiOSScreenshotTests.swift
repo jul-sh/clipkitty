@@ -97,7 +97,7 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         let searchField = app.textFields["bottomBar.searchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 3),
                       "bottomBar.searchField not found for locale \(locale!)")
-        searchField.typeText("dockr push")
+        typeSearchQuery("dockr push", into: searchField)
         sleep(2)
         waitForFeedSettled(context: "search results")
 
@@ -135,6 +135,48 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
 
         let filterScreenshot = captureScreen()
         saveScreenshot(filterScreenshot, index: 3, name: "filter")
+    }
+
+    // MARK: - Verified typing
+
+    /// Types `text` into `field` and confirms every character actually
+    /// arrived, retyping until it does.
+    ///
+    /// On the first keyboard bring-up after a simulator boot, `typeText`
+    /// can post its key events while the text-input session is still
+    /// connecting; the events are dropped silently and the call still
+    /// returns as a success. The en iPad capture of run 28816034636
+    /// shipped to the App Store with an empty search field exactly this
+    /// way — first locale of the job, cold simulator, test green. Only
+    /// reading the field's value back distinguishes that run from a real
+    /// one: a retype lands once the input session is up, and a loud
+    /// failure here beats a query-less marketing screenshot.
+    private func typeSearchQuery(_ text: String, into field: XCUIElement) {
+        // While the field is empty its accessibility value reads as the
+        // localized placeholder; snapshot it so residue detection below
+        // can tell "empty" from "partially typed".
+        let placeholder = field.value as? String
+        let maxAttempts = 5
+        for attempt in 1 ... maxAttempts {
+            // Clear residue from a prior partial attempt (including
+            // keystrokes that arrived after the last read-back) so a
+            // retype can't double up the query. The caret sits after the
+            // residue, so deletes remove all of it.
+            if let residue = field.value as? String,
+               residue != placeholder, !residue.isEmpty
+            {
+                field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue,
+                                      count: residue.count))
+            }
+            field.typeText(text)
+            // Give a still-connecting input session a beat to deliver the
+            // keystrokes before reading the value back.
+            sleep(1)
+            if (field.value as? String) == text { return }
+            print("typeSearchQuery: attempt \(attempt)/\(maxAttempts) dropped keystrokes; retrying")
+        }
+        XCTFail("Search query '\(text)' never landed after \(maxAttempts) attempts " +
+            "(locale \(locale!)) — capturing would ship an empty search field")
     }
 
     // MARK: - Image-load settling

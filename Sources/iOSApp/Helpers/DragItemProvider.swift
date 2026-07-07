@@ -3,12 +3,28 @@ import UIKit
 import UniformTypeIdentifiers
 
 enum DragItemProvider {
+    /// Type identifier registered on every card drag, visible only within
+    /// this process, so the window's drop-to-add target
+    /// (`AddClipDropTarget`) can recognize ClipKitty's own drags and ignore
+    /// them: re-dropping an existing clip onto the feed must not duplicate
+    /// it. Deliberately undeclared as a UTType — receivers match it by exact
+    /// identifier, never by conformance.
+    static let internalDragMarker = "com.eviljuliette.clipkitty.internal-drag"
+
     /// Builds an NSItemProvider that lazily fetches the full clipboard item
     /// by id when a drop target requests the data. This lets us start the drag
     /// immediately without having pre-loaded the full content into the card.
     @MainActor
     static func make(itemId: String, fetch: @escaping @Sendable (String) async -> ClipboardItem?) -> NSItemProvider {
         let provider = NSItemProvider()
+
+        provider.registerDataRepresentation(
+            forTypeIdentifier: internalDragMarker,
+            visibility: .ownProcess
+        ) { completion in
+            completion(Data(), nil)
+            return nil
+        }
 
         // Register every type we might drop as. The drop target picks the best
         // match. Load handlers only fire for the chosen type, so there's no

@@ -13,6 +13,11 @@ struct RootView: View {
 
     var body: some View {
         HomeFeedView()
+            // Window-wide: anything draggable from another app can be
+            // dropped anywhere over ClipKitty to become a clip. Applied
+            // beneath the snackbar overlay so the "Added" toast still draws
+            // above the drop chrome.
+            .addClipDropTarget()
             .overlay(alignment: .bottom) {
                 if let item = activeSnackbar {
                     SnackbarOverlay(item: item) {
@@ -33,6 +38,7 @@ struct RootView: View {
     }
 
     // MARK: - Snackbar resolution
+
     //
     // Mirrors the Mac's `SnackbarScheduler.evaluateSnackbar`: a single bottom
     // slot rendered from one `SnackbarItem`. Notifications (transient toasts)
@@ -99,6 +105,7 @@ struct RootView: View {
 }
 
 // MARK: - Snackbar rendering
+
 //
 // The iOS counterpart of Mac's `SnackbarView`: one switch over `SnackbarItem`
 // renders the bottom slot. iOS doesn't surface `.nudge` items (no launch-at-
