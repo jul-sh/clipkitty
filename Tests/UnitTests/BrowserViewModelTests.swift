@@ -1860,6 +1860,52 @@ final class BrowserViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedIndex, 1)
     }
 
+    func testQueryUpdateWhileChipTargetedReturnsKeyboardToResults() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [],
+            firstPreviewPayload: nil,
+            totalCount: 0
+        ))
+        let viewModel = makeTypedFilterViewModel(client: client)
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "image", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstPreviewPayload: nil,
+            totalCount: 2
+        ))
+        viewModel.updateSearchText("image")
+        try? await Task.sleep(for: .milliseconds(120))
+        await flushMainActor()
+        client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
+        await awaitPendingFilterSurface()
+
+        viewModel.moveSelection(by: -1)
+        guard case .pendingFilterChip = viewModel.keyboardTarget else {
+            return XCTFail("Expected chip to own the keyboard after Up, got \(viewModel.keyboardTarget)")
+        }
+
+        // Typing again hands the keyboard back to the first real result; the
+        // chip stays visible but Enter must not apply the filter anymore.
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "images", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstPreviewPayload: nil,
+            totalCount: 2
+        ))
+        viewModel.updateSearchText("images")
+        try? await Task.sleep(for: .milliseconds(120))
+        await awaitPendingFilterSurface()
+
+        XCTAssertEqual(viewModel.keyboardTarget, .results)
+        XCTAssertEqual(viewModel.pendingFilterSuggestion?.kind, .images, "The chip stays visible across the update")
+        XCTAssertEqual(viewModel.selectedIndex, 0)
+    }
+
     func testUpWalksRowsBeforeReachingChipFromPreservedSelection() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(

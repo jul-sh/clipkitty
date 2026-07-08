@@ -806,8 +806,12 @@ public final class BrowserViewModel {
     /// the chip always reflects the request the user actually sees.
     ///
     /// A suggestion that is already visible for the same filter updates in
-    /// place (keeping the user's keyboard target) so the chip doesn't flicker
-    /// while the trigger token grows ("ima" → "imag"). A NEW suggestion only
+    /// place so the chip doesn't flicker while the trigger token grows
+    /// ("ima" → "imag"), but the keyboard always returns to the results: a
+    /// query change means the user is typing again, so Enter must address the
+    /// first real result even if they had arrowed up onto the chip. If the new
+    /// load comes up empty, ``applySearchResponse`` promotes the chip again.
+    /// A NEW suggestion only
     /// surfaces after the user pauses typing for ``pendingFilterSurfaceDelay``,
     /// so intermediate prefixes mid-word don't flash the chip; it surfaces
     /// with the results keeping the keyboard — the user opts into the chip
@@ -825,10 +829,10 @@ public final class BrowserViewModel {
             return
         }
 
-        if case let .suggested(current, keyboardTarget) = pendingFilterState,
+        if case let .suggested(current, _) = pendingFilterState,
            current.kind == suggestion.kind
         {
-            pendingFilterState = .suggested(suggestion, keyboardTarget: keyboardTarget)
+            pendingFilterState = .suggested(suggestion, keyboardTarget: .results)
             return
         }
 
