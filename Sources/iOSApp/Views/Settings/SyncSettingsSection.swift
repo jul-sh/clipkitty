@@ -5,7 +5,10 @@
 
     struct SyncSettingsSection: View {
         @Environment(iOSSettingsStore.self) private var settings
-        @Environment(iOSSyncCoordinator.self) private var syncCoordinator
+        /// Optional on purpose: the coordinator leaves the environment while
+        /// the app suspends but the last session's tree keeps rendering (see
+        /// RootView.syncCoordinator). Falls back to `.idle` below.
+        @Environment(iOSSyncCoordinator.self) private var syncCoordinator: iOSSyncCoordinator?
 
         /// Tracks the last known sync date so we can suppress brief "Syncing" flashes.
         @State private var lastSyncDate: Date?
@@ -20,12 +23,12 @@
             Section("iCloud Sync") {
                 Toggle("Sync via iCloud", isOn: $settings.syncEnabled)
                     .onChange(of: settings.syncEnabled) { _, enabled in
-                        syncCoordinator.setSyncEnabled(enabled)
+                        syncCoordinator?.setSyncEnabled(enabled)
                     }
 
                 statusRow
             }
-            .onChange(of: syncCoordinator.status) { _, newStatus in
+            .onChange(of: syncCoordinator?.status) { _, newStatus in
                 if case let .synced(date) = newStatus {
                     lastSyncDate = date
                 }
@@ -86,8 +89,8 @@
         /// Returns the status to display, suppressing brief `.syncing` flashes when
         /// we synced very recently.
         private var displayStatus: SyncEngine.SyncStatus {
-            let actual = syncCoordinator.status
-            if case .syncing(_) = actual,
+            let actual = syncCoordinator?.status ?? .idle
+            if case .syncing = actual,
                let last = lastSyncDate,
                -last.timeIntervalSinceNow < Self.syncingSuppressionInterval
             {

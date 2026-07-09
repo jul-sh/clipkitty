@@ -8,7 +8,13 @@ import SwiftUI
 struct RootView: View {
     @Environment(AppState.self) private var appState
     #if ENABLE_ICLOUD_SYNC
-        @Environment(iOSSyncCoordinator.self) private var syncCoordinator
+        /// Optional on purpose: the coordinator leaves the environment when the
+        /// app suspends (`syncCoordinator = nil` in finishPreparingForSuspension)
+        /// while the suspended session keeps rendering for the app-switcher
+        /// snapshot. A non-optional read here traps with "No Observable object
+        /// of type iOSSyncCoordinator found" in the background (TestFlight
+        /// crashes on build 1398).
+        @Environment(iOSSyncCoordinator.self) private var syncCoordinator: iOSSyncCoordinator?
     #endif
 
     var body: some View {
@@ -57,6 +63,7 @@ struct RootView: View {
 
     private var ongoingInfo: InfoKind? {
         #if ENABLE_ICLOUD_SYNC
+            guard let syncCoordinator else { return nil }
             switch syncCoordinator.status {
             case let .syncing(activity):
                 return Self.infoKind(for: activity)
