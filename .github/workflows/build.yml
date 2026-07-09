@@ -1409,6 +1409,11 @@ jobs:
         env:
           KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
           CLIPKITTY_SIGNING_EXTERNAL: "1"
+          # The ASC API intermittently takes >30s per request; a metadata
+          # PATCH timing out after the binary upload leaves the run
+          # unrerunnable (the bundle version is already consumed), so give
+          # asc a generous timeout instead. (2026-07-09: run 28994746631.)
+          ASC_TIMEOUT: 120s
 
       - name: Verify lockfiles unchanged
         run: make check
@@ -1576,6 +1581,10 @@ jobs:
           make release-ios-appstore VERSION="$VERSION" BUILD_NUMBER="$COMMIT_COUNT"
         env:
           KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          # See the macOS publish step: ASC requests can exceed asc's
+          # default timeout, and a failed publish can't be rerun once the
+          # binary for this build number has been uploaded.
+          ASC_TIMEOUT: 120s
 
       - name: Verify lockfiles unchanged after build
         run: make check
