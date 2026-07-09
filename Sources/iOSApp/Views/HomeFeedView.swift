@@ -118,40 +118,50 @@ struct HomeFeedView: View {
         }
     }
 
+    /// A ScrollView rather than a List on purpose: List attaches context-menu
+    /// and drag interactions to the whole UICollectionView cell, so in packed
+    /// rows a long press lifted every card in the row at once and a drag
+    /// carried the row, not the card. Outside a List each CardView owns its
+    /// own interactions.
     private var scrollableFeed: some View {
-        List {
-            switch feedLayout {
-            case .singleColumn:
-                ForEach(filteredRows) { row in
-                    CardView(
-                        row: row,
-                        previewItemId: $previewItemId
-                    )
-                    .onAppear {
-                        viewModel.loadMatchedExcerptsForItems([row.id])
-                    }
-                    .cardListRow()
-                }
-
-            case let .packedRows(rowWidth):
-                ForEach(CardRowChunk.pack(filteredRows, rowWidth: rowWidth)) { chunk in
-                    JustifiedCardRow {
-                        ForEach(chunk.rows) { row in
-                            CardView(
-                                row: row,
-                                previewItemId: $previewItemId
-                            )
+        ScrollView {
+            LazyVStack(spacing: Self.feedRowSpacing) {
+                switch feedLayout {
+                case .singleColumn:
+                    ForEach(filteredRows) { row in
+                        CardView(
+                            row: row,
+                            previewItemId: $previewItemId
+                        )
+                        .onAppear {
+                            viewModel.loadMatchedExcerptsForItems([row.id])
                         }
                     }
-                    .onAppear {
-                        viewModel.loadMatchedExcerptsForItems(chunk.rows.map(\.id))
+
+                case let .packedRows(rowWidth):
+                    ForEach(CardRowChunk.pack(filteredRows, rowWidth: rowWidth)) { chunk in
+                        JustifiedCardRow {
+                            ForEach(chunk.rows) { row in
+                                CardView(
+                                    row: row,
+                                    previewItemId: $previewItemId
+                                )
+                            }
+                        }
+                        .onAppear {
+                            viewModel.loadMatchedExcerptsForItems(chunk.rows.map(\.id))
+                        }
                     }
-                    .cardListRow()
                 }
             }
+            .padding(.horizontal, Self.feedGutter)
+            .padding(.vertical, Self.feedRowSpacing / 2)
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
+        // Keep the ClipKitty header reading as a fixed bar: a hard top edge
+        // gives the navigation bar an opaque glass backing, so cards scroll
+        // under it instead of mixing with the title (the default soft edge
+        // left the title floating over card text).
+        .scrollEdgeEffectStyle(.hard, for: .top)
         .accessibilityIdentifier("feed.\(viewModel.activeFilterKind.rawValue).\(feedLoadPhase)")
         .onGeometryChange(for: FeedLayout.self) { proxy in
             FeedLayout(containerWidth: proxy.size.width)
@@ -178,8 +188,11 @@ struct HomeFeedView: View {
     }
 
     /// Horizontal gutter between the feed content and the screen edges,
-    /// applied via list-row insets so multi-clip rows share one gutter.
+    /// shared by every feed row so multi-clip rows line up with single cards.
     fileprivate static let feedGutter: CGFloat = 16
+
+    /// Vertical spacing between feed rows.
+    private static let feedRowSpacing: CGFloat = 12
 
     /// Filter out file items — iPhone app doesn't support file sharing.
     private var filteredRows: [DisplayRow] {
@@ -247,21 +260,6 @@ struct HomeFeedView: View {
 
     private var isSearchOrFilterActive: Bool {
         !viewModel.searchText.isEmpty || viewModel.activeFilterKind != .all
-    }
-}
-
-private extension View {
-    /// Shared list-row chrome for feed rows: no separator, card gutters via
-    /// insets, transparent background.
-    func cardListRow() -> some View {
-        listRowSeparator(.hidden)
-            .listRowInsets(EdgeInsets(
-                top: 6,
-                leading: HomeFeedView.feedGutter,
-                bottom: 6,
-                trailing: HomeFeedView.feedGutter
-            ))
-            .listRowBackground(Color.clear)
     }
 }
 
