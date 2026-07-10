@@ -183,11 +183,14 @@ struct BrowserView: View {
             }
 
             // Backspace in the empty search field removes the applied filter
-            // chip. Handled here because the field editor consumes the key
-            // before SwiftUI's onKeyPress sees it. The field-editor check
-            // keeps preview-pane editing (a plain NSTextView) unaffected.
-            let plainModifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if plainModifiers.isEmpty,
+            // chip. ⌥⌫ and ⌘⌫ count too: their word/line deletes have nothing
+            // left to act on in an empty field, so they fall through to the
+            // chip like a plain ⌫. Handled here because the field editor
+            // consumes the key before SwiftUI's onKeyPress sees it. The
+            // field-editor check keeps preview-pane editing (a plain
+            // NSTextView) unaffected.
+            let backspaceModifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if backspaceModifiers.isSubset(of: [.option, .command]),
                event.keyCode == 51, // ⌫
                !event.isARepeat,
                let editor = event.window?.firstResponder as? NSTextView,
