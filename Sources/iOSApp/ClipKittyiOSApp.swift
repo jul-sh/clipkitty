@@ -275,6 +275,7 @@ enum ToastMessage: Equatable {
     case deleted
     case addSucceeded
     case addFailed(String)
+    case clipboardEmpty
 
     var notificationKind: NotificationKind {
         switch self {
@@ -294,6 +295,11 @@ enum ToastMessage: Equatable {
             return .passive(
                 message: String(localized: "Failed: \(reason)"),
                 iconSystemName: "exclamationmark.triangle"
+            )
+        case .clipboardEmpty:
+            return .passive(
+                message: String(localized: "Clipboard is empty"),
+                iconSystemName: "doc.on.clipboard"
             )
         }
     }

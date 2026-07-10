@@ -11,6 +11,7 @@ struct BottomControlBar: View {
     @Environment(AppState.self) private var appState
     @Environment(BrowserViewModel.self) private var viewModel
     @Environment(HapticsClient.self) private var haptics
+    @Environment(iOSSettingsStore.self) private var settings
 
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var createFlow: CreateFlow = .none
@@ -244,18 +245,23 @@ struct BottomControlBar: View {
                 .glassEffect(.regular.interactive(), in: .circle)
                 .glassEffectID("add_text", in: barNamespace)
 
-                Button {
-                    withAnimation(.bouncy) { createFlow = .none }
-                    Task { await pasteClipboard() }
-                } label: {
-                    Image(systemName: "doc.on.clipboard")
-                        .font(.body.weight(.medium))
-                        .frame(width: 52, height: 52)
-                        .contentShape(Circle())
+                // With auto-add on, everything on the pasteboard is ingested
+                // each time the app comes to the foreground, so a manual
+                // "add from clipboard" button would only ever duplicate that.
+                if !settings.autoAddFromClipboard {
+                    Button {
+                        withAnimation(.bouncy) { createFlow = .none }
+                        Task { await pasteClipboard() }
+                    } label: {
+                        Image(systemName: "doc.on.clipboard")
+                            .font(.body.weight(.medium))
+                            .frame(width: 52, height: 52)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: .circle)
+                    .glassEffectID("add_paste", in: barNamespace)
                 }
-                .buttonStyle(.plain)
-                .glassEffect(.regular.interactive(), in: .circle)
-                .glassEffectID("add_paste", in: barNamespace)
             }
 
             Button {
@@ -338,6 +344,10 @@ struct BottomControlBar: View {
 
     private func pasteClipboard() async {
         guard let content = container.clipboardService.readCurrentClipboard() else {
+            // Explain the no-op: otherwise tapping the button with an empty
+            // pasteboard just silently adds nothing.
+            haptics.fire(.destructive)
+            appState.showToast(.clipboardEmpty)
             return
         }
 
