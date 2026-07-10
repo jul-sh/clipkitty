@@ -1246,9 +1246,16 @@ fn import_metadata(
     }
 }
 
-fn is_transient_asc_auth_error(err: &anyhow::Error) -> bool {
+fn is_transient_asc_error(err: &anyhow::Error) -> bool {
     let msg = err.to_string();
+    // Spurious per-subrequest 401s; the next call with a fresh JWT works.
     msg.contains("Authentication credentials are missing or invalid")
+        // ASC-side 5xx flakiness. The asc CLI deliberately retries only
+        // GET/HEAD itself, so mutating commands surface these directly;
+        // our commands re-apply desired state, so re-running is safe.
+        || msg.contains("An unexpected error occurred on the server side")
+        // ASC responses that outlive the request timeout (ASC_TIMEOUT).
+        || msg.contains("context deadline exceeded")
 }
 
 fn upload_screenshots(
@@ -2124,26 +2131,27 @@ fn asc_command(
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
 ) -> Result<crate::process::CommandOutput> {
-    // ASC's API frequently 401s a single subrequest mid-call ("Authentication
-    // credentials are missing or invalid") even though the JWT we just minted
-    // is fine — the very next call with a fresh token works. Retry up to a
-    // few times with growing backoff to absorb the spurious failures.
-    const MAX_AUTH_RETRIES: usize = 3;
+    // ASC's API is flaky in ways the asc CLI won't absorb for mutating
+    // requests: spurious per-subrequest 401s, 5xx "unexpected error on the
+    // server side", and responses that outlive the request timeout (each has
+    // failed a release publish; see is_transient_asc_error). Retry with
+    // growing backoff to absorb them.
+    const MAX_TRANSIENT_RETRIES: usize = 3;
     let mut last_err: Option<anyhow::Error> = None;
-    for attempt in 0..=MAX_AUTH_RETRIES {
+    for attempt in 0..=MAX_TRANSIENT_RETRIES {
         let output = asc_command_output(repo, args, asc_env, reporter)?;
         if output.status.success() {
             return Ok(output);
         }
         let combined = command_output_text(&output);
         let err = anyhow!("`asc {}` failed: {combined}", args.join(" "));
-        if attempt < MAX_AUTH_RETRIES && is_transient_asc_auth_error(&err) {
+        if attempt < MAX_TRANSIENT_RETRIES && is_transient_asc_error(&err) {
             let backoff = Duration::from_secs(2u64.pow(attempt as u32 + 1));
             reporter.info(&format!(
-                "ASC returned a transient auth failure, retrying in {}s ({}/{})...",
+                "ASC returned a transient failure, retrying in {}s ({}/{})...",
                 backoff.as_secs(),
                 attempt + 1,
-                MAX_AUTH_RETRIES,
+                MAX_TRANSIENT_RETRIES,
             ));
             thread::sleep(backoff);
             last_err = Some(err);
