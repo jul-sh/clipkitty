@@ -52,19 +52,14 @@ struct HomeFeedView: View {
                     searchFocusRequestID: searchFocusRequestID
                 )
             }
+            // The title still names the screen (and labels the back button on
+            // pushed screens), but the bar itself is hidden: the ClipKitty
+            // header lives inside the feed (`feedHeader`) so it scrolls away
+            // with the content instead of floating over it.
             .navigationTitle("ClipKitty")
-            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(item: $previewItemId) { itemId in
                 PreviewScreen(itemId: itemId)
-            }
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showSettings = true
-                    } label: {
-                        Image(systemName: "gearshape")
-                    }
-                }
             }
             .sheet(isPresented: $showSettings) {
                 SettingsScreen()
@@ -91,20 +86,20 @@ struct HomeFeedView: View {
     private var feedContent: some View {
         switch viewModel.contentState {
         case .idle:
-            Color.clear
+            staticState { Color.clear }
 
         case let .loading(_, previous, phase):
             if previous != nil {
                 scrollableFeed
             } else if phase.isSpinnerVisible {
-                loadingView
+                staticState { loadingView }
             } else {
-                Color.clear
+                staticState { Color.clear }
             }
 
         case .loaded:
             if filteredRows.isEmpty {
-                emptyStateView
+                staticState { emptyStateView }
             } else {
                 scrollableFeed
             }
@@ -113,8 +108,43 @@ struct HomeFeedView: View {
             if previous != nil {
                 scrollableFeed
             } else {
-                failedView(message: message)
+                staticState { failedView(message: message) }
             }
+        }
+    }
+
+    /// The ClipKitty header: part of the feed content, not a pinned bar, so
+    /// it sits at the top of the list and hides as you scroll down.
+    private var feedHeader: some View {
+        ZStack {
+            Text("ClipKitty")
+                .font(.headline)
+
+            HStack {
+                Spacer()
+                Button {
+                    showSettings = true
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.title3)
+                        // Color.primary, not the hierarchical .primary: inside
+                        // a button the hierarchy is rooted at the tint, so the
+                        // shorthand stays accent blue.
+                        .foregroundStyle(Color.primary)
+                }
+                .accessibilityLabel(String(localized: "Settings"))
+            }
+        }
+        .padding(.horizontal, Self.feedGutter)
+        .padding(.vertical, 10)
+    }
+
+    /// Non-scrolling states (spinner, empty, failed) keep the same header at
+    /// the top so the screen doesn't lose its title and Settings access.
+    private func staticState(@ViewBuilder content: () -> some View) -> some View {
+        VStack(spacing: 0) {
+            feedHeader
+            content()
         }
     }
 
@@ -125,49 +155,59 @@ struct HomeFeedView: View {
     /// own interactions.
     private var scrollableFeed: some View {
         ScrollView {
-            LazyVStack(spacing: Self.feedRowSpacing) {
-                switch feedLayout {
-                case .singleColumn:
-                    ForEach(filteredRows) { row in
-                        CardView(
-                            row: row,
-                            previewItemId: $previewItemId
-                        )
-                        .onAppear {
-                            viewModel.loadMatchedExcerptsForItems([row.id])
-                        }
-                    }
-
-                case let .packedRows(rowWidth):
-                    ForEach(CardRowChunk.pack(filteredRows, rowWidth: rowWidth)) { chunk in
-                        JustifiedCardRow {
-                            ForEach(chunk.rows) { row in
-                                CardView(
-                                    row: row,
-                                    previewItemId: $previewItemId
-                                )
-                            }
-                        }
-                        .onAppear {
-                            viewModel.loadMatchedExcerptsForItems(chunk.rows.map(\.id))
-                        }
-                    }
-                }
+            VStack(spacing: 0) {
+                feedHeader
+                feedRows
             }
-            .padding(.horizontal, Self.feedGutter)
-            .padding(.vertical, Self.feedRowSpacing / 2)
         }
-        // Keep the ClipKitty header reading as a fixed bar: a hard top edge
-        // gives the navigation bar an opaque glass backing, so cards scroll
-        // under it instead of mixing with the title (the default soft edge
-        // left the title floating over card text).
-        .scrollEdgeEffectStyle(.hard, for: .top)
+        // With the navigation bar gone there is no bar for the system to
+        // anchor a scroll edge effect to, so scrolled content collides with
+        // the status bar clock. An empty safe-area bar recreates the effect
+        // region: content softly fades out under the status bar.
+        .safeAreaBar(edge: .top, spacing: 0) {
+            Color.clear.frame(height: 0)
+        }
+        .scrollEdgeEffectStyle(.soft, for: .top)
         .accessibilityIdentifier("feed.\(viewModel.activeFilterKind.rawValue).\(feedLoadPhase)")
         .onGeometryChange(for: FeedLayout.self) { proxy in
             FeedLayout(containerWidth: proxy.size.width)
         } action: { layout in
             feedLayout = layout
         }
+    }
+
+    private var feedRows: some View {
+        LazyVStack(spacing: Self.feedRowSpacing) {
+            switch feedLayout {
+            case .singleColumn:
+                ForEach(filteredRows) { row in
+                    CardView(
+                        row: row,
+                        previewItemId: $previewItemId
+                    )
+                    .onAppear {
+                        viewModel.loadMatchedExcerptsForItems([row.id])
+                    }
+                }
+
+            case let .packedRows(rowWidth):
+                ForEach(CardRowChunk.pack(filteredRows, rowWidth: rowWidth)) { chunk in
+                    JustifiedCardRow {
+                        ForEach(chunk.rows) { row in
+                            CardView(
+                                row: row,
+                                previewItemId: $previewItemId
+                            )
+                        }
+                    }
+                    .onAppear {
+                        viewModel.loadMatchedExcerptsForItems(chunk.rows.map(\.id))
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, Self.feedGutter)
+        .padding(.vertical, Self.feedRowSpacing / 2)
     }
 
     /// Load-state signal for UI automation, the iOS counterpart of the Mac's
