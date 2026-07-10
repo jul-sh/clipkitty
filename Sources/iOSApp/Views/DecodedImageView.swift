@@ -51,6 +51,25 @@ private final class ResumeOnce: @unchecked Sendable {
     }
 }
 
+/// Counts image cards currently rendering their placeholder, aggregated by
+/// the feed into its load-state accessibility identifier.
+///
+/// This closes a gap `ImageLoadActivity` cannot: the gauge only turns busy
+/// once a card's `.task` runs, which is at least one frame after the card
+/// first draws its placeholder. When a filter's rows land while the gauge is
+/// already settled, that frame reads "settled" with placeholders on screen —
+/// exactly the frame a marketing capture must not take (an App Store iPhone
+/// screenshot shipped a placeholder whale card this way). A preference is
+/// computed in the same render pass that draws the placeholder, so the feed
+/// flips back to "loading" as soon as SwiftUI processes the pass.
+struct PendingImagePlaceholderCount: PreferenceKey {
+    static let defaultValue = 0
+
+    static func reduce(value: inout Int, nextValue: () -> Int) {
+        value += nextValue()
+    }
+}
+
 struct DecodedImageView<Placeholder: View>: View {
     let namespace: String
     let itemId: String
@@ -86,6 +105,7 @@ struct DecodedImageView<Placeholder: View>: View {
                     .aspectRatio(image.size, contentMode: contentMode)
             } else {
                 placeholder()
+                    .preference(key: PendingImagePlaceholderCount.self, value: 1)
             }
         }
         .task(id: cacheKey) {

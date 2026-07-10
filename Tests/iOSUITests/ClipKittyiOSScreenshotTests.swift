@@ -199,13 +199,26 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         context: String
     ) {
         let settled = app.descendants(matching: .any)["feed.\(filterKind).settled"]
+        let deadline = Date().addingTimeInterval(timeout)
+        var isStable = false
+        while !isStable, Date() < deadline {
+            guard settled.waitForExistence(timeout: max(1, deadline.timeIntervalSinceNow)) else {
+                break
+            }
+            // One extra beat so the final decoded frame reaches the display
+            // buffer that `XCUIScreen.main.screenshot()` grabs — and to reject
+            // a transient settle: freshly landed rows can read settled for a
+            // frame before their placeholder cards flip the feed back to
+            // loading (the App Store iPhone Images screenshot shipped a
+            // placeholder card through exactly that frame). Only capture once
+            // the settle survives the beat.
+            sleep(1)
+            isStable = settled.exists
+        }
         XCTAssertTrue(
-            settled.waitForExistence(timeout: timeout),
+            isStable,
             "Feed did not settle within \(Int(timeout))s (\(context), locale \(locale!)) — capturing would ship placeholder cards"
         )
-        // One extra beat so the final decoded frame reaches the display
-        // buffer that `XCUIScreen.main.screenshot()` grabs.
-        sleep(1)
     }
 
     // MARK: - Screen capture

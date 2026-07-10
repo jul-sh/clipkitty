@@ -12,6 +12,9 @@ struct HomeFeedView: View {
     @State private var showSettings = false
     @State private var searchFocusRequestID = 0
     @State private var feedLayout: FeedLayout = .singleColumn
+    /// Cards currently drawing an image placeholder; see
+    /// `PendingImagePlaceholderCount` and `feedLoadPhase`.
+    @State private var pendingImagePlaceholders = 0
 
     /// How the feed arranges clips, derived from the window geometry. The
     /// packed case carries the row width it was derived from, so packing can
@@ -168,6 +171,9 @@ struct HomeFeedView: View {
             Color.clear.frame(height: 0)
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
+        .onPreferenceChange(PendingImagePlaceholderCount.self) { count in
+            pendingImagePlaceholders = count
+        }
         .accessibilityIdentifier("feed.\(viewModel.activeFilterKind.rawValue).\(feedLoadPhase)")
         .onGeometryChange(for: FeedLayout.self) { proxy in
             FeedLayout(containerWidth: proxy.size.width)
@@ -221,7 +227,13 @@ struct HomeFeedView: View {
     /// "settled" before the filtered content even arrived. Marketing
     /// screenshot runs wait on this instead of guessing at sleeps.
     private var feedLoadPhase: String {
-        if case .loaded = viewModel.contentState, ImageLoadActivity.shared.isSettled {
+        if case .loaded = viewModel.contentState,
+           ImageLoadActivity.shared.isSettled,
+           // Cards drawing a placeholder count as loading even before their
+           // fetch/decode tasks have started (the tasks are what drive
+           // ImageLoadActivity, and they run a frame after first draw).
+           pendingImagePlaceholders == 0
+        {
             return "settled"
         }
         return "loading"
