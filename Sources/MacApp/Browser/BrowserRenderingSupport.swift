@@ -1656,6 +1656,7 @@ struct ItemRow: View {
                                     .frame(width: 18, height: 18)
                                     .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
                                     .offset(x: 4, y: 4)
+                                    .transition(.scale.combined(with: .opacity))
                             } else if let bundleID = metadata.sourceAppBundleId,
                                       let sourceAppImage = RowIconCache.sourceAppImage(bundleID: bundleID)
                             {
@@ -1722,6 +1723,12 @@ struct ItemRow: View {
                         .strokeBorder(Color.primary.opacity(0.22), lineWidth: 1)
                 }
             }
+            // Each keyed to its own state so selection changes stay instant:
+            // the pencil/background crossfade on entering edit mode, the
+            // context-target ring/fill fade, and the bookmark badge pop.
+            .animation(.easeInOut(duration: 0.15), value: hasPendingEdit)
+            .animation(.easeOut(duration: 0.12), value: isContextMenuTargeted)
+            .animation(.spring(response: 0.3, dampingFraction: 0.55), value: metadata.tags.contains(.bookmark))
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .contentShape(Rectangle())
         }
@@ -1999,38 +2006,6 @@ struct HighlightedTextView: View, Equatable {
     }
 }
 
-// MARK: - Filter Option Row
-
-private struct FilterOptionRow: View {
-    let label: String
-    let isSelected: Bool
-    var isHighlighted: Bool = false
-    let action: () -> Void
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            Text(label)
-                .font(.system(size: 13))
-                .foregroundStyle(isHighlighted ? .white : .secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background {
-                    if isHighlighted {
-                        Color.selectionBackground
-                            .clipShape(RoundedRectangle(cornerRadius: 9))
-                    } else {
-                        RoundedRectangle(cornerRadius: 9)
-                            .fill(isSelected ? Color.primary.opacity(0.1) : isHovered ? Color.primary.opacity(0.05) : Color.clear)
-                    }
-                }
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-    }
-}
-
 // MARK: - Action Option Row
 
 struct ActionOptionRow: View {
@@ -2060,6 +2035,7 @@ struct ActionOptionRow: View {
                 RoundedRectangle(cornerRadius: 7)
                     .fill(backgroundColor)
             }
+            .animation(.easeOut(duration: 0.12), value: isHighlighted)
             .contentShape(RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
