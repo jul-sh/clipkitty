@@ -47,7 +47,7 @@ struct KeyboardRootView: View {
                 systemImage: "lock",
                 title: String(localized: "Allow Full Access to see your clips"),
                 caption: String(
-                    localized: "In the Settings app, go to ClipKitty → Keyboards and turn on Allow Full Access. ClipKitty's keyboard only reads your clip history; it sends nothing anywhere."
+                    localized: "In the Settings app, go to ClipKitty → Keyboards and turn on Allow Full Access. The keyboard reads your clip history and saves new clips to it; nothing leaves your device."
                 )
             )
 
@@ -55,11 +55,11 @@ struct KeyboardRootView: View {
             KeyboardMessageView(
                 systemImage: "clipboard",
                 title: String(localized: "No clips yet"),
-                caption: String(localized: "Open ClipKitty to load your recent clips, then they'll appear here.")
+                caption: String(localized: "Copy something, or open ClipKitty to load your recent clips — they'll appear here.")
             )
 
-        case let .ready(items):
-            KeyboardCardStrip(items: items, insertText: insertText)
+        case let .ready(cards):
+            KeyboardCardStrip(cards: cards, insertText: insertText)
         }
     }
 }
@@ -67,19 +67,72 @@ struct KeyboardRootView: View {
 // MARK: - Card strip
 
 private struct KeyboardCardStrip: View {
-    let items: [KeyboardFeedStore.Item]
+    let cards: [KeyboardFeedModel.Card]
     let insertText: (String) -> Void
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(spacing: 10) {
-                ForEach(items) { item in
-                    KeyboardCardView(item: item, insertText: insertText)
+                ForEach(cards) { card in
+                    switch card {
+                    case let .clip(item):
+                        KeyboardCardView(item: item, insertText: insertText)
+                    case let .capturedImage(imageCard):
+                        CapturedImageCardView(card: imageCard)
+                    }
                 }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
         }
+    }
+}
+
+// MARK: - Card chrome
+
+private enum KeyboardCardMetrics {
+    static let cornerRadius: CGFloat = 12
+    static let width: CGFloat = 180
+
+    static let relativeDateFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+
+    /// "Now" under a minute — RelativeDateTimeFormatter's "0 sec. ago" reads
+    /// like a stopwatch, and freshly-captured cards always land here.
+    static func relativeTime(fromUnix timestampUnix: Int64) -> String {
+        let date = Date(timeIntervalSince1970: TimeInterval(timestampUnix))
+        if Date().timeIntervalSince(date) < 60 {
+            return String(localized: "Now")
+        }
+        return relativeDateFormatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+private struct KeyboardCardSurface: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        content
+            .padding(12)
+            .frame(width: KeyboardCardMetrics.width, alignment: .topLeading)
+            .frame(maxHeight: .infinity)
+            .background(
+                .regularMaterial,
+                in: RoundedRectangle(cornerRadius: KeyboardCardMetrics.cornerRadius, style: .continuous)
+            )
+            .overlay {
+                if colorScheme == .dark {
+                    RoundedRectangle(cornerRadius: KeyboardCardMetrics.cornerRadius, style: .continuous)
+                        .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
+                }
+            }
+            .contentShape(
+                [.interaction, .dragPreview],
+                RoundedRectangle(cornerRadius: KeyboardCardMetrics.cornerRadius, style: .continuous)
+            )
     }
 }
 
@@ -89,16 +142,7 @@ private struct KeyboardCardView: View {
     let item: KeyboardFeedStore.Item
     let insertText: (String) -> Void
 
-    @Environment(\.colorScheme) private var colorScheme
     @State private var showsInsertedFlash = false
-
-    private static let cornerRadius: CGFloat = 12
-
-    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter
-    }()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -106,24 +150,8 @@ private struct KeyboardCardView: View {
             contentPreview
             Spacer(minLength: 0)
         }
-        .padding(12)
-        .frame(width: 180, alignment: .topLeading)
-        .frame(maxHeight: .infinity)
-        .background(
-            .regularMaterial,
-            in: RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
-        )
-        .overlay {
-            if colorScheme == .dark {
-                RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
-                    .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
-            }
-        }
+        .modifier(KeyboardCardSurface())
         .overlay(insertedFlash)
-        .contentShape(
-            [.interaction, .dragPreview],
-            RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
-        )
         .onTapGesture(perform: insert)
         .onDrag(makeDragProvider)
         .accessibilityElement(children: .combine)
@@ -197,7 +225,7 @@ private struct KeyboardCardView: View {
     @ViewBuilder
     private var insertedFlash: some View {
         if showsInsertedFlash {
-            RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+            RoundedRectangle(cornerRadius: KeyboardCardMetrics.cornerRadius, style: .continuous)
                 .fill(.regularMaterial)
                 .overlay(
                     Image(systemName: "checkmark.circle.fill")
@@ -250,8 +278,7 @@ private struct KeyboardCardView: View {
     }
 
     private var relativeTime: String {
-        let date = Date(timeIntervalSince1970: TimeInterval(item.timestampUnix))
-        return Self.relativeDateFormatter.localizedString(for: date, relativeTo: Date())
+        KeyboardCardMetrics.relativeTime(fromUnix: item.timestampUnix)
     }
 
     private var swatchColor: Color {
@@ -271,6 +298,83 @@ private struct KeyboardCardView: View {
         parts.append(String(excerpt.prefix(100)))
         parts.append(relativeTime)
         return parts.joined(separator: ", ")
+    }
+}
+
+// MARK: - Captured image card
+
+/// An image just captured from the pasteboard. It can't be inserted as text,
+/// so the card is a drag source: drop it into the host app. The bytes stay on
+/// disk in the pending queue and are read lazily when a drop lands.
+private struct CapturedImageCardView: View {
+    let card: KeyboardFeedModel.CapturedImageCard
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "photo")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(String(localized: "Image"))
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Text(KeyboardCardMetrics.relativeTime(fromUnix: card.timestampUnix))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            if let thumbnail = card.thumbnail {
+                Image(uiImage: thumbnail)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            } else {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(.secondary.opacity(0.1))
+                    .overlay(
+                        Image(systemName: "photo")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                    )
+            }
+
+            HStack(spacing: 4) {
+                Image(systemName: "hand.draw")
+                    .font(.caption2)
+                Text(String(localized: "Drag to use"))
+                    .font(.caption2)
+            }
+            .foregroundStyle(.tertiary)
+        }
+        .modifier(KeyboardCardSurface())
+        .onDrag(makeDragProvider)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(String(localized: "Image from your clipboard"))
+        .accessibilityHint(String(localized: "Drag into the app to use it"))
+    }
+
+    private func makeDragProvider() -> NSItemProvider {
+        let provider = NSItemProvider()
+        let fileURL = card.fileURL
+        provider.registerDataRepresentation(
+            forTypeIdentifier: card.utType.identifier,
+            visibility: .all
+        ) { completion in
+            // Read lazily: the bytes may be several MB, and most drags never
+            // leave the keyboard.
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let data = try Data(contentsOf: fileURL)
+                    completion(data, nil)
+                } catch {
+                    completion(nil, error)
+                }
+            }
+            return nil
+        }
+        return provider
     }
 }
 
