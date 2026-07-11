@@ -14,12 +14,12 @@
       <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.13.1407-beta/ClipKitty.dmg" type="application/octet-stream" sparkle:edSignature="PhtSNvxUW53OmX0icbhvuz8XZiQ1RqR43GFXGcj4aJfYkdBgl2kr9U42apqMOizqHMyEB/RJfWqZLQocDc9mCA==" length="19168924" />
     </item>
     <item>
-      <title>ClipKitty 1.13.1396</title>
-      <sparkle:version>1396</sparkle:version>
-      <sparkle:shortVersionString>1.13.1396</sparkle:shortVersionString>
+      <title>ClipKitty 1.13.1407</title>
+      <sparkle:version>1407</sparkle:version>
+      <sparkle:shortVersionString>1.13.1407</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <pubDate>Sat, 11 Jul 2026 21:06:37 GMT</pubDate>
-      <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.13.1396/ClipKitty.dmg" type="application/octet-stream" sparkle:edSignature="sHlJh6unYFwiojI7gnTRuIN8P4OcKwX7A/wlvLXSZQ1pkHOg4FoP6UagD3JH7aeCNZ1Z56rQla0so7FlkkatAw==" length="19168940" />
+      <pubDate>Sat, 11 Jul 2026 22:08:49 GMT</pubDate>
+      <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.13.1407/ClipKitty.dmg" type="application/octet-stream" sparkle:edSignature="PhtSNvxUW53OmX0icbhvuz8XZiQ1RqR43GFXGcj4aJfYkdBgl2kr9U42apqMOizqHMyEB/RJfWqZLQocDc9mCA==" length="19168924" />
     </item>
   </channel>
 </rss>
