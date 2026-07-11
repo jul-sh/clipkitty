@@ -126,6 +126,10 @@ final class AppState {
     func refreshFeed() {
         contentRevision += 1
         viewModel.handlePanelVisibilityChange(true, contentRevision: contentRevision)
+        // Content changed; if this landed while backgrounded (sync), the
+        // keyboard snapshot refreshes now — foreground changes wait for
+        // suspension (see KeyboardFeedService).
+        container.keyboardFeed.scheduleRefresh()
     }
 
     func restoreVisibleFeedAfterForegroundActivation() {
@@ -612,12 +616,29 @@ struct ClipKittyiOSApp: App {
                 else {
                     return
                 }
+                // Snapshot the keyboard feed while the store is still open —
+                // the user is heading to another app, where the keyboard may
+                // come up next.
+                await session.container.keyboardFeed.refreshOnSuspension()
+                guard !Task.isCancelled,
+                      case let .suspending(recheck) = launchState,
+                      recheck.id == suspensionID
+                else {
+                    return
+                }
                 session.appState.prepareForSuspension()
                 session.container.prepareForSuspension()
             }
         #else
             guard case let .suspending(context) = launchState,
                   context.id == suspensionID
+            else {
+                return
+            }
+            await session.container.keyboardFeed.refreshOnSuspension()
+            guard !Task.isCancelled,
+                  case let .suspending(recheck) = launchState,
+                  recheck.id == suspensionID
             else {
                 return
             }

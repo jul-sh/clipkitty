@@ -19,6 +19,7 @@ final class AppContainer {
     let clipboardService: iOSClipboardService
     let settings: iOSSettingsStore
     let haptics: HapticsClient
+    let keyboardFeed: KeyboardFeedService
 
     private init(
         store: ClipKittyRust.ClipboardStore,
@@ -28,7 +29,8 @@ final class AppContainer {
         storeClient: iOSBrowserStoreClient,
         clipboardService: iOSClipboardService,
         settings: iOSSettingsStore,
-        haptics: HapticsClient
+        haptics: HapticsClient,
+        keyboardFeed: KeyboardFeedService
     ) {
         self.store = store
         self.repository = repository
@@ -38,6 +40,7 @@ final class AppContainer {
         self.clipboardService = clipboardService
         self.settings = settings
         self.haptics = haptics
+        self.keyboardFeed = keyboardFeed
     }
 
     static func bootstrap(databasePath customPath: String? = nil) -> Result<AppContainer, BootstrapError> {
@@ -136,6 +139,7 @@ final class AppContainer {
         let settings = iOSSettingsStore()
         let clipboardService = iOSClipboardService(settings: settings)
         let haptics = HapticsClient(settings: settings)
+        let keyboardFeed = KeyboardFeedService(repository: repository)
 
         return AppContainer(
             store: store,
@@ -145,7 +149,8 @@ final class AppContainer {
             storeClient: storeClient,
             clipboardService: clipboardService,
             settings: settings,
-            haptics: haptics
+            haptics: haptics,
+            keyboardFeed: keyboardFeed
         )
     }
 

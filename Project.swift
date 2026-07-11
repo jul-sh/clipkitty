@@ -388,19 +388,30 @@ enum IOSBuildVariant: CaseIterable {
     }
 
     func shareExtensionConfiguration() -> Configuration {
+        iOSExtensionConfiguration(
+            entitlements: "Sources/ShareExtension/ClipKittyShare.entitlements",
+            appStoreProfile: "ClipKitty Share AppStore"
+        )
+    }
+
+    func keyboardExtensionConfiguration() -> Configuration {
+        iOSExtensionConfiguration(
+            entitlements: "Sources/KeyboardExtension/ClipKittyKeyboard.entitlements",
+            appStoreProfile: "ClipKitty Keyboard AppStore"
+        )
+    }
+
+    private func iOSExtensionConfiguration(
+        entitlements: String,
+        appStoreProfile: String
+    ) -> Configuration {
         let settings: SettingsDictionary
         switch self {
-        case .debug:
+        case .debug, .release:
             settings = [
                 "CODE_SIGN_STYLE": "Automatic",
                 "CODE_SIGN_IDENTITY": "Apple Development",
-                "CODE_SIGN_ENTITLEMENTS": "Sources/ShareExtension/ClipKittyShare.entitlements",
-            ]
-        case .release:
-            settings = [
-                "CODE_SIGN_STYLE": "Automatic",
-                "CODE_SIGN_IDENTITY": "Apple Development",
-                "CODE_SIGN_ENTITLEMENTS": "Sources/ShareExtension/ClipKittyShare.entitlements",
+                "CODE_SIGN_ENTITLEMENTS": .string(entitlements),
             ]
         case .sparkle, .hardened:
             settings = [:]
@@ -408,8 +419,8 @@ enum IOSBuildVariant: CaseIterable {
             settings = [
                 "CODE_SIGN_STYLE": "Manual",
                 "CODE_SIGN_IDENTITY": "Apple Distribution",
-                "CODE_SIGN_ENTITLEMENTS": "Sources/ShareExtension/ClipKittyShare.entitlements",
-                "PROVISIONING_PROFILE_SPECIFIER": "ClipKitty Share AppStore",
+                "CODE_SIGN_ENTITLEMENTS": .string(entitlements),
+                "PROVISIONING_PROFILE_SPECIFIER": .string(appStoreProfile),
             ]
         }
 
@@ -867,6 +878,7 @@ let project = Project(
                 .target(name: "ClipKittyAppleServices"),
                 .target(name: "ClipKittyShortcuts"),
                 .target(name: "ClipKittyShare"),
+                .target(name: "ClipKittyKeyboard"),
             ],
             settings: .settings(
                 base: [
@@ -930,6 +942,63 @@ let project = Project(
                     "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
                 ],
                 configurations: IOSBuildVariant.allCases.map { $0.shareExtensionConfiguration() }
+            )
+        ),
+
+        // MARK: ClipKittyKeyboard — iOS Keyboard Extension
+
+        // A keyless keyboard: the recent-clips feed as tappable/draggable
+        // cards. It never opens the database — it reads the App Group
+        // snapshot the main app maintains (see KeyboardFeedStore), keeping
+        // the extension inside the tight keyboard memory budget.
+        // RequestsOpenAccess is required: without Full Access a keyboard
+        // cannot reach its App Group container at all.
+        .target(
+            name: "ClipKittyKeyboard",
+            destinations: [.iPhone, .iPad],
+            product: .appExtension,
+            bundleId: "com.eviljuliette.clipkitty.keyboard",
+            deploymentTargets: .iOS("26.0"),
+            infoPlist: .extendingDefault(with: [
+                "CFBundleDisplayName": "ClipKitty",
+                "CFBundleShortVersionString": "$(MARKETING_VERSION)",
+                "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
+                "NSExtension": [
+                    "NSExtensionPointIdentifier": "com.apple.keyboard-service",
+                    "NSExtensionPrincipalClass": "$(PRODUCT_MODULE_NAME).KeyboardViewController",
+                    "NSExtensionAttributes": [
+                        "IsASCIICapable": false,
+                        "PrefersRightToLeft": false,
+                        "PrimaryLanguage": "en-US",
+                        "RequestsOpenAccess": true,
+                    ],
+                ],
+            ]),
+            sources: ["Sources/KeyboardExtension/**"],
+            resources: [
+                // Shares the app's string catalog so keyboard strings are
+                // translated from the same source of truth (and pass the
+                // xtask localization-coverage check).
+                "Sources/iOSApp/Resources/Localizable.xcstrings",
+            ],
+            dependencies: [
+                .target(name: "ClipKittyRust"),
+                .target(name: "ClipKittyShared"),
+            ],
+            settings: .settings(
+                base: [
+                    "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr"]),
+                    "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": .array([
+                        "$(inherited)",
+                        "$(PROJECT_DIR)/Sources/ClipKittyRust/ios-device",
+                    ]),
+                    "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": .array([
+                        "$(inherited)",
+                        "$(PROJECT_DIR)/Sources/ClipKittyRust/ios-simulator",
+                    ]),
+                    "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
+                ],
+                configurations: IOSBuildVariant.allCases.map { $0.keyboardExtensionConfiguration() }
             )
         ),
 

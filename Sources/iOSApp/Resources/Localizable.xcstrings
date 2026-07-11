@@ -4,6 +4,42 @@
     "%.0f GB" : {
 
     },
+    "Allow Full Access to see your clips" : {
+
+    },
+    "Double tap to insert" : {
+
+    },
+    "In the Settings app, go to ClipKitty → Keyboards and turn on Allow Full Access. ClipKitty's keyboard only reads your clip history; it sends nothing anywhere." : {
+
+    },
+    "Keyboard" : {
+
+    },
+    "Next keyboard" : {
+
+    },
+    "No clips yet" : {
+
+    },
+    "Open ClipKitty in the Settings app, tap \"Keyboards\", then turn on ClipKitty and \"Allow Full Access\". Full Access is what lets the keyboard read your clips; nothing leaves your device." : {
+
+    },
+    "Open ClipKitty to load your recent clips, then they'll appear here." : {
+
+    },
+    "Paste from your clip history in any app — the ClipKitty keyboard shows your recent clips as cards. Tap one to insert it, or drag it into the app." : {
+
+    },
+    "Set Up Keyboard" : {
+
+    },
+    "Tap the globe key on any keyboard to switch to ClipKitty and insert recent clips." : {
+
+    },
+    "The ClipKitty keyboard is set up" : {
+
+    },
     "%.1f GB" : {
 
     },
