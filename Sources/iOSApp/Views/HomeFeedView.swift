@@ -15,6 +15,11 @@ struct HomeFeedView: View {
     /// Cards currently drawing an image placeholder; see
     /// `PendingImagePlaceholderCount` and `feedLoadPhase`.
     @State private var pendingImagePlaceholders = 0
+    /// The request whose results the feed last rendered; see
+    /// `feedMutationAnimation`. Trails `displayedRequest` by one render pass,
+    /// which is exactly what lets the pass that swaps in a new query's rows
+    /// render unanimated.
+    @State private var settledRequest: SearchRequest?
 
     /// How the feed arranges clips, derived from the window geometry. The
     /// packed case carries the row width it was derived from, so packing can
@@ -87,7 +92,27 @@ struct HomeFeedView: View {
                 guard oldValue != nil, newValue == nil, isSearchActive else { return }
                 searchFocusRequestID += 1
             }
+            .onChange(of: displayedRequest) { _, newValue in
+                settledRequest = newValue
+            }
         }
+    }
+
+    /// The request that produced the rows currently on screen. While a new
+    /// query is loading this stays on the previous request, so it only moves
+    /// in the same render pass that swaps the rows.
+    private var displayedRequest: SearchRequest? {
+        viewModel.contentState.response?.request
+    }
+
+    /// Animates feed mutations within one result set — a new clip arriving, a
+    /// delete collapsing out, an undo re-inserting — while full swaps from a
+    /// changed search or filter stay instant. In the pass that lands a new
+    /// query's rows, `settledRequest` still holds the previous request (its
+    /// `onChange` hasn't run yet), so the mismatch disables the animation for
+    /// exactly that pass.
+    private var feedMutationAnimation: Animation? {
+        displayedRequest == settledRequest ? .bouncy : nil
     }
 
     @ViewBuilder
@@ -153,9 +178,17 @@ struct HomeFeedView: View {
                     .onAppear {
                         viewModel.loadMatchedExcerptsForItems([row.id])
                     }
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .top).combined(with: .opacity),
+                        removal: .scale(scale: 0.92).combined(with: .opacity)
+                    ))
                 }
 
             case let .packedRows(rowWidth):
+                // Chunk identity is derived from member ids, so an insert or
+                // delete re-chunks everything below it; a plain fade keeps
+                // that wholesale identity churn reading as one crossfade
+                // instead of a cascade of sliding rows.
                 ForEach(CardRowChunk.pack(filteredRows, rowWidth: rowWidth)) { chunk in
                     JustifiedCardRow {
                         ForEach(chunk.rows) { row in
@@ -168,11 +201,13 @@ struct HomeFeedView: View {
                     .onAppear {
                         viewModel.loadMatchedExcerptsForItems(chunk.rows.map(\.id))
                     }
+                    .transition(.opacity)
                 }
             }
         }
         .padding(.horizontal, Self.feedGutter)
         .padding(.vertical, Self.feedRowSpacing / 2)
+        .animation(feedMutationAnimation, value: viewModel.itemIds)
     }
 
     /// Load-state signal for UI automation, the iOS counterpart of the Mac's
