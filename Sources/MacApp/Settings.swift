@@ -251,7 +251,7 @@ final class AppSettings: ObservableObject {
 
         launchAtLoginEnabled = defaults.bool(forKey: launchAtLoginKey)
         fontPreference = defaults.string(forKey: fontPreferenceKey)
-            .flatMap(AppFontPreference.init(rawValue:)) ?? .iosevkaCharon
+            .flatMap(AppFontPreference.init(rawValue:)) ?? .system
         previewFontPreference = defaults.string(forKey: previewFontPreferenceKey)
             .flatMap(PreviewFontPreference.init(rawValue:)) ?? .coding
         #if ENABLE_SYNTHETIC_PASTE

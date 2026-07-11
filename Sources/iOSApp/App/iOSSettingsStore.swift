@@ -88,7 +88,7 @@ final class iOSSettingsStore {
         autoAddFromClipboard = defaults.object(forKey: autoAddFromClipboardKey) as? Bool ?? false
         maxDatabaseSizeGB = defaults.object(forKey: maxDatabaseSizeGBKey) as? Double ?? 7.0
         fontPreference = defaults.string(forKey: fontPreferenceKey)
-            .flatMap(AppFontPreference.init(rawValue:)) ?? .iosevkaCharon
+            .flatMap(AppFontPreference.init(rawValue:)) ?? .system
         previewFontPreference = defaults.string(forKey: previewFontPreferenceKey)
             .flatMap(PreviewFontPreference.init(rawValue:)) ?? .coding
         permissionHintDismissed = defaults.object(forKey: permissionHintDismissedKey) as? Bool ?? false

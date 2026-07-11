@@ -12,7 +12,7 @@ struct TextPreviewView: UIViewRepresentable {
     var highlights: [Utf16HighlightRange] = []
     var initialScrollHighlightIndex: UInt64?
     var isEditable: Bool = true
-    var fontPreference: AppFontPreference = .iosevkaCharon
+    var fontPreference: AppFontPreference = .system
     var previewStyle: PreviewFontPreference = .coding
 
     var onTextChange: ((String) -> Void)?
