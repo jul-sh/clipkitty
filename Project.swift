@@ -508,7 +508,7 @@ private let macAppBaseSettings: SettingsDictionary = [
 ]
 
 /// Shared source and resource paths for all macOS app targets.
-private let macAppSources: SourceFilesList = ["Sources/MacApp/**"]
+private let macAppSources: SourceFilesList = ["Sources/MacApp/**", "Sources/AppShortcuts/**"]
 private let macAppResources: ResourceFileElements = [
     .folderReference(path: "Sources/MacApp/Resources/Fonts"),
     "Sources/MacApp/Resources/menu-bar.svg",
@@ -853,7 +853,7 @@ let project = Project(
                 // the capability the binary actually satisfies.
                 "UIRequiredDeviceCapabilities": ["arm64"],
             ]),
-            sources: ["Sources/iOSApp/**"],
+            sources: ["Sources/iOSApp/**", "Sources/AppShortcuts/**"],
             resources: [
                 "AppIcon.icon",
                 "Sources/iOSApp/Resources/Fonts/**",
