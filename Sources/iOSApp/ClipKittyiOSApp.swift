@@ -126,6 +126,10 @@ final class AppState {
     func refreshFeed() {
         contentRevision += 1
         viewModel.handlePanelVisibilityChange(true, contentRevision: contentRevision)
+        // Content changed; if this landed while backgrounded (sync), the
+        // keyboard snapshot refreshes now — foreground changes wait for
+        // suspension (see KeyboardFeedService).
+        container.keyboardFeed.scheduleRefresh()
     }
 
     func restoreVisibleFeedAfterForegroundActivation() {
@@ -179,18 +183,25 @@ final class AppState {
 
         var saved = 0
         for entry in pending {
+            // Keyboard captures are clipboard content, so they get the same
+            // source label auto-add uses; share-sheet items keep theirs.
+            let sourceApp = switch entry.origin {
+            case .shareSheet: "Share Sheet"
+            case .keyboard: "Pasteboard"
+            }
+
             let result: Result<String, ClipboardError>
             switch entry.item {
             case let .text(text):
                 result = await container.repository.saveText(
                     text: text,
-                    sourceApp: "Share Sheet",
+                    sourceApp: sourceApp,
                     sourceAppBundleId: nil
                 )
             case let .url(url):
                 result = await container.repository.saveText(
                     text: url,
-                    sourceApp: "Share Sheet",
+                    sourceApp: sourceApp,
                     sourceAppBundleId: nil
                 )
             case .image:
@@ -198,7 +209,7 @@ final class AppState {
                 result = await saveImage(
                     imageData: imageData,
                     thumbnail: entry.thumbnailData,
-                    sourceApp: "Share Sheet",
+                    sourceApp: sourceApp,
                     sourceAppBundleId: nil,
                     isAnimated: false
                 )
@@ -210,6 +221,10 @@ final class AppState {
 
     func autoAddFromClipboard() async {
         guard container.settings.autoAddFromClipboard else { return }
+
+        // The keyboard may have captured (and marked) a generation while this
+        // session was backgrounded but not torn down.
+        container.settings.refreshPasteboardIngestState()
 
         // Reading changeCount does not trigger the paste-consent alert. If the
         // pasteboard has not changed since we last looked, skip the read so we
@@ -612,12 +627,29 @@ struct ClipKittyiOSApp: App {
                 else {
                     return
                 }
+                // Snapshot the keyboard feed while the store is still open —
+                // the user is heading to another app, where the keyboard may
+                // come up next.
+                await session.container.keyboardFeed.refreshOnSuspension()
+                guard !Task.isCancelled,
+                      case let .suspending(recheck) = launchState,
+                      recheck.id == suspensionID
+                else {
+                    return
+                }
                 session.appState.prepareForSuspension()
                 session.container.prepareForSuspension()
             }
         #else
             guard case let .suspending(context) = launchState,
                   context.id == suspensionID
+            else {
+                return
+            }
+            await session.container.keyboardFeed.refreshOnSuspension()
+            guard !Task.isCancelled,
+                  case let .suspending(recheck) = launchState,
+                  recheck.id == suspensionID
             else {
                 return
             }

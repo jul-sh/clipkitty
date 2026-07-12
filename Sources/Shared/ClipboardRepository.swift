@@ -74,13 +74,19 @@ public final class ClipboardRepository: @unchecked Sendable {
     }
 
     public func fetchItem(id: String) async -> ClipboardItem? {
-        let result = await runRepositoryOperation("fetchItem", on: store) { store in
-            try store.fetchByIds(itemIds: [id])
+        await fetchItems(ids: [id]).first
+    }
+
+    /// Fetch full items by id; ids that no longer exist are simply absent
+    /// from the result.
+    public func fetchItems(ids: [String]) async -> [ClipboardItem] {
+        let result = await runRepositoryOperation("fetchItems", on: store) { store in
+            try store.fetchByIds(itemIds: ids)
         }
         if case let .success(items) = result {
-            return items.first
+            return items
         }
-        return nil
+        return []
     }
 
     public func resolveMatchedExcerpts(requests: [MatchedExcerptRequest]) async -> [MatchedExcerptResolution] {
