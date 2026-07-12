@@ -1596,3 +1596,4 @@ jobs:
         run: |
           rm -f ~/Library/MobileDevice/Provisioning\ Profiles/clipkitty-ios.mobileprovision
           rm -f ~/Library/MobileDevice/Provisioning\ Profiles/clipkitty-share.mobileprovision
+          rm -f ~/Library/MobileDevice/Provisioning\ Profiles/clipkitty-keyboard.mobileprovision
