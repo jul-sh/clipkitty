@@ -40,8 +40,19 @@ const VIDEO_BOUNDS_FILE: &str = "/tmp/clipkitty_window_bounds.txt";
 const VIDEO_OFFSET_FILE: &str = "/tmp/clipkitty_video_start_offset.txt";
 const VIDEO_TYPING_LATENCY_FILE: &str = "/tmp/clipkitty_video_typing_latency.json";
 const SILVER_BACKGROUND: &str = "/System/Library/Desktop Pictures/Solid Colors/Silver.png";
-const SCREENSHOT_CAPTURE_SPECS: [(usize, &str); 3] =
+/// Index/suffix pairs the Mac screenshot test saves. The iOS/iPad set is a
+/// superset — see `CapturePlatform::capture_specs`.
+const MAC_SCREENSHOT_CAPTURE_SPECS: [(usize, &str); 3] =
     [(1, "history"), (2, "search"), (3, "filter")];
+
+/// The iOS/iPad set adds the ClipKitty keyboard and the share-sheet flow.
+const IOS_SCREENSHOT_CAPTURE_SPECS: [(usize, &str); 5] = [
+    (1, "history"),
+    (2, "search"),
+    (3, "filter"),
+    (4, "keyboard"),
+    (5, "share"),
+];
 
 pub fn run(cmd: &MarketingCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
     let _ = SideEffectLevel::LocalMutation;
@@ -174,6 +185,18 @@ enum CapturePlatform {
     Ios(IosDeviceKind),
 }
 
+impl CapturePlatform {
+    /// Which `<index>_<suffix>` PNGs the platform's screenshot test saves;
+    /// must match the `saveScreenshot` calls on the Swift side so a partial
+    /// capture is detected as such.
+    fn capture_specs(self) -> &'static [(usize, &'static str)] {
+        match self {
+            Self::MacOs => &MAC_SCREENSHOT_CAPTURE_SPECS,
+            Self::Ios(_) => &IOS_SCREENSHOT_CAPTURE_SPECS,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ScreenshotDbMode {
     LocalizedDatabases,
@@ -193,8 +216,7 @@ enum ScreenshotCopy {
 }
 
 impl ScreenshotCopy {
-    fn from_copied(copied: usize) -> Self {
-        let expected = expected_screenshot_count();
+    fn from_copied(copied: usize, expected: usize) -> Self {
         if copied == expected {
             Self::Complete { count: copied }
         } else {
@@ -310,6 +332,10 @@ fn run_screenshot_plan(
 
     if matches!(plan.db_mode, ScreenshotDbMode::LocalizedDatabases) {
         patch_demo_items(repo, false, reporter)?;
+    }
+
+    if plan.ios_device_kind().is_some() {
+        seed_ios_keyboard(plan, reporter)?;
     }
 
     let mut temp_paths = vec![
@@ -461,6 +487,88 @@ fn screenshot_db_name(locale: MarketingLocale, mode: ScreenshotDbMode) -> String
 /// attempts clears that state.
 const IOS_SCREENSHOT_MAX_ATTEMPTS: u32 = 3;
 const MACOS_SCREENSHOT_MAX_ATTEMPTS: u32 = 3;
+
+/// Enable the ClipKitty keyboard on the plan's simulator before any capture
+/// runs. The keyboard screenshot needs the third-party keyboard reachable
+/// via the globe key, and there is no way to toggle it from inside the test
+/// run (preference writes from the test-runner process land in the runner's
+/// own container, and the Settings UI switch is inert under automation).
+///
+/// The recipe that the text-input system actually honors, verified on iOS 26
+/// simulators: `AppleKeyboards` lists the QWERTY board plus the extension's
+/// bundle id, `AppleKeyboardsExpanded` is the integer flag 1 (NEVER an array
+/// — that wedges SpringBoard's boot at "Waiting on System App"), and the
+/// list is read when the device boots with the app installed. Seeding a
+/// fresh device before the first `xcodebuild test` therefore takes effect on
+/// the boot of the SECOND run — the existing retry loop converges on it —
+/// and stays in effect for every later locale on an already-provisioned
+/// device (the CI path after the first attempt, and local reruns).
+fn seed_ios_keyboard(plan: ScreenshotPlan, reporter: &Reporter) -> Result<()> {
+    let device_name = plan
+        .destination
+        .split("name=")
+        .nth(1)
+        .context("iOS destination has no device name")?;
+
+    let list = Runner::new(reporter, "xcrun")
+        .args(["simctl", "list", "devices", "available", "-j"])
+        .capture_stdout()
+        .capture_stderr()
+        .output()?;
+    let parsed: serde_json::Value = serde_json::from_slice(&list.stdout)
+        .context("parsing `simctl list devices -j` output")?;
+    let udid = parsed["devices"]
+        .as_object()
+        .into_iter()
+        .flat_map(|runtimes| runtimes.values())
+        .flat_map(|devices| devices.as_array().into_iter().flatten())
+        .find(|device| device["name"].as_str() == Some(device_name))
+        .and_then(|device| device["udid"].as_str().map(ToOwned::to_owned))
+        .with_context(|| format!("no available simulator named `{device_name}`"))?;
+
+    // `simctl spawn ... defaults` needs the device booted; boot is idempotent.
+    let _ = Runner::new(reporter, "xcrun")
+        .args(["simctl", "boot", &udid])
+        .capture_stdout()
+        .capture_stderr()
+        .status();
+    Runner::new(reporter, "xcrun")
+        .args(["simctl", "bootstatus", &udid, "-b"])
+        .capture_stdout()
+        .capture_stderr()
+        .output_status()?;
+    Runner::new(reporter, "xcrun")
+        .args([
+            "simctl",
+            "spawn",
+            &udid,
+            "defaults",
+            "write",
+            ".GlobalPreferences",
+            "AppleKeyboards",
+            "-array",
+            "en_US@sw=QWERTY;hw=Automatic",
+            "com.eviljuliette.clipkitty.keyboard",
+        ])
+        .output_status()?;
+    Runner::new(reporter, "xcrun")
+        .args([
+            "simctl",
+            "spawn",
+            &udid,
+            "defaults",
+            "write",
+            ".GlobalPreferences",
+            "AppleKeyboardsExpanded",
+            "-int",
+            "1",
+        ])
+        .output_status()?;
+    reporter.info(&format!(
+        "Seeded the ClipKitty keyboard on `{device_name}` ({udid})."
+    ));
+    Ok(())
+}
 
 /// Shut down all booted simulators so the next `xcodebuild test` boots a
 /// fresh device. Best-effort: a failure here is logged, not propagated,
@@ -698,10 +806,20 @@ fn run_screenshot_xcodebuild(
         .env("CLIPKITTY_SKIP_RUST_PREBUILD", "1")
         .capture_stdout()
         .capture_stderr();
-    if matches!(plan.platform, CapturePlatform::Ios(_))
-        || env::var("SKIP_SIGNING").ok().as_deref() == Some("1")
-    {
-        runner = runner.arg("CODE_SIGNING_ALLOWED=NO");
+    match plan.platform {
+        // Ad-hoc signing needs no certificate but keeps entitlements —
+        // CODE_SIGNING_ALLOWED=NO strips them, which silently removes the
+        // App Group container the keyboard screenshot depends on (the
+        // keyboard renders the snapshot the app writes there), and an
+        // unsigned keyboard extension never registers as an input mode.
+        CapturePlatform::Ios(_) => {
+            runner = runner.arg("CODE_SIGN_IDENTITY=-");
+        }
+        CapturePlatform::MacOs => {
+            if env::var("SKIP_SIGNING").ok().as_deref() == Some("1") {
+                runner = runner.arg("CODE_SIGNING_ALLOWED=NO");
+            }
+        }
     }
 
     let _hang_sampler = plan
@@ -721,10 +839,6 @@ fn run_screenshot_xcodebuild(
         }
     }
     Ok(output.status)
-}
-
-fn expected_screenshot_count() -> usize {
-    SCREENSHOT_CAPTURE_SPECS.len()
 }
 
 fn screenshot_source_prefix(platform: CapturePlatform, locale: MarketingLocale) -> String {
@@ -748,7 +862,7 @@ fn screenshot_source_path(prefix: &str, index: usize, suffix: &str) -> Utf8PathB
 
 fn clear_screenshot_sources(platform: CapturePlatform, locale: MarketingLocale) -> Result<()> {
     let prefix = screenshot_source_prefix(platform, locale);
-    for &(index, suffix) in &SCREENSHOT_CAPTURE_SPECS {
+    for &(index, suffix) in platform.capture_specs() {
         remove_if_exists(&screenshot_source_path(&prefix, index, suffix))?;
     }
     Ok(())
@@ -765,11 +879,12 @@ fn copy_screenshots(
     let target_dir = repo.join(format!("{}/{}", plan.marketing_root, locale_code));
     let mut copied = 0usize;
 
-    for &(index, _) in &SCREENSHOT_CAPTURE_SPECS {
+    let specs = plan.platform.capture_specs();
+    for &(index, _) in specs {
         remove_if_exists(&target_dir.join(format!("screenshot_{index}.png")))?;
     }
 
-    for &(index, suffix) in &SCREENSHOT_CAPTURE_SPECS {
+    for &(index, suffix) in specs {
         let source = screenshot_source_path(&prefix, index, suffix);
         let target = target_dir.join(format!("screenshot_{index}.png"));
         if source.as_std_path().is_file() {
@@ -782,7 +897,7 @@ fn copy_screenshots(
     if copied > 0 {
         reporter.info(&format!("  saved screenshots to {target_dir}"));
     }
-    Ok(ScreenshotCopy::from_copied(copied))
+    Ok(ScreenshotCopy::from_copied(copied, specs.len()))
 }
 
 fn intro_video(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
@@ -1623,9 +1738,9 @@ fn tool_exists(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        copy_base_database_without_images, expected_screenshot_count, screenshot_source_prefix,
-        CapturePlatform, IosDeviceKind, LocaleAsset, ManifestItem, MarketingLocale,
-        ScreenshotCopy, SCREENSHOT_LOCALES_ENV,
+        copy_base_database_without_images, screenshot_source_prefix, CapturePlatform,
+        IosDeviceKind, LocaleAsset, ManifestItem, MarketingLocale, ScreenshotCopy,
+        SCREENSHOT_LOCALES_ENV,
     };
     use camino::Utf8PathBuf;
     use rusqlite::{params, Connection};
@@ -1678,25 +1793,28 @@ mod tests {
 
     #[test]
     fn screenshot_copy_requires_complete_capture_set() {
-        let expected = expected_screenshot_count();
+        assert_eq!(CapturePlatform::MacOs.capture_specs().len(), 3);
+        let expected = CapturePlatform::Ios(IosDeviceKind::IPhone)
+            .capture_specs()
+            .len();
 
-        assert_eq!(expected, 3);
+        assert_eq!(expected, 5);
         assert_eq!(
-            ScreenshotCopy::from_copied(0),
+            ScreenshotCopy::from_copied(0, expected),
             ScreenshotCopy::Incomplete {
                 copied: 0,
                 expected
             }
         );
         assert_eq!(
-            ScreenshotCopy::from_copied(expected - 1),
+            ScreenshotCopy::from_copied(expected - 1, expected),
             ScreenshotCopy::Incomplete {
                 copied: expected - 1,
                 expected
             }
         );
         assert_eq!(
-            ScreenshotCopy::from_copied(expected),
+            ScreenshotCopy::from_copied(expected, expected),
             ScreenshotCopy::Complete { count: expected }
         );
     }

@@ -94,6 +94,14 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         // Dismiss the iOS keyboard "slide to type" tutorial if it appears
         dismissKeyboardTutorial()
 
+        // Input mode persists across runs; if the ClipKitty keyboard came up,
+        // hop back to QWERTY so this capture shows the system keyboard.
+        let clipKittyGlobe = app.buttons["keyboard.globeKey"]
+        if clipKittyGlobe.waitForExistence(timeout: 2) {
+            clipKittyGlobe.tap()
+            sleep(1)
+        }
+
         let searchField = app.textFields["bottomBar.searchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 3),
                       "bottomBar.searchField not found for locale \(locale!)")
@@ -135,6 +143,133 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
 
         let filterScreenshot = captureScreen()
         saveScreenshot(filterScreenshot, index: 3, name: "filter")
+
+        // Screenshot 4: the ClipKitty keyboard over the feed's search.
+        captureKeyboardScreenshot()
+
+        // Screenshot 5: the share sheet over the feed.
+        captureShareSheetScreenshot()
+    }
+
+    // MARK: - Keyboard screenshot
+
+    /// Brings up the ClipKitty keyboard on the app's own search field and
+    /// captures it showing clip cards.
+    ///
+    /// Preconditions handled in `setUpWithError`: the keyboard is seeded into
+    /// the simulator's keyboard list with Full Access
+    /// (`seedClipKittyKeyboard`), and the extension process's language is
+    /// pinned to the capture locale (it doesn't inherit the app's
+    /// `-AppleLanguages` launch arguments).
+    private func captureKeyboardScreenshot() {
+        // Back to the unfiltered feed so the strip shows the hero content.
+        let filterPill = app.buttons["bottomBar.filterPill"]
+        XCTAssertTrue(filterPill.waitForExistence(timeout: 5),
+                      "bottomBar.filterPill not found for locale \(locale!)")
+        filterPill.tap()
+        sleep(1)
+        let allFilter = app.buttons["bottomBar.filterOption.all"]
+        XCTAssertTrue(allFilter.waitForExistence(timeout: 3),
+                      "bottomBar.filterOption.all not found for locale \(locale!)")
+        allFilter.tap()
+        sleep(1)
+        waitForFeedSettled(context: "keyboard screenshot prep")
+
+        // The keyboard renders the App Group snapshot the app writes when it
+        // suspends; background and reactivate once so it exists.
+        XCUIDevice.shared.press(.home)
+        sleep(3)
+        app.activate()
+        waitForFeedSettled(context: "post-suspension reactivation")
+
+        let searchButton = app.buttons["bottomBar.searchButton"]
+        XCTAssertTrue(searchButton.waitForExistence(timeout: 5),
+                      "bottomBar.searchButton not found for locale \(locale!)")
+        searchButton.tap()
+        sleep(1)
+        dismissKeyboardTutorial()
+
+        // Cycle keyboards with the globe key until ours comes up. The
+        // simulator's own locale stays en across capture locales, so the
+        // system key's label is stable. The card strip identifier only
+        // exists once the keyboard is up WITH cards — it distinguishes the
+        // ready state from the status messages.
+        let clipKittyKeyboardMarker = app.descendants(matching: .any)["keyboard.cardStrip"]
+        var hops = 0
+        while !clipKittyKeyboardMarker.exists, hops < 6 {
+            let globe = app.buttons["Next keyboard"]
+            XCTAssertTrue(globe.waitForExistence(timeout: 10),
+                          "globe key not found — keyboard list not seeded? (locale \(locale!))")
+            globe.tap()
+            hops += 1
+            // The first-ever globe tap shows a "Quickly Change Keyboards"
+            // overlay (with a Continue button) instead of switching.
+            dismissKeyboardTutorial()
+            _ = clipKittyKeyboardMarker.waitForExistence(timeout: 3)
+        }
+        XCTAssertTrue(clipKittyKeyboardMarker.waitForExistence(timeout: 15),
+                      "ClipKitty keyboard did not come up with cards (locale \(locale!))")
+        sleep(2) // let card content and material chrome finish rendering
+
+        saveScreenshot(captureScreen(), index: 4, name: "keyboard")
+
+        // Hop back to QWERTY so the next locale's search capture doesn't
+        // come up on the ClipKitty keyboard (input mode is remembered
+        // across app runs).
+        let clipKittyGlobe = app.buttons["keyboard.globeKey"]
+        if clipKittyGlobe.waitForExistence(timeout: 3) {
+            clipKittyGlobe.tap()
+            sleep(1)
+        }
+
+        // Put search away again for the share capture.
+        let closeButton = app.buttons["bottomBar.closeSearchButton"]
+        XCTAssertTrue(closeButton.waitForExistence(timeout: 5),
+                      "bottomBar.closeSearchButton not found for locale \(locale!)")
+        closeButton.tap()
+        sleep(1)
+    }
+
+    // MARK: - Share sheet screenshot
+
+    /// The card context menu's Share action title in each capture locale —
+    /// the app's own catalog strings (`Localizable.xcstrings`), embedded here
+    /// because context-menu items only expose their localized labels to the
+    /// automation tree.
+    private static let shareMenuTitles: [String: String] = [
+        "en": "Share",
+        "de": "Teilen",
+        "es": "Compartir",
+        "fr": "Partager",
+        "ja": "共有",
+        "ko": "공유",
+        "pt-BR": "Compartilhar",
+        "ru": "Поделиться",
+        "zh-Hans": "共享",
+        "zh-Hant": "分享",
+    ]
+
+    /// Long-presses the first clip card and opens the system share sheet via
+    /// the context menu's Share action.
+    private func captureShareSheetScreenshot() {
+        let firstCard = app.scrollViews.firstMatch.buttons.firstMatch
+        XCTAssertTrue(firstCard.waitForExistence(timeout: 5),
+                      "no card found for share screenshot (locale \(locale!))")
+        firstCard.press(forDuration: 1.2)
+
+        guard let shareTitle = Self.shareMenuTitles[locale] else {
+            XCTFail("no share menu title mapped for locale \(locale!)")
+            return
+        }
+        let shareItem = app.buttons[shareTitle]
+        XCTAssertTrue(shareItem.waitForExistence(timeout: 5),
+                      "context menu Share item ('\(shareTitle)') not found for locale \(locale!)")
+        shareItem.tap()
+
+        // Give the activity sheet time to lay out its app row and previews.
+        sleep(4)
+
+        saveScreenshot(captureScreen(), index: 5, name: "share")
     }
 
     // MARK: - Verified typing

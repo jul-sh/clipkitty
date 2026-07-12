@@ -371,6 +371,9 @@ struct PublishPlatform {
     marketing_dir_name: &'static str,
     screenshot_device_types: &'static [&'static str],
     preview_device_types: &'static [&'static str],
+    /// Which files each locale's marketing dir must contain, in upload
+    /// order; must match the platform's capture specs in marketing.rs.
+    expected_screenshot_files: &'static [&'static str],
 }
 
 impl PublishPlatform {
@@ -392,6 +395,7 @@ const MACOS_PLATFORM: PublishPlatform = PublishPlatform {
     marketing_dir_name: "marketing",
     screenshot_device_types: &["APP_DESKTOP"],
     preview_device_types: &["DESKTOP"],
+    expected_screenshot_files: MAC_SCREENSHOT_FILES,
 };
 
 const IOS_PLATFORM: PublishPlatform = PublishPlatform {
@@ -404,6 +408,7 @@ const IOS_PLATFORM: PublishPlatform = PublishPlatform {
     marketing_dir_name: "marketing-ios",
     screenshot_device_types: &["IPHONE_61"],
     preview_device_types: &[],
+    expected_screenshot_files: IOS_SCREENSHOT_FILES,
 };
 
 /// Shares `IOS_PLATFORM`'s app_id, IPA, and ASC version row. Only the
@@ -420,6 +425,7 @@ const IPAD_PLATFORM: PublishPlatform = PublishPlatform {
     marketing_dir_name: "marketing-ipad",
     screenshot_device_types: &["IPAD_PRO_3GEN_129"],
     preview_device_types: &[],
+    expected_screenshot_files: IOS_SCREENSHOT_FILES,
 };
 
 const LOCALE_MAP: &[(&str, &str)] = &[
@@ -435,8 +441,17 @@ const LOCALE_MAP: &[(&str, &str)] = &[
     ("zh-Hant", "zh-Hant"),
 ];
 
-const EXPECTED_SCREENSHOT_FILES: &[&str] =
+const MAC_SCREENSHOT_FILES: &[&str] =
     &["screenshot_1.png", "screenshot_2.png", "screenshot_3.png"];
+
+/// The iOS/iPad capture adds the keyboard and share-sheet shots.
+const IOS_SCREENSHOT_FILES: &[&str] = &[
+    "screenshot_1.png",
+    "screenshot_2.png",
+    "screenshot_3.png",
+    "screenshot_4.png",
+    "screenshot_5.png",
+];
 
 fn publish_platform(name: &str) -> Result<PublishPlatform> {
     match name {
@@ -1308,7 +1323,7 @@ fn upload_screenshots(
         };
 
         let locale_dir = marketing_dir.join(source_locale);
-        let pngs = expected_screenshot_paths(&locale_dir, *asc_locale, platform.label)?;
+        let pngs = expected_screenshot_paths(&locale_dir, *asc_locale, &platform)?;
 
         for device_type in platform.screenshot_device_types {
             // Up to 3 attempts: ASC's flaky 401s can leave the set with the
@@ -1536,16 +1551,17 @@ fn clear_existing_screenshots_for_device(
 fn expected_screenshot_paths(
     locale_dir: &Utf8Path,
     asc_locale: &str,
-    platform_label: &str,
+    platform: &PublishPlatform,
 ) -> Result<Vec<Utf8PathBuf>> {
+    let platform_label = platform.label;
     if !locale_dir.as_std_path().is_dir() {
         return Err(anyhow!(
             "missing {platform_label} screenshot directory for {asc_locale}: {locale_dir}"
         ));
     }
 
-    let mut paths = Vec::with_capacity(EXPECTED_SCREENSHOT_FILES.len());
-    for filename in EXPECTED_SCREENSHOT_FILES {
+    let mut paths = Vec::with_capacity(platform.expected_screenshot_files.len());
+    for filename in platform.expected_screenshot_files {
         let path = locale_dir.join(filename);
         if !path.as_std_path().is_file() {
             return Err(anyhow!(
