@@ -111,7 +111,7 @@ struct BrowserSearchBar: View {
             }
         }
         .padding(.horizontal, 17)
-        .padding(.vertical, 13)
+        .padding(.vertical, 15)
     }
 }
 
