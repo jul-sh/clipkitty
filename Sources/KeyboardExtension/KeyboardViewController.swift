@@ -29,6 +29,9 @@ final class KeyboardViewController: UIInputViewController {
                 insertText: { [weak self] text in
                     self?.textDocumentProxy.insertText(text)
                 },
+                openSearchInApp: { [weak self] in
+                    self?.openApp(link: .search)
+                },
                 inputModeSwitchTarget: self
             )
         )
@@ -58,6 +61,51 @@ final class KeyboardViewController: UIInputViewController {
         // appear, so the globe key is decided here, not in viewDidLoad.
         model.needsGlobeKey = needsInputModeSwitchKey
         model.reload(hasFullAccess: hasFullAccess)
+    }
+
+    // MARK: - Opening the main app
+
+    /// Keyboard extensions have no supported way to open their containing
+    /// app: `extensionContext.open` reports failure here (it's honored only
+    /// for Today widgets), so we fall back to performing UIApplication's
+    /// `openURL:options:completionHandler:` up the responder chain — the
+    /// long-standing pattern third-party keyboards use. The system then asks
+    /// the user to confirm ("Open in ClipKitty?") before foregrounding the
+    /// app. The deprecated `openURL:` no longer works from keyboards on
+    /// iOS 26; only the options-variant reaches LaunchServices.
+    private func openApp(link: AppDeepLink) {
+        let url = link.url
+        if let extensionContext {
+            extensionContext.open(url) { [weak self] success in
+                guard !success else { return }
+                DispatchQueue.main.async {
+                    self?.openViaResponderChain(url)
+                }
+            }
+        } else {
+            openViaResponderChain(url)
+        }
+    }
+
+    private func openViaResponderChain(_ url: URL) {
+        var responder: UIResponder? = self
+        while let current = responder {
+            if let application = current as? UIApplication {
+                open(url, via: application)
+                return
+            }
+            responder = current.next
+        }
+    }
+
+    private func open(_ url: URL, via application: UIApplication) {
+        let selector = sel_registerName("openURL:options:completionHandler:")
+        guard application.responds(to: selector) else { return }
+        typealias OpenFunction = @convention(c) (
+            NSObject, Selector, NSURL, NSDictionary, (@convention(block) (Bool) -> Void)?
+        ) -> Void
+        let open = unsafeBitCast(application.method(for: selector), to: OpenFunction.self)
+        open(application, selector, url as NSURL, [:], nil)
     }
 }
 
@@ -110,13 +158,18 @@ final class KeyboardFeedModel {
     private static let maxCapturedImageBytes = 20 * 1024 * 1024
 
     func reload(hasFullAccess: Bool) {
-        guard hasFullAccess else {
+        // Without Full Access the App Group container is unreachable on
+        // device — but the simulator doesn't enforce that (marketing
+        // screenshots rely on this), and a snapshot we can actually read is
+        // worth showing no matter what the API reports.
+        let snapshot = KeyboardFeedStore.loadSnapshot()
+        guard hasFullAccess || snapshot != nil else {
             state = .needsFullAccess
             return
         }
         // Reaching this point proves the whole setup chain (keyboard enabled,
-        // full access granted) works — record it so the app's activation flow
-        // can show success.
+        // clip history readable) works — record it so the app's activation
+        // flow can show success.
         KeyboardFeedStore.recordKeyboardOpened()
 
         captureFromPasteboard()
@@ -124,7 +177,7 @@ final class KeyboardFeedModel {
         let pendingCards = PendingShareQueue.peekAll()
             .filter { $0.origin == .keyboard }
             .compactMap(Self.card(fromPending:))
-        let snapshotCards = (KeyboardFeedStore.loadSnapshot()?.items ?? []).map(Card.clip)
+        let snapshotCards = (snapshot?.items ?? []).map(Card.clip)
 
         let cards = pendingCards + snapshotCards
         state = cards.isEmpty ? .empty : .ready(cards)

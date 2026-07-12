@@ -3,19 +3,19 @@ import SwiftUI
 import UIKit
 
 /// Activation flow for the ClipKitty keyboard. Until the keyboard has been
-/// used once, this walks through enabling it (mirroring the clipboard
-/// permission hint in `GeneralSettingsSection`); once the keyboard drops its
-/// first activation marker — proof it is enabled with Full Access — the
-/// section collapses to a success row.
+/// used once, this shows a compact setup card that opens the step-by-step
+/// flow (`KeyboardSetupFlowView`); once the keyboard drops its first
+/// activation marker — proof it is enabled with Full Access — the section
+/// collapses to a success row.
 ///
 /// There is no API to ask "is my keyboard enabled?", so the marker written by
 /// the keyboard itself (`KeyboardFeedStore.recordKeyboardOpened`) is the only
 /// trustworthy signal.
 struct KeyboardSettingsSection: View {
-    @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var keyboardLastOpened: Date? = KeyboardFeedStore.keyboardLastOpened()
+    @State private var showSetupFlow = false
 
     var body: some View {
         Section(String(localized: "Keyboard")) {
@@ -31,24 +31,44 @@ struct KeyboardSettingsSection: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(String(localized: "Paste from your clip history in any app — the ClipKitty keyboard shows your recent clips as cards. Tap one to insert it, or drag it in. It also saves anything new you've copied."))
-                        .foregroundStyle(.primary)
-
-                    Text(String(localized: "Open ClipKitty in the Settings app, tap \"Keyboards\", then turn on ClipKitty and \"Allow Full Access\" — that's what lets the keyboard read and save your clips; nothing leaves your device."))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Text(String(localized: "To save new clips without paste prompts, also set \"Paste from Other Apps\" to \"Allow\" while you're there."))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .fixedSize(horizontal: false, vertical: true)
-
                 Button {
-                    openAppSettings()
+                    showSetupFlow = true
                 } label: {
-                    Label(String(localized: "Set Up Keyboard"), systemImage: "keyboard")
+                    HStack(spacing: 12) {
+                        Image(systemName: "keyboard.badge.ellipsis")
+                            .font(.title3)
+                            .foregroundStyle(.tint)
+                            .frame(width: 40, height: 40)
+                            .background(
+                                .tint.opacity(0.12),
+                                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            )
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            // Concrete colors on purpose: the Form's button
+                            // style tints the row, and hierarchical styles
+                            // would resolve against that tint.
+                            Text(String(localized: "Set up the ClipKitty keyboard"))
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(Color.primary)
+                            Text(String(localized: "Paste your clips in any app"))
+                                .font(.caption)
+                                .foregroundStyle(Color.secondary)
+                        }
+
+                        Spacer()
+
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color(.tertiaryLabel))
+                    }
+                    .padding(.vertical, 4)
+                }
+                .accessibilityIdentifier("settings.keyboardSetupCard")
+                // On the row, not the Section: presentation modifiers on a
+                // Form Section are silently ignored.
+                .sheet(isPresented: $showSetupFlow) {
+                    KeyboardSetupFlowView()
                 }
             }
         }
@@ -59,10 +79,5 @@ struct KeyboardSettingsSection: View {
                 keyboardLastOpened = KeyboardFeedStore.keyboardLastOpened()
             }
         }
-    }
-
-    private func openAppSettings() {
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        openURL(url)
     }
 }

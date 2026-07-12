@@ -337,6 +337,7 @@ struct ClipKittyiOSApp: App {
     /// The in-flight store open of the current resume, chained so a
     /// superseded open always releases its store before the next one starts.
     @State private var resumeOpenTask: Task<Void, Never>?
+    @State private var deepLinks = DeepLinkRouter()
     @Environment(\.scenePhase) private var scenePhase
 
     #if ENABLE_ICLOUD_SYNC
@@ -354,6 +355,13 @@ struct ClipKittyiOSApp: App {
             content
                 .onChange(of: scenePhase) { _, newPhase in
                     handleScenePhaseChange(newPhase)
+                }
+                // Attached above the launch-state switch so a link that
+                // arrives mid-bootstrap (keyboard cold-starting the app)
+                // still lands; the router holds it until the feed consumes it.
+                .onOpenURL { url in
+                    guard let link = AppDeepLink(url: url) else { return }
+                    deepLinks.open(link)
                 }
         }
     }
@@ -409,6 +417,7 @@ struct ClipKittyiOSApp: App {
             .environment(appState.viewModel)
             .environment(container.settings)
             .environment(container.haptics)
+            .environment(deepLinks)
             .task {
                 await appState.ingestPendingAndClipboard()
             }

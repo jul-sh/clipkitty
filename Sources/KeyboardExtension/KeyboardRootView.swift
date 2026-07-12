@@ -9,6 +9,7 @@ import UniformTypeIdentifiers
 struct KeyboardRootView: View {
     let model: KeyboardFeedModel
     let insertText: (String) -> Void
+    let openSearchInApp: () -> Void
     weak var inputModeSwitchTarget: UIInputViewController?
 
     var body: some View {
@@ -28,10 +29,23 @@ struct KeyboardRootView: View {
 
             Spacer()
 
+            // The keyboard has no search of its own (for now); this hands
+            // off to the app's search.
+            Button(action: openSearchInApp) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 36, height: 30)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(String(localized: "Search in ClipKitty"))
+            .accessibilityIdentifier("keyboard.searchButton")
+
             if model.needsGlobeKey {
                 InputModeSwitchButton(target: inputModeSwitchTarget)
                     .frame(width: 36, height: 30)
                     .accessibilityLabel(String(localized: "Next keyboard"))
+                    .accessibilityIdentifier("keyboard.globeKey")
             }
         }
         .padding(.horizontal, 12)
@@ -59,7 +73,7 @@ struct KeyboardRootView: View {
             )
 
         case let .ready(cards):
-            KeyboardCardStrip(cards: cards, insertText: insertText)
+            KeyboardCardStrip(cards: cards, insertText: insertText, openSearchInApp: openSearchInApp)
         }
     }
 }
@@ -69,6 +83,7 @@ struct KeyboardRootView: View {
 private struct KeyboardCardStrip: View {
     let cards: [KeyboardFeedModel.Card]
     let insertText: (String) -> Void
+    let openSearchInApp: () -> Void
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -81,10 +96,18 @@ private struct KeyboardCardStrip: View {
                         CapturedImageCardView(card: imageCard)
                     }
                 }
+
+                // The strip only holds the newest clips (see
+                // KeyboardFeedStore.maxItems); scrolling past the end offers
+                // the rest via the app's search.
+                SearchInAppCardView(openSearchInApp: openSearchInApp)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
         }
+        // Only exists in the ready state, so automation can tell "cards are
+        // showing" apart from the full-access / empty messages.
+        .accessibilityIdentifier("keyboard.cardStrip")
     }
 }
 
@@ -375,6 +398,52 @@ private struct CapturedImageCardView: View {
             return nil
         }
         return provider
+    }
+}
+
+// MARK: - Search hand-off card
+
+/// The strip's last card: the keyboard only carries the newest clips, so
+/// anything older means a trip to the app — this card lands there with
+/// search already open.
+private struct SearchInAppCardView: View {
+    let openSearchInApp: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(String(localized: "Search"))
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+
+            Text(String(localized: "Looking for an older clip?"))
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.primary)
+
+            Text(String(localized: "The keyboard shows recent clips only."))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 4) {
+                Text(String(localized: "Search in ClipKitty"))
+                Image(systemName: "arrow.up.forward")
+            }
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.tint)
+        }
+        .modifier(KeyboardCardSurface())
+        .onTapGesture(perform: openSearchInApp)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(String(localized: "Search all your clips in ClipKitty"))
+        .accessibilityIdentifier("keyboard.searchCard")
+        .accessibilityAddTraits(.isButton)
     }
 }
 

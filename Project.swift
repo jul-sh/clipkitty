@@ -856,6 +856,15 @@ let project = Project(
                 ],
                 "UIBackgroundModes": ["fetch", "processing", "remote-notification"],
                 "UILaunchScreen": ["UIColorName": ""],
+                // clipkitty:// deep links let the extensions open the app
+                // (see AppDeepLink in ClipKittyShared).
+                "CFBundleURLTypes": [
+                    [
+                        "CFBundleTypeRole": "Viewer",
+                        "CFBundleURLName": "com.eviljuliette.clipkitty",
+                        "CFBundleURLSchemes": ["clipkitty"],
+                    ],
+                ],
                 // Tuist's default iOS Info.plist declares UIRequiredDevice
                 // capabilities = [armv7]. This is an arm64-only iOS 26 app, so
                 // its Mach-O has no armv7 slice and App Store Connect rejects
