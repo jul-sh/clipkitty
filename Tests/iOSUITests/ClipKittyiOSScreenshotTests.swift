@@ -42,13 +42,36 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         case notReady
     }
 
+    /// The two ownership models UIKit exposes for an input-mode switcher.
+    /// iPad presents the extension's own control, while iPhone can suppress
+    /// that control and provide a system-owned accessory button instead.
+    private enum InputModeSwitcher {
+        case extensionOwned(button: XCUIElement)
+        case systemOwned(button: XCUIElement)
+
+        func tap() {
+            switch self {
+            case let .extensionOwned(button), let .systemOwned(button):
+                button.tap()
+            }
+        }
+    }
+
+    /// Parsing result at the external accessibility boundary. Absence stays
+    /// explicit here so only the corresponding `VisibleKeyboard` cases below
+    /// can represent a keyboard without a switcher.
+    private enum InputModeSwitcherObservation {
+        case available(InputModeSwitcher)
+        case unavailable
+    }
+
     /// The input mode currently exposed by the accessibility hierarchy.
     /// Associated controls belong to the modes in which they are valid, so
     /// transition code must handle every observable presentation explicitly.
     private enum VisibleKeyboard {
-        case system(nextButton: XCUIElement)
+        case system(switcher: InputModeSwitcher)
         case systemWithoutSwitcher
-        case clipKitty(content: ClipKittyKeyboardContent, nextButton: XCUIElement)
+        case clipKitty(content: ClipKittyKeyboardContent, switcher: InputModeSwitcher)
         case clipKittyWithoutSwitcher(content: ClipKittyKeyboardContent)
         case unavailable
     }
@@ -267,23 +290,66 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
             } else {
                 .notReady
             }
-            let nextButton = app.buttons["keyboard.globeKey"]
-            if nextButton.exists {
-                return .clipKitty(content: content, nextButton: nextButton)
+            switch inputModeSwitcher() {
+            case let .available(switcher):
+                return .clipKitty(content: content, switcher: switcher)
+            case .unavailable:
+                return .clipKittyWithoutSwitcher(content: content)
             }
-            return .clipKittyWithoutSwitcher(content: content)
         }
 
-        // UIKit localizes the label (for example, "Teclado siguiente" in
-        // Spanish) even though the simulator's configured keyboard is still
-        // QWERTY. Its accessibility identifier remains `emoji` across app
-        // languages, and its value names the next installed input mode.
-        let systemNextButton = app.buttons["emoji"]
-        if systemNextButton.exists {
-            return .system(nextButton: systemNextButton)
+        switch inputModeSwitcher() {
+        case let .available(switcher):
+            return .system(switcher: switcher)
+        case .unavailable:
+            if app.keys.firstMatch.exists {
+                return .systemWithoutSwitcher
+            }
+            return .unavailable
         }
-        if app.keys.firstMatch.exists {
-            return .systemWithoutSwitcher
+    }
+
+    /// Parses UIKit's device-dependent switcher presentations without using
+    /// localized labels. iPad exposes the extension-owned identifier or the
+    /// system keyboard's stable `emoji` identifier. On iPhone, iOS 26 owns a
+    /// bottom accessory switcher that deliberately has no identifier; its
+    /// non-empty accessibility value names the next input mode. Constraining
+    /// that shape to the leading half of the bottom accessory band avoids
+    /// confusing it with app or keyboard-content buttons.
+    private func inputModeSwitcher() -> InputModeSwitcherObservation {
+        let extensionOwnedButton = app.buttons["keyboard.globeKey"]
+        if extensionOwnedButton.exists {
+            return .available(.extensionOwned(button: extensionOwnedButton))
+        }
+
+        let identifierBearingSystemButton = app.buttons["emoji"]
+        if identifierBearingSystemButton.exists {
+            return .available(.systemOwned(button: identifierBearingSystemButton))
+        }
+
+        let appFrame = app.frame
+        let accessoryBandHeight = min(96, appFrame.height)
+        let leadingAccessoryBand = CGRect(
+            x: appFrame.minX,
+            y: appFrame.maxY - accessoryBandHeight,
+            width: appFrame.width / 2,
+            height: accessoryBandHeight
+        )
+        for button in app.buttons.allElementsBoundByIndex {
+            guard button.exists,
+                  button.isHittable,
+                  button.identifier.isEmpty,
+                  let nextInputMode = button.value as? String,
+                  !nextInputMode.isEmpty
+            else {
+                continue
+            }
+
+            let frame = button.frame
+            let center = CGPoint(x: frame.midX, y: frame.midY)
+            if leadingAccessoryBand.contains(center) {
+                return .available(.systemOwned(button: button))
+            }
         }
         return .unavailable
     }
@@ -296,8 +362,8 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
             switch visibleKeyboard() {
             case .system, .systemWithoutSwitcher:
                 return
-            case let .clipKitty(_, nextButton):
-                nextButton.tap()
+            case let .clipKitty(_, switcher):
+                switcher.tap()
                 dismissKeyboardTutorial()
             case .clipKittyWithoutSwitcher:
                 throw KeyboardTransitionError.missingInputModeSwitcher(context: context)
@@ -319,20 +385,20 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
             case let .clipKitty(.ready(cardStrip), _),
                  let .clipKittyWithoutSwitcher(.ready(cardStrip)):
                 return cardStrip
-            case let .clipKitty(.notReady, nextButton):
+            case let .clipKitty(.notReady, switcher):
                 let cardStrip = app.descendants(matching: .any)["keyboard.cardStrip"]
                 if cardStrip.waitForExistence(timeout: 5) {
                     return cardStrip
                 }
-                nextButton.tap()
+                switcher.tap()
             case .clipKittyWithoutSwitcher(.notReady):
                 let cardStrip = app.descendants(matching: .any)["keyboard.cardStrip"]
                 if cardStrip.waitForExistence(timeout: 15) {
                     return cardStrip
                 }
                 throw KeyboardTransitionError.clipKittyContentNotReady(context: context)
-            case let .system(nextButton):
-                nextButton.tap()
+            case let .system(switcher):
+                switcher.tap()
                 // The first-ever globe tap can show a "Quickly Change
                 // Keyboards" overlay instead of changing the input mode.
                 dismissKeyboardTutorial()
