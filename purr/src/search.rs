@@ -864,6 +864,13 @@ fn compute_scalar_highlights(content: &str, query: &str) -> Vec<HighlightRange> 
         return short_query_highlights(content, trimmed, true);
     }
 
+    if is_symbol_bearing_query(trimmed) {
+        let literal_highlights = short_query_highlights(content, trimmed, true);
+        if !literal_highlights.is_empty() {
+            return literal_highlights;
+        }
+    }
+
     let query_words_owned = tokenize_words(trimmed);
     let query_words: Vec<&str> = query_words_owned
         .iter()
@@ -930,6 +937,13 @@ pub(crate) fn analyze_content_word_match(content: &str, query: &str) -> Option<H
 /// match class (exact, prefix, subword, infix, fuzzy, subsequence); larger
 /// contents produce only `Exact` and `Prefix` kinds for performance.
 fn compute_word_match_highlights(content: &str, query: &str) -> Vec<HighlightRange> {
+    if is_symbol_bearing_query(query) {
+        let literal_highlights = short_query_highlights(content, query, true);
+        if !literal_highlights.is_empty() {
+            return literal_highlights;
+        }
+    }
+
     let query_words_owned = tokenize_words(query);
     let query_words: Vec<&str> = query_words_owned
         .iter()
@@ -1033,6 +1047,12 @@ pub(crate) fn tokenize_words(content: &str) -> Vec<(usize, usize, String)> {
 /// so checking the first character is sufficient.
 pub(crate) fn is_word_token(token: &str) -> bool {
     token.starts_with(|c: char| c.is_alphanumeric())
+}
+
+pub(crate) fn is_symbol_bearing_query(query: &str) -> bool {
+    query
+        .chars()
+        .any(|character| !character.is_alphanumeric() && !character.is_whitespace())
 }
 
 fn normalize_snippet_with_mapping_ws(
@@ -1496,6 +1516,26 @@ mod tests {
     }
 
     // ── URL / special-character query tests ─────────────────────
+
+    #[test]
+    fn test_literal_symbol_query_highlights_complete_sequence() {
+        assert_eq!(
+            compute_scalar_highlights("/unit-testing-best-practices", "/unit"),
+            vec![HighlightRange {
+                start: 0,
+                end: 5,
+                kind: HighlightKind::Prefix,
+            }]
+        );
+        assert_eq!(
+            compute_word_match_highlights("https://example.com", "://"),
+            vec![HighlightRange {
+                start: 5,
+                end: 8,
+                kind: HighlightKind::Exact,
+            }]
+        );
+    }
 
     #[test]
     fn test_highlight_url_query_bridges_punctuation() {

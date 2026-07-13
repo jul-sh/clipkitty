@@ -1,4 +1,4 @@
-use super::{ExactnessSignals, MatchSpanStats};
+use super::{ExactnessSignals, LiteralMatch, MatchSpanStats};
 
 /// Documents larger than this threshold use fast matching (exact + prefix only).
 /// This trades typo tolerance for performance on large documents like code files.
@@ -164,6 +164,12 @@ pub(super) fn compute_quality_tier(
     exactness: ExactnessSignals,
     span_stats: Option<MatchSpanStats>,
 ) -> QualityTier {
+    match exactness.literal_match {
+        LiteralMatch::ContentPrefix => return QualityTier::ContentPrefix,
+        LiteralMatch::Substring => return QualityTier::Dense,
+        LiteralMatch::None => {}
+    }
+
     if words_matched_weight == 0 {
         return QualityTier::NoMatch;
     }
@@ -266,7 +272,9 @@ fn compute_phrase_shape_band(
         ExactnessBand::AnchoredSequence if matched_count >= 2 => {
             return PhraseShapeBand::AnchoredSequence;
         }
-        ExactnessBand::QuerySubstring if matched_count >= 2 => {
+        ExactnessBand::QuerySubstring
+            if exactness.literal_match == LiteralMatch::Substring || matched_count >= 2 =>
+        {
             return PhraseShapeBand::QuerySubstring;
         }
         ExactnessBand::FuzzyOnly

@@ -16,6 +16,11 @@ pub(crate) const WORD_MATCH_SIGNAL: f32 = 100_000.0;
 /// and [`PROXIMITY_BOOST_SCALE`]; ordering-only — admission never trusts the
 /// index automaton, which is looser than `does_word_match`.
 pub(crate) const WEAK_WORD_MATCH_SIGNAL: f32 = 10_000.0;
+/// Exact contiguous raw-query evidence for symbol-bearing queries. This sits
+/// below one weak-word signal and above every proximity signal. It is decoded
+/// into its own leading structural field, so exact punctuation structure
+/// reaches Phase 2 even when the adjacent word is still only a prefix.
+pub(crate) const LITERAL_SEQUENCE_SIGNAL: f32 = 5_000.0;
 /// Cap on per-query weak-signal words: 9 x 10_000 stays below
 /// [`WORD_MATCH_SIGNAL`] (100_000), so the weak band can never bleed into the
 /// exact word-match band above it. Tail verification mirrors the cap so
@@ -25,16 +30,18 @@ pub(crate) const MAX_WEAK_SIGNAL_WORDS: usize = 9;
 /// Structured Phase 1 score replacing the old magnitude-encoded f32.
 ///
 /// Field order defines the lexicographic ranking policy via `derive(Ord)`:
-/// 1. word_match_count — number of query words with exact word-level matches
-/// 2. weak_word_match_count — query words with prefix/typo-variant evidence
-/// 3. proximity_tier — count of matched constant-score proximity clauses
+/// 1. literal_sequence_match — exact raw symbol-bearing query sequence matched
+/// 2. word_match_count — number of query words with exact word-level matches
+/// 3. weak_word_match_count — query words with prefix/typo-variant evidence
+/// 4. proximity_tier — count of matched constant-score proximity clauses
 ///    (slop-3 phrase, trailing-prefix phrase), at most 2; constant scoring
 ///    keeps the proximity band below [`WEAK_WORD_MATCH_SIGNAL`]
-/// 4. evidence_density_score — weak huge-parent matches decay before recency
-/// 5. recency_score — logarithmic recency decay (0-2550, scaled 10x from u8)
-/// 6. bm25_remainder — BM25 score below the proximity band, quantized to u16
+/// 5. evidence_density_score — weak huge-parent matches decay before recency
+/// 6. recency_score — logarithmic recency decay (0-2550, scaled 10x from u8)
+/// 7. bm25_remainder — BM25 score below the proximity band, quantized to u16
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct PhaseOneBlendedScore {
+    pub literal_sequence_match: bool,
     pub word_match_count: u32,
     pub weak_word_match_count: u32,
     pub proximity_tier: u16,
@@ -50,6 +57,8 @@ impl PhaseOneBlendedScore {
     ///   (100 000) via `ConstScoreQuery` on `content_words`.
     /// - **Weak word match count**: each query word with a prefix/typo-variant
     ///   match adds [`WEAK_WORD_MATCH_SIGNAL`] (10 000) via `ConstScoreQuery`.
+    /// - **Literal sequence match**: an exact symbol-bearing raw query adds
+    ///   [`LITERAL_SEQUENCE_SIGNAL`] (5 000) via `ConstScoreQuery`.
     /// - **Proximity tier**: each matched proximity phrase clause adds
     ///   [`PROXIMITY_BOOST_SCALE`] (1 000) via `ConstScoreQuery`.
     /// - **BM25 remainder**: whatever is left after stripping the above bands,
@@ -65,6 +74,13 @@ impl PhaseOneBlendedScore {
         let weak_word_match_count = (base / WEAK_WORD_MATCH_SIGNAL as f64).floor() as u32;
         let base = base - (weak_word_match_count as f64 * WEAK_WORD_MATCH_SIGNAL as f64);
 
+        let literal_sequence_match = base >= LITERAL_SEQUENCE_SIGNAL as f64;
+        let base = if literal_sequence_match {
+            base - LITERAL_SEQUENCE_SIGNAL as f64
+        } else {
+            base
+        };
+
         let proximity_tier = (base / PROXIMITY_BOOST_SCALE as f64).floor();
         let proximity_tier_score = proximity_tier as u16;
         let base_remainder = base - (proximity_tier * PROXIMITY_BOOST_SCALE as f64);
@@ -79,6 +95,7 @@ impl PhaseOneBlendedScore {
         let recency_score = compute_recency(timestamp, now);
 
         Self {
+            literal_sequence_match,
             word_match_count,
             weak_word_match_count,
             proximity_tier: proximity_tier_score,
@@ -150,6 +167,7 @@ impl PhaseOneBlendedScore {
     /// only care about relative ordering via bm25_remainder.
     pub(crate) fn from_raw(raw: f32) -> Self {
         Self {
+            literal_sequence_match: false,
             word_match_count: 0,
             weak_word_match_count: 0,
             proximity_tier: 0,
@@ -193,7 +211,10 @@ impl PhaseOneAdmissionPolicy {
         // candidates that scan-verified tail rescue admits. Work stays bounded
         // by RAW_RECALL_BATCHES.
         last_score.is_some_and(|s| {
-            s < regular_threshold && s.word_match_count == 0 && s.weak_word_match_count == 0
+            s < regular_threshold
+                && s.word_match_count == 0
+                && s.weak_word_match_count == 0
+                && !s.literal_sequence_match
         })
     }
 
@@ -603,8 +624,48 @@ mod tests {
 
         assert_eq!(decoded.word_match_count, 1);
         assert_eq!(decoded.weak_word_match_count, 2);
+        assert!(!decoded.literal_sequence_match);
         assert_eq!(decoded.proximity_tier, 1);
         assert_eq!(decoded.bm25_remainder, 800);
+    }
+
+    #[test]
+    fn decode_extracts_literal_sequence_band() {
+        let raw = WORD_MATCH_SIGNAL
+            + WEAK_WORD_MATCH_SIGNAL
+            + LITERAL_SEQUENCE_SIGNAL
+            + PROXIMITY_BOOST_SCALE
+            + 8.0;
+        let decoded = PhaseOneBlendedScore::decode(raw, NOW, 2_048, NOW);
+
+        assert_eq!(decoded.word_match_count, 1);
+        assert_eq!(decoded.weak_word_match_count, 1);
+        assert!(decoded.literal_sequence_match);
+        assert_eq!(decoded.proximity_tier, 1);
+        assert_eq!(decoded.bm25_remainder, 800);
+    }
+
+    #[test]
+    fn literal_sequence_evidence_sorts_before_recency() {
+        let old_literal = PhaseOneBlendedScore::decode(
+            WEAK_WORD_MATCH_SIGNAL + LITERAL_SEQUENCE_SIGNAL + 1.0,
+            NOW - 300 * 3600,
+            2_048,
+            NOW,
+        );
+        let fresh_word_only = PhaseOneBlendedScore::decode(
+            WORD_MATCH_SIGNAL + WEAK_WORD_MATCH_SIGNAL + 500.0,
+            NOW,
+            2_048,
+            NOW,
+        );
+
+        assert!(old_literal.literal_sequence_match);
+        assert!(!fresh_word_only.literal_sequence_match);
+        assert!(
+            old_literal > fresh_word_only,
+            "exact symbol structure should reach Phase 2 even while its adjacent word is a prefix"
+        );
     }
 
     #[test]

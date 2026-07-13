@@ -13,14 +13,15 @@ use crate::ranking::{
     compute_bucket_score_with_perf, RankingPerfBreakdown, LARGE_DOC_THRESHOLD_BYTES,
 };
 use crate::ranking::{
-    fold_str, prepare_document_for_ranking, PrefixPreferenceQuery, QualityTier, ScoringContext,
+    fold_str, prepare_document_for_ranking, PrefixPreferenceQuery, PreparedQuery, QualityTier,
+    ScoringContext,
 };
 use crate::search::{self, SearchQuery};
 pub(crate) use crate::search_admission::CHUNK_PARENT_THRESHOLD_BYTES;
 use crate::search_admission::{
     verify_tail_word_evidence, PhaseOneAdmissionPolicy, PhaseOneBlendedScore, PhaseTwoHead,
-    TailEvidence, TailScanBudget, TailVerifyQuery, MAX_WEAK_SIGNAL_WORDS, PROXIMITY_BOOST_SCALE,
-    TAIL_SCAN_BUDGET_UNITS, WEAK_WORD_MATCH_SIGNAL, WORD_MATCH_SIGNAL,
+    TailEvidence, TailScanBudget, TailVerifyQuery, LITERAL_SEQUENCE_SIGNAL, MAX_WEAK_SIGNAL_WORDS,
+    PROXIMITY_BOOST_SCALE, TAIL_SCAN_BUDGET_UNITS, WEAK_WORD_MATCH_SIGNAL, WORD_MATCH_SIGNAL,
 };
 use chrono::Utc;
 use tokio_util::sync::CancellationToken;
@@ -201,10 +202,7 @@ impl OwnedPrefixPreferenceQuery {
 
 #[derive(Debug, Clone, Copy)]
 struct PhaseTwoQuery<'a> {
-    query_words: &'a [&'a str],
-    query_words_folded: &'a [&'a str],
-    joined_query_folded: Option<&'a str>,
-    last_word_is_prefix: bool,
+    query: &'a PreparedQuery,
     prefix_preference: Option<PrefixPreferenceQuery<'a>>,
 }
 
@@ -216,23 +214,16 @@ struct WordFieldPlan {
 }
 
 #[derive(Debug, Clone)]
-enum PhaseOneQueryPlan {
-    Trigram {
-        recall: TrigramRecallPlan,
-        word_field: WordFieldPlan,
-    },
-    WordSequence {
-        recall: WordSequenceRecallPlan,
-        word_field: WordFieldPlan,
-    },
+struct PhaseOneQueryPlan<'a> {
+    recall: PhaseOneRecallPlan,
+    word_field: WordFieldPlan,
+    query: &'a PreparedQuery,
 }
 
-impl PhaseOneQueryPlan {
-    fn word_field(&self) -> &WordFieldPlan {
-        match self {
-            Self::Trigram { word_field, .. } | Self::WordSequence { word_field, .. } => word_field,
-        }
-    }
+#[derive(Debug, Clone)]
+enum PhaseOneRecallPlan {
+    Trigram(TrigramRecallPlan),
+    WordSequence(WordSequenceRecallPlan),
 }
 
 #[derive(Debug, Clone)]
@@ -246,15 +237,6 @@ struct WordSequenceRecallPlan {
     words: Vec<String>,
     pair_min_match: usize,
     last_word_is_prefix: bool,
-}
-
-#[derive(Debug, Clone)]
-struct OwnedPhaseTwoQuery {
-    query_words: Vec<String>,
-    query_words_folded: Vec<String>,
-    joined_query_folded: Option<String>,
-    last_word_is_prefix: bool,
-    prefix_preference: Option<OwnedPrefixPreferenceQuery>,
 }
 
 #[cfg(feature = "perf-log")]
@@ -321,15 +303,8 @@ impl PhaseTwoPerfTotals {
     }
 }
 
-fn prepare_phase_two_query(query: &SearchQuery, recall_text: &str) -> OwnedPhaseTwoQuery {
-    let query_words = crate::search::tokenize_words(recall_text)
-        .into_iter()
-        .map(|(_, _, word)| word)
-        .collect::<Vec<_>>();
-    let query_words_folded = query_words.iter().map(|word| fold_str(word)).collect();
-    let joined_query_folded = (!query_words.is_empty()).then(|| fold_str(&query_words.join(" ")));
-    let last_word_is_prefix = recall_text.ends_with(|c: char| c.is_alphanumeric());
-    let prefix_preference = match query {
+fn prepare_prefix_preference(query: &SearchQuery) -> Option<OwnedPrefixPreferenceQuery> {
+    match query {
         SearchQuery::Plain { .. } => None,
         SearchQuery::PreferPrefix {
             raw_text,
@@ -338,14 +313,6 @@ fn prepare_phase_two_query(query: &SearchQuery, recall_text: &str) -> OwnedPhase
             raw_query_folded: fold_str(raw_text),
             stripped_query_folded: fold_str(stripped_text),
         }),
-    };
-
-    OwnedPhaseTwoQuery {
-        query_words,
-        query_words_folded,
-        joined_query_folded,
-        last_word_is_prefix,
-        prefix_preference,
     }
 }
 
@@ -510,10 +477,7 @@ fn score_phase_two_candidate(
 
     let bucket = compute_bucket_score(&ScoringContext {
         document: &document,
-        query_words: phase_two_query.query_words,
-        query_words_folded: phase_two_query.query_words_folded,
-        joined_query_folded: phase_two_query.joined_query_folded,
-        last_word_is_prefix: phase_two_query.last_word_is_prefix,
+        query: phase_two_query.query,
         prefix_preference: phase_two_query.prefix_preference,
         timestamp: candidate.timestamp,
         now,
@@ -537,10 +501,7 @@ fn score_phase_two_candidate(
 
     let (bucket, ranking) = compute_bucket_score_with_perf(&ScoringContext {
         document: &document,
-        query_words: phase_two_query.query_words,
-        query_words_folded: phase_two_query.query_words_folded,
-        joined_query_folded: phase_two_query.joined_query_folded,
-        last_word_is_prefix: phase_two_query.last_word_is_prefix,
+        query: phase_two_query.query,
         prefix_preference: phase_two_query.prefix_preference,
         timestamp: candidate.timestamp,
         now,
@@ -1181,7 +1142,8 @@ impl Indexer {
         #[cfg(feature = "perf-log")]
         let t0 = std::time::Instant::now();
         let recall_text = query.recall_text();
-        let phase_one_plan = self.plan_phase_one_query(recall_text);
+        let prepared_query = PreparedQuery::new(recall_text);
+        let phase_one_plan = self.plan_phase_one_query(&prepared_query);
         let candidates = self.phase_one_recall(&phase_one_plan, limit)?;
         #[cfg(feature = "perf-log")]
         let t1 = std::time::Instant::now();
@@ -1203,24 +1165,10 @@ impl Indexer {
         }
         #[cfg(test)]
         test_support::before_phase_two();
-        let phase_two_query_owned = prepare_phase_two_query(query, recall_text);
-        let query_words: Vec<&str> = phase_two_query_owned
-            .query_words
-            .iter()
-            .map(String::as_str)
-            .collect();
-        let query_words_folded: Vec<&str> = phase_two_query_owned
-            .query_words_folded
-            .iter()
-            .map(String::as_str)
-            .collect();
+        let prefix_preference = prepare_prefix_preference(query);
         let phase_two_query = PhaseTwoQuery {
-            query_words: &query_words,
-            query_words_folded: &query_words_folded,
-            joined_query_folded: phase_two_query_owned.joined_query_folded.as_deref(),
-            last_word_is_prefix: phase_two_query_owned.last_word_is_prefix,
-            prefix_preference: phase_two_query_owned
-                .prefix_preference
+            query: &prepared_query,
+            prefix_preference: prefix_preference
                 .as_ref()
                 .map(OwnedPrefixPreferenceQuery::as_borrowed),
         };
@@ -1239,7 +1187,7 @@ impl Indexer {
         // content is scan-verified with the same match classes Phase 2 ranks
         // (prefix/substring/fuzzy/subsequence), so variant-only matches
         // survive a head full of exact-word competitors.
-        let word_field = phase_one_plan.word_field();
+        let word_field = &phase_one_plan.word_field;
         let tail_query = TailVerifyQuery::new(
             &word_field.words,
             word_field.last_word_is_prefix,
@@ -1447,7 +1395,7 @@ impl Indexer {
     /// candidate per parent item before Phase 2.
     fn phase_one_recall(
         &self,
-        plan: &PhaseOneQueryPlan,
+        plan: &PhaseOneQueryPlan<'_>,
         _limit: usize,
     ) -> IndexerResult<Vec<SearchCandidate>> {
         let reader = self.reader.read();
@@ -1486,50 +1434,49 @@ impl Indexer {
         Ok(collapsed)
     }
 
-    fn plan_phase_one_query(&self, query: &str) -> PhaseOneQueryPlan {
-        let word_field_words = search::tokenize_words(query)
-            .into_iter()
-            .map(|(_, _, word)| word)
-            .filter(|word| search::is_word_token(word))
-            .collect::<Vec<_>>();
-        let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
+    fn plan_phase_one_query<'a>(&self, query: &'a PreparedQuery) -> PhaseOneQueryPlan<'a> {
+        let query_text = query.raw_text();
+        let word_field_words = query.word_texts().map(str::to_string).collect::<Vec<_>>();
+        let last_word_is_prefix = query.last_word_is_prefix();
 
         if let Some(recall) =
             Self::plan_word_sequence_recall(&word_field_words, last_word_is_prefix)
         {
-            return PhaseOneQueryPlan::WordSequence {
-                recall,
+            return PhaseOneQueryPlan {
+                recall: PhaseOneRecallPlan::WordSequence(recall),
                 word_field: WordFieldPlan {
                     words: word_field_words,
                     last_word_is_prefix,
                     signal_min_chars: 1,
                 },
+                query,
             };
         }
 
-        let words = query
+        let words = query_text
             .split_whitespace()
             .map(|word| word.to_string())
             .collect::<Vec<_>>();
         let recall = if words.len() >= 4 && self.has_per_word_trigrams(&words) {
             TrigramRecallPlan::PerWord {
-                query: query.to_string(),
+                query: query_text.to_string(),
                 words,
             }
         } else {
             TrigramRecallPlan::FullString {
-                query: query.to_string(),
+                query: query_text.to_string(),
                 words,
             }
         };
 
-        PhaseOneQueryPlan::Trigram {
-            recall,
+        PhaseOneQueryPlan {
+            recall: PhaseOneRecallPlan::Trigram(recall),
             word_field: WordFieldPlan {
                 words: word_field_words,
                 last_word_is_prefix,
                 signal_min_chars: 2,
             },
+            query,
         }
     }
 
@@ -1723,6 +1670,29 @@ impl Indexer {
         boosts
     }
 
+    /// Build one exact contiguous signal for the original symbol-bearing query.
+    ///
+    /// Individual punctuation tokens intentionally carry no word weight, but
+    /// punctuation structure such as `/unit`, `@RunWith`, or `C++` is strong
+    /// evidence when the complete raw sequence occurs. Trigram positions let
+    /// us encode that distinction without making common standalone symbols
+    /// noisy.
+    fn build_literal_sequence_signal(
+        &self,
+        raw_query: &str,
+    ) -> Option<Box<dyn tantivy::query::Query>> {
+        let terms = self.trigram_terms(raw_query);
+        let literal_query: Box<dyn tantivy::query::Query> = match terms.as_slice() {
+            [] => return None,
+            [term] => Box::new(TermQuery::new(term.clone(), IndexRecordOption::Basic)),
+            _ => Box::new(PhraseQuery::new(terms)),
+        };
+        Some(Box::new(ConstScoreQuery::new(
+            literal_query,
+            LITERAL_SEQUENCE_SIGNAL,
+        )))
+    }
+
     /// Encode word-match count into the Tantivy score.
     ///
     /// Each query word meeting the plan's minimum length gets a `ConstScoreQuery`
@@ -1789,18 +1759,26 @@ impl Indexer {
 
     /// Build the Phase 1 Tantivy query for the current recall plan.
     ///
-    fn build_phase_one_query(&self, plan: &PhaseOneQueryPlan) -> Box<dyn tantivy::query::Query> {
-        let recall: Box<dyn tantivy::query::Query> = match plan {
-            PhaseOneQueryPlan::Trigram { recall, word_field } => {
-                self.build_trigram_recall_query(recall, word_field)
+    fn build_phase_one_query(
+        &self,
+        plan: &PhaseOneQueryPlan<'_>,
+    ) -> Box<dyn tantivy::query::Query> {
+        let recall: Box<dyn tantivy::query::Query> = match &plan.recall {
+            PhaseOneRecallPlan::Trigram(recall) => {
+                self.build_trigram_recall_query(recall, &plan.word_field)
             }
-            PhaseOneQueryPlan::WordSequence { recall, .. } => {
+            PhaseOneRecallPlan::WordSequence(recall) => {
                 self.build_word_sequence_recall_query(recall)
             }
         };
 
-        let word_field = plan.word_field();
-        let all_boosts = self.build_word_boosts(word_field);
+        let word_field = &plan.word_field;
+        let mut all_boosts = self.build_word_boosts(word_field);
+        if let Some(literal_sequence) = plan.query.literal_sequence() {
+            if let Some(signal) = self.build_literal_sequence_signal(literal_sequence) {
+                all_boosts.push((Occur::Should, signal));
+            }
+        }
 
         if all_boosts.is_empty() {
             recall
@@ -2884,7 +2862,8 @@ mod tests {
 
         // Premise: the fresh noise must outnumber the head limit in phase-1
         // recall, or this test stops exercising the scan order at all.
-        let plan = indexer.plan_phase_one_query("man");
+        let prepared_query = PreparedQuery::new("man");
+        let plan = indexer.plan_phase_one_query(&prepared_query);
         let candidates = indexer.phase_one_recall(&plan, 500).unwrap();
         let noise_recalled = candidates
             .iter()
@@ -2936,7 +2915,8 @@ mod tests {
             .unwrap();
         indexer.commit().unwrap();
 
-        let plan = indexer.plan_phase_one_query("man clip");
+        let prepared_query = PreparedQuery::new("man clip");
+        let plan = indexer.plan_phase_one_query(&prepared_query);
         let candidates = indexer.phase_one_recall(&plan, 50).unwrap();
         let recalled: Vec<&str> = candidates.iter().map(|c| c.id.as_str()).collect();
 
@@ -3075,5 +3055,46 @@ mod tests {
             "folded word hit should carry the exact word-match signal, got {}",
             candidate.word_match_count()
         );
+    }
+
+    #[test]
+    fn symbol_literal_reaches_phase_two_in_dense_recent_history() {
+        for (query, literal_content, plain_word) in [
+            ("/unit", "/unit-testing-best-practices", "unit"),
+            ("/uni", "/unit-testing-best-practices", "uni"),
+            ("@run", "@RunWith(JUnit4::class)", "run"),
+        ] {
+            let indexer = Indexer::new_in_memory().unwrap();
+            let now = Utc::now().timestamp();
+            indexer
+                .add_document("literal", literal_content, now - 8 * 86_400)
+                .unwrap();
+            for index in 0..70i64 {
+                indexer
+                    .add_document(
+                        &format!("plain-{index}"),
+                        &format!("Recent {plain_word} mention {index}"),
+                        now - index * 60,
+                    )
+                    .unwrap();
+            }
+            indexer.commit().unwrap();
+
+            let results = indexer.search(query, 100).unwrap();
+            assert_eq!(
+                results.first().map(|candidate| candidate.id.as_str()),
+                Some("literal"),
+                "the exact symbol-bearing prefix must outrank newer word-only matches for {query:?}"
+            );
+            let literal = results
+                .iter()
+                .find(|candidate| candidate.id == "literal")
+                .unwrap();
+            assert!(literal.phase_one_score.literal_sequence_match);
+            assert_eq!(
+                literal.scoring_phase(),
+                crate::candidate::ScoringPhase::PhaseTwoScored
+            );
+        }
     }
 }
