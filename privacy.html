@@ -4,33 +4,21 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Privacy Policy — ClipKitty</title>
-<style>
-  :root { color-scheme: light dark; }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    line-height: 1.7;
-    max-width: 680px;
-    margin: 0 auto;
-    padding: 3rem 1.5rem;
-    color: #1d1d1f;
-    background: #fff;
-  }
-  @media (prefers-color-scheme: dark) {
-    body { color: #f5f5f7; background: #1d1d1f; }
-    a { color: #6cb4ee; }
-  }
-  h1 { font-size: 2rem; margin-bottom: 0.25rem; }
-  h2 { font-size: 1.25rem; margin-top: 2rem; margin-bottom: 0.5rem; }
-  p, ul { margin-bottom: 1rem; }
-  ul { padding-left: 1.5rem; }
-  .updated { color: #86868b; font-size: 0.875rem; margin-bottom: 2rem; }
-  a { color: #0071e3; text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  footer { margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid #d2d2d7; font-size: 0.875rem; color: #86868b; }
-</style>
+<meta name="description" content="How ClipKitty keeps clipboard data private and handles optional iCloud Sync.">
+<meta name="theme-color" content="#fbfaf8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111216" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="icon.png">
+<link rel="stylesheet" href="site.css">
 </head>
 <body>
+<nav class="site-nav" aria-label="Primary">
+  <a class="brand" href="./"><img src="icon.png" alt="">ClipKitty</a>
+  <div class="nav-links">
+    <a href="./">Home</a>
+    <a href="https://github.com/jul-sh/clipkitty">GitHub</a>
+  </div>
+</nav>
+<main class="legal">
 
 <h1>Privacy Policy</h1>
 <p class="updated">Last updated: April 20, 2026</p>
@@ -38,7 +26,7 @@
 <p>ClipKitty is a clipboard history manager for macOS built by Juliette Pluto. This policy explains how ClipKitty handles your data.</p>
 
 <h2>The short version</h2>
-<p>ClipKitty does not collect, transmit, or share your data with the developer or any third party. Everything stays on your Mac &mdash; unless you choose to turn on the optional iCloud Sync feature, which stores a copy of your clipboard history in your own private iCloud account so it can be shared across your Apple devices.</p>
+<p class="summary">ClipKitty does not collect, transmit, or share your data with the developer or any third party. Everything stays on your Mac &mdash; unless you choose to turn on the optional iCloud Sync feature, which stores a copy of your clipboard history in your own private iCloud account so it can be shared across your Apple devices.</p>
 
 <h2>Data storage</h2>
 <p>ClipKitty stores your clipboard history (text, images, links, files, and colors) in a local database on your Mac at:</p>
@@ -90,9 +78,17 @@
 
 <h2>Contact</h2>
 <p>Questions about this privacy policy can be directed to <a href="mailto:apple@jul.sh">apple@jul.sh</a>.</p>
+</main>
 
 <footer>
-  <p>&copy; 2025&ndash;2026 Juliette Pluto &middot; <a href="https://github.com/jul-sh/clipkitty">GitHub</a></p>
+  <div class="footer-inner">
+    <p>&copy; 2025&ndash;2026 Juliette Pluto</p>
+    <div class="footer-links">
+      <a href="./">Home</a>
+      <a href="https://github.com/jul-sh/clipkitty">GitHub</a>
+      <a href="mailto:apple@jul.sh">Contact</a>
+    </div>
+  </div>
 </footer>
 
 </body>

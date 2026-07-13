@@ -5,91 +5,38 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ClipKitty — Clipboard Manager for macOS</title>
 <meta name="description" content="Unlimited clipboard history with instant fuzzy search and multi-line previews. Private, fast, keyboard-driven. Free and open source for macOS.">
-<style>
-  :root { color-scheme: light dark; }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    line-height: 1.7;
-    max-width: 760px;
-    margin: 0 auto;
-    padding: 3rem 1.5rem;
-    color: #1d1d1f;
-    background: #fff;
-  }
-  @media (prefers-color-scheme: dark) {
-    body { color: #f5f5f7; background: #1d1d1f; }
-    a { color: #6cb4ee; }
-    code { background: #2d2d2d; }
-    pre { background: #2d2d2d !important; }
-    table th { background: #2d2d2d; }
-    table td, table th { border-color: #424245; }
-  }
-
-  h1 { font-size: 2.25rem; margin-top: 2.5rem; margin-bottom: 0.5rem; }
-  h2 { font-size: 1.4rem; margin-top: 2.5rem; margin-bottom: 0.75rem; }
-  h3 { font-size: 1.1rem; margin-top: 1.5rem; margin-bottom: 0.5rem; }
-  p { margin-bottom: 1rem; }
-  ul, ol { margin-bottom: 1rem; padding-left: 1.5rem; }
-  li { margin-bottom: 0.3rem; }
-  img { max-width: 100%; height: auto; border-radius: 8px; margin: 1rem 0; }
-  a { color: #0071e3; text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  code {
-    background: #f5f5f7;
-    padding: 0.15em 0.4em;
-    border-radius: 4px;
-    font-size: 0.9em;
-    font-family: "SF Mono", Menlo, monospace;
-  }
-  pre {
-    background: #f5f5f7;
-    padding: 1rem;
-    border-radius: 8px;
-    overflow-x: auto;
-    margin-bottom: 1rem;
-  }
-  pre code { background: none; padding: 0; }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-bottom: 1rem;
-    font-size: 0.95rem;
-  }
-  table th, table td {
-    text-align: left;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid #d2d2d7;
-  }
-  table th { background: #f5f5f7; font-weight: 600; }
-
-  footer {
-    margin-top: 3rem;
-    padding-top: 1.5rem;
-    border-top: 1px solid #d2d2d7;
-    font-size: 0.85rem;
-    color: #86868b;
-    text-align: center;
-  }
-  @media (prefers-color-scheme: dark) {
-    footer { border-top-color: #424245; }
-  }
-  footer a { color: inherit; text-decoration: none; }
-  footer a:hover { text-decoration: underline; }
-  footer .links { margin-top: 0.5rem; }
-  footer .links a { margin: 0 0.75rem; }
-</style>
+<meta name="theme-color" content="#fbfaf8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111216" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="icon.png">
+<link rel="stylesheet" href="site.css">
 </head>
 <body>
-<h1>ClipKitty</h1>
-<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/main/Sources/MacApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png" alt="ClipKitty icon" width="60">
-<img src="marketing_1.png" alt="ClipKitty clipboard history" width="820">
-<h2>Why ClipKitty</h2>
+<nav class="site-nav" aria-label="Primary">
+  <a class="brand" href="./"><img src="icon.png" alt="">ClipKitty</a>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#installation">Download</a>
+    <a href="https://github.com/jul-sh/clipkitty">GitHub</a>
+  </div>
+</nav>
+<main>
+<header class="hero">
+  <div class="hero-copy">
+    <img class="hero-icon" src="icon.png" alt="">
+    <p class="eyebrow">Clipboard history for Mac, iPhone, and iPad</p>
+    <h1>Copy it once.<br>Find it forever.</h1>
+    <p class="lede">Keep everything you copy, find it even with a typo, and preview it before you paste. Private by default, with optional iCloud Sync.</p>
+    <p class="actions">
+      <a class="button" href="https://apps.apple.com/us/app/clipkitty-clipboard-manager/id6759137247?mt=12">Download on the Mac App Store</a>
+      <a class="button secondary" href="https://github.com/jul-sh/clipkitty/releases">Get the latest release</a>
+    </p>
+  </div>
+  <img class="hero-shot" src="marketing_1.png" alt="ClipKitty showing a searchable clipboard history beside a full preview">
+</header>
+<h2 id="why-clipkitty">Why ClipKitty</h2>
 <p>Most clipboard managers work fine when your history is small. Then the thing you need is from last week, from another device, or buried under a hundred other clips.</p>
 <p>ClipKitty is built around a simple idea: your clipboard can remember more without asking more from you.</p>
-<h2>Features</h2>
+<h2 id="features">Features</h2>
 <ul>
 <li>
 <p><strong>Copy it once; find it forever.</strong>
@@ -113,10 +60,10 @@ No accounts. No telemetry. No third-party servers. Your clipboard history stays 
 </li>
 <li>
 <p><strong>Don’t take our word for it:</strong>
-ClipKitty is open source, empowering anyone to verify its privacy and behavior claims against the public code. Build attestations cryptographically <a href="VERIFY.md">link each release</a> back to the public source code.</p>
+ClipKitty is open source, empowering anyone to verify its privacy and behavior claims against the public code. Build attestations cryptographically <a href="https://github.com/jul-sh/clipkitty/blob/main/VERIFY.md">link each release</a> back to the public source code.</p>
 </li>
 </ul>
-<h2>Installation</h2>
+<h2 id="installation">Installation</h2>
 <h3>Mac App Store</h3>
 <p><a href="https://apps.apple.com/us/app/clipkitty-clipboard-manager/id6759137247?mt=12"><img src="https://github.com/jul-sh/clipkitty/raw/main/distribution/MacAppStore.png" alt="Download on the Mac App Store" width="200"></a></p>
 <h3>Manual download</h3>
@@ -125,7 +72,7 @@ ClipKitty is open source, empowering anyone to verify its privacy and behavior c
 <li>Drag ClipKitty to your Applications folder.</li>
 <li>Open ClipKitty and grant clipboard/accessibility permissions if prompted.</li>
 </ol>
-<h2>Alternatives</h2>
+<h2 id="alternatives">Alternatives</h2>
 <table>
 <thead>
 <tr>
@@ -148,7 +95,7 @@ ClipKitty is open source, empowering anyone to verify its privacy and behavior c
 </tr>
 </tbody>
 </table>
-<h1>Behind the Scenes</h1>
+<h2 id="behind-the-scenes">Behind the Scenes</h2>
 <h3>How Search Works</h3>
 <p>Clipboard search sounds simple until you ask for the version people actually want:</p>
 <ul>
@@ -180,12 +127,15 @@ make -C distribution hardened          # Hardened signed DMG
 </code></pre>
 <p>Requires macOS 15+ and Swift 6.2+.</p>
 
+</main>
 <footer>
-  <p>&copy; 2025–2026 Juliette Pluto</p>
-  <div class="links">
-    <a href="https://github.com/jul-sh/clipkitty">GitHub</a>
-    <a href="privacy.html">Privacy Policy</a>
-    <a href="mailto:apple@jul.sh">Contact</a>
+  <div class="footer-inner">
+    <p>&copy; 2025–2026 Juliette Pluto</p>
+    <div class="footer-links">
+      <a href="https://github.com/jul-sh/clipkitty">GitHub</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="mailto:apple@jul.sh">Contact</a>
+    </div>
   </div>
 </footer>
 
