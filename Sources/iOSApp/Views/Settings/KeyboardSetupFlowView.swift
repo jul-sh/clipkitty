@@ -18,7 +18,7 @@ struct KeyboardSetupFlowView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var stepIndex = 0
-    @State private var isSetUp = KeyboardFeedStore.keyboardLastOpened() != nil
+    @State private var setupStatus = KeyboardFeedStore.setupStatus()
 
     private struct Step: Identifiable {
         let id: Int
@@ -48,21 +48,28 @@ struct KeyboardSetupFlowView: View {
                 title: String(localized: "Skip the paste prompts"),
                 detail: String(localized: "Optional: set Paste from Other Apps to Allow, so the keyboard can save new clips without asking.")
             ),
-            isSetUp
-                ? Step(
-                    id: 3,
-                    systemImage: "checkmark.circle.fill",
-                    title: String(localized: "You're all set"),
-                    detail: String(localized: "The ClipKitty keyboard is on — your clips are one tap away."),
-                    iconStyle: .green
-                )
-                : Step(
-                    id: 3,
-                    systemImage: "globe",
-                    title: String(localized: "Try it out"),
-                    detail: String(localized: "In any text field, touch and hold the globe key and choose ClipKitty.")
-                ),
+            finalStep,
         ]
+    }
+
+    private var finalStep: Step {
+        switch setupStatus {
+        case .confirmed:
+            Step(
+                id: 3,
+                systemImage: "checkmark.circle.fill",
+                title: String(localized: "You're all set"),
+                detail: String(localized: "The ClipKitty keyboard is on — your clips are one tap away."),
+                iconStyle: .green
+            )
+        case .unconfirmed:
+            Step(
+                id: 3,
+                systemImage: "globe",
+                title: String(localized: "Try it out"),
+                detail: String(localized: "In any text field, touch and hold the globe key and choose ClipKitty.")
+            )
+        }
     }
 
     var body: some View {
@@ -104,7 +111,16 @@ struct KeyboardSetupFlowView: View {
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 withAnimation(.bouncy) {
-                    isSetUp = KeyboardFeedStore.keyboardLastOpened() != nil
+                    setupStatus = KeyboardFeedStore.setupStatus()
+                }
+            }
+        }
+        .task {
+            setupStatus = KeyboardFeedStore.setupStatus()
+            for await _ in KeyboardFeedStore.changes(for: .activation) {
+                guard !Task.isCancelled else { return }
+                withAnimation(.bouncy) {
+                    setupStatus = KeyboardFeedStore.setupStatus()
                 }
             }
         }

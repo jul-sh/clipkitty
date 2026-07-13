@@ -89,6 +89,18 @@ public final class ClipboardRepository: @unchecked Sendable {
         return []
     }
 
+    /// Fetch a bounded recent slice without using the store's interactive
+    /// search slot. Secondary surfaces can stay current without cancelling a
+    /// user's in-flight browser search.
+    public func fetchRecentItems(
+        scope: RecentItemsScope,
+        limit: UInt32
+    ) async -> Result<[ClipboardItem], ClipboardError> {
+        await runRepositoryOperation("fetchRecentItems", on: store) { store in
+            try store.fetchRecentItems(scope: scope, limit: limit)
+        }
+    }
+
     public func resolveMatchedExcerpts(requests: [MatchedExcerptRequest]) async -> [MatchedExcerptResolution] {
         let result = await runRepositoryOperation("resolveMatchedExcerpts", on: store) { store in
             try store.resolveMatchedExcerpts(requests: requests)

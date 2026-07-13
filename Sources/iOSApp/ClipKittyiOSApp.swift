@@ -101,6 +101,10 @@ final class AppState {
                 self?.toast = .init()
             }
         }
+
+        // Ensure an existing database gets a keyboard snapshot even when the
+        // user makes no mutation before switching apps.
+        container.keyboardFeed.scheduleRefresh()
     }
 
     func showToast(_ message: ToastMessage, action: (() -> Void)? = nil) {
@@ -126,9 +130,8 @@ final class AppState {
     func refreshFeed() {
         contentRevision += 1
         viewModel.handlePanelVisibilityChange(true, contentRevision: contentRevision)
-        // Content changed; if this landed while backgrounded (sync), the
-        // keyboard snapshot refreshes now — foreground changes wait for
-        // suspension (see KeyboardFeedService).
+        // Snapshot generation is a direct database read, so it is safe to
+        // keep the keyboard current while browser search is active.
         container.keyboardFeed.scheduleRefresh()
     }
 

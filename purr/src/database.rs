@@ -6,7 +6,7 @@
 use crate::interface::{
     BaselineExcerpt, ClipboardContent, ContentTypeFilter, FileEntry, FilePreviewSnapshot,
     FileStatus, FileTextPreviewSnapshot, ItemIcon, ItemMetadata, ItemTag, LinkMetadataState,
-    ListPresentationProfile,
+    ListPresentationProfile, RecentItemsScope,
 };
 use crate::models::StoredItem;
 use crate::search::{generate_preview_for_profile, SNIPPET_CONTEXT_CHARS};
@@ -1046,6 +1046,53 @@ impl Database {
         Ok(items)
     }
 
+    /// Fetch a bounded recent-item slice without involving the search index.
+    /// Secondary surfaces use this to snapshot database content without
+    /// consuming `ClipboardStore`'s single interactive-search slot.
+    pub fn fetch_recent_items(
+        &self,
+        scope: RecentItemsScope,
+        limit: u32,
+    ) -> DatabaseResult<Vec<StoredItem>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.get_conn()?;
+        let mut items = match scope {
+            RecentItemsScope::All => {
+                let mut stmt = conn.prepare(
+                    "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id \
+                     FROM items ORDER BY timestamp DESC LIMIT ?1",
+                )?;
+                let rows = stmt
+                    .query_map([limit], Self::row_to_base_item)?
+                    .collect::<Result<Vec<_>, _>>()?;
+                rows
+            }
+            RecentItemsScope::TextRepresentable { max_length } => {
+                let mut stmt = conn.prepare(
+                    "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id \
+                     FROM items WHERE contentType IN ('text', 'link', 'color') \
+                     AND length(content) BETWEEN 1 AND ?2 \
+                     ORDER BY timestamp DESC LIMIT ?1",
+                )?;
+                let rows = stmt
+                    .query_map(params![limit, max_length], Self::row_to_base_item)?
+                    .collect::<Result<Vec<_>, _>>()?;
+                rows
+            }
+        };
+
+        for item in &mut items {
+            if let Some(id) = item.id {
+                Self::populate_child_content(&conn, item, id)?;
+            }
+        }
+
+        Ok(items)
+    }
+
     /// Fetch all item IDs, ordered by recency.
     pub fn fetch_all_item_ids(&self) -> DatabaseResult<Vec<i64>> {
         let conn = self.get_conn()?;
@@ -1666,6 +1713,35 @@ mod tests {
         )
         .unwrap();
         conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn recent_text_representable_items_are_filtered_ordered_and_bounded() {
+        let db = Database::open_in_memory().unwrap();
+        let text_id = seed_base_item(&db, "text", "older text", None);
+        let _image_id = seed_base_item(&db, "image", "excluded image", None);
+        let _oversized_id = seed_base_item(&db, "text", "excluded because it is too long", None);
+        let color_id = seed_base_item(&db, "color", "#ff8800", None);
+
+        let conn = db.get_conn().unwrap();
+        conn.execute(
+            "UPDATE items SET timestamp = '2026-01-01 00:00:01' WHERE id = ?1",
+            [text_id],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE items SET timestamp = '2026-01-01 00:00:03' WHERE id = ?1",
+            [color_id],
+        )
+        .unwrap();
+        drop(conn);
+
+        let items = db
+            .fetch_recent_items(RecentItemsScope::TextRepresentable { max_length: 10 }, 1)
+            .unwrap();
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].content.text_content(), "#ff8800");
     }
 
     #[test]

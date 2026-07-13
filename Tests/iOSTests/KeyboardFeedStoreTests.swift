@@ -67,11 +67,44 @@ final class KeyboardFeedStoreTests: XCTestCase {
     }
 
     func testRewriteReplacesPreviousSnapshot() throws {
-        try KeyboardFeedStore.write(items: [makeItem(id: "old")], in: tempDir)
-        try KeyboardFeedStore.write(items: [makeItem(id: "new")], in: tempDir)
+        try KeyboardFeedStore.write(
+            items: [makeItem(id: "old")],
+            generation: 1,
+            in: tempDir
+        )
+        try KeyboardFeedStore.write(
+            items: [makeItem(id: "new")],
+            generation: 2,
+            in: tempDir
+        )
 
         let snapshot = try XCTUnwrap(KeyboardFeedStore.loadSnapshot(in: tempDir))
         XCTAssertEqual(snapshot.items.map(\.id), ["new"])
+    }
+
+    func testOlderPublisherCannotOverwriteNewerSnapshot() throws {
+        try KeyboardFeedStore.write(
+            items: [makeItem(id: "new")],
+            generation: 2,
+            in: tempDir
+        )
+        try KeyboardFeedStore.write(
+            items: [makeItem(id: "stale")],
+            generation: 1,
+            in: tempDir
+        )
+
+        XCTAssertEqual(
+            KeyboardFeedStore.loadSnapshot(in: tempDir)?.items.map(\.id),
+            ["new"]
+        )
+    }
+
+    func testPublisherGenerationsAreMonotonic() throws {
+        let first = try KeyboardFeedStore.reserveGeneration(in: tempDir)
+        let second = try KeyboardFeedStore.reserveGeneration(in: tempDir)
+
+        XCTAssertEqual(second, first + 1)
     }
 
     func testLoadRejectsUnknownSchemaVersion() throws {
@@ -80,7 +113,7 @@ final class KeyboardFeedStoreTests: XCTestCase {
             .appendingPathComponent("keyboard", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let alien = """
-        {"version": \(KeyboardFeedStore.schemaVersion + 1), "generatedAtUnix": 0, "items": []}
+        {"version": \(KeyboardFeedStore.schemaVersion + 1), "generation": 0, "items": []}
         """
         try Data(alien.utf8).write(to: dir.appendingPathComponent("snapshot.json"))
 
@@ -91,6 +124,7 @@ final class KeyboardFeedStoreTests: XCTestCase {
 
     func testKeyboardLastOpenedIsNilBeforeFirstOpen() {
         XCTAssertNil(KeyboardFeedStore.keyboardLastOpened(in: tempDir))
+        XCTAssertEqual(KeyboardFeedStore.setupStatus(in: tempDir), .unconfirmed)
     }
 
     func testRecordKeyboardOpenedRoundTrips() throws {
@@ -99,6 +133,42 @@ final class KeyboardFeedStoreTests: XCTestCase {
 
         let read = try XCTUnwrap(KeyboardFeedStore.keyboardLastOpened(in: tempDir))
         XCTAssertEqual(read.timeIntervalSince1970, opened.timeIntervalSince1970, accuracy: 1)
+        XCTAssertEqual(
+            KeyboardFeedStore.setupStatus(in: tempDir),
+            .confirmed(lastOpened: opened)
+        )
+    }
+
+    func testWritePublishesFeedInvalidation() async throws {
+        let changed = expectation(description: "feed invalidated")
+        let changes = KeyboardFeedStore.changes(for: .feed)
+        let observation = Task {
+            for await _ in changes {
+                changed.fulfill()
+                return
+            }
+        }
+
+        try KeyboardFeedStore.write(items: [makeItem(id: "new")], in: tempDir)
+
+        await fulfillment(of: [changed], timeout: 2)
+        observation.cancel()
+    }
+
+    func testOpeningKeyboardPublishesActivationInvalidation() async {
+        let changed = expectation(description: "activation invalidated")
+        let changes = KeyboardFeedStore.changes(for: .activation)
+        let observation = Task {
+            for await _ in changes {
+                changed.fulfill()
+                return
+            }
+        }
+
+        KeyboardFeedStore.recordKeyboardOpened(in: tempDir)
+
+        await fulfillment(of: [changed], timeout: 2)
+        observation.cancel()
     }
 }
 
@@ -156,5 +226,31 @@ final class KeyboardFeedServiceTests: XCTestCase {
             "only insertable kinds belong in the keyboard feed"
         )
         XCTAssertEqual(snapshot.items.count, 3, "the image clip must not appear")
+    }
+
+    func testContentChangeRefreshRunsWithoutWaitingForSuspension() async throws {
+        let dbPath = tempDir.appendingPathComponent("scheduled.db").path
+        guard case let .success(container) = AppContainer.bootstrap(databasePath: dbPath) else {
+            return XCTFail("Bootstrap failed")
+        }
+        defer { container.prepareForSuspension() }
+
+        _ = await container.repository.saveText(
+            text: "available to the keyboard",
+            sourceApp: nil,
+            sourceAppBundleId: nil
+        )
+        let service = KeyboardFeedService(repository: container.repository, baseDirectory: tempDir)
+        service.scheduleRefresh()
+
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while KeyboardFeedStore.loadSnapshot(in: tempDir) == nil,
+              ContinuousClock.now < deadline
+        {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let snapshot = try XCTUnwrap(KeyboardFeedStore.loadSnapshot(in: tempDir))
+        XCTAssertEqual(snapshot.items.map(\.text), ["available to the keyboard"])
     }
 }

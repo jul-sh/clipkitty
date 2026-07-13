@@ -132,14 +132,17 @@ final class AppContainer {
         let repository = ClipboardRepository(store: store)
         let previewLoader = PreviewLoader(repository: repository)
         let imageDescriptionUpdater = ImageDescriptionUpdater(repository: repository)
+        let keyboardFeed = KeyboardFeedService(repository: repository)
         let storeClient = iOSBrowserStoreClient(
             repository: repository,
-            previewLoader: previewLoader
+            previewLoader: previewLoader,
+            onFeedContentChanged: { [weak keyboardFeed] in
+                keyboardFeed?.scheduleRefresh()
+            }
         )
         let settings = iOSSettingsStore()
         let clipboardService = iOSClipboardService(settings: settings)
         let haptics = HapticsClient(settings: settings)
-        let keyboardFeed = KeyboardFeedService(repository: repository)
 
         return AppContainer(
             store: store,
@@ -182,9 +185,13 @@ final class AppContainer {
     func pruneToStorageLimit() async {
         let maxGB = settings.maxDatabaseSizeGB
         guard maxGB > 0 else { return }
-        if case let .failure(error) = await repository.pruneToSize(
+        let result = await repository.pruneToSize(
             maxBytes: Utilities.bytes(fromGB: maxGB)
-        ) {
+        )
+        switch result {
+        case .success:
+            keyboardFeed.scheduleRefresh()
+        case let .failure(error):
             Self.logger.error("Storage limit prune failed: \(error.localizedDescription)")
         }
     }

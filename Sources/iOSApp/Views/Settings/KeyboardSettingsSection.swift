@@ -14,12 +14,13 @@ import UIKit
 struct KeyboardSettingsSection: View {
     @Environment(\.scenePhase) private var scenePhase
 
-    @State private var keyboardLastOpened: Date? = KeyboardFeedStore.keyboardLastOpened()
+    @State private var setupStatus = KeyboardFeedStore.setupStatus()
     @State private var showSetupFlow = false
 
     var body: some View {
         Section(String(localized: "Keyboard")) {
-            if keyboardLastOpened != nil {
+            switch setupStatus {
+            case .confirmed:
                 Label {
                     Text(String(localized: "The ClipKitty keyboard is set up"))
                 } icon: {
@@ -30,7 +31,7 @@ struct KeyboardSettingsSection: View {
                 Text(String(localized: "Tap the globe key on any keyboard to switch to ClipKitty. New clipboard content is saved to your history whenever the keyboard opens."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            } else {
+            case .unconfirmed:
                 Button {
                     showSetupFlow = true
                 } label: {
@@ -76,7 +77,14 @@ struct KeyboardSettingsSection: View {
             // Returning from the Settings app (or first use of the keyboard)
             // is when the marker can newly exist — re-check on activation.
             if newPhase == .active {
-                keyboardLastOpened = KeyboardFeedStore.keyboardLastOpened()
+                setupStatus = KeyboardFeedStore.setupStatus()
+            }
+        }
+        .task {
+            setupStatus = KeyboardFeedStore.setupStatus()
+            for await _ in KeyboardFeedStore.changes(for: .activation) {
+                guard !Task.isCancelled else { return }
+                setupStatus = KeyboardFeedStore.setupStatus()
             }
         }
     }

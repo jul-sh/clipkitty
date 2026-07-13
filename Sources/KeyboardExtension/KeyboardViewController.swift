@@ -18,7 +18,14 @@ final class KeyboardViewController: UIInputViewController {
     /// useful excerpt, but shy of GIF-keyboard heights that feel like a modal.
     private static let keyboardHeight: CGFloat = 270
 
+    private enum PresentationState {
+        case offscreen
+        case presented
+    }
+
     private let model = KeyboardFeedModel()
+    private var presentationState: PresentationState = .offscreen
+    private var feedObservationTask: Task<Void, Never>?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -53,14 +60,41 @@ final class KeyboardViewController: UIInputViewController {
         let height = view.heightAnchor.constraint(equalToConstant: Self.keyboardHeight)
         height.priority = UILayoutPriority(999)
         height.isActive = true
+
+        feedObservationTask = Task { @MainActor [weak self] in
+            for await _ in KeyboardFeedStore.changes(for: .feed) {
+                guard !Task.isCancelled else { return }
+                guard let self else { return }
+                switch self.presentationState {
+                case .offscreen:
+                    break
+                case .presented:
+                    self.reloadModel()
+                }
+            }
+        }
+    }
+
+    deinit {
+        feedObservationTask?.cancel()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        presentationState = .presented
         // `needsInputModeSwitchKey` isn't reliable until the view is about to
         // appear, so the globe key is decided here, not in viewDidLoad.
         model.needsGlobeKey = needsInputModeSwitchKey
-        model.reload(hasFullAccess: hasFullAccess)
+        reloadModel()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        presentationState = .offscreen
+    }
+
+    private func reloadModel() {
+        model.reload(from: .read(hasFullAccess: hasFullAccess))
     }
 
     // MARK: - Opening the main app
@@ -116,10 +150,26 @@ final class KeyboardViewController: UIInputViewController {
 @MainActor
 @Observable
 final class KeyboardFeedModel {
+    /// Parsed boundary state for App Group access and snapshot availability.
+    /// Once constructed, callers never need to combine a permission boolean
+    /// with an optional snapshot.
+    enum FeedSource {
+        case restricted
+        case accessibleWithoutSnapshot
+        case snapshot(KeyboardFeedStore.Snapshot)
+
+        static func read(hasFullAccess: Bool) -> FeedSource {
+            if let snapshot = KeyboardFeedStore.loadSnapshot() {
+                return .snapshot(snapshot)
+            }
+            return hasFullAccess ? .accessibleWithoutSnapshot : .restricted
+        }
+    }
+
     /// One card in the strip.
     enum Card: Identifiable {
         /// A regular insertable clip — from the snapshot, or text/link content
-        /// this keyboard captured that the app hasn't ingested yet.
+        /// an extension captured that the app hasn't ingested yet.
         case clip(KeyboardFeedStore.Item)
         /// An image captured from the pasteboard, not yet ingested. It can't
         /// be inserted as text, but it can be dragged into the host app.
@@ -129,6 +179,13 @@ final class KeyboardFeedModel {
             switch self {
             case let .clip(item): return item.id
             case let .capturedImage(card): return card.id
+            }
+        }
+
+        var timestampUnix: Int64 {
+            switch self {
+            case let .clip(item): item.timestampUnix
+            case let .capturedImage(card): card.timestampUnix
             }
         }
     }
@@ -142,6 +199,7 @@ final class KeyboardFeedModel {
     }
 
     enum State {
+        case loading
         /// Full access is off, so the App Group container (and with it the
         /// snapshot) is unreachable.
         case needsFullAccess
@@ -150,23 +208,25 @@ final class KeyboardFeedModel {
         case ready([Card])
     }
 
-    private(set) var state: State = .empty
+    private(set) var state: State = .loading
     var needsGlobeKey = false
 
     /// Keyboard extensions live under a tight memory budget; captured images
     /// beyond this stay on the pasteboard only.
     private static let maxCapturedImageBytes = 20 * 1024 * 1024
 
-    func reload(hasFullAccess: Bool) {
-        // Without Full Access the App Group container is unreachable on
-        // device — but the simulator doesn't enforce that (marketing
-        // screenshots rely on this), and a snapshot we can actually read is
-        // worth showing no matter what the API reports.
-        let snapshot = KeyboardFeedStore.loadSnapshot()
-        guard hasFullAccess || snapshot != nil else {
+    func reload(from source: FeedSource) {
+        let snapshotItems: [KeyboardFeedStore.Item]
+        switch source {
+        case .restricted:
             state = .needsFullAccess
             return
+        case .accessibleWithoutSnapshot:
+            snapshotItems = []
+        case let .snapshot(snapshot):
+            snapshotItems = snapshot.items
         }
+
         // Reaching this point proves the whole setup chain (keyboard enabled,
         // clip history readable) works — record it so the app's activation
         // flow can show success.
@@ -175,11 +235,12 @@ final class KeyboardFeedModel {
         captureFromPasteboard()
 
         let pendingCards = PendingShareQueue.peekAll()
-            .filter { $0.origin == .keyboard }
             .compactMap(Self.card(fromPending:))
-        let snapshotCards = (snapshot?.items ?? []).map(Card.clip)
+        let snapshotCards = snapshotItems.map(Card.clip)
 
-        let cards = pendingCards + snapshotCards
+        let cards = Array((pendingCards + snapshotCards)
+            .sorted { $0.timestampUnix > $1.timestampUnix }
+            .prefix(KeyboardFeedStore.maxItems))
         state = cards.isEmpty ? .empty : .ready(cards)
     }
 
@@ -229,13 +290,17 @@ final class KeyboardFeedModel {
 
     private static func card(fromPending pending: PendingShareQueue.PeekedItem) -> Card? {
         let timestamp = Int64(pending.enqueuedAt.timeIntervalSince1970)
+        let sourceApp = switch pending.origin {
+        case .keyboard: "Pasteboard"
+        case .shareSheet: "Share Sheet"
+        }
         switch pending.item {
         case let .text(text):
             return .clip(KeyboardFeedStore.Item(
                 id: "pending-\(pending.id)",
                 kind: .text,
                 text: text,
-                sourceApp: "Pasteboard",
+                sourceApp: sourceApp,
                 timestampUnix: timestamp
             ))
         case let .url(url):
@@ -243,7 +308,7 @@ final class KeyboardFeedModel {
                 id: "pending-\(pending.id)",
                 kind: .link,
                 text: url,
-                sourceApp: "Pasteboard",
+                sourceApp: sourceApp,
                 timestampUnix: timestamp
             ))
         case .image:

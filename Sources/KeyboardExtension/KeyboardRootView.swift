@@ -56,6 +56,9 @@ struct KeyboardRootView: View {
     @ViewBuilder
     private var content: some View {
         switch model.state {
+        case .loading:
+            ProgressView()
+
         case .needsFullAccess:
             KeyboardMessageView(
                 systemImage: "lock",
