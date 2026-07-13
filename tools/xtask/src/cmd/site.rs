@@ -52,6 +52,16 @@ fn landing_page(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<(
         "https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/",
         "",
     );
+    let body = body
+        .replace(
+            "https://raw.githubusercontent.com/jul-sh/clipkitty/main/Sources/MacApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png",
+            "icon.png",
+        )
+        .replace("<h2>Why ClipKitty</h2>", "<h2 id=\"why-clipkitty\">Why ClipKitty</h2>")
+        .replace("<h2>Features</h2>", "<h2 id=\"features\">Features</h2>")
+        .replace("<h2>Installation</h2>", "<h2 id=\"installation\">Installation</h2>")
+        .replace("<h2>Alternatives</h2>", "<h2 id=\"alternatives\">Alternatives</h2>")
+        .replace("<h2>Behind the Scenes</h2>", "<h2 id=\"behind-the-scenes\">Behind the Scenes</h2>");
 
     let mut stdout = io::stdout().lock();
     stdout.write_all(LANDING_PAGE_HEAD.as_bytes())?;
@@ -60,103 +70,43 @@ fn landing_page(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<(
     Ok(())
 }
 
-const LANDING_PAGE_HEAD: &str = r#"<!DOCTYPE html>
+const LANDING_PAGE_HEAD: &str = r##"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ClipKitty — Clipboard Manager for macOS</title>
 <meta name="description" content="Unlimited clipboard history with instant fuzzy search and multi-line previews. Private, fast, keyboard-driven. Free and open source for macOS.">
-<style>
-  :root { color-scheme: light dark; }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    line-height: 1.7;
-    max-width: 760px;
-    margin: 0 auto;
-    padding: 3rem 1.5rem;
-    color: #1d1d1f;
-    background: #fff;
-  }
-  @media (prefers-color-scheme: dark) {
-    body { color: #f5f5f7; background: #1d1d1f; }
-    a { color: #6cb4ee; }
-    code { background: #2d2d2d; }
-    pre { background: #2d2d2d !important; }
-    table th { background: #2d2d2d; }
-    table td, table th { border-color: #424245; }
-  }
-
-  h1 { font-size: 2.25rem; margin-top: 2.5rem; margin-bottom: 0.5rem; }
-  h2 { font-size: 1.4rem; margin-top: 2.5rem; margin-bottom: 0.75rem; }
-  h3 { font-size: 1.1rem; margin-top: 1.5rem; margin-bottom: 0.5rem; }
-  p { margin-bottom: 1rem; }
-  ul, ol { margin-bottom: 1rem; padding-left: 1.5rem; }
-  li { margin-bottom: 0.3rem; }
-  img { max-width: 100%; height: auto; border-radius: 8px; margin: 1rem 0; }
-  a { color: #0071e3; text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  code {
-    background: #f5f5f7;
-    padding: 0.15em 0.4em;
-    border-radius: 4px;
-    font-size: 0.9em;
-    font-family: "SF Mono", Menlo, monospace;
-  }
-  pre {
-    background: #f5f5f7;
-    padding: 1rem;
-    border-radius: 8px;
-    overflow-x: auto;
-    margin-bottom: 1rem;
-  }
-  pre code { background: none; padding: 0; }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    margin-bottom: 1rem;
-    font-size: 0.95rem;
-  }
-  table th, table td {
-    text-align: left;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid #d2d2d7;
-  }
-  table th { background: #f5f5f7; font-weight: 600; }
-
-  footer {
-    margin-top: 3rem;
-    padding-top: 1.5rem;
-    border-top: 1px solid #d2d2d7;
-    font-size: 0.85rem;
-    color: #86868b;
-    text-align: center;
-  }
-  @media (prefers-color-scheme: dark) {
-    footer { border-top-color: #424245; }
-  }
-  footer a { color: inherit; text-decoration: none; }
-  footer a:hover { text-decoration: underline; }
-  footer .links { margin-top: 0.5rem; }
-  footer .links a { margin: 0 0.75rem; }
-</style>
+<meta name="theme-color" content="#fbfaf8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111216" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="icon.png">
+<link rel="stylesheet" href="site.css">
 </head>
 <body>
-"#;
-
-const LANDING_PAGE_FOOT: &str = r#"
-<footer>
-  <p>&copy; 2025–2026 Juliette Pluto</p>
-  <div class="links">
+<nav class="site-nav" aria-label="Primary">
+  <a class="brand" href="./"><img src="icon.png" alt="">ClipKitty</a>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#installation">Download</a>
     <a href="https://github.com/jul-sh/clipkitty">GitHub</a>
-    <a href="privacy.html">Privacy Policy</a>
-    <a href="mailto:apple@jul.sh">Contact</a>
+  </div>
+</nav>
+<main>
+"##;
+
+const LANDING_PAGE_FOOT: &str = r##"
+</main>
+<footer>
+  <div class="footer-inner">
+    <p>&copy; 2025–2026 Juliette Pluto</p>
+    <div class="footer-links">
+      <a href="https://github.com/jul-sh/clipkitty">GitHub</a>
+      <a href="privacy.html">Privacy</a>
+      <a href="mailto:apple@jul.sh">Contact</a>
+    </div>
   </div>
 </footer>
 
 </body>
 </html>
-"#;
+"##;
