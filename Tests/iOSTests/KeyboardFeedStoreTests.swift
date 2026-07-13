@@ -124,7 +124,7 @@ final class KeyboardFeedStoreTests: XCTestCase {
 
     func testKeyboardLastOpenedIsNilBeforeFirstOpen() {
         XCTAssertNil(KeyboardFeedStore.keyboardLastOpened(in: tempDir))
-        XCTAssertEqual(KeyboardFeedStore.setupStatus(in: tempDir), .unconfirmed)
+        XCTAssertEqual(KeyboardFeedStore.activationHistory(in: tempDir), .neverOpened)
     }
 
     func testRecordKeyboardOpenedRoundTrips() throws {
@@ -134,8 +134,8 @@ final class KeyboardFeedStoreTests: XCTestCase {
         let read = try XCTUnwrap(KeyboardFeedStore.keyboardLastOpened(in: tempDir))
         XCTAssertEqual(read.timeIntervalSince1970, opened.timeIntervalSince1970, accuracy: 1)
         XCTAssertEqual(
-            KeyboardFeedStore.setupStatus(in: tempDir),
-            .confirmed(lastOpened: opened)
+            KeyboardFeedStore.activationHistory(in: tempDir),
+            .opened(lastOpened: opened)
         )
     }
 
@@ -169,6 +169,55 @@ final class KeyboardFeedStoreTests: XCTestCase {
 
         await fulfillment(of: [changed], timeout: 2)
         observation.cancel()
+    }
+}
+
+final class KeyboardSetupStatusTests: XCTestCase {
+    private let primaryLanguage = "en-US-x-clipkitty"
+    private let opened = Date(timeIntervalSince1970: 1_750_000_123)
+
+    func testMissingDeclaredInputModeIdentityIsUnavailable() {
+        XCTAssertEqual(
+            KeyboardSetupStatus.resolve(
+                activePrimaryLanguages: [primaryLanguage],
+                declaredPrimaryLanguage: nil,
+                activationHistory: .opened(lastOpened: opened)
+            ),
+            .unavailable
+        )
+    }
+
+    func testDisabledInputModeOverridesHistoricalActivation() {
+        XCTAssertEqual(
+            KeyboardSetupStatus.resolve(
+                activePrimaryLanguages: ["en-US", "fr-FR"],
+                declaredPrimaryLanguage: primaryLanguage,
+                activationHistory: .opened(lastOpened: opened)
+            ),
+            .disabled
+        )
+    }
+
+    func testEnabledInputModeAwaitsFirstSuccessfulUse() {
+        XCTAssertEqual(
+            KeyboardSetupStatus.resolve(
+                activePrimaryLanguages: [primaryLanguage],
+                declaredPrimaryLanguage: primaryLanguage,
+                activationHistory: .neverOpened
+            ),
+            .enabledAwaitingFirstUse
+        )
+    }
+
+    func testEnabledInputModeCombinesWithActivationEvidence() {
+        XCTAssertEqual(
+            KeyboardSetupStatus.resolve(
+                activePrimaryLanguages: [primaryLanguage],
+                declaredPrimaryLanguage: primaryLanguage,
+                activationHistory: .opened(lastOpened: opened)
+            ),
+            .enabled(lastOpened: opened)
+        )
     }
 }
 

@@ -1,5 +1,10 @@
 import ProjectDescription
 
+/// A language-neutral, valid BCP-47 private-use tag shared by the containing
+/// app and keyboard extension. The app reads its copy from Info.plist rather
+/// than duplicating this identity in runtime code.
+let clipKittyKeyboardPrimaryLanguage = "en-US-x-clipkitty"
+
 // MARK: - Capability Model
 
 /// Each capability maps to a compile condition and controls what code is included.
@@ -844,6 +849,7 @@ let project = Project(
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "ClipKitty",
                 "CFBundleIconName": "AppIcon",
+                "ClipKittyKeyboardPrimaryLanguage": .string(clipKittyKeyboardPrimaryLanguage),
                 "CFBundleDevelopmentRegion": "en",
                 "CFBundleShortVersionString": "$(MARKETING_VERSION)",
                 "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
@@ -978,7 +984,9 @@ let project = Project(
                     "NSExtensionAttributes": [
                         "IsASCIICapable": false,
                         "PrefersRightToLeft": false,
-                        "PrimaryLanguage": "en-US",
+                        // The containing app identifies this enabled input
+                        // mode through the public primaryLanguage API.
+                        "PrimaryLanguage": .string(clipKittyKeyboardPrimaryLanguage),
                         "RequestsOpenAccess": true,
                     ],
                 ],

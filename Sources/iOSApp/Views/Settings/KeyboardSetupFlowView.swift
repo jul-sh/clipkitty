@@ -8,17 +8,16 @@ import UIKit
 /// pages and the primary button advances; the "turn it on" step jumps
 /// straight to ClipKitty's page in the Settings app.
 ///
-/// Setup can only complete outside this app (in Settings, then by opening
-/// the keyboard somewhere), so on every return to the foreground the flow
-/// re-checks the keyboard's activation marker and swaps the last step for a
-/// success state once it exists.
+/// Setup can only complete outside this app (in Settings, then by opening the
+/// keyboard somewhere), so the flow derives current setup state again on every
+/// foreground transition and extension activation.
 struct KeyboardSetupFlowView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var stepIndex = 0
-    @State private var setupStatus = KeyboardFeedStore.setupStatus()
+    @State private var setupStatus = KeyboardSetupStatus.current()
 
     private struct Step: Identifiable {
         let id: Int
@@ -54,7 +53,7 @@ struct KeyboardSetupFlowView: View {
 
     private var finalStep: Step {
         switch setupStatus {
-        case .confirmed:
+        case .enabled:
             Step(
                 id: 3,
                 systemImage: "checkmark.circle.fill",
@@ -62,7 +61,7 @@ struct KeyboardSetupFlowView: View {
                 detail: String(localized: "The ClipKitty keyboard is on — your clips are one tap away."),
                 iconStyle: .green
             )
-        case .unconfirmed:
+        case .unavailable, .disabled, .enabledAwaitingFirstUse:
             Step(
                 id: 3,
                 systemImage: "globe",
@@ -111,16 +110,16 @@ struct KeyboardSetupFlowView: View {
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 withAnimation(.bouncy) {
-                    setupStatus = KeyboardFeedStore.setupStatus()
+                    setupStatus = KeyboardSetupStatus.current()
                 }
             }
         }
         .task {
-            setupStatus = KeyboardFeedStore.setupStatus()
+            setupStatus = KeyboardSetupStatus.current()
             for await _ in KeyboardFeedStore.changes(for: .activation) {
                 guard !Task.isCancelled else { return }
                 withAnimation(.bouncy) {
-                    setupStatus = KeyboardFeedStore.setupStatus()
+                    setupStatus = KeyboardSetupStatus.current()
                 }
             }
         }

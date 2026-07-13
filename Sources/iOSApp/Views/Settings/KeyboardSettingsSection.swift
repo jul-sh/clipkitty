@@ -2,25 +2,20 @@ import ClipKittyShared
 import SwiftUI
 import UIKit
 
-/// Activation flow for the ClipKitty keyboard. Until the keyboard has been
-/// used once, this shows a compact setup card that opens the step-by-step
-/// flow (`KeyboardSetupFlowView`); once the keyboard drops its first
-/// activation marker — proof it is enabled with Full Access — the section
-/// collapses to a success row.
-///
-/// There is no API to ask "is my keyboard enabled?", so the marker written by
-/// the keyboard itself (`KeyboardFeedStore.recordKeyboardOpened`) is the only
-/// trustworthy signal.
+/// Activation flow for the ClipKitty keyboard. Current input-mode enablement
+/// and historical Full Access evidence are parsed into one strict setup state,
+/// so disabling the keyboard immediately restores the setup card when the app
+/// returns from Settings.
 struct KeyboardSettingsSection: View {
     @Environment(\.scenePhase) private var scenePhase
 
-    @State private var setupStatus = KeyboardFeedStore.setupStatus()
+    @State private var setupStatus = KeyboardSetupStatus.current()
     @State private var showSetupFlow = false
 
     var body: some View {
         Section(String(localized: "Keyboard")) {
             switch setupStatus {
-            case .confirmed:
+            case .enabled:
                 Label {
                     Text(String(localized: "The ClipKitty keyboard is set up"))
                 } icon: {
@@ -31,7 +26,7 @@ struct KeyboardSettingsSection: View {
                 Text(String(localized: "Tap the globe key on any keyboard to switch to ClipKitty. New clipboard content is saved to your history whenever the keyboard opens."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            case .unconfirmed:
+            case .unavailable, .disabled, .enabledAwaitingFirstUse:
                 Button {
                     showSetupFlow = true
                 } label: {
@@ -74,17 +69,16 @@ struct KeyboardSettingsSection: View {
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
-            // Returning from the Settings app (or first use of the keyboard)
-            // is when the marker can newly exist — re-check on activation.
+            // The enabled input-mode list changes while the app is in Settings.
             if newPhase == .active {
-                setupStatus = KeyboardFeedStore.setupStatus()
+                setupStatus = KeyboardSetupStatus.current()
             }
         }
         .task {
-            setupStatus = KeyboardFeedStore.setupStatus()
+            setupStatus = KeyboardSetupStatus.current()
             for await _ in KeyboardFeedStore.changes(for: .activation) {
                 guard !Task.isCancelled else { return }
-                setupStatus = KeyboardFeedStore.setupStatus()
+                setupStatus = KeyboardSetupStatus.current()
             }
         }
     }

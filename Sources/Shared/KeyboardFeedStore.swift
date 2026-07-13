@@ -100,13 +100,12 @@ public enum KeyboardFeedStore {
         }
     }
 
-    /// Evidence the containing app can truthfully obtain about keyboard
-    /// setup. iOS has no API for querying whether a third-party keyboard is
-    /// currently enabled, so a successful open is represented as historical
-    /// evidence rather than a permanent boolean capability flag.
-    public enum SetupStatus: Equatable, Sendable {
-        case unconfirmed
-        case confirmed(lastOpened: Date)
+    /// Historical evidence written by the keyboard extension. The containing
+    /// app combines this with the current enabled-input-mode list at its UIKit
+    /// boundary; a previous open must never stand in for current enablement.
+    public enum ActivationHistory: Equatable, Sendable {
+        case neverOpened
+        case opened(lastOpened: Date)
     }
 
     // MARK: - Write (main app)
@@ -202,10 +201,10 @@ public enum KeyboardFeedStore {
         return Date(timeIntervalSince1970: TimeInterval(marker.lastOpenedUnix))
     }
 
-    public static func setupStatus(in baseDirectory: URL? = nil) -> SetupStatus {
+    public static func activationHistory(in baseDirectory: URL? = nil) -> ActivationHistory {
         switch keyboardLastOpened(in: baseDirectory) {
-        case let .some(lastOpened): .confirmed(lastOpened: lastOpened)
-        case .none: .unconfirmed
+        case let .some(lastOpened): .opened(lastOpened: lastOpened)
+        case .none: .neverOpened
         }
     }
 

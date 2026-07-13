@@ -13,6 +13,7 @@ struct SettingsScreen: View {
                     SyncSettingsSection()
                 #endif
                 HistorySettingsSection()
+                AdvancedSettingsSection()
                 AboutSettingsSection()
             }
             .navigationTitle(String(localized: "Settings"))
