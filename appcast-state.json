@@ -8,11 +8,11 @@
     "published_at": "2026-07-14T16:27:53.451797+00:00"
   },
   "stable": {
-    "version": "1.13.1407",
-    "build_number": "1407",
-    "url": "https://github.com/jul-sh/clipkitty/releases/download/v1.13.1407/ClipKitty.dmg",
-    "signature": "PhtSNvxUW53OmX0icbhvuz8XZiQ1RqR43GFXGcj4aJfYkdBgl2kr9U42apqMOizqHMyEB/RJfWqZLQocDc9mCA==",
-    "length": 19168924,
-    "published_at": "2026-07-14T21:15:16.414451+00:00"
+    "version": "1.13.1428",
+    "build_number": "1428",
+    "url": "https://github.com/jul-sh/clipkitty/releases/download/v1.13.1428/ClipKitty.dmg",
+    "signature": "W7E+NLW4CVbWna3sEFj1Zh5YTJOr+hYQnhiri4yXuT3GbXlaM+6yCqtHXY5FKu8bU1NC0CEtV6dQw0uHKHNKCQ==",
+    "length": 19200652,
+    "published_at": "2026-07-14T22:14:28.435422+00:00"
   }
 }
