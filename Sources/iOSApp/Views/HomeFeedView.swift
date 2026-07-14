@@ -5,6 +5,7 @@ import SwiftUI
 struct HomeFeedView: View {
     @Environment(AppState.self) private var appState
     @Environment(BrowserViewModel.self) private var viewModel
+    @Environment(DeepLinkRouter.self) private var deepLinks
 
     @State private var isSearchActive = false
     @State private var previewItemId: String?
@@ -88,7 +89,23 @@ struct HomeFeedView: View {
                 guard oldValue != nil, newValue == nil, isSearchActive else { return }
                 searchFocusRequestID += 1
             }
+            // `initial: true` covers links that arrived before this view
+            // existed (keyboard extension cold-starting the app).
+            .onChange(of: deepLinks.pending, initial: true) { _, _ in
+                handlePendingDeepLink()
+            }
         }
+    }
+
+    private func handlePendingDeepLink() {
+        guard deepLinks.consume() == .search else { return }
+        // Search lives in this screen's bottom bar; clear anything covering it.
+        showSettings = false
+        previewItemId = nil
+        withAnimation(.bouncy) {
+            isSearchActive = true
+        }
+        searchFocusRequestID += 1
     }
 
     @ViewBuilder

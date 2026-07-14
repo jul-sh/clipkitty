@@ -6,6 +6,7 @@ import XCTest
 /// - Tab navigation between Library and Settings
 /// - Settings screen structure and toggle behavior
 /// - Clear history confirmation flow
+/// - Deep link routing via clipkitty:// URL scheme
 /// - Card swipe actions (bookmark, delete)
 final class ClipKittyiOSUITests: XCTestCase {
     private var app: XCUIApplication!
@@ -192,6 +193,40 @@ final class ClipKittyiOSUITests: XCTestCase {
         // The plus should turn to an X
         // Tap again to dismiss
         addButton.tap()
+    }
+
+    // MARK: - Deep Links
+
+    func testSearchDeepLinkOpensLibraryWithSearch() {
+        // Navigate to settings first to verify deep link switches back
+        app.tabBars.buttons["Settings"].tap()
+        let settingsTitle = app.navigationBars["Settings"]
+        XCTAssertTrue(settingsTitle.waitForExistence(timeout: 5))
+
+        // Open deep link
+        let url = URL(string: "clipkitty://search?q=test")!
+        app.open(url)
+
+        // Should switch to library tab
+        sleep(2)
+        let libraryTab = app.tabBars.buttons["Library"]
+        XCTAssertTrue(libraryTab.isSelected, "Deep link should switch to Library tab")
+    }
+
+    func testAddDeepLinkOpensLibrary() {
+        // Navigate to settings first
+        app.tabBars.buttons["Settings"].tap()
+        let settingsTitle = app.navigationBars["Settings"]
+        XCTAssertTrue(settingsTitle.waitForExistence(timeout: 5))
+
+        // Open deep link
+        let url = URL(string: "clipkitty://add")!
+        app.open(url)
+
+        // Should switch to library tab
+        sleep(2)
+        let libraryTab = app.tabBars.buttons["Library"]
+        XCTAssertTrue(libraryTab.isSelected, "Deep link should switch to Library tab")
     }
 
     // MARK: - Card Swipe Actions

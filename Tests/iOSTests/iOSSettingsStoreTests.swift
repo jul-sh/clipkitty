@@ -18,7 +18,7 @@ final class iOSSettingsStoreTests: XCTestCase {
     }
 
     func testDefaultValues() {
-        let store = iOSSettingsStore(defaults: defaults)
+        let store = iOSSettingsStore(defaults: defaults, ingestStateDefaults: defaults)
         XCTAssertTrue(store.hapticsEnabled)
         XCTAssertTrue(store.generateLinkPreviews)
         XCTAssertFalse(store.autoAddFromClipboard)
@@ -27,64 +27,64 @@ final class iOSSettingsStoreTests: XCTestCase {
     }
 
     func testMaxDatabaseSizeGBPersists() {
-        let store = iOSSettingsStore(defaults: defaults)
+        let store = iOSSettingsStore(defaults: defaults, ingestStateDefaults: defaults)
         store.maxDatabaseSizeGB = 16.0
 
-        let reloaded = iOSSettingsStore(defaults: defaults)
+        let reloaded = iOSSettingsStore(defaults: defaults, ingestStateDefaults: defaults)
         XCTAssertEqual(reloaded.maxDatabaseSizeGB, 16.0, accuracy: 1e-9)
     }
 
     func testLastIngestedPasteboardChangeCountPersists() {
-        let store = iOSSettingsStore(defaults: defaults)
+        let store = iOSSettingsStore(defaults: defaults, ingestStateDefaults: defaults)
         store.lastIngestedPasteboardChangeCount = 42
 
-        let reloaded = iOSSettingsStore(defaults: defaults)
+        let reloaded = iOSSettingsStore(defaults: defaults, ingestStateDefaults: defaults)
         XCTAssertEqual(reloaded.lastIngestedPasteboardChangeCount, 42)
     }
 
     func testHapticsEnabledPersists() {
-        let store = iOSSettingsStore(defaults: defaults)
+        let store = iOSSettingsStore(defaults: defaults, ingestStateDefaults: defaults)
         store.hapticsEnabled = false
 
-        let reloaded = iOSSettingsStore(defaults: defaults)
+        let reloaded = iOSSettingsStore(defaults: defaults, ingestStateDefaults: defaults)
         XCTAssertFalse(reloaded.hapticsEnabled)
     }
 
     func testGenerateLinkPreviewsPersists() {
-        let store = iOSSettingsStore(defaults: defaults)
+        let store = iOSSettingsStore(defaults: defaults, ingestStateDefaults: defaults)
         store.generateLinkPreviews = false
 
-        let reloaded = iOSSettingsStore(defaults: defaults)
+        let reloaded = iOSSettingsStore(defaults: defaults, ingestStateDefaults: defaults)
         XCTAssertFalse(reloaded.generateLinkPreviews)
     }
 
     func testAutoAddFromClipboardPersists() {
-        let store = iOSSettingsStore(defaults: defaults)
+        let store = iOSSettingsStore(defaults: defaults, ingestStateDefaults: defaults)
         store.autoAddFromClipboard = true
 
-        let reloaded = iOSSettingsStore(defaults: defaults)
+        let reloaded = iOSSettingsStore(defaults: defaults, ingestStateDefaults: defaults)
         XCTAssertTrue(reloaded.autoAddFromClipboard)
     }
 
     func testMultipleSettingsPersistIndependently() {
-        let store = iOSSettingsStore(defaults: defaults)
+        let store = iOSSettingsStore(defaults: defaults, ingestStateDefaults: defaults)
         store.hapticsEnabled = false
         store.generateLinkPreviews = true
         store.autoAddFromClipboard = true
 
-        let reloaded = iOSSettingsStore(defaults: defaults)
+        let reloaded = iOSSettingsStore(defaults: defaults, ingestStateDefaults: defaults)
         XCTAssertFalse(reloaded.hapticsEnabled)
         XCTAssertTrue(reloaded.generateLinkPreviews)
         XCTAssertTrue(reloaded.autoAddFromClipboard)
     }
 
     func testToggleBackAndForth() {
-        let store = iOSSettingsStore(defaults: defaults)
+        let store = iOSSettingsStore(defaults: defaults, ingestStateDefaults: defaults)
 
         store.hapticsEnabled = false
-        XCTAssertFalse(iOSSettingsStore(defaults: defaults).hapticsEnabled)
+        XCTAssertFalse(iOSSettingsStore(defaults: defaults, ingestStateDefaults: defaults).hapticsEnabled)
 
         store.hapticsEnabled = true
-        XCTAssertTrue(iOSSettingsStore(defaults: defaults).hapticsEnabled)
+        XCTAssertTrue(iOSSettingsStore(defaults: defaults, ingestStateDefaults: defaults).hapticsEnabled)
     }
 }

@@ -444,12 +444,13 @@ const LOCALE_MAP: &[(&str, &str)] = &[
 const MAC_SCREENSHOT_FILES: &[&str] =
     &["screenshot_1.png", "screenshot_2.png", "screenshot_3.png"];
 
-/// The iOS/iPad capture adds the share-sheet shot.
+/// The iOS/iPad capture adds the keyboard and share-sheet shots.
 const IOS_SCREENSHOT_FILES: &[&str] = &[
     "screenshot_1.png",
     "screenshot_2.png",
     "screenshot_3.png",
     "screenshot_4.png",
+    "screenshot_5.png",
 ];
 
 fn publish_platform(name: &str) -> Result<PublishPlatform> {

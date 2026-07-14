@@ -128,6 +128,16 @@ pub enum ItemQueryFilter {
     Tagged { tag: ItemTag },
 }
 
+/// Mutually exclusive scopes for non-searching recent-item reads.
+///
+/// `TextRepresentable` is the exact domain required by text insertion
+/// surfaces: text, links, and colors, but never images or files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum RecentItemsScope {
+    All,
+    TextRepresentable { max_length: u32 },
+}
+
 /// Icon representation for list items
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum ItemIcon {
@@ -871,6 +881,14 @@ pub trait ClipboardStoreApi: Send + Sync {
 
     /// Fetch full items by IDs for preview pane
     fn fetch_by_ids(&self, item_ids: Vec<String>) -> Result<Vec<ClipboardItem>, ClipKittyError>;
+
+    /// Fetch full recent items directly from SQLite without consuming the
+    /// store's single interactive-search slot.
+    fn fetch_recent_items(
+        &self,
+        scope: RecentItemsScope,
+        limit: u32,
+    ) -> Result<Vec<ClipboardItem>, ClipKittyError>;
 
     /// Get the database size in bytes
     fn database_size(&self) -> i64;

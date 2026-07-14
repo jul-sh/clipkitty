@@ -21,11 +21,20 @@ final class PendingShareQueueTests: XCTestCase {
     }
 
     func testEnqueueCarriesOrigin() throws {
+        try PendingShareQueue.enqueueText("from keyboard", origin: .keyboard, in: tempDir)
         try PendingShareQueue.enqueueText("from share sheet", in: tempDir)
 
         let dequeued = PendingShareQueue.dequeueAll(in: tempDir)
-        XCTAssertEqual(dequeued.count, 1)
-        XCTAssertEqual(dequeued.first?.origin, .shareSheet)
+        XCTAssertEqual(dequeued.count, 2)
+
+        let byText = { (text: String) -> PendingShareQueue.DequeuedItem? in
+            dequeued.first {
+                if case let .text(value) = $0.item { return value == text }
+                return false
+            }
+        }
+        XCTAssertEqual(try XCTUnwrap(byText("from keyboard")).origin, .keyboard)
+        XCTAssertEqual(try XCTUnwrap(byText("from share sheet")).origin, .shareSheet)
     }
 
     func testLegacyManifestWithoutOriginDequeuesAsShareSheet() throws {
@@ -48,17 +57,60 @@ final class PendingShareQueueTests: XCTestCase {
         }
     }
 
-    func testImageRoundTripsThumbnailAndData() throws {
+    func testPeekDoesNotRemoveItems() throws {
+        try PendingShareQueue.enqueueText("captured", origin: .keyboard, in: tempDir)
+
+        let peeked = PendingShareQueue.peekAll(in: tempDir)
+        XCTAssertEqual(peeked.count, 1)
+        XCTAssertEqual(peeked.first?.origin, .keyboard)
+
+        // Still there for the app to ingest.
+        let dequeued = PendingShareQueue.dequeueAll(in: tempDir)
+        XCTAssertEqual(dequeued.count, 1)
+        XCTAssertTrue(PendingShareQueue.peekAll(in: tempDir).isEmpty)
+    }
+
+    func testPeekedImageExposesThumbnailAndFileURL() throws {
         let imageData = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x01])
         let thumbnail = Data([0x01, 0x02])
         try PendingShareQueue.enqueueImage(
             imageData: imageData,
             thumbnail: thumbnail,
+            origin: .keyboard,
             in: tempDir
         )
 
-        let dequeued = try XCTUnwrap(PendingShareQueue.dequeueAll(in: tempDir).first)
-        XCTAssertEqual(dequeued.thumbnailData, thumbnail)
-        XCTAssertEqual(dequeued.imageData, imageData)
+        let peeked = try XCTUnwrap(PendingShareQueue.peekAll(in: tempDir).first)
+        XCTAssertEqual(peeked.thumbnailData, thumbnail)
+        let fileURL = try XCTUnwrap(peeked.imageFileURL)
+        XCTAssertEqual(try Data(contentsOf: fileURL), imageData)
+    }
+}
+
+final class PasteboardIngestStateTests: XCTestCase {
+    private var defaults: UserDefaults!
+
+    override func setUp() {
+        super.setUp()
+        defaults = UserDefaults(suiteName: "PasteboardIngestStateTests")!
+        defaults.removePersistentDomain(forName: "PasteboardIngestStateTests")
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: "PasteboardIngestStateTests")
+        defaults = nil
+        super.tearDown()
+    }
+
+    func testNilBeforeFirstRecord() {
+        XCTAssertNil(PasteboardIngestState.lastChangeCount(defaults: defaults))
+    }
+
+    func testRecordRoundTrips() {
+        PasteboardIngestState.recordChangeCount(7, defaults: defaults)
+        XCTAssertEqual(PasteboardIngestState.lastChangeCount(defaults: defaults), 7)
+
+        PasteboardIngestState.recordChangeCount(9, defaults: defaults)
+        XCTAssertEqual(PasteboardIngestState.lastChangeCount(defaults: defaults), 9)
     }
 }
