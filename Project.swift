@@ -3,7 +3,9 @@ import ProjectDescription
 /// A language-neutral, valid BCP-47 private-use tag shared by the containing
 /// app and keyboard extension. The app reads its copy from Info.plist rather
 /// than duplicating this identity in runtime code.
-let clipKittyKeyboardPrimaryLanguage = "en-US-x-clipkitty"
+/// BCP-47 caps each private-use subtag (after "x-") at 8 characters; App Store
+/// Connect rejects the upload otherwise (error 90362).
+let clipKittyKeyboardPrimaryLanguage = "en-US-x-clipkty"
 
 // MARK: - Capability Model
 

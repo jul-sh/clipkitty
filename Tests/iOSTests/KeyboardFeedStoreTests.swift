@@ -173,7 +173,7 @@ final class KeyboardFeedStoreTests: XCTestCase {
 }
 
 final class KeyboardSetupStatusTests: XCTestCase {
-    private let primaryLanguage = "en-US-x-clipkitty"
+    private let primaryLanguage = "en-US-x-clipkty"
     private let opened = Date(timeIntervalSince1970: 1_750_000_123)
 
     func testMissingDeclaredInputModeIdentityIsUnavailable() {
