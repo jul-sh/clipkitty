@@ -37,15 +37,18 @@ private final class RepositoryBrowserSearchOperation: BrowserSearchOperation {
 final class iOSBrowserStoreClient: BrowserStoreClient {
     private let repository: ClipboardRepository
     private let previewLoader: PreviewLoader
+    private let onFeedContentChanged: () -> Void
 
     let listPresentationProfile: ListPresentationProfile = .card
 
     init(
         repository: ClipboardRepository,
-        previewLoader: PreviewLoader
+        previewLoader: PreviewLoader,
+        onFeedContentChanged: @escaping () -> Void = {}
     ) {
         self.repository = repository
         self.previewLoader = previewLoader
+        self.onFeedContentChanged = onFeedContentChanged
     }
 
     func startSearch(request: SearchRequest) -> BrowserSearchOperation {
@@ -82,18 +85,29 @@ final class iOSBrowserStoreClient: BrowserStoreClient {
     }
 
     func delete(itemId: String) async -> Result<Void, ClipboardError> {
-        await repository.delete(itemId: itemId)
+        let result = await repository.delete(itemId: itemId)
+        notifyFeedContentChanged(after: result)
+        return result
     }
 
     func clear() async -> Result<Void, ClipboardError> {
-        await repository.clear()
+        let result = await repository.clear()
+        notifyFeedContentChanged(after: result)
+        return result
     }
 
     func updateTextItem(itemId: String, text: String) async -> Result<Void, ClipboardError> {
-        await repository.updateTextItem(itemId: itemId, text: text)
+        let result = await repository.updateTextItem(itemId: itemId, text: text)
+        notifyFeedContentChanged(after: result)
+        return result
     }
 
     func formatExcerpt(content: String) -> String {
         repository.store.formatExcerpt(content: content, presentation: listPresentationProfile)
+    }
+
+    private func notifyFeedContentChanged(after result: Result<Void, ClipboardError>) {
+        guard case .success = result else { return }
+        onFeedContentChanged()
     }
 }

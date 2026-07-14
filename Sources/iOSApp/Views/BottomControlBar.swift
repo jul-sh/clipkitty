@@ -101,8 +101,8 @@ struct BottomControlBar: View {
         .onChange(of: searchFocusRequestID) { _, _ in
             restoreSearchFocusIfNeeded()
         }
-        // Search can be activated from outside the bar; make sure no create
-        // sheet/menu covers it.
+        // Search can be activated from outside the bar (deep link from the
+        // keyboard extension); make sure no create sheet/menu covers it.
         .onChange(of: isSearchActive) { _, active in
             guard active else { return }
             createFlow = .none

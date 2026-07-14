@@ -33,6 +33,7 @@ const SCREENSHOT_DB_FILE: &str = "/tmp/clipkitty_screenshot_db.txt";
 const IOS_SCREENSHOT_LOCALE_FILE: &str = "/tmp/clipkitty_ios_screenshot_locale.txt";
 const IOS_SCREENSHOT_DB_FILE: &str = "/tmp/clipkitty_ios_screenshot_db.txt";
 const IOS_SCREENSHOT_DEVICE_FILE: &str = "/tmp/clipkitty_ios_screenshot_device.txt";
+const IOS_KEYBOARD_BUNDLE_ID: &str = "com.eviljuliette.clipkitty.keyboard";
 const SCREENSHOT_LOCALES_ENV: &str = "CLIPKITTY_SCREENSHOT_LOCALES";
 const VIDEO_RESULT_BUNDLE: &str = "/tmp/clipkitty_video_result.xcresult";
 const VIDEO_ATTACHMENTS_DIR: &str = "/tmp/xcresult-attachments";
@@ -45,12 +46,13 @@ const SILVER_BACKGROUND: &str = "/System/Library/Desktop Pictures/Solid Colors/S
 const MAC_SCREENSHOT_CAPTURE_SPECS: [(usize, &str); 3] =
     [(1, "history"), (2, "search"), (3, "filter")];
 
-/// The iOS/iPad set adds the share-sheet flow.
-const IOS_SCREENSHOT_CAPTURE_SPECS: [(usize, &str); 4] = [
+/// The iOS/iPad set adds the ClipKitty keyboard and the share-sheet flow.
+const IOS_SCREENSHOT_CAPTURE_SPECS: [(usize, &str); 5] = [
     (1, "history"),
     (2, "search"),
     (3, "filter"),
-    (4, "share"),
+    (4, "keyboard"),
+    (5, "share"),
 ];
 
 pub fn run(cmd: &MarketingCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
@@ -199,7 +201,7 @@ impl CapturePlatform {
 /// The concrete destination selected for this invocation. iOS preparation
 /// resolves a device name to one simulator and every later build/test step
 /// uses that exact UDID, so duplicate local simulator names cannot make the
-/// install and capture steps drift onto different devices.
+/// installed keyboard and the captured keyboard drift onto different devices.
 enum CaptureRuntime {
     MacOs,
     Ios { udid: String },
@@ -345,7 +347,7 @@ fn run_screenshot_plan(
     let runtime = match plan.platform {
         CapturePlatform::MacOs => CaptureRuntime::MacOs,
         CapturePlatform::Ios(_) => CaptureRuntime::Ios {
-            udid: prepare_ios_simulator(repo, plan, reporter)?,
+            udid: prepare_ios_keyboard(repo, plan, reporter)?,
         },
     };
 
@@ -500,10 +502,12 @@ fn screenshot_db_name(locale: MarketingLocale, mode: ScreenshotDbMode) -> String
 const IOS_SCREENSHOT_MAX_ATTEMPTS: u32 = 3;
 const MACOS_SCREENSHOT_MAX_ATTEMPTS: u32 = 3;
 
-/// Build ClipKitty for testing, boot the target simulator, and install the
-/// app so the capture run starts from a known-good device. Returns the UDID
-/// the device name resolved to; every later build/test step reuses it.
-fn prepare_ios_simulator(
+/// Build and install ClipKitty before enabling its keyboard, then reboot the
+/// simulator so the text-input system reads the enabled-keyboard list with
+/// the extension already registered. The ordering is significant: seeding a
+/// fresh simulator before the containing app is installed leaves the first
+/// screenshot run without a globe key and only happens to work on a retry.
+fn prepare_ios_keyboard(
     repo: &RepoRoot,
     plan: ScreenshotPlan,
     reporter: &Reporter,
@@ -531,12 +535,12 @@ fn prepare_ios_simulator(
         .with_context(|| format!("no available simulator named `{device_name}`"))?;
 
     reporter.info(&format!(
-        "Preparing the iOS simulator `{device_name}` ({udid})..."
+        "Preparing the ClipKitty keyboard on `{device_name}` ({udid})..."
     ));
 
-    // Build the app up front. This uses the same derived data as the capture,
-    // so the subsequent `xcodebuild test` reuses the products instead of
-    // rebuilding.
+    // Build the host app and its embedded extension before changing keyboard
+    // preferences. This uses the same derived data as the capture, so the
+    // subsequent `xcodebuild test` reuses the products instead of rebuilding.
     let workspace = repo.join("ClipKitty.xcworkspace");
     let destination = format!("platform=iOS Simulator,id={udid}");
     Runner::new(reporter, "xcodebuild")
@@ -554,9 +558,9 @@ fn prepare_ios_simulator(
         .sanitize_for_xcode()
         .env("CLIPKITTY_SKIP_RUST_PREBUILD", "1")
         .run()
-        .context("building the iOS screenshot app")?;
+        .context("building the iOS screenshot app before keyboard setup")?;
 
-    // `simctl install` requires a booted device.
+    // `simctl install` and `simctl spawn ... defaults` require a booted device.
     boot_ios_simulator(&udid, reporter)?;
     let app = repo
         .join(plan.derived_data)
@@ -570,10 +574,72 @@ fn prepare_ios_simulator(
         .args(["simctl", "install", &udid])
         .arg(app.as_std_path())
         .run()
-        .context("installing the iOS app on the simulator")?;
+        .context("installing the iOS app before keyboard setup")?;
+
+    Runner::new(reporter, "xcrun")
+        .args([
+            "simctl",
+            "spawn",
+            &udid,
+            "defaults",
+            "write",
+            ".GlobalPreferences",
+            "AppleKeyboards",
+            "-array",
+            "en_US@sw=QWERTY;hw=Automatic",
+            IOS_KEYBOARD_BUNDLE_ID,
+        ])
+        .run()
+        .context("enabling the ClipKitty keyboard")?;
+    Runner::new(reporter, "xcrun")
+        .args([
+            "simctl",
+            "spawn",
+            &udid,
+            "defaults",
+            "write",
+            ".GlobalPreferences",
+            "AppleKeyboardsExpanded",
+            "-int",
+            "1",
+        ])
+        .run()
+        .context("expanding the simulator keyboard list")?;
+
+    // SpringBoard/text-input services cache this preference at boot. Reboot
+    // now so the very first capture observes the same current state we wrote.
+    Runner::new(reporter, "xcrun")
+        .args(["simctl", "shutdown", &udid])
+        .run()
+        .context("shutting down the simulator after keyboard setup")?;
+    boot_ios_simulator(&udid, reporter)?;
+
+    let enabled = Runner::new(reporter, "xcrun")
+        .args([
+            "simctl",
+            "spawn",
+            &udid,
+            "defaults",
+            "read",
+            ".GlobalPreferences",
+            "AppleKeyboards",
+        ])
+        .capture_stderr()
+        .output()
+        .context("reading back the simulator's enabled keyboards")?
+        .stdout_string()?;
+    if !enabled.lines().any(|line| {
+        line.trim()
+            .trim_matches(|character| character == '"' || character == ',' || character == ' ')
+            == IOS_KEYBOARD_BUNDLE_ID
+    }) {
+        return Err(anyhow!(
+            "ClipKitty keyboard was not enabled after reboot; AppleKeyboards was:\n{enabled}"
+        ));
+    }
 
     reporter.info(&format!(
-        "Built, booted, and installed ClipKitty on `{device_name}` ({udid})."
+        "Installed, enabled, and verified the ClipKitty keyboard on `{device_name}` ({udid})."
     ));
     Ok(udid)
 }
@@ -850,8 +916,9 @@ fn run_screenshot_xcodebuild(
     match plan.platform {
         // Ad-hoc signing needs no certificate but keeps entitlements —
         // CODE_SIGNING_ALLOWED=NO strips them, which silently removes the
-        // App Group container the screenshots depend on (the demo database
-        // lives there, and the share-sheet capture reads from it).
+        // App Group container the keyboard screenshot depends on (the
+        // keyboard renders the snapshot the app writes there), and an
+        // unsigned keyboard extension never registers as an input mode.
         CapturePlatform::Ios(_) => {
             runner = runner.arg("CODE_SIGN_IDENTITY=-");
         }
