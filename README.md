@@ -1,16 +1,8 @@
-<header class="hero">
-  <div class="hero-copy">
-    <img class="hero-icon" src="https://raw.githubusercontent.com/jul-sh/clipkitty/main/Sources/MacApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png" alt="">
-    <p class="eyebrow">Clipboard history for Mac, iPhone, and iPad</p>
-    <h1>Copy it once.<br>Find it forever.</h1>
-    <p class="lede">Keep everything you copy, find it even with a typo, and preview it before you paste. Private by default, with optional iCloud Sync.</p>
-    <p class="actions">
-      <a class="button" href="https://apps.apple.com/us/app/clipkitty-clipboard-manager/id6759137247?mt=12">Download on the Mac App Store</a>
-      <a class="button secondary" href="https://github.com/jul-sh/clipkitty/releases">Get the latest release</a>
-    </p>
-  </div>
-  <img class="hero-shot" src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty showing a searchable clipboard history beside a full preview">
-</header>
+# ClipKitty
+
+<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/main/Sources/MacApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png" alt="ClipKitty icon" width="60">
+
+<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty clipboard history" width="820">
 
 ## Why ClipKitty
 
@@ -36,7 +28,7 @@ ClipKitty is built around a simple idea: your clipboard can remember more withou
   No accounts. No telemetry. No third-party servers. Your clipboard history stays on-device unless you enable iCloud Sync; synced clips use Apple's private CloudKit database, with no developer access.
 
 - **Don’t take our word for it:**
-  ClipKitty is open source, empowering anyone to verify its privacy and behavior claims against the public code. Build attestations cryptographically [link each release](https://github.com/jul-sh/clipkitty/blob/main/VERIFY.md) back to the public source code.
+  ClipKitty is open source, empowering anyone to verify its privacy and behavior claims against the public code. Build attestations cryptographically [link each release](VERIFY.md) back to the public source code.
 
 ## Installation
 
@@ -58,7 +50,7 @@ ClipKitty is built around a simple idea: your clipboard can remember more withou
 | **vs Raycast** | Same speed, better search, no expiration. Raycast doesn't save long clips and offers limited search only. Its free tier expires after 3 months; sync requires a paid subscription. ClipKitty preserves everything forever, syncs via iCloud for free, and finds items more reliably with smarter, typo tolerant search. |
 | **vs Paste** | Same utility, no subscription. Paste charges $30/year. You own ClipKitty outright. Plus ClipKitty ships with an intuitive list with instant live preview, vs paste's horizontal carousel. |
 
-## Behind the Scenes
+# Behind the Scenes
 
 ### How Search Works
 
