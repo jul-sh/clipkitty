@@ -18,6 +18,7 @@ private struct AdvancedSettingsScreen: View {
     @Environment(AppState.self) private var appState
 
     @State private var storageState = StorageState.loading
+    @State private var historyAction = HistoryAction.idle
 
     private enum StorageState {
         case loading
@@ -25,6 +26,21 @@ private struct AdvancedSettingsScreen: View {
         case confirmingShrink(usedBytes: Int64, previousLimitGB: Double)
         case pruning(usedBytes: Int64, committedLimitGB: Double)
         case loadFailed(message: String)
+    }
+
+    private enum HistoryAction {
+        case idle
+        case confirmingClear
+        case clearing
+        case failed(String)
+    }
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
+    }
+
+    private var buildNumber: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "Unknown"
     }
 
     var body: some View {
@@ -67,6 +83,42 @@ private struct AdvancedSettingsScreen: View {
                         }
                     }
                 }
+            }
+
+            Section("History") {
+                switch historyAction {
+                case .idle:
+                    Button("Clear History", role: .destructive) {
+                        historyAction = .confirmingClear
+                    }
+                case .confirmingClear:
+                    Button("Tap Again to Confirm", role: .destructive) {
+                        Task { await clearHistory() }
+                    }
+                case .clearing:
+                    HStack {
+                        Text("Clearing...")
+                        Spacer()
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                case let .failed(message):
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Clear failed")
+                            .foregroundStyle(.red)
+                        Text(message)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Button("Retry", role: .destructive) {
+                            Task { await clearHistory() }
+                        }
+                    }
+                }
+            }
+
+            Section("About") {
+                LabeledContent("Version", value: appVersion)
+                LabeledContent("Build", value: buildNumber)
             }
         }
         .navigationTitle(String(localized: "Advanced"))
@@ -168,6 +220,18 @@ private struct AdvancedSettingsScreen: View {
             )
         case let .failure(error):
             storageState = .loadFailed(message: error.localizedDescription)
+        }
+    }
+
+    private func clearHistory() async {
+        historyAction = .clearing
+        let result = await container.storeClient.clear()
+        switch result {
+        case .success:
+            historyAction = .idle
+            appState.refreshFeed()
+        case let .failure(error):
+            historyAction = .failed(error.localizedDescription)
         }
     }
 }

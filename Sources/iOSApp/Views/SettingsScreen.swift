@@ -12,9 +12,7 @@ struct SettingsScreen: View {
                 #if ENABLE_ICLOUD_SYNC
                     SyncSettingsSection()
                 #endif
-                HistorySettingsSection()
                 AdvancedSettingsSection()
-                AboutSettingsSection()
             }
             .navigationTitle(String(localized: "Settings"))
             .toolbar {
