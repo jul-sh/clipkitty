@@ -25,50 +25,16 @@ private struct AddClipDropTarget: ViewModifier {
     @Environment(AppState.self) private var appState
     @Environment(HapticsClient.self) private var haptics
 
-    @State private var isTargeted = false
-
     func body(content: Content) -> some View {
         content
-            .overlay {
-                if isTargeted {
-                    dropHint
-                }
-            }
-            .animation(.bouncy, value: isTargeted)
             .onDrop(
                 of: DroppedClipReader.acceptedTypes,
                 delegate: ClipDropDelegate(
-                    isTargeted: $isTargeted,
                     ingest: { providers in
                         Task { await ingest(providers) }
                     }
                 )
             )
-    }
-
-    /// Full-window cue that the drag will be accepted, styled after the
-    /// snackbar capsule so it reads as part of the same family.
-    private var dropHint: some View {
-        ZStack {
-            Color.accentColor.opacity(0.08)
-                .ignoresSafeArea()
-
-            GlassEffectContainer {
-                HStack(spacing: 10) {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.tint)
-                    Text("Drop to add", comment: "Overlay hint while dragging content over the app window")
-                        .font(.subheadline.weight(.medium))
-                }
-                .padding(.horizontal, 16)
-                .frame(height: 44)
-                .glassEffect(.regular, in: .capsule)
-            }
-        }
-        // The hint must never intercept the very drop it invites.
-        .allowsHitTesting(false)
-        .transition(.opacity)
     }
 
     /// Saves every readable payload in the drop, then reports once for the
@@ -129,11 +95,9 @@ private struct AddClipDropTarget: ViewModifier {
 }
 
 /// Session gatekeeper for the drop target: ClipKitty's own card drags are
-/// rejected at validation time — no highlight, no dead drop — because the
-/// clip already lives in the store; everything else lights the hint and is
-/// handed to `ingest` on release.
+/// rejected at validation time — no dead drop — because the clip already
+/// lives in the store; everything else is handed to `ingest` on release.
 private struct ClipDropDelegate: DropDelegate {
-    @Binding var isTargeted: Bool
     let ingest: ([NSItemProvider]) -> Void
 
     /// Providers worth saving: conforming to an accepted type and not marked
@@ -148,16 +112,7 @@ private struct ClipDropDelegate: DropDelegate {
         !externalProviders(info).isEmpty
     }
 
-    func dropEntered(info _: DropInfo) {
-        isTargeted = true
-    }
-
-    func dropExited(info _: DropInfo) {
-        isTargeted = false
-    }
-
     func performDrop(info: DropInfo) -> Bool {
-        isTargeted = false
         let providers = externalProviders(info)
         guard !providers.isEmpty else { return false }
         ingest(providers)
