@@ -1,9 +1,8 @@
 import Foundation
 
-/// Lightweight file-based queue for passing items into the main app from its
-/// extensions (share sheet, keyboard) without opening the database. Items are
-/// written as files in the App Group container and picked up by the main app
-/// on activation.
+/// Lightweight file-based queue for passing items into the main app from the
+/// share extension without opening the database. Items are written as files
+/// in the App Group container and picked up by the main app on activation.
 public enum PendingShareQueue {
     private static let pendingDirName = "pending"
     private static let manifestFilename = "manifest.json"
@@ -12,12 +11,9 @@ public enum PendingShareQueue {
 
     // MARK: - Item Model
 
-    /// Which surface captured the item. Decides the source-app label the item
-    /// gets when saved: keyboard captures are clipboard content (labelled like
-    /// auto-add's "Pasteboard"), share-sheet items keep "Share Sheet".
+    /// Which surface captured the item.
     public enum Origin: String, Codable {
         case shareSheet
-        case keyboard
     }
 
     public enum PendingItem: Codable {
@@ -111,60 +107,6 @@ public enum PendingShareQueue {
         if let thumbnail {
             try thumbnail.write(to: dir.appendingPathComponent(thumbnailFilename))
         }
-    }
-
-    // MARK: - Peek (keyboard extension)
-
-    /// A pending item read without being removed. The keyboard shows its own
-    /// captures at the top of the strip until the app ingests them; full image
-    /// bytes stay on disk (`imageFileURL`) so drags can read them lazily.
-    public struct PeekedItem: Identifiable {
-        /// The queue entry's directory name — stable across reads.
-        public let id: String
-        public let item: PendingItem
-        public let origin: Origin
-        public let thumbnailData: Data?
-        public let imageFileURL: URL?
-        public let enqueuedAt: Date
-    }
-
-    /// Reads all pending items without removing them, newest first.
-    public static func peekAll(in baseDirectory: URL? = nil) -> [PeekedItem] {
-        guard let baseDir = pendingDirectory(in: baseDirectory) else { return [] }
-        let fm = FileManager.default
-        guard let entries = try? fm.contentsOfDirectory(
-            at: baseDir,
-            includingPropertiesForKeys: [.creationDateKey]
-        ) else { return [] }
-
-        var results: [PeekedItem] = []
-        for itemDir in entries {
-            let manifestURL = itemDir.appendingPathComponent(manifestFilename)
-            guard let manifestData = try? Data(contentsOf: manifestURL),
-                  let manifest = decodeManifest(manifestData)
-            else { continue }
-
-            let thumbnailData: Data?
-            let imageFileURL: URL?
-            if case .image = manifest.item {
-                thumbnailData = try? Data(contentsOf: itemDir.appendingPathComponent(thumbnailFilename))
-                imageFileURL = itemDir.appendingPathComponent(imageFilename)
-            } else {
-                thumbnailData = nil
-                imageFileURL = nil
-            }
-
-            let createdAt = (try? itemDir.resourceValues(forKeys: [.creationDateKey]))?.creationDate
-            results.append(PeekedItem(
-                id: itemDir.lastPathComponent,
-                item: manifest.item,
-                origin: manifest.origin ?? .shareSheet,
-                thumbnailData: thumbnailData,
-                imageFileURL: imageFileURL,
-                enqueuedAt: createdAt ?? Date()
-            ))
-        }
-        return results.sorted { $0.enqueuedAt > $1.enqueuedAt }
     }
 
     // MARK: - Dequeue (main app)

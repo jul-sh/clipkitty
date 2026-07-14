@@ -2,7 +2,7 @@ import XCTest
 
 /// Marketing screenshot generator for the iOS App Store listing.
 ///
-/// Captures three screenshots on either iPhone 17 (6.1-inch, 1206x2622;
+/// Captures four screenshots on either iPhone 17 (6.1-inch, 1206x2622;
 /// uploaded to ASC's IPHONE_61 slot) or iPad Pro 13-inch M5 (2064x2752;
 /// uploaded to ASC's IPAD_PRO_3GEN_129 slot). The scenes are identical
 /// across devices; only the simulator chosen by the xcodebuild
@@ -10,6 +10,7 @@ import XCTest
 ///   1. History feed; the main clipboard history view
 ///   2. Search; search bar active with a query
 ///   3. Filter; filtered by a content type
+///   4. Share; the system share sheet over a clip card
 ///
 /// Locale is read from `/tmp/clipkitty_ios_screenshot_locale.txt`.
 /// Database filename is read from `/tmp/clipkitty_ios_screenshot_db.txt`.
@@ -30,68 +31,6 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
             switch self {
             case .iPhone: return "ios"
             case .iPad: return "ipad"
-            }
-        }
-    }
-
-    /// The ClipKitty keyboard can be visible before its App Group snapshot
-    /// has loaded. Keep that state distinct from the ready card strip so the
-    /// test never mistakes "ClipKitty is loading" for "QWERTY is active."
-    private enum ClipKittyKeyboardContent {
-        case ready(cardStrip: XCUIElement)
-        case notReady
-    }
-
-    /// The two ownership models UIKit exposes for an input-mode switcher.
-    /// iPad presents the extension's own control, while iPhone can suppress
-    /// that control and provide a system-owned accessory button instead.
-    private enum InputModeSwitcher {
-        case extensionOwned(button: XCUIElement)
-        case systemOwned(button: XCUIElement)
-
-        func tap() {
-            switch self {
-            case let .extensionOwned(button), let .systemOwned(button):
-                button.tap()
-            }
-        }
-    }
-
-    /// Parsing result at the external accessibility boundary. Absence stays
-    /// explicit here so only the corresponding `VisibleKeyboard` cases below
-    /// can represent a keyboard without a switcher.
-    private enum InputModeSwitcherObservation {
-        case available(InputModeSwitcher)
-        case unavailable
-    }
-
-    /// The input mode currently exposed by the accessibility hierarchy.
-    /// Associated controls belong to the modes in which they are valid, so
-    /// transition code must handle every observable presentation explicitly.
-    private enum VisibleKeyboard {
-        case system(switcher: InputModeSwitcher)
-        case systemWithoutSwitcher
-        case clipKitty(content: ClipKittyKeyboardContent, switcher: InputModeSwitcher)
-        case clipKittyWithoutSwitcher(content: ClipKittyKeyboardContent)
-        case unavailable
-    }
-
-    private enum KeyboardTransitionError: LocalizedError {
-        case missingInputModeSwitcher(context: String)
-        case systemKeyboardUnreachable(context: String)
-        case clipKittyKeyboardUnreachable(context: String)
-        case clipKittyContentNotReady(context: String)
-
-        var errorDescription: String? {
-            switch self {
-            case let .missingInputModeSwitcher(context):
-                "The keyboard input-mode switcher disappeared during \(context)."
-            case let .systemKeyboardUnreachable(context):
-                "Could not reach the system keyboard during \(context)."
-            case let .clipKittyKeyboardUnreachable(context):
-                "Could not reach the ClipKitty keyboard during \(context)."
-            case let .clipKittyContentNotReady(context):
-                "The ClipKitty keyboard was visible but its cards never became ready during \(context)."
             }
         }
     }
@@ -132,7 +71,7 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         waitForFeedSettled(context: "initial feed")
     }
 
-    func testTakeMarketingScreenshots() throws {
+    func testTakeMarketingScreenshots() {
         // All UI lookups use stable accessibilityIdentifier values so this
         // test works under every locale. If an element can't be found, fail
         // loudly — silent fallthrough produces duplicate screenshots that
@@ -155,10 +94,6 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
 
         // Dismiss the iOS keyboard "slide to type" tutorial if it appears
         dismissKeyboardTutorial()
-
-        // Input mode persists across runs. Converge on QWERTY and verify the
-        // transition instead of assuming one globe tap changed the mode.
-        try switchToSystemKeyboard(context: "search screenshot for locale \(locale!)")
 
         let searchField = app.textFields["bottomBar.searchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 3),
@@ -202,214 +137,8 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         let filterScreenshot = captureScreen()
         saveScreenshot(filterScreenshot, index: 3, name: "filter")
 
-        // Screenshot 4: the ClipKitty keyboard over the feed's search.
-        try captureKeyboardScreenshot()
-
-        // Screenshot 5: the share sheet over the feed.
+        // Screenshot 4: the share sheet over the feed.
         captureShareSheetScreenshot()
-    }
-
-    // MARK: - Keyboard screenshot
-
-    /// Brings up the ClipKitty keyboard on the app's own search field and
-    /// captures it showing clip cards.
-    ///
-    /// Preconditions handled in `setUpWithError`: the keyboard is seeded into
-    /// the simulator's keyboard list with Full Access
-    /// (`seedClipKittyKeyboard`), and the extension process's language is
-    /// pinned to the capture locale (it doesn't inherit the app's
-    /// `-AppleLanguages` launch arguments).
-    private func captureKeyboardScreenshot() throws {
-        // Back to the unfiltered feed so the strip shows the hero content.
-        let filterPill = app.buttons["bottomBar.filterPill"]
-        XCTAssertTrue(filterPill.waitForExistence(timeout: 5),
-                      "bottomBar.filterPill not found for locale \(locale!)")
-        filterPill.tap()
-        sleep(1)
-        let allFilter = app.buttons["bottomBar.filterOption.all"]
-        XCTAssertTrue(allFilter.waitForExistence(timeout: 3),
-                      "bottomBar.filterOption.all not found for locale \(locale!)")
-        allFilter.tap()
-        sleep(1)
-        waitForFeedSettled(context: "keyboard screenshot prep")
-
-        // The keyboard renders the App Group snapshot the app writes when it
-        // suspends; background and reactivate once so it exists.
-        XCUIDevice.shared.press(.home)
-        sleep(3)
-        app.activate()
-        waitForFeedSettled(context: "post-suspension reactivation")
-
-        let searchButton = app.buttons["bottomBar.searchButton"]
-        XCTAssertTrue(searchButton.waitForExistence(timeout: 5),
-                      "bottomBar.searchButton not found for locale \(locale!)")
-        searchButton.tap()
-        sleep(1)
-        dismissKeyboardTutorial()
-
-        // Converge on ClipKitty from either starting mode. A previous run can
-        // leave ClipKitty selected but still loading; that is not a missing
-        // globe key, and cycling out and back gives the extension a clean
-        // presentation from which to reload its snapshot.
-        let clipKittyCardStrip = try switchToClipKittyKeyboard(
-            context: "keyboard screenshot for locale \(locale!)"
-        )
-        sleep(2) // let card content and material chrome finish rendering
-        guard clipKittyCardStrip.exists else {
-            throw KeyboardTransitionError.clipKittyContentNotReady(
-                context: "keyboard screenshot rendering for locale \(locale!)"
-            )
-        }
-
-        saveScreenshot(captureScreen(), index: 4, name: "keyboard")
-
-        // Input mode is remembered across app runs. Do not proceed to the
-        // share capture until the switch back to QWERTY is observable; this
-        // is the postcondition that keeps the next locale in sync.
-        try switchToSystemKeyboard(
-            context: "keyboard screenshot cleanup for locale \(locale!)"
-        )
-
-        // Put search away again for the share capture.
-        let closeButton = app.buttons["bottomBar.closeSearchButton"]
-        XCTAssertTrue(closeButton.waitForExistence(timeout: 5),
-                      "bottomBar.closeSearchButton not found for locale \(locale!)")
-        closeButton.tap()
-        sleep(1)
-    }
-
-    /// Observes the input mode as one exhaustive state. ClipKitty is detected
-    /// by its always-present search control, independently of whether its card
-    /// feed has reached `.ready`; QWERTY is detected by its key hierarchy.
-    private func visibleKeyboard() -> VisibleKeyboard {
-        let clipKittyMarker = app.buttons["keyboard.searchButton"]
-        if clipKittyMarker.exists {
-            let cardStrip = app.descendants(matching: .any)["keyboard.cardStrip"]
-            let content: ClipKittyKeyboardContent = if cardStrip.exists {
-                .ready(cardStrip: cardStrip)
-            } else {
-                .notReady
-            }
-            switch inputModeSwitcher() {
-            case let .available(switcher):
-                return .clipKitty(content: content, switcher: switcher)
-            case .unavailable:
-                return .clipKittyWithoutSwitcher(content: content)
-            }
-        }
-
-        switch inputModeSwitcher() {
-        case let .available(switcher):
-            return .system(switcher: switcher)
-        case .unavailable:
-            if app.keys.firstMatch.exists {
-                return .systemWithoutSwitcher
-            }
-            return .unavailable
-        }
-    }
-
-    /// Parses UIKit's device-dependent switcher presentations without using
-    /// localized labels. iPad exposes the extension-owned identifier or the
-    /// system keyboard's stable `emoji` identifier. On iPhone, iOS 26 owns a
-    /// bottom accessory switcher that deliberately has no identifier; its
-    /// non-empty accessibility value names the next input mode. Constraining
-    /// that shape to the leading half of the bottom accessory band avoids
-    /// confusing it with app or keyboard-content buttons.
-    private func inputModeSwitcher() -> InputModeSwitcherObservation {
-        let extensionOwnedButton = app.buttons["keyboard.globeKey"]
-        if extensionOwnedButton.exists {
-            return .available(.extensionOwned(button: extensionOwnedButton))
-        }
-
-        let identifierBearingSystemButton = app.buttons["emoji"]
-        if identifierBearingSystemButton.exists {
-            return .available(.systemOwned(button: identifierBearingSystemButton))
-        }
-
-        let appFrame = app.frame
-        let accessoryBandHeight = min(96, appFrame.height)
-        let leadingAccessoryBand = CGRect(
-            x: appFrame.minX,
-            y: appFrame.maxY - accessoryBandHeight,
-            width: appFrame.width / 2,
-            height: accessoryBandHeight
-        )
-        for button in app.buttons.allElementsBoundByIndex {
-            guard button.exists,
-                  button.isHittable,
-                  button.identifier.isEmpty,
-                  let nextInputMode = button.value as? String,
-                  !nextInputMode.isEmpty
-            else {
-                continue
-            }
-
-            let frame = button.frame
-            let center = CGPoint(x: frame.midX, y: frame.midY)
-            if leadingAccessoryBand.contains(center) {
-                return .available(.systemOwned(button: button))
-            }
-        }
-        return .unavailable
-    }
-
-    /// Repeatedly observes and advances the current mode until QWERTY is
-    /// actually visible. A successful return is the verified postcondition.
-    private func switchToSystemKeyboard(context: String) throws {
-        let maxObservations = 8
-        for _ in 1 ... maxObservations {
-            switch visibleKeyboard() {
-            case .system, .systemWithoutSwitcher:
-                return
-            case let .clipKitty(_, switcher):
-                switcher.tap()
-                dismissKeyboardTutorial()
-            case .clipKittyWithoutSwitcher:
-                throw KeyboardTransitionError.missingInputModeSwitcher(context: context)
-            case .unavailable:
-                dismissKeyboardTutorial()
-            }
-            sleep(1)
-        }
-        throw KeyboardTransitionError.systemKeyboardUnreachable(context: context)
-    }
-
-    /// Repeatedly observes and advances the current mode until ClipKitty's
-    /// ready card strip is visible. If ClipKitty is already selected but its
-    /// content is stale, cycle through QWERTY and back to force a clean reload.
-    private func switchToClipKittyKeyboard(context: String) throws -> XCUIElement {
-        let maxObservations = 8
-        for _ in 1 ... maxObservations {
-            switch visibleKeyboard() {
-            case let .clipKitty(.ready(cardStrip), _),
-                 let .clipKittyWithoutSwitcher(.ready(cardStrip)):
-                return cardStrip
-            case let .clipKitty(.notReady, switcher):
-                let cardStrip = app.descendants(matching: .any)["keyboard.cardStrip"]
-                if cardStrip.waitForExistence(timeout: 5) {
-                    return cardStrip
-                }
-                switcher.tap()
-            case .clipKittyWithoutSwitcher(.notReady):
-                let cardStrip = app.descendants(matching: .any)["keyboard.cardStrip"]
-                if cardStrip.waitForExistence(timeout: 15) {
-                    return cardStrip
-                }
-                throw KeyboardTransitionError.clipKittyContentNotReady(context: context)
-            case let .system(switcher):
-                switcher.tap()
-                // The first-ever globe tap can show a "Quickly Change
-                // Keyboards" overlay instead of changing the input mode.
-                dismissKeyboardTutorial()
-            case .systemWithoutSwitcher:
-                throw KeyboardTransitionError.missingInputModeSwitcher(context: context)
-            case .unavailable:
-                dismissKeyboardTutorial()
-            }
-            sleep(1)
-        }
-        throw KeyboardTransitionError.clipKittyKeyboardUnreachable(context: context)
     }
 
     // MARK: - Share sheet screenshot
@@ -434,6 +163,21 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
     /// Long-presses the first clip card and opens the system share sheet via
     /// the context menu's Share action.
     private func captureShareSheetScreenshot() {
+        // Back to the unfiltered feed so the sheet presents over the hero
+        // content — the images filter from the previous capture is still
+        // active at this point.
+        let filterPill = app.buttons["bottomBar.filterPill"]
+        XCTAssertTrue(filterPill.waitForExistence(timeout: 5),
+                      "bottomBar.filterPill not found for locale \(locale!)")
+        filterPill.tap()
+        sleep(1)
+        let allFilter = app.buttons["bottomBar.filterOption.all"]
+        XCTAssertTrue(allFilter.waitForExistence(timeout: 3),
+                      "bottomBar.filterOption.all not found for locale \(locale!)")
+        allFilter.tap()
+        sleep(1)
+        waitForFeedSettled(context: "share screenshot prep")
+
         let firstCard = app.scrollViews.firstMatch.buttons.firstMatch
         XCTAssertTrue(firstCard.waitForExistence(timeout: 5),
                       "no card found for share screenshot (locale \(locale!))")
@@ -451,7 +195,7 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         // Give the activity sheet time to lay out its app row and previews.
         sleep(4)
 
-        saveScreenshot(captureScreen(), index: 5, name: "share")
+        saveScreenshot(captureScreen(), index: 4, name: "share")
     }
 
     // MARK: - Verified typing

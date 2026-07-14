@@ -1,1 +1,1 @@
-schránka,historie,kopírovat,vložit,správce,hledání,sync,iCloud,Mac,klávesnice,produktivita
+schránka,historie,kopírovat,vložit,správce,hledání,sync,iCloud,Mac,produktivita

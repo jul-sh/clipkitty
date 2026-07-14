@@ -19,7 +19,6 @@ final class AppContainer {
     let clipboardService: iOSClipboardService
     let settings: iOSSettingsStore
     let haptics: HapticsClient
-    let keyboardFeed: KeyboardFeedService
 
     private init(
         store: ClipKittyRust.ClipboardStore,
@@ -29,8 +28,7 @@ final class AppContainer {
         storeClient: iOSBrowserStoreClient,
         clipboardService: iOSClipboardService,
         settings: iOSSettingsStore,
-        haptics: HapticsClient,
-        keyboardFeed: KeyboardFeedService
+        haptics: HapticsClient
     ) {
         self.store = store
         self.repository = repository
@@ -40,7 +38,6 @@ final class AppContainer {
         self.clipboardService = clipboardService
         self.settings = settings
         self.haptics = haptics
-        self.keyboardFeed = keyboardFeed
     }
 
     static func bootstrap(databasePath customPath: String? = nil) -> Result<AppContainer, BootstrapError> {
@@ -132,13 +129,9 @@ final class AppContainer {
         let repository = ClipboardRepository(store: store)
         let previewLoader = PreviewLoader(repository: repository)
         let imageDescriptionUpdater = ImageDescriptionUpdater(repository: repository)
-        let keyboardFeed = KeyboardFeedService(repository: repository)
         let storeClient = iOSBrowserStoreClient(
             repository: repository,
-            previewLoader: previewLoader,
-            onFeedContentChanged: { [weak keyboardFeed] in
-                keyboardFeed?.scheduleRefresh()
-            }
+            previewLoader: previewLoader
         )
         let settings = iOSSettingsStore()
         let clipboardService = iOSClipboardService(settings: settings)
@@ -152,8 +145,7 @@ final class AppContainer {
             storeClient: storeClient,
             clipboardService: clipboardService,
             settings: settings,
-            haptics: haptics,
-            keyboardFeed: keyboardFeed
+            haptics: haptics
         )
     }
 
@@ -188,10 +180,7 @@ final class AppContainer {
         let result = await repository.pruneToSize(
             maxBytes: Utilities.bytes(fromGB: maxGB)
         )
-        switch result {
-        case .success:
-            keyboardFeed.scheduleRefresh()
-        case let .failure(error):
+        if case let .failure(error) = result {
             Self.logger.error("Storage limit prune failed: \(error.localizedDescription)")
         }
     }

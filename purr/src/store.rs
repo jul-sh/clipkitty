@@ -5,7 +5,7 @@ use crate::indexer::{IndexInspection, Indexer};
 use crate::interface::{
     ClipKittyError, ClipboardItem, ClipboardStoreApi, FilePreviewSnapshot, ItemQueryFilter,
     ItemTag, ListPresentationProfile, MatchedExcerptRequest, MatchedExcerptResolution,
-    PreviewPayload, RecentItemsScope, SearchOutcome, SearchResult, StoreBootstrapPlan,
+    PreviewPayload, SearchOutcome, SearchResult, StoreBootstrapPlan,
 };
 #[cfg(feature = "sync")]
 use crate::sync_bridge::{snapshot_from_stored_item_with_bookmark, RealSyncEmitter, SyncEmitter};
@@ -426,19 +426,6 @@ impl ClipboardStoreApi for ClipboardStore {
                 .unwrap_or_default();
         }
         Ok(items)
-    }
-
-    fn fetch_recent_items(
-        &self,
-        scope: RecentItemsScope,
-        limit: u32,
-    ) -> Result<Vec<ClipboardItem>, ClipKittyError> {
-        Ok(self
-            .db
-            .fetch_recent_items(scope, limit)?
-            .into_iter()
-            .map(|item| item.to_clipboard_item())
-            .collect())
     }
 
     fn resolve_matched_excerpts(

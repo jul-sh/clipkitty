@@ -18,8 +18,6 @@
 		<string>ClipKitty iOS AppStore</string>
 		<key>com.eviljuliette.clipkitty.share</key>
 		<string>ClipKitty Share AppStore</string>
-		<key>com.eviljuliette.clipkitty.keyboard</key>
-		<string>ClipKitty Keyboard AppStore</string>
 	</dict>
 </dict>
 </plist>

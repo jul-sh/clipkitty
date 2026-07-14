@@ -101,10 +101,6 @@ final class AppState {
                 self?.toast = .init()
             }
         }
-
-        // Ensure an existing database gets a keyboard snapshot even when the
-        // user makes no mutation before switching apps.
-        container.keyboardFeed.scheduleRefresh()
     }
 
     func showToast(_ message: ToastMessage, action: (() -> Void)? = nil) {
@@ -130,9 +126,6 @@ final class AppState {
     func refreshFeed() {
         contentRevision += 1
         viewModel.handlePanelVisibilityChange(true, contentRevision: contentRevision)
-        // Snapshot generation is a direct database read, so it is safe to
-        // keep the keyboard current while browser search is active.
-        container.keyboardFeed.scheduleRefresh()
     }
 
     func restoreVisibleFeedAfterForegroundActivation() {
@@ -186,12 +179,7 @@ final class AppState {
 
         var saved = 0
         for entry in pending {
-            // Keyboard captures are clipboard content, so they get the same
-            // source label auto-add uses; share-sheet items keep theirs.
-            let sourceApp = switch entry.origin {
-            case .shareSheet: "Share Sheet"
-            case .keyboard: "Pasteboard"
-            }
+            let sourceApp = "Share Sheet"
 
             let result: Result<String, ClipboardError>
             switch entry.item {
@@ -224,10 +212,6 @@ final class AppState {
 
     func autoAddFromClipboard() async {
         guard container.settings.autoAddFromClipboard else { return }
-
-        // The keyboard may have captured (and marked) a generation while this
-        // session was backgrounded but not torn down.
-        container.settings.refreshPasteboardIngestState()
 
         // Reading changeCount does not trigger the paste-consent alert. If the
         // pasteboard has not changed since we last looked, skip the read so we
@@ -340,7 +324,6 @@ struct ClipKittyiOSApp: App {
     /// The in-flight store open of the current resume, chained so a
     /// superseded open always releases its store before the next one starts.
     @State private var resumeOpenTask: Task<Void, Never>?
-    @State private var deepLinks = DeepLinkRouter()
     @Environment(\.scenePhase) private var scenePhase
 
     #if ENABLE_ICLOUD_SYNC
@@ -358,13 +341,6 @@ struct ClipKittyiOSApp: App {
             content
                 .onChange(of: scenePhase) { _, newPhase in
                     handleScenePhaseChange(newPhase)
-                }
-                // Attached above the launch-state switch so a link that
-                // arrives mid-bootstrap (keyboard cold-starting the app)
-                // still lands; the router holds it until the feed consumes it.
-                .onOpenURL { url in
-                    guard let link = AppDeepLink(url: url) else { return }
-                    deepLinks.open(link)
                 }
         }
     }
@@ -420,7 +396,6 @@ struct ClipKittyiOSApp: App {
             .environment(appState.viewModel)
             .environment(container.settings)
             .environment(container.haptics)
-            .environment(deepLinks)
             .task {
                 await appState.ingestPendingAndClipboard()
             }
@@ -639,29 +614,12 @@ struct ClipKittyiOSApp: App {
                 else {
                     return
                 }
-                // Snapshot the keyboard feed while the store is still open —
-                // the user is heading to another app, where the keyboard may
-                // come up next.
-                await session.container.keyboardFeed.refreshOnSuspension()
-                guard !Task.isCancelled,
-                      case let .suspending(recheck) = launchState,
-                      recheck.id == suspensionID
-                else {
-                    return
-                }
                 session.appState.prepareForSuspension()
                 session.container.prepareForSuspension()
             }
         #else
             guard case let .suspending(context) = launchState,
                   context.id == suspensionID
-            else {
-                return
-            }
-            await session.container.keyboardFeed.refreshOnSuspension()
-            guard !Task.isCancelled,
-                  case let .suspending(recheck) = launchState,
-                  recheck.id == suspensionID
             else {
                 return
             }

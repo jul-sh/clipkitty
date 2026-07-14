@@ -1509,11 +1509,9 @@ jobs:
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo "$APP_PROFILE" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/clipkitty-ios.mobileprovision
           echo "$SHARE_PROFILE" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/clipkitty-share.mobileprovision
-          echo "$KEYBOARD_PROFILE" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/clipkitty-keyboard.mobileprovision
         env:
           APP_PROFILE: ${{ steps.secrets.outputs.IOS_APPSTORE_PROFILE_BASE64 }}
           SHARE_PROFILE: ${{ steps.secrets.outputs.IOS_SHARE_PROFILE_BASE64 }}
-          KEYBOARD_PROFILE: ${{ steps.secrets.outputs.IOS_KEYBOARD_PROFILE_BASE64 }}
 
       # actions/upload-artifact@v4 strips the common path prefix (here the
       # `marketing-ios/` / `marketing-ipad/` roots), so each artifact holds
@@ -1597,4 +1595,3 @@ jobs:
         run: |
           rm -f ~/Library/MobileDevice/Provisioning\ Profiles/clipkitty-ios.mobileprovision
           rm -f ~/Library/MobileDevice/Provisioning\ Profiles/clipkitty-share.mobileprovision
-          rm -f ~/Library/MobileDevice/Provisioning\ Profiles/clipkitty-keyboard.mobileprovision

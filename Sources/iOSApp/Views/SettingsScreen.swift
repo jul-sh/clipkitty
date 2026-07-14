@@ -7,7 +7,6 @@ struct SettingsScreen: View {
         NavigationStack {
             Form {
                 GeneralSettingsSection()
-                KeyboardSettingsSection()
                 AppearanceSettingsSection()
                 #if ENABLE_ICLOUD_SYNC
                     SyncSettingsSection()

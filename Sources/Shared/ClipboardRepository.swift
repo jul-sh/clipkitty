@@ -74,31 +74,13 @@ public final class ClipboardRepository: @unchecked Sendable {
     }
 
     public func fetchItem(id: String) async -> ClipboardItem? {
-        await fetchItems(ids: [id]).first
-    }
-
-    /// Fetch full items by id; ids that no longer exist are simply absent
-    /// from the result.
-    public func fetchItems(ids: [String]) async -> [ClipboardItem] {
-        let result = await runRepositoryOperation("fetchItems", on: store) { store in
-            try store.fetchByIds(itemIds: ids)
+        let result = await runRepositoryOperation("fetchItem", on: store) { store in
+            try store.fetchByIds(itemIds: [id])
         }
         if case let .success(items) = result {
-            return items
+            return items.first
         }
-        return []
-    }
-
-    /// Fetch a bounded recent slice without using the store's interactive
-    /// search slot. Secondary surfaces can stay current without cancelling a
-    /// user's in-flight browser search.
-    public func fetchRecentItems(
-        scope: RecentItemsScope,
-        limit: UInt32
-    ) async -> Result<[ClipboardItem], ClipboardError> {
-        await runRepositoryOperation("fetchRecentItems", on: store) { store in
-            try store.fetchRecentItems(scope: scope, limit: limit)
-        }
+        return nil
     }
 
     public func resolveMatchedExcerpts(requests: [MatchedExcerptRequest]) async -> [MatchedExcerptResolution] {

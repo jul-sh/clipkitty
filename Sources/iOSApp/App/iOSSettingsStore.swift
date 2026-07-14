@@ -1,4 +1,3 @@
-import ClipKittyShared
 import Foundation
 
 /// UserDefaults-backed settings for the iOS app.
@@ -49,24 +48,14 @@ final class iOSSettingsStore {
 
     // MARK: - Pasteboard ingest state
 
-    /// The pasteboard `changeCount` already ingested by auto-add (or by the
-    /// keyboard's capture — see `PasteboardIngestState`). This is state, not a
-    /// user-facing preference, so it bypasses the `isInitializing`/`save()`
-    /// flow and writes straight through. Persistence is required because
-    /// backgrounding tears down the container and rebootstraps on foreground;
-    /// App Group storage is required so the keyboard extension shares it.
+    /// The pasteboard `changeCount` already ingested by auto-add. This is
+    /// state, not a user-facing preference, so it bypasses the
+    /// `isInitializing`/`save()` flow and writes straight to UserDefaults.
+    /// Persistence is required because backgrounding tears down the container
+    /// and rebootstraps on foreground.
     @ObservationIgnored
     var lastIngestedPasteboardChangeCount: Int {
-        didSet { PasteboardIngestState.recordChangeCount(lastIngestedPasteboardChangeCount, defaults: ingestStateDefaults) }
-    }
-
-    /// Re-reads the shared marker. The keyboard advances it while this store's
-    /// in-memory copy is alive but the app is backgrounded; auto-add refreshes
-    /// before comparing so a keyboard-captured generation isn't ingested twice.
-    func refreshPasteboardIngestState() {
-        if let shared = PasteboardIngestState.lastChangeCount(defaults: ingestStateDefaults) {
-            lastIngestedPasteboardChangeCount = shared
-        }
+        didSet { defaults.set(lastIngestedPasteboardChangeCount, forKey: lastIngestedPasteboardChangeCountKey) }
     }
 
     // MARK: - Keys
@@ -88,17 +77,11 @@ final class iOSSettingsStore {
     @ObservationIgnored
     private let defaults: UserDefaults
 
-    /// Where the shared pasteboard-ingest marker lives (App Group suite in
-    /// production; injected in tests to stay hermetic).
-    @ObservationIgnored
-    private let ingestStateDefaults: UserDefaults?
-
     @ObservationIgnored
     private var isInitializing = true
 
-    init(defaults: UserDefaults = .standard, ingestStateDefaults: UserDefaults? = nil) {
+    init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        self.ingestStateDefaults = ingestStateDefaults
 
         hapticsEnabled = defaults.object(forKey: hapticsEnabledKey) as? Bool ?? true
         generateLinkPreviews = defaults.object(forKey: generateLinkPreviewsKey) as? Bool ?? true
@@ -109,11 +92,7 @@ final class iOSSettingsStore {
         previewFontPreference = defaults.string(forKey: previewFontPreferenceKey)
             .flatMap(PreviewFontPreference.init(rawValue:)) ?? .coding
         permissionHintDismissed = defaults.object(forKey: permissionHintDismissedKey) as? Bool ?? false
-        // Prefer the shared App Group marker; fall back to the pre-keyboard
-        // per-process value so an update doesn't re-ingest the current
-        // pasteboard generation.
-        lastIngestedPasteboardChangeCount = PasteboardIngestState.lastChangeCount(defaults: ingestStateDefaults)
-            ?? defaults.object(forKey: lastIngestedPasteboardChangeCountKey) as? Int ?? 0
+        lastIngestedPasteboardChangeCount = defaults.object(forKey: lastIngestedPasteboardChangeCountKey) as? Int ?? 0
 
         #if ENABLE_ICLOUD_SYNC
             syncEnabled = defaults.object(forKey: syncEnabledKey) as? Bool ?? false

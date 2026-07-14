@@ -1,12 +1,5 @@
 import ProjectDescription
 
-/// A language-neutral, valid BCP-47 private-use tag shared by the containing
-/// app and keyboard extension. The app reads its copy from Info.plist rather
-/// than duplicating this identity in runtime code.
-/// BCP-47 caps each private-use subtag (after "x-") at 8 characters; App Store
-/// Connect rejects the upload otherwise (error 90362).
-let clipKittyKeyboardPrimaryLanguage = "en-US-x-clipkty"
-
 // MARK: - Capability Model
 
 /// Each capability maps to a compile condition and controls what code is included.
@@ -398,13 +391,6 @@ enum IOSBuildVariant: CaseIterable {
         iOSExtensionConfiguration(
             entitlements: "Sources/ShareExtension/ClipKittyShare.entitlements",
             appStoreProfile: "ClipKitty Share AppStore"
-        )
-    }
-
-    func keyboardExtensionConfiguration() -> Configuration {
-        iOSExtensionConfiguration(
-            entitlements: "Sources/KeyboardExtension/ClipKittyKeyboard.entitlements",
-            appStoreProfile: "ClipKitty Keyboard AppStore"
         )
     }
 
@@ -851,7 +837,6 @@ let project = Project(
             infoPlist: .extendingDefault(with: [
                 "CFBundleDisplayName": "ClipKitty",
                 "CFBundleIconName": "AppIcon",
-                "ClipKittyKeyboardPrimaryLanguage": .string(clipKittyKeyboardPrimaryLanguage),
                 "CFBundleDevelopmentRegion": "en",
                 "CFBundleShortVersionString": "$(MARKETING_VERSION)",
                 "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
@@ -864,15 +849,6 @@ let project = Project(
                 ],
                 "UIBackgroundModes": ["fetch", "processing", "remote-notification"],
                 "UILaunchScreen": ["UIColorName": ""],
-                // clipkitty:// deep links let the extensions open the app
-                // (see AppDeepLink in ClipKittyShared).
-                "CFBundleURLTypes": [
-                    [
-                        "CFBundleTypeRole": "Viewer",
-                        "CFBundleURLName": "com.eviljuliette.clipkitty",
-                        "CFBundleURLSchemes": ["clipkitty"],
-                    ],
-                ],
                 // Tuist's default iOS Info.plist declares UIRequiredDevice
                 // capabilities = [armv7]. This is an arm64-only iOS 26 app, so
                 // its Mach-O has no armv7 slice and App Store Connect rejects
@@ -895,7 +871,6 @@ let project = Project(
                 .target(name: "ClipKittyAppleServices"),
                 .target(name: "ClipKittyShortcuts"),
                 .target(name: "ClipKittyShare"),
-                .target(name: "ClipKittyKeyboard"),
             ],
             settings: .settings(
                 base: [
@@ -959,65 +934,6 @@ let project = Project(
                     "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
                 ],
                 configurations: IOSBuildVariant.allCases.map { $0.shareExtensionConfiguration() }
-            )
-        ),
-
-        // MARK: ClipKittyKeyboard — iOS Keyboard Extension
-
-        // A keyless keyboard: the recent-clips feed as tappable/draggable
-        // cards. It never opens the database — it reads the App Group
-        // snapshot the main app maintains (see KeyboardFeedStore), keeping
-        // the extension inside the tight keyboard memory budget.
-        // RequestsOpenAccess is required: without Full Access a keyboard
-        // cannot reach its App Group container at all.
-        .target(
-            name: "ClipKittyKeyboard",
-            destinations: [.iPhone, .iPad],
-            product: .appExtension,
-            bundleId: "com.eviljuliette.clipkitty.keyboard",
-            deploymentTargets: .iOS("26.0"),
-            infoPlist: .extendingDefault(with: [
-                "CFBundleDisplayName": "ClipKitty",
-                "CFBundleShortVersionString": "$(MARKETING_VERSION)",
-                "CFBundleVersion": "$(CURRENT_PROJECT_VERSION)",
-                "NSExtension": [
-                    "NSExtensionPointIdentifier": "com.apple.keyboard-service",
-                    "NSExtensionPrincipalClass": "$(PRODUCT_MODULE_NAME).KeyboardViewController",
-                    "NSExtensionAttributes": [
-                        "IsASCIICapable": false,
-                        "PrefersRightToLeft": false,
-                        // The containing app identifies this enabled input
-                        // mode through the public primaryLanguage API.
-                        "PrimaryLanguage": .string(clipKittyKeyboardPrimaryLanguage),
-                        "RequestsOpenAccess": true,
-                    ],
-                ],
-            ]),
-            sources: ["Sources/KeyboardExtension/**"],
-            resources: [
-                // Shares the app's string catalog so keyboard strings are
-                // translated from the same source of truth (and pass the
-                // xtask localization-coverage check).
-                "Sources/iOSApp/Resources/Localizable.xcstrings",
-            ],
-            dependencies: [
-                .target(name: "ClipKittyRust"),
-                .target(name: "ClipKittyShared"),
-            ],
-            settings: .settings(
-                base: [
-                    "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr"]),
-                    "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": .array([
-                        "$(inherited)",
-                        "$(PROJECT_DIR)/Sources/ClipKittyRust/ios-device",
-                    ]),
-                    "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": .array([
-                        "$(inherited)",
-                        "$(PROJECT_DIR)/Sources/ClipKittyRust/ios-simulator",
-                    ]),
-                    "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
-                ],
-                configurations: IOSBuildVariant.allCases.map { $0.keyboardExtensionConfiguration() }
             )
         ),
 

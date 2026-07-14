@@ -2,7 +2,6 @@ import ClipKittyAppleServices
 import ClipKittyRust
 import ClipKittyShared
 import Foundation
-import os
 
 protocol ClipKittyShortcutServicing: Sendable {
     func saveText(_ text: String) async throws -> ShortcutSavedClip
@@ -116,8 +115,6 @@ private enum ShortcutRepositorySource {
 }
 
 final class ClipKittyShortcutService: ClipKittyShortcutServicing {
-    private nonisolated static let logger = Logger(subsystem: "com.clipkitty", category: "Shortcuts")
-
     private let repositorySource: ShortcutRepositorySource
     private let pasteboardClient: ShortcutPasteboardClient
     private let imageDescriptionGenerator: @Sendable (Data) async -> String?
@@ -173,13 +170,7 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
             sourceApp: "Shortcuts",
             sourceAppBundleId: "com.apple.shortcuts"
         )
-        let saved = try savedClip(from: result)
-        #if os(iOS)
-            // A duplicate save still touches the existing item's timestamp,
-            // so both successful outcomes can change keyboard feed ordering.
-            await refreshKeyboardFeed(using: repository)
-        #endif
-        return saved
+        return try savedClip(from: result)
     }
 
     func saveCurrentClipboard() async throws -> ShortcutSavedClip {
@@ -258,15 +249,6 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
         }
         return values
     }
-
-    #if os(iOS)
-        private func refreshKeyboardFeed(using repository: ClipboardRepository) async {
-            let result = await KeyboardFeedSnapshotWriter(repository: repository).writeCurrentSnapshot()
-            if case let .failure(error) = result {
-                Self.logger.error("Keyboard feed refresh failed: \(error.localizedDescription)")
-            }
-        }
-    #endif
 
     private func makeRepository() async throws -> ClipboardRepository {
         switch repositorySource {
