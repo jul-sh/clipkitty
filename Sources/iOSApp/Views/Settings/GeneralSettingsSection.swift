@@ -14,6 +14,12 @@ struct GeneralSettingsSection: View {
             Toggle(String(localized: "Auto-Add from Clipboard"), isOn: $settings.autoAddFromClipboard)
         }
 
+        Section {
+            Toggle(String(localized: "Capture Sensitive Clips"), isOn: $settings.captureSensitiveClips)
+        } footer: {
+            Text(String(localized: "When off, clips that an app marks as sensitive (such as passwords and one-time codes from a password manager) are not saved to history. Turn this on only if you want those clips captured too."))
+        }
+
         if !settings.permissionHintDismissed {
             Section(String(localized: "Permissions")) {
                 VStack(alignment: .leading, spacing: 8) {

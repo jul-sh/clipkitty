@@ -416,7 +416,14 @@ struct ClipKittyiOSApp: App {
     private static let resumeWarmupDeadline: Duration = .seconds(2)
 
     private func performBootstrap() {
-        let customPath = ProcessInfo.processInfo.environment["CLIPKITTY_SCREENSHOT_DB"]
+        // The screenshot-DB override injects a synthetic store for automated
+        // App Store screenshots. It must never exist in shipping builds, so the
+        // env-var read is compiled out of release binaries entirely.
+        #if DEBUG
+            let customPath = ProcessInfo.processInfo.environment["CLIPKITTY_SCREENSHOT_DB"]
+        #else
+            let customPath: String? = nil
+        #endif
         switch AppContainer.bootstrap(databasePath: customPath) {
         case let .success(container):
             let session = makeSession(container: container)
@@ -462,7 +469,13 @@ struct ClipKittyiOSApp: App {
     /// content without an empty flash.
     private func beginResume(previous: AppSession) {
         launchState = .resuming(previous: previous, spinnerVisible: false)
-        let customPath = ProcessInfo.processInfo.environment["CLIPKITTY_SCREENSHOT_DB"]
+        // Screenshot-DB override is DEBUG-only; release builds always resume the
+        // real store (custom path nil). See `performBootstrap`.
+        #if DEBUG
+            let customPath = ProcessInfo.processInfo.environment["CLIPKITTY_SCREENSHOT_DB"]
+        #else
+            let customPath: String? = nil
+        #endif
 
         Task { @MainActor in
             try? await Task.sleep(for: Self.resumeSpinnerGrace)

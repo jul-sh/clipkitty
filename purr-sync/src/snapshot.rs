@@ -44,7 +44,9 @@ impl ItemSnapshot {
     ) -> Self {
         Self {
             item_id,
-            snapshot_revision: previous_revision + 1,
+            // Saturating: `previous_revision` may originate from a remote snapshot,
+            // so a wrapping bump could reset the revision and defeat compaction ordering.
+            snapshot_revision: previous_revision.saturating_add(1),
             schema_version: SYNC_SCHEMA_VERSION,
             covers_through_event: Some(covers_through_event),
             aggregate,

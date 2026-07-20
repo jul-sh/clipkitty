@@ -1951,11 +1951,18 @@ impl Indexer {
     }
 
     pub fn clear(&self) -> IndexerResult<()> {
+        // `delete_all_documents` drops the segments from the index metadata, but
+        // the underlying segment files (which hold verbatim stored `content`)
+        // linger on disk until garbage collection removes them. Clearing history
+        // must leave no recoverable plaintext, so force a GC after the commit.
         self.with_writer(|writer| {
             writer.delete_all_documents()?;
+            writer.commit()?;
+            writer.garbage_collect_files().wait()?;
             Ok(())
         })?;
-        self.commit()
+        self.reader.write().reload()?;
+        Ok(())
     }
 
     /// Get the number of documents in the index

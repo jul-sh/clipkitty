@@ -109,6 +109,10 @@ struct ShareView: View {
             url = nil
         }
         guard let url else { return false }
+        // Reject file URLs: the path points inside the source app's sandbox and
+        // is unreadable from the main app, so persisting it stores a dead
+        // reference. Mirrors the in-app `DroppedClipReader`.
+        guard !url.isFileURL else { return false }
         return (try? PendingShareQueue.enqueueURL(url.absoluteString)) != nil
     }
 
@@ -120,12 +124,23 @@ struct ShareView: View {
         return (try? PendingShareQueue.enqueueImage(imageData: data, thumbnail: thumbnail)) != nil
     }
 
+    /// Upper bound on image bytes read from a shared file URL. Guards against a
+    /// pathological or hostile item exhausting memory in the (tightly
+    /// memory-limited) share extension.
+    private static let maxImageDataBytes = 50 * 1024 * 1024 // 50 MB
+
     private func loadImageData(from provider: NSItemProvider) async throws -> Data {
         let item = try await provider.loadItem(forTypeIdentifier: UTType.image.identifier)
         if let data = item as? Data {
             return data
         }
         if let url = item as? URL {
+            // Size-check before reading so an oversized file can't blow the
+            // extension's memory budget.
+            let fileSize = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize
+            if let fileSize, fileSize > Self.maxImageDataBytes {
+                throw CocoaError(.fileReadTooLarge)
+            }
             return try Data(contentsOf: url)
         }
         if let image = item as? UIImage, let data = image.pngData() {

@@ -102,10 +102,10 @@ public enum PendingShareQueue {
         let dir = try createItemDirectory(in: baseDirectory)
         let manifest = Manifest(item: .image, origin: origin)
         let data = try JSONEncoder().encode(manifest)
-        try data.write(to: dir.appendingPathComponent(manifestFilename))
-        try imageData.write(to: dir.appendingPathComponent(imageFilename))
+        try writeProtected(data, to: dir.appendingPathComponent(manifestFilename))
+        try writeProtected(imageData, to: dir.appendingPathComponent(imageFilename))
         if let thumbnail {
-            try thumbnail.write(to: dir.appendingPathComponent(thumbnailFilename))
+            try writeProtected(thumbnail, to: dir.appendingPathComponent(thumbnailFilename))
         }
     }
 
@@ -200,12 +200,34 @@ public enum PendingShareQueue {
         }
         let itemDir = baseDir.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: itemDir, withIntermediateDirectories: true)
+        // Harden the queued item directory so its clip-bearing files are
+        // unreadable while the device is locked. `.completeUnlessOpen` lets an
+        // already-open handle keep working across a lock. Best-effort; iOS-only
+        // because this file also compiles for macOS, which has no such API.
+        #if os(iOS)
+            try? FileManager.default.setAttributes(
+                [.protectionKey: FileProtectionType.completeUnlessOpen],
+                ofItemAtPath: itemDir.path
+            )
+        #endif
         return itemDir
     }
 
     private static func writeManifest(_ item: PendingItem, origin: Origin, in baseDirectory: URL?) throws {
         let dir = try createItemDirectory(in: baseDirectory)
         let data = try JSONEncoder().encode(Manifest(item: item, origin: origin))
-        try data.write(to: dir.appendingPathComponent(manifestFilename))
+        try writeProtected(data, to: dir.appendingPathComponent(manifestFilename))
+    }
+
+    /// Writes `data` with file-level data protection so the on-disk clip is
+    /// unreadable while the device is locked. `.completeFileProtectionUnlessOpen`
+    /// mirrors the directory protection above. iOS-only; the writing option is
+    /// meaningless on macOS, which also compiles this file.
+    private static func writeProtected(_ data: Data, to url: URL) throws {
+        #if os(iOS)
+            try data.write(to: url, options: [.completeFileProtectionUnlessOpen])
+        #else
+            try data.write(to: url)
+        #endif
     }
 }

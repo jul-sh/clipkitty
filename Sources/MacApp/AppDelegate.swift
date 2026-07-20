@@ -17,17 +17,25 @@ private enum LaunchMode {
     case simulatedDatabase(initialSearchQuery: String?)
 
     static func fromCommandLine() -> LaunchMode {
-        guard CommandLine.arguments.contains("--use-simulated-db") else {
-            return .production
-        }
+        // The `--use-simulated-db` / `--search` launch arguments are XCUITest
+        // and marketing-screenshot hooks that swap in a fake database. They must
+        // not be reachable in release builds, so the parsing is compiled out
+        // there and production always resolves to `.production`.
+        #if DEBUG
+            guard CommandLine.arguments.contains("--use-simulated-db") else {
+                return .production
+            }
 
-        var searchQuery: String? = nil
-        if let searchIndex = CommandLine.arguments.firstIndex(of: "--search"),
-           searchIndex + 1 < CommandLine.arguments.count
-        {
-            searchQuery = CommandLine.arguments[searchIndex + 1]
-        }
-        return .simulatedDatabase(initialSearchQuery: searchQuery)
+            var searchQuery: String? = nil
+            if let searchIndex = CommandLine.arguments.firstIndex(of: "--search"),
+               searchIndex + 1 < CommandLine.arguments.count
+            {
+                searchQuery = CommandLine.arguments[searchIndex + 1]
+            }
+            return .simulatedDatabase(initialSearchQuery: searchQuery)
+        #else
+            return .production
+        #endif
     }
 }
 

@@ -71,6 +71,7 @@ enum ClipKittyShortcutError: Equatable, LocalizedError {
     case databasePathUnavailable(String)
     case databaseOpenFailed(String)
     case operationFailed(String)
+    case readAccessDisabled
 
     var errorDescription: String? {
         switch self {
@@ -86,7 +87,43 @@ enum ClipKittyShortcutError: Equatable, LocalizedError {
             return "Could not open ClipKitty's database: \(reason)"
         case let .operationFailed(reason):
             return reason
+        case .readAccessDisabled:
+            return "Enable 'Allow Shortcuts to read clipboard history' in ClipKitty Settings to use this action."
         }
+    }
+}
+
+/// Privacy gate for the read-only Shortcuts actions.
+///
+/// The SAVE/write intents pose no exfiltration risk, but the GET/SEARCH
+/// intents return raw clip text with `openAppWhenRun = false` and no auth or
+/// consent, and that history may contain passwords, 2FA codes, or other
+/// secrets. The gate lets a privacy-conscious user switch history access off
+/// for automations (via the "Allow Shortcuts to Read History" setting) while
+/// still allowing Shortcuts to save new clips. It defaults ON, so the read
+/// intents work out of the box.
+///
+/// The setting is persisted by the app to standard `UserDefaults` under the
+/// `allowShortcutsReadAccess` key. Reading it directly here (rather than
+/// threading the full settings store through the intent runtime) keeps this
+/// gate low-coupling and available in every context the intents run in. We
+/// also consult the App Group suite so the gate holds if the value is ever
+/// mirrored there.
+enum ShortcutReadAccessGate {
+    static let settingKey = "allowShortcutsReadAccess"
+    private static let appGroupSuite = "group.com.eviljuliette.clipkitty"
+
+    static var isReadAccessAllowed: Bool {
+        if let standard = UserDefaults.standard.object(forKey: settingKey) as? Bool {
+            return standard
+        }
+        if let group = UserDefaults(suiteName: appGroupSuite),
+           let shared = group.object(forKey: settingKey) as? Bool {
+            return shared
+        }
+        // Default ON when the setting has never been written; the user can turn
+        // it off to deny automations access to clipboard history.
+        return true
     }
 }
 
@@ -217,6 +254,13 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
     }
 
     private func fetchText(query: String, limit: Int) async throws -> [String] {
+        // Privacy gate: never return clipboard history to a read intent when the
+        // user has turned off Shortcuts read access. Default ON. Only the read
+        // path (search / recent) is gated; the SAVE path never calls this.
+        guard ShortcutReadAccessGate.isReadAccessAllowed else {
+            throw ClipKittyShortcutError.readAccessDisabled
+        }
+
         let repository = try await makeRepository()
         let result = await repository.search(
             query: query,

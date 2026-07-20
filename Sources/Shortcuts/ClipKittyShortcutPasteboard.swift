@@ -14,6 +14,18 @@ enum ShortcutSavableContent: Sendable {
     case image(data: Data, thumbnail: Data?, isAnimated: Bool)
 }
 
+/// Ingestion byte ceilings for the Shortcuts "Save Clipboard" read path.
+///
+/// A malicious app can place an arbitrarily large payload on the pasteboard;
+/// reading it unbounded spikes memory and bloats the store. Oversized items
+/// are treated as unsupported rather than truncated. These mirror the ceilings
+/// enforced by `PasteboardMonitor` on macOS (kept in sync manually since this
+/// cross-platform module cannot depend on the macOS-only platform target).
+private enum ShortcutIngestLimits {
+    static let maxTextByteCount = 10 * 1024 * 1024 // 10 MB of UTF-8 text
+    static let maxImageByteCount = 50 * 1024 * 1024 // 50 MB of raw image data
+}
+
 enum ShortcutPasteboardRead: Sendable {
     case content(ShortcutSavableContent)
     case empty
@@ -41,6 +53,9 @@ enum ShortcutPasteboard {
             let gifType = NSPasteboard.PasteboardType("com.compuserve.gif")
             if availableTypes.contains(gifType),
                let data = pasteboard.data(forType: gifType) {
+                guard data.count <= ShortcutIngestLimits.maxImageByteCount else {
+                    return .unsupported("The clipboard image is too large for ClipKitty to save.")
+                }
                 return .content(.image(
                     data: data,
                     thumbnail: ShortcutImageThumbnail.makeThumbnail(from: data),
@@ -50,6 +65,9 @@ enum ShortcutPasteboard {
 
             for type in [NSPasteboard.PasteboardType.tiff, .png] where availableTypes.contains(type) {
                 guard let data = pasteboard.data(forType: type) else { continue }
+                guard data.count <= ShortcutIngestLimits.maxImageByteCount else {
+                    return .unsupported("The clipboard image is too large for ClipKitty to save.")
+                }
                 return .content(.image(
                     data: data,
                     thumbnail: ShortcutImageThumbnail.makeThumbnail(from: data),
@@ -60,6 +78,9 @@ enum ShortcutPasteboard {
             if availableTypes.contains(.string),
                let text = pasteboard.string(forType: .string),
                !text.isEmpty {
+                guard text.utf8.count <= ShortcutIngestLimits.maxTextByteCount else {
+                    return .unsupported("The clipboard text is too large for ClipKitty to save.")
+                }
                 return .content(.text(text))
             }
 
@@ -73,6 +94,9 @@ enum ShortcutPasteboard {
 
             if let image = pasteboard.image,
                let data = image.pngData() {
+                guard data.count <= ShortcutIngestLimits.maxImageByteCount else {
+                    return .unsupported("The clipboard image is too large for ClipKitty to save.")
+                }
                 return .content(.image(
                     data: data,
                     thumbnail: ShortcutImageThumbnail.makeThumbnail(from: data),
@@ -81,10 +105,17 @@ enum ShortcutPasteboard {
             }
 
             if let url = pasteboard.url {
-                return .content(.text(url.absoluteString))
+                let absolute = url.absoluteString
+                guard absolute.utf8.count <= ShortcutIngestLimits.maxTextByteCount else {
+                    return .unsupported("The clipboard text is too large for ClipKitty to save.")
+                }
+                return .content(.text(absolute))
             }
 
             if let text = pasteboard.string, !text.isEmpty {
+                guard text.utf8.count <= ShortcutIngestLimits.maxTextByteCount else {
+                    return .unsupported("The clipboard text is too large for ClipKitty to save.")
+                }
                 return .content(.text(text))
             }
 

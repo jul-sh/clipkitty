@@ -135,7 +135,9 @@ fn apply_text_edited(
             new_snapshot.content_hash = crate::util::content_hash(new_text);
 
             let mut new_versions = live.versions;
-            new_versions.content += 1;
+            // Saturating: a malicious remote snapshot can seed the counter at
+            // u64::MAX; a wrapping bump would corrupt conflict resolution.
+            new_versions.content = new_versions.content.saturating_add(1);
 
             ApplyResult::Applied(ProjectionDelta {
                 new_aggregate: ItemAggregate::Live(LiveItemState {
@@ -180,7 +182,7 @@ fn apply_bookmark_set(
             let mut new_snapshot = live.snapshot.clone();
             new_snapshot.is_bookmarked = true;
             let mut new_versions = live.versions;
-            new_versions.bookmark += 1;
+            new_versions.bookmark = new_versions.bookmark.saturating_add(1);
 
             ApplyResult::Applied(ProjectionDelta {
                 new_aggregate: ItemAggregate::Live(LiveItemState {
@@ -225,7 +227,7 @@ fn apply_bookmark_cleared(
             let mut new_snapshot = live.snapshot.clone();
             new_snapshot.is_bookmarked = false;
             let mut new_versions = live.versions;
-            new_versions.bookmark += 1;
+            new_versions.bookmark = new_versions.bookmark.saturating_add(1);
 
             ApplyResult::Applied(ProjectionDelta {
                 new_aggregate: ItemAggregate::Live(LiveItemState {
@@ -268,7 +270,7 @@ fn apply_item_deleted(
             }
 
             let mut new_versions = live.versions;
-            new_versions.existence += 1;
+            new_versions.existence = new_versions.existence.saturating_add(1);
 
             ApplyResult::Applied(ProjectionDelta {
                 new_aggregate: ItemAggregate::Tombstoned(TombstoneState {
@@ -315,7 +317,7 @@ fn apply_item_touched(
             let mut new_snapshot = live.snapshot.clone();
             new_snapshot.timestamp_unix = new_last_used_at_unix;
             let mut new_versions = live.versions;
-            new_versions.touch += 1;
+            new_versions.touch = new_versions.touch.saturating_add(1);
 
             ApplyResult::Applied(ProjectionDelta {
                 new_aggregate: ItemAggregate::Live(LiveItemState {
@@ -368,7 +370,7 @@ fn apply_link_metadata_updated(
                 *link_meta = Some(metadata.clone());
             }
             let mut new_versions = live.versions;
-            new_versions.metadata += 1;
+            new_versions.metadata = new_versions.metadata.saturating_add(1);
 
             ApplyResult::Applied(ProjectionDelta {
                 new_aggregate: ItemAggregate::Live(LiveItemState {
@@ -422,7 +424,7 @@ fn apply_image_description_updated(
                 *desc = description.to_string();
             }
             let mut new_versions = live.versions;
-            new_versions.content += 1;
+            new_versions.content = new_versions.content.saturating_add(1);
 
             ApplyResult::Applied(ProjectionDelta {
                 new_aggregate: ItemAggregate::Live(LiveItemState {

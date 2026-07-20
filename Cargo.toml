@@ -15,6 +15,9 @@ codegen-units = 1
 strip = true
 panic = "abort"
 debug = false
+# Turn silent integer wraps into detectable panics so CRDT counter overflow
+# (e.g. a malicious snapshot seeding a counter near u64::MAX) surfaces in testing.
+overflow-checks = true
 
 [profile.release.package."*"]
 opt-level = 3

@@ -16,7 +16,66 @@ public enum DatabasePath {
     public static func resolve() throws -> String {
         let dir = try databaseDirectory()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent(dbFilename).path
+        let dbPath = dir.appendingPathComponent(dbFilename).path
+        // Harden the on-disk store: iOS data protection + backup exclusion.
+        // Best-effort; a failure here must never break path resolution.
+        applyDataProtection(toDirectory: dir)
+        excludeFromBackup(directory: dir)
+        return dbPath
+    }
+
+    // MARK: - Hardening
+
+    /// Applies file data protection to the database directory and its clip-bearing
+    /// contents so the plaintext store is unreadable while the device is locked.
+    ///
+    /// Uses `.completeUnlessOpen`: files stay accessible to an already-open handle
+    /// across a device lock (the app keeps its SQLite handle open in the
+    /// background), but a file created or opened while locked is inaccessible.
+    /// `.complete` would break background database access, so it is deliberately
+    /// not used here. Directory protection makes newly-created files inherit the
+    /// class. iOS-only; macOS has no data-protection API and this file compiles
+    /// for both platforms.
+    private static func applyDataProtection(toDirectory dir: URL) {
+        #if os(iOS)
+            let fm = FileManager.default
+            let protection: [FileAttributeKey: Any] = [
+                .protectionKey: FileProtectionType.completeUnlessOpen,
+            ]
+            // The directory itself, so newly-created files inherit protection.
+            var paths = [dir.path]
+            // The database file and its WAL/SHM companions.
+            for suffix in ["", "-wal", "-shm"] {
+                paths.append(dir.appendingPathComponent(dbFilename + suffix).path)
+            }
+            // Any tantivy index directory sitting alongside the database.
+            if let entries = try? fm.contentsOfDirectory(atPath: dir.path) {
+                for entry in entries where entry.hasPrefix("tantivy_index_v") {
+                    paths.append(dir.appendingPathComponent(entry).path)
+                }
+            }
+            for path in paths where fm.fileExists(atPath: path) {
+                // Best-effort: log nothing sensitive, never crash.
+                try? fm.setAttributes(protection, ofItemAtPath: path)
+            }
+        #endif
+    }
+
+    /// Excludes the database directory (and everything inside it: the database,
+    /// WAL/SHM companions, and the search index) from device backups. Secrets
+    /// must not sweep into unencrypted local iTunes/Finder backups; CloudKit sync
+    /// is the intended cross-device migration path. Best-effort; a failure here
+    /// must never break path resolution. iOS-only for clarity; the flag is a
+    /// no-op on macOS.
+    private static func excludeFromBackup(directory dir: URL) {
+        #if os(iOS)
+            var url = dir
+            guard FileManager.default.fileExists(atPath: url.path) else { return }
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            // Best-effort: never crash if the flag cannot be set.
+            try? url.setResourceValues(values)
+        #endif
     }
 
     // MARK: - Migration

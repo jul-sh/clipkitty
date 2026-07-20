@@ -116,6 +116,17 @@ private struct AdvancedSettingsScreen: View {
                 }
             }
 
+            Section {
+                Toggle(
+                    String(localized: "Allow Shortcuts to Read History"),
+                    isOn: $settings.allowShortcutsReadAccess
+                )
+            } header: {
+                Text(String(localized: "Shortcuts"))
+            } footer: {
+                Text(String(localized: "When off, Shortcuts and automations cannot read or search your clipboard history; saving new clips from Shortcuts still works. Turn this off if you do not want automations to access your history."))
+            }
+
             Section("About") {
                 LabeledContent("Version", value: appVersion)
                 LabeledContent("Build", value: buildNumber)

@@ -18,6 +18,21 @@ final class iOSSettingsStore {
         didSet { save() }
     }
 
+    /// Whether Shortcuts intents may read clipboard history. Default ON; the
+    /// read-intents are gated on this so a privacy-conscious user can turn off
+    /// history access for automations while still allowing them to save clips.
+    var allowShortcutsReadAccess: Bool {
+        didSet { save() }
+    }
+
+    /// Whether to capture clips the source marked as sensitive (passwords, OTPs,
+    /// tokens; `org.nspasteboard.ConcealedType` and friends). Default OFF, so
+    /// password-manager and other secret clips are not added to history unless
+    /// the user opts in.
+    var captureSensitiveClips: Bool {
+        didSet { save() }
+    }
+
     /// The UI typeface used across the app. Mirrors the macOS `fontPreference`.
     var fontPreference: AppFontPreference {
         didSet { save() }
@@ -63,6 +78,8 @@ final class iOSSettingsStore {
     private let hapticsEnabledKey = "iOSHapticsEnabled"
     private let generateLinkPreviewsKey = "iOSGenerateLinkPreviews"
     private let autoAddFromClipboardKey = "iOSAutoAddFromClipboard"
+    private let allowShortcutsReadAccessKey = "allowShortcutsReadAccess"
+    private let captureSensitiveClipsKey = "captureSensitiveClips"
     private let maxDatabaseSizeGBKey = "iOSMaxDatabaseSizeGB"
     private let fontPreferenceKey = "iOSFontPreference"
     private let previewFontPreferenceKey = "iOSPreviewFontPreference"
@@ -86,6 +103,8 @@ final class iOSSettingsStore {
         hapticsEnabled = defaults.object(forKey: hapticsEnabledKey) as? Bool ?? true
         generateLinkPreviews = defaults.object(forKey: generateLinkPreviewsKey) as? Bool ?? true
         autoAddFromClipboard = defaults.object(forKey: autoAddFromClipboardKey) as? Bool ?? false
+        allowShortcutsReadAccess = defaults.object(forKey: allowShortcutsReadAccessKey) as? Bool ?? true
+        captureSensitiveClips = defaults.object(forKey: captureSensitiveClipsKey) as? Bool ?? false
         maxDatabaseSizeGB = defaults.object(forKey: maxDatabaseSizeGBKey) as? Double ?? 7.0
         fontPreference = defaults.string(forKey: fontPreferenceKey)
             .flatMap(AppFontPreference.init(rawValue:)) ?? .system
@@ -106,6 +125,8 @@ final class iOSSettingsStore {
         defaults.set(hapticsEnabled, forKey: hapticsEnabledKey)
         defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
         defaults.set(autoAddFromClipboard, forKey: autoAddFromClipboardKey)
+        defaults.set(allowShortcutsReadAccess, forKey: allowShortcutsReadAccessKey)
+        defaults.set(captureSensitiveClips, forKey: captureSensitiveClipsKey)
         defaults.set(maxDatabaseSizeGB, forKey: maxDatabaseSizeGBKey)
         defaults.set(fontPreference.rawValue, forKey: fontPreferenceKey)
         defaults.set(previewFontPreference.rawValue, forKey: previewFontPreferenceKey)

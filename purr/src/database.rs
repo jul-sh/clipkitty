@@ -246,6 +246,7 @@ impl Database {
                     PRAGMA foreign_keys=ON;
                     PRAGMA mmap_size=67108864;
                     PRAGMA cache_size=-32000;
+                    PRAGMA secure_delete=ON;
                 ",
             )?;
             Ok(())
@@ -747,10 +748,18 @@ impl Database {
         Ok(())
     }
 
-    /// Delete all items (CASCADE handles children)
+    /// Delete all items (CASCADE handles children).
+    ///
+    /// Clearing history must leave no recoverable plaintext residue. With
+    /// `secure_delete=ON` the DELETE zeroes freed pages; VACUUM then rewrites the
+    /// database file to reclaim and overwrite slack space, and a TRUNCATE
+    /// checkpoint shrinks the WAL so no stale content survives there either.
     pub fn clear_all(&self) -> DatabaseResult<()> {
         let conn = self.get_conn()?;
         conn.execute("DELETE FROM items", [])?;
+        // VACUUM cannot run inside a transaction; execute it standalone.
+        conn.execute_batch("VACUUM;")?;
+        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
         Ok(())
     }
 
@@ -1643,9 +1652,9 @@ impl Database {
     }
 }
 
-// Database is now inherently thread-safe via r2d2 pool
-unsafe impl Send for Database {}
-unsafe impl Sync for Database {}
+// `Database` is inherently thread-safe: its sole field is an r2d2 `Pool`, which
+// is already `Send + Sync`, so `Send`/`Sync` auto-derive. Manual `unsafe impl`s
+// would only mask a future field that is not thread-safe.
 
 #[cfg(test)]
 mod tests {

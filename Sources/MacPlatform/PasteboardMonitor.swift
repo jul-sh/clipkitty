@@ -107,6 +107,15 @@ public final class PasteboardMonitor {
     private static let gifType = NSPasteboard.PasteboardType("com.compuserve.gif")
     private static let legacyFileNamesType = NSPasteboard.PasteboardType("NSFilenamesPboardType")
 
+    /// Ingestion byte ceilings. A malicious app can place an arbitrarily large
+    /// payload on the pasteboard; without a cap, reading it spikes memory and
+    /// bloats the store. Oversized items are skipped rather than truncated for
+    /// images (a truncated image is useless) and skipped for text as well, so a
+    /// crafted giant clip never lands in history. These are named here so the
+    /// mac and Shortcuts read sites share one source of truth.
+    public static let maxTextByteCount = 10 * 1024 * 1024 // 10 MB of UTF-8 text
+    public static let maxImageByteCount = 50 * 1024 * 1024 // 50 MB of raw image data
+
     public init(
         pasteboard: PasteboardProtocol,
         workspace: WorkspaceProtocol,
@@ -263,6 +272,8 @@ public final class PasteboardMonitor {
         #endif
 
         if availableTypes.contains(Self.gifType), let gifData = pasteboard.data(forType: Self.gifType) {
+            // Skip oversized images entirely; a truncated image is not usable.
+            guard gifData.count <= Self.maxImageByteCount else { return }
             onDetection(.image(data: gifData, isAnimated: true, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID))
             return
         }
@@ -270,6 +281,8 @@ public final class PasteboardMonitor {
         for type in [NSPasteboard.PasteboardType.tiff, .png] {
             guard availableTypes.contains(type) else { continue }
             if let rawData = pasteboard.data(forType: type) {
+                // Skip this image type when it exceeds the ingestion ceiling.
+                guard rawData.count <= Self.maxImageByteCount else { return }
                 onDetection(.image(data: rawData, isAnimated: false, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID))
                 return
             }
@@ -277,6 +290,8 @@ public final class PasteboardMonitor {
 
         guard availableTypes.contains(.string) else { return }
         guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
+        // Skip text past the ingestion ceiling to bound memory and store size.
+        guard text.utf8.count <= Self.maxTextByteCount else { return }
         onDetection(.text(text: text, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID))
     }
 }
