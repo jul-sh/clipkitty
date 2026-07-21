@@ -20,13 +20,14 @@ pub fn run(dry_run: bool, reporter: &Reporter) -> Result<()> {
     let repo = RepoRoot::discover(reporter)?;
     if dry_run {
         reporter.info(
-            "[dry-run] would verify pinned inputs, pinned GitHub Actions, site layout, and product copy alignment",
+            "[dry-run] would verify pinned inputs, pinned GitHub Actions, site layout, app icon assets, and product copy alignment",
         );
         return Ok(());
     }
     check_pinned_actions(&repo, false, reporter)?;
     check_pins(&repo, false, reporter)?;
     check_site_layout(&repo, reporter)?;
+    check_app_icon_layout(&repo, reporter)?;
     crate::cmd::copy::check_synced(&repo, reporter)
 }
 
@@ -83,6 +84,105 @@ fn check_site_layout(repo: &RepoRoot, reporter: &Reporter) -> Result<()> {
         }
         Err(anyhow!("Public-site source layout is invalid."))
     }
+}
+
+const APP_ICON_MANIFEST: &str = "AppIcon.icon/icon.json";
+const APP_ICON_ASSETS: &str = "AppIcon.icon/Assets";
+
+fn check_app_icon_layout(repo: &RepoRoot, reporter: &Reporter) -> Result<()> {
+    let manifest_path = repo.join(APP_ICON_MANIFEST);
+    let assets_path = repo.join(APP_ICON_ASSETS);
+    let manifest = fs::read_to_string(manifest_path.as_std_path())
+        .with_context(|| format!("reading {manifest_path}"))?;
+    let manifest: serde_json::Value =
+        serde_json::from_str(&manifest).with_context(|| format!("parsing {manifest_path}"))?;
+
+    let mut referenced = BTreeSet::new();
+    let mut hidden_elements = 0;
+    collect_icon_manifest_state(&manifest, &mut referenced, &mut hidden_elements);
+
+    let mut assets = BTreeSet::new();
+    let mut errors = Vec::new();
+    for entry in
+        fs::read_dir(assets_path.as_std_path()).with_context(|| format!("reading {assets_path}"))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            errors.push(format!(
+                "NON-FILE APP ICON ASSET: {}",
+                entry.path().display()
+            ));
+            continue;
+        }
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|name| anyhow!("non-UTF-8 app icon asset name: {name:?}"))?;
+        if name == ".DS_Store" {
+            continue;
+        }
+        if !is_simple_asset_filename(&name) {
+            errors.push(format!(
+                "COMPLEX APP ICON ASSET NAME: {name} (use lowercase letters, digits, dots, dashes, or underscores)"
+            ));
+        }
+        assets.insert(name);
+    }
+
+    for missing in referenced.difference(&assets) {
+        errors.push(format!("MISSING APP ICON ASSET: {missing}"));
+    }
+    for unused in assets.difference(&referenced) {
+        errors.push(format!("UNUSED APP ICON ASSET: {unused}"));
+    }
+    if hidden_elements > 0 {
+        errors.push(format!(
+            "HIDDEN APP ICON CONTENT: found {hidden_elements} hidden element(s); remove unused layers and groups"
+        ));
+    }
+
+    if errors.is_empty() {
+        reporter.success("App icon assets are referenced, visible, and simply named.");
+        Ok(())
+    } else {
+        for error in errors {
+            reporter.info(&error);
+        }
+        Err(anyhow!("App icon asset layout is invalid."))
+    }
+}
+
+fn collect_icon_manifest_state(
+    value: &serde_json::Value,
+    referenced: &mut BTreeSet<String>,
+    hidden_elements: &mut usize,
+) {
+    match value {
+        serde_json::Value::Object(object) => {
+            if object.get("hidden").and_then(serde_json::Value::as_bool) == Some(true) {
+                *hidden_elements += 1;
+            }
+            if let Some(name) = object.get("image-name").and_then(serde_json::Value::as_str) {
+                referenced.insert(name.to_string());
+            }
+            for child in object.values() {
+                collect_icon_manifest_state(child, referenced, hidden_elements);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for child in values {
+                collect_icon_manifest_state(child, referenced, hidden_elements);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_simple_asset_filename(name: &str) -> bool {
+    !name.is_empty()
+        && name.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-".contains(&byte)
+        })
 }
 
 fn check_pins(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
@@ -440,5 +540,36 @@ mod tests {
         assert!(keys.contains(&"Another".to_string()));
         // Interpolated keys are kept here but filtered at the call site.
         assert!(keys.iter().any(|k| k.contains('\\')));
+    }
+
+    #[test]
+    fn app_icon_asset_names_are_portable() {
+        assert!(is_simple_asset_filename("icon.png"));
+        assert!(is_simple_asset_filename("paper-clip_2.svg"));
+        assert!(!is_simple_asset_filename("AppIcon.png"));
+        assert!(!is_simple_asset_filename("generated image.png"));
+        assert!(!is_simple_asset_filename("猫.png"));
+    }
+
+    #[test]
+    fn app_icon_manifest_state_finds_images_and_hidden_content() {
+        let manifest = serde_json::json!({
+            "groups": [{
+                "layers": [
+                    { "image-name": "icon.png" },
+                    { "hidden": true, "image-name": "draft.png" }
+                ]
+            }]
+        });
+        let mut referenced = BTreeSet::new();
+        let mut hidden_elements = 0;
+
+        collect_icon_manifest_state(&manifest, &mut referenced, &mut hidden_elements);
+
+        assert_eq!(
+            referenced,
+            BTreeSet::from(["draft.png".to_string(), "icon.png".to_string()])
+        );
+        assert_eq!(hidden_elements, 1);
     }
 }

@@ -611,11 +611,23 @@ final class ClipKittyUITests: XCTestCase {
 
     /// Tests the typed-filter suggestion flow end to end: typing a category
     /// prefix reveals the pending chip, Return applies it as a search-bar
-    /// chip, and the close control removes it.
+    /// chip without resizing the search row, and the close control removes it.
     func testTypedFilterSuggestionFlow() {
+        let unfilteredResults = app.descendants(matching: .any)["ResultsState_all_loaded"]
+        XCTAssertTrue(unfilteredResults.waitForExistence(timeout: 5), "Unfiltered results should finish loading")
+        let unfilteredResultsTop = unfilteredResults.frame.minY
+
         saveScreenshot(name: "filter_before")
         applyTypedFilter(trigger: "links", kindIdentifier: "links")
         saveScreenshot(name: "filter_applied")
+
+        let filteredResults = app.descendants(matching: .any)["ResultsState_links_loaded"]
+        XCTAssertEqual(
+            filteredResults.frame.minY,
+            unfilteredResultsTop,
+            accuracy: 0.5,
+            "Adding an applied filter chip must not change the search-bar height"
+        )
 
         // The trigger token is consumed, not left in the query.
         let searchField = app.textFields["SearchField"]

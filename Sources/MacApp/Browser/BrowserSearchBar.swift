@@ -110,6 +110,10 @@ struct BrowserSearchBar: View {
                     .frame(width: 16, height: 16)
             }
         }
+        // Keep optional controls from resizing the row when they appear. The
+        // height scales with the search text so larger accessibility sizes
+        // still have enough room for both the field and the filter chip.
+        .frame(height: settings.scaled(24))
         .padding(.horizontal, 17)
         .padding(.vertical, 15)
     }
