@@ -108,14 +108,18 @@ ClipKitty is open source, empowering anyone to verify its privacy and behavior c
 <h2>Building from Source</h2>
 <pre><code class="language-bash">git clone https://github.com/jul-sh/clipkitty
 cd clipkitty
-make
+nix build .#clipkitty-debug
 </code></pre>
-<p>Build a specific variant by setting <code>CONFIGURATION</code>. If you want the hardened one, you are building a different binary with different capabilities, not the same app with a few checkboxes unchecked.</p>
-<pre><code class="language-bash">make all CONFIGURATION=SparkleRelease  # With auto-update support
-make all CONFIGURATION=Hardened        # Hardened (no network/files/sync)
-make -C distribution hardened          # Hardened signed DMG
+<p>Run the debug app, materialize the generated Xcode workspace, or verify repository invariants with the supported entry points:</p>
+<pre><code class="language-bash">nix run .#run
+make workspace
+make check
 </code></pre>
-<p>Requires macOS 15+ and Swift 6.2+.</p>
+<p>Build a release variant through its explicit Nix package. The hardened build is a different binary with network, broad filesystem access, and sync compiled out.</p>
+<pre><code class="language-bash">nix build .#clipkitty-sparkle
+nix build .#clipkitty-hardened
+</code></pre>
+<p>Run <code>make help</code> for the complete automation surface. Building requires macOS 15+, Xcode with Swift 6.2+, and Nix with flakes enabled.</p>
 
 </main>
 <footer>
