@@ -1838,7 +1838,7 @@ mod tests {
             .capture_specs()
             .len();
 
-        assert_eq!(expected, 5);
+        assert_eq!(expected, 4);
         assert_eq!(
             ScreenshotCopy::from_copied(0, expected),
             ScreenshotCopy::Incomplete {

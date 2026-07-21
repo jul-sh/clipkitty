@@ -19,9 +19,9 @@ private enum LaunchMode {
     static func fromCommandLine() -> LaunchMode {
         // The `--use-simulated-db` / `--search` launch arguments are XCUITest
         // and marketing-screenshot hooks that swap in a fake database. They must
-        // not be reachable in release builds, so the parsing is compiled out
-        // there and production always resolves to `.production`.
-        #if DEBUG
+        // not be reachable in shipping builds, so the build-variant capability
+        // compiles the parsing into test fixtures only.
+        #if ENABLE_TEST_FIXTURES
             guard CommandLine.arguments.contains("--use-simulated-db") else {
                 return .production
             }
@@ -147,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 case .downloading: AppSettings.shared.updateCheckState = .downloading
                 case .installing: AppSettings.shared.updateCheckState = .installing
                 case .available: AppSettings.shared.updateCheckState = .available
-                case .checkFailed(let msg): AppSettings.shared.updateCheckState = .checkFailed(errorMessage: msg)
+                case let .checkFailed(msg): AppSettings.shared.updateCheckState = .checkFailed(errorMessage: msg)
                 }
             }
             updater = sparkleUpdater

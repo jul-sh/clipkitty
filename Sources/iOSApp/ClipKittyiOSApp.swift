@@ -418,8 +418,8 @@ struct ClipKittyiOSApp: App {
     private func performBootstrap() {
         // The screenshot-DB override injects a synthetic store for automated
         // App Store screenshots. It must never exist in shipping builds, so the
-        // env-var read is compiled out of release binaries entirely.
-        #if DEBUG
+        // build-variant capability compiles it into test fixtures only.
+        #if ENABLE_TEST_FIXTURES
             let customPath = ProcessInfo.processInfo.environment["CLIPKITTY_SCREENSHOT_DB"]
         #else
             let customPath: String? = nil
@@ -469,9 +469,9 @@ struct ClipKittyiOSApp: App {
     /// content without an empty flash.
     private func beginResume(previous: AppSession) {
         launchState = .resuming(previous: previous, spinnerVisible: false)
-        // Screenshot-DB override is DEBUG-only; release builds always resume the
-        // real store (custom path nil). See `performBootstrap`.
-        #if DEBUG
+        // Screenshot-DB override is fixture-only; shipping builds always resume
+        // the real store (custom path nil). See `performBootstrap`.
+        #if ENABLE_TEST_FIXTURES
             let customPath = ProcessInfo.processInfo.environment["CLIPKITTY_SCREENSHOT_DB"]
         #else
             let customPath: String? = nil

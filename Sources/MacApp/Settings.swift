@@ -71,9 +71,9 @@ final class AppSettings: ObservableObject {
             // to show "Paste" without depending on TCC.db state. The launcher
             // sets --force-paste-mode for those runs only; other UI tests
             // still exercise the real permission-denied path. This is a test
-            // hook and must not fake permission in release builds, so the flag
-            // is only honored under DEBUG.
-            #if DEBUG
+            // hook and must not fake permission in shipping builds, so the flag
+            // is only honored when test fixtures are compiled in.
+            #if ENABLE_TEST_FIXTURES
                 if CommandLine.arguments.contains("--force-paste-mode") {
                     return true
                 }
@@ -100,9 +100,9 @@ final class AppSettings: ObservableObject {
         /// - Returns `.copyOnly` when user explicitly chose copy-only mode
         /// - Returns `.noPermission` when user wants autoPaste but permission is not granted
         var pasteMode: PasteMode {
-            // `--force-paste-mode` is a DEBUG-only screenshot/test hook; never
-            // honor it in release builds (see hasPostEventPermission).
-            #if DEBUG
+            // `--force-paste-mode` is a fixture-only screenshot/test hook; never
+            // honor it in shipping builds (see hasPostEventPermission).
+            #if ENABLE_TEST_FIXTURES
                 if CommandLine.arguments.contains("--force-paste-mode") { return .autoPaste }
             #endif
             guard autoPasteEnabled else { return .copyOnly }

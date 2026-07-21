@@ -5,6 +5,7 @@ import ProjectDescription
 /// Each capability maps to a compile condition and controls what code is included.
 /// Variants declare the set of capabilities they support; everything else is derived.
 enum Capability: String, CaseIterable {
+    case testFixtures // ENABLE_TEST_FIXTURES
     case syntheticPaste // ENABLE_SYNTHETIC_PASTE
     case fileClipboardItems // ENABLE_FILE_CLIPBOARD_ITEMS
     case linkPreviews // ENABLE_LINK_PREVIEWS
@@ -16,6 +17,7 @@ enum Capability: String, CaseIterable {
 
     var compileCondition: String {
         switch self {
+        case .testFixtures: return "ENABLE_TEST_FIXTURES"
         case .syntheticPaste: return "ENABLE_SYNTHETIC_PASTE"
         case .fileClipboardItems: return "ENABLE_FILE_CLIPBOARD_ITEMS"
         case .linkPreviews: return "ENABLE_LINK_PREVIEWS"
@@ -26,6 +28,15 @@ enum Capability: String, CaseIterable {
         case .hardened: return "CLIPKITTY_HARDENED"
         }
     }
+}
+
+/// Preserve Xcode's configuration-provided conditions (notably `DEBUG`) when
+/// layering ClipKitty capability flags onto a target. Target-level assignments
+/// replace inherited values unless `$(inherited)` is carried forward explicitly.
+private func swiftCompilationConditions(_ customConditions: String) -> String {
+    customConditions.isEmpty
+        ? "$(inherited)"
+        : "$(inherited) \(customConditions)"
 }
 
 // MARK: - Build Variant Model
@@ -50,13 +61,6 @@ enum MacBuildVariant: CaseIterable {
         case .sparkle: return .configuration("SparkleRelease")
         case .appStore: return .configuration("AppStore")
         case .hardened: return .configuration("Hardened")
-        }
-    }
-
-    var isRelease: Bool {
-        switch self {
-        case .debug: return false
-        case .release, .sparkle, .appStore, .hardened: return true
         }
     }
 
@@ -98,7 +102,7 @@ enum MacBuildVariant: CaseIterable {
 
     var capabilities: Set<Capability> {
         switch self {
-        case .debug: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .appleShortcuts]
+        case .debug: return [.testFixtures, .syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .appleShortcuts]
         case .release: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .appleShortcuts]
         case .sparkle: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .sparkleUpdates, .appleShortcuts]
         case .appStore: return [.syntheticPaste, .fileClipboardItems, .linkPreviews, .iCloudSync, .buildAttestationLink, .appleShortcuts]
@@ -151,17 +155,14 @@ enum MacBuildVariant: CaseIterable {
             .map(\.compileCondition).sorted().joined(separator: " ")
     }
 
-    /// Whether this variant requires SparkleUpdater in the target dependency graph.
-    var requiresSparkle: Bool {
-        capabilities.contains(.sparkleUpdates)
-    }
-
     /// Additional target-level dependencies for this variant's target.
     var additionalTargetDependencies: [TargetDependency] {
-        if requiresSparkle {
+        switch self {
+        case .sparkle:
             return [.external(name: "SparkleUpdater")]
+        case .debug, .release, .appStore, .hardened:
+            return []
         }
-        return []
     }
 
     /// Additional target-level base build settings (e.g. Sparkle feed config).
@@ -187,7 +188,8 @@ enum MacBuildVariant: CaseIterable {
 
     /// Additional Info.plist entries for this variant's target.
     var additionalInfoPlistEntries: [String: Plist.Value] {
-        if requiresSparkle {
+        switch self {
+        case .sparkle:
             return [
                 "SUFeedURL": "$(SPARKLE_FEED_URL)",
                 "SUPublicEDKey": "$(SPARKLE_PUBLIC_KEY)",
@@ -195,8 +197,9 @@ enum MacBuildVariant: CaseIterable {
                 "SUAutomaticallyUpdate": "$(SPARKLE_AUTO_UPDATE)",
                 "SUEnableInstallerLauncherService": "$(SPARKLE_INSTALLER_SERVICE)",
             ]
+        case .debug, .release, .appStore, .hardened:
+            return [:]
         }
-        return [:]
     }
 
     // MARK: Scheme — derived from the variant
@@ -234,10 +237,11 @@ enum MacBuildVariant: CaseIterable {
     // MARK: Configuration Builders
 
     func projectConfiguration() -> Configuration {
-        if isRelease {
-            return .release(name: configurationName, settings: [:])
-        } else {
+        switch self {
+        case .debug:
             return .debug(name: configurationName, settings: [:])
+        case .release, .sparkle, .appStore, .hardened:
+            return .release(name: configurationName, settings: [:])
         }
     }
 
@@ -250,49 +254,53 @@ enum MacBuildVariant: CaseIterable {
             "CK_BUNDLE_IDENTIFIER": .string(bundleIdentifier),
             "CK_BUILD_CHANNEL": .string(buildChannel),
             "CK_DISPLAY_NAME": .string(displayName),
-            "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(macAppCompilationConditions),
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(swiftCompilationConditions(macAppCompilationConditions)),
         ]
 
-        if isRelease {
-            return .release(name: configurationName, settings: settings)
-        } else {
+        switch self {
+        case .debug:
             return .debug(name: configurationName, settings: settings)
+        case .release, .sparkle, .appStore, .hardened:
+            return .release(name: configurationName, settings: settings)
         }
     }
 
     func appleServicesConfiguration() -> Configuration {
         let conditions = appleServicesCompilationConditions
         let settings: SettingsDictionary = conditions.isEmpty ? [:] : [
-            "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(conditions),
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(swiftCompilationConditions(conditions)),
         ]
-        if isRelease {
-            return .release(name: configurationName, settings: settings)
-        } else {
+        switch self {
+        case .debug:
             return .debug(name: configurationName, settings: settings)
+        case .release, .sparkle, .appStore, .hardened:
+            return .release(name: configurationName, settings: settings)
         }
     }
 
     func sharedConfiguration() -> Configuration {
         let conditions = sharedCompilationConditions
         let settings: SettingsDictionary = conditions.isEmpty ? [:] : [
-            "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(conditions),
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(swiftCompilationConditions(conditions)),
         ]
-        if isRelease {
-            return .release(name: configurationName, settings: settings)
-        } else {
+        switch self {
+        case .debug:
             return .debug(name: configurationName, settings: settings)
+        case .release, .sparkle, .appStore, .hardened:
+            return .release(name: configurationName, settings: settings)
         }
     }
 
     func macPlatformConfiguration() -> Configuration {
         let conditions = macPlatformCompilationConditions
         let settings: SettingsDictionary = conditions.isEmpty ? [:] : [
-            "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(conditions),
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(swiftCompilationConditions(conditions)),
         ]
-        if isRelease {
-            return .release(name: configurationName, settings: settings)
-        } else {
+        switch self {
+        case .debug:
             return .debug(name: configurationName, settings: settings)
+        case .release, .sparkle, .appStore, .hardened:
+            return .release(name: configurationName, settings: settings)
         }
     }
 
@@ -302,10 +310,11 @@ enum MacBuildVariant: CaseIterable {
             "CODE_SIGN_IDENTITY": "Developer ID Application",
             "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
         ]
-        if isRelease {
-            return .release(name: configurationName, settings: settings)
-        } else {
+        switch self {
+        case .debug:
             return .debug(name: configurationName, settings: settings)
+        case .release, .sparkle, .appStore, .hardened:
+            return .release(name: configurationName, settings: settings)
         }
     }
 }
@@ -332,17 +341,12 @@ enum IOSBuildVariant: CaseIterable {
         }
     }
 
-    var isRelease: Bool {
-        switch self {
-        case .debug: return false
-        case .release, .sparkle, .appStore, .hardened: return true
-        }
-    }
-
     /// iOS always gets sync and link previews (no hardened iOS variant)
     var compilationConditions: String {
         switch self {
-        case .debug, .release:
+        case .debug:
+            return "ENABLE_APP_SHORTCUTS ENABLE_ICLOUD_SYNC ENABLE_LINK_PREVIEWS ENABLE_TEST_FIXTURES"
+        case .release:
             return "ENABLE_APP_SHORTCUTS ENABLE_ICLOUD_SYNC ENABLE_LINK_PREVIEWS"
         case .sparkle, .hardened:
             return "" // no-op configs
@@ -359,14 +363,14 @@ enum IOSBuildVariant: CaseIterable {
                 "CODE_SIGN_STYLE": "Automatic",
                 "CODE_SIGN_IDENTITY": "Apple Development",
                 "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.debug.entitlements",
-                "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(compilationConditions),
+                "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(swiftCompilationConditions(compilationConditions)),
             ]
         case .release:
             settings = [
                 "CODE_SIGN_STYLE": "Automatic",
                 "CODE_SIGN_IDENTITY": "Apple Development",
                 "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.entitlements",
-                "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(compilationConditions),
+                "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(swiftCompilationConditions(compilationConditions)),
             ]
         case .sparkle, .hardened:
             settings = [:]
@@ -375,15 +379,16 @@ enum IOSBuildVariant: CaseIterable {
                 "CODE_SIGN_STYLE": "Manual",
                 "CODE_SIGN_IDENTITY": "Apple Distribution",
                 "CODE_SIGN_ENTITLEMENTS": "Sources/iOSApp/ClipKittyiOS.appstore.entitlements",
-                "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(compilationConditions),
+                "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(swiftCompilationConditions(compilationConditions)),
                 "PROVISIONING_PROFILE_SPECIFIER": "ClipKitty iOS AppStore",
             ]
         }
 
-        if isRelease {
-            return .release(name: configurationName, settings: settings)
-        } else {
+        switch self {
+        case .debug:
             return .debug(name: configurationName, settings: settings)
+        case .release, .sparkle, .appStore, .hardened:
+            return .release(name: configurationName, settings: settings)
         }
     }
 
@@ -417,10 +422,11 @@ enum IOSBuildVariant: CaseIterable {
             ]
         }
 
-        if isRelease {
-            return .release(name: configurationName, settings: settings)
-        } else {
+        switch self {
+        case .debug:
             return .debug(name: configurationName, settings: settings)
+        case .release, .sparkle, .appStore, .hardened:
+            return .release(name: configurationName, settings: settings)
         }
     }
 }
@@ -564,9 +570,8 @@ func macAppDependencies(for variant: MacBuildVariant) -> [TargetDependency] {
 ///
 /// Variants are grouped by target name. Each group produces one Tuist target
 /// whose configurations come from its member variants. This is how Sparkle
-/// stays out of non-Sparkle targets: the enum's `requiresSparkle` /
-/// `additionalTargetDependencies` / `additionalTargetBaseSettings` drive
-/// everything — no hardcoded Sparkle knowledge lives here.
+/// stays out of non-Sparkle targets: exhaustive variant switches drive the
+/// dependencies and base settings, with no parallel boolean feature flags.
 func makeMacAppTargets() -> [Target] {
     // Group variants by target name, preserving allCases order
     var groups: [(name: String, variants: [MacBuildVariant])] = []
@@ -600,9 +605,12 @@ func makeMacAppTargets() -> [Target] {
             if group.variants.contains(where: { $0 == variant }) {
                 return variant.macAppConfiguration()
             }
-            return variant.isRelease
-                ? .release(name: variant.configurationName, settings: [:])
-                : .debug(name: variant.configurationName, settings: [:])
+            switch variant {
+            case .debug:
+                return .debug(name: variant.configurationName, settings: [:])
+            case .release, .sparkle, .appStore, .hardened:
+                return .release(name: variant.configurationName, settings: [:])
+            }
         }
 
         return Target.target(
@@ -765,11 +773,14 @@ let project = Project(
                 ],
                 configurations: MacBuildVariant.allCases.map { variant in
                     let settings: SettingsDictionary = [
-                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(variant.shortcutCompilationConditions),
+                        "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(swiftCompilationConditions(variant.shortcutCompilationConditions)),
                     ]
-                    return variant.isRelease
-                        ? .release(name: variant.configurationName, settings: settings)
-                        : .debug(name: variant.configurationName, settings: settings)
+                    switch variant {
+                    case .debug:
+                        return .debug(name: variant.configurationName, settings: settings)
+                    case .release, .sparkle, .appStore, .hardened:
+                        return .release(name: variant.configurationName, settings: settings)
+                    }
                 }
             )
         ),
@@ -783,9 +794,7 @@ let project = Project(
             product: .unitTests,
             bundleId: "com.eviljuliette.clipkitty.tests",
             deploymentTargets: .macOS("14.0"),
-            sources: .sourceFilesList(globs: [
-                .glob("Tests/**", excluding: ["Tests/UITests/**", "Tests/iOSTests/**"]),
-            ]),
+            sources: ["Tests/UnitTests/**"],
             dependencies: [
                 .target(name: "ClipKitty"),
                 .target(name: "ClipKittyRust"),
@@ -955,7 +964,7 @@ let project = Project(
             ],
             settings: .settings(
                 base: [
-                    "SWIFT_ACTIVE_COMPILATION_CONDITIONS": "ENABLE_ICLOUD_SYNC ENABLE_LINK_PREVIEWS",
+                    "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(swiftCompilationConditions("ENABLE_ICLOUD_SYNC ENABLE_LINK_PREVIEWS")),
                     "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr"]),
                     "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": .array([
                         "$(inherited)",

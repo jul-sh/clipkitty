@@ -11,7 +11,9 @@ struct BrowserPreviewPane: View {
     let focusTarget: FocusState<BrowserView.FocusTarget?>.Binding
 
     @ObservedObject private var settings = AppSettings.shared
-    private let isUITestPreviewDebugEnabled = CommandLine.arguments.contains("--use-simulated-db")
+    #if ENABLE_TEST_FIXTURES
+        private let isUITestPreviewDebugEnabled = CommandLine.arguments.contains("--use-simulated-db")
+    #endif
 
     var body: some View {
         Group {
@@ -179,18 +181,20 @@ struct BrowserPreviewPane: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topLeading) {
-                if isUITestPreviewDebugEnabled {
-                    Color.clear
-                        .frame(width: 1, height: 1)
-                        .allowsHitTesting(false)
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(previewHighlightDebugLabel(
-                            text: previewText,
-                            itemId: item.itemMetadata.itemId,
-                            previewState: content.previewState
-                        ))
-                        .accessibilityIdentifier("PreviewHighlightDebug")
-                }
+                #if ENABLE_TEST_FIXTURES
+                    if isUITestPreviewDebugEnabled {
+                        Color.clear
+                            .frame(width: 1, height: 1)
+                            .allowsHitTesting(false)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(previewHighlightDebugLabel(
+                                text: previewText,
+                                itemId: item.itemMetadata.itemId,
+                                previewState: content.previewState
+                            ))
+                            .accessibilityIdentifier("PreviewHighlightDebug")
+                    }
+                #endif
             }
         case let .image(data, description, _):
             let highlights = previewDecoration(for: content)?.highlights ?? []
@@ -244,32 +248,34 @@ struct BrowserPreviewPane: View {
         return itemId
     }
 
-    private func previewHighlightDebugLabel(
-        text: String,
-        itemId: String,
-        previewState: SelectedPreviewState
-    ) -> String {
-        let state: String
-        let fragments: [String]
+    #if ENABLE_TEST_FIXTURES
+        private func previewHighlightDebugLabel(
+            text: String,
+            itemId: String,
+            previewState: SelectedPreviewState
+        ) -> String {
+            let state: String
+            let fragments: [String]
 
-        switch previewState {
-        case .plain:
-            state = "plain"
-            fragments = []
-        case .loadingDecoration(previous: nil):
-            state = "loading-decoration"
-            fragments = []
-        case let .loadingDecoration(previous: .some(decoration)):
-            state = "loading-decoration-stale"
-            fragments = HighlightStyler.fragments(in: text, highlights: decoration.highlights)
-        case let .highlighted(decoration):
-            state = "highlighted"
-            fragments = HighlightStyler.fragments(in: text, highlights: decoration.highlights)
+            switch previewState {
+            case .plain:
+                state = "plain"
+                fragments = []
+            case .loadingDecoration(previous: nil):
+                state = "loading-decoration"
+                fragments = []
+            case let .loadingDecoration(previous: .some(decoration)):
+                state = "loading-decoration-stale"
+                fragments = HighlightStyler.fragments(in: text, highlights: decoration.highlights)
+            case let .highlighted(decoration):
+                state = "highlighted"
+                fragments = HighlightStyler.fragments(in: text, highlights: decoration.highlights)
+            }
+
+            let joinedFragments = fragments.isEmpty ? "none" : fragments.joined(separator: "|")
+            return "item=\(itemId);state=\(state);highlights=\(joinedFragments)"
         }
-
-        let joinedFragments = fragments.isEmpty ? "none" : fragments.joined(separator: "|")
-        return "item=\(itemId);state=\(state);highlights=\(joinedFragments)"
-    }
+    #endif
 
     private func metadataFooter(for item: ClipboardItem) -> some View {
         return HStack(spacing: 12) {

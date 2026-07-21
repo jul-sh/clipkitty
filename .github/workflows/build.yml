@@ -72,7 +72,6 @@ jobs:
 
       - name: Resolve Release Version
         id: resolve-version
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release' || (github.event_name == 'pull_request' && (github.base_ref == 'main' || github.base_ref == 'release'))
         run: |
           TARGET_BRANCH="${GITHUB_BASE_REF:-${GITHUB_REF#refs/heads/}}"
           BASE_VERSION=$(awk -F '"' '/"MARKETING_VERSION"[[:space:]]*:/ { print $4; exit }' Project.swift)
@@ -85,17 +84,19 @@ jobs:
           VERSION="${MAJOR_MINOR}.${COMMIT_COUNT}"
           echo "Resolved release version: $VERSION"
 
-          if [ "$TARGET_BRANCH" = "main" ]; then
-            CHANNEL="beta"
-            RELEASE_TAG="v${VERSION}-beta"
-            RELEASE_TITLE="ClipKitty v${VERSION} Beta"
-            RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}-beta/ClipKitty.dmg"
-          else
-            # Stable releases from release branch
+          if [ "$TARGET_BRANCH" = "release" ]; then
+            # Stable releases come only from the release branch.
             CHANNEL="stable"
             RELEASE_TAG="v${VERSION}"
             RELEASE_TITLE="ClipKitty v${VERSION}"
             RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/ClipKitty.dmg"
+          else
+            # Main, PRs targeting main, and manually-dispatched feature branches
+            # all use non-stable metadata. Publishing remains branch-gated below.
+            CHANNEL="beta"
+            RELEASE_TAG="v${VERSION}-beta"
+            RELEASE_TITLE="ClipKitty v${VERSION} Beta"
+            RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}-beta/ClipKitty.dmg"
           fi
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -771,6 +772,7 @@ jobs:
         env:
           LOCKED: "1"
         run: |
+          set -o pipefail
           set +e
           # -retry-tests-on-failure: individual UI tests flake on loaded
           # runners with shifting element-appearance timeouts (a different
@@ -794,7 +796,7 @@ jobs:
             -skip-testing:ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots \
             -resultBundlePath TestResults.xcresult \
             2>&1 | tee xcodebuild-test.log
-          TEST_EXIT=$?
+          TEST_EXIT=${PIPESTATUS[0]}
           echo "::group::Test Summary"
           grep -E "(Test Case|Test Suite|passed|failed|error:|Failing tests:)" xcodebuild-test.log || true
           echo "::endgroup::"
@@ -1002,10 +1004,10 @@ jobs:
 
   # Aggregate status check: branch protection requires a check named "build",
   # and PR authors get one canonical pass/fail without enumerating jobs.
-  # Skipped jobs are fine (screenshots don't run on PRs); failures and
-  # cancellations are not.
+  # Screenshot/video jobs are allowed to skip only on PRs, where their job
+  # conditions intentionally disable them. Every other result must succeed.
   build:
-    needs: [prewarm-nix, rust-tests, macos-build, ios-smoke, ios-build, ios-screenshots, macos-uitests, macos-marketing]
+    needs: [version, prewarm-nix, rust-tests, macos-build, ios-smoke, ios-build, ios-screenshots, macos-uitests, macos-marketing, intro-videos]
     runs-on: ubuntu-latest
     if: always()
 
@@ -1015,8 +1017,21 @@ jobs:
           RESULTS: ${{ toJSON(needs) }}
         run: |
           echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          if echo "$RESULTS" | jq -e '[.[] | select(.result == "failure" or .result == "cancelled")] | length > 0' >/dev/null; then
-            echo "::error::One or more required jobs failed"
+          if ! echo "$RESULTS" | jq -e --arg event "$GITHUB_EVENT_NAME" '
+            [
+              to_entries[]
+              | select(
+                  .value.result != "success"
+                  and (
+                    $event != "pull_request"
+                    or .value.result != "skipped"
+                    or (.key != "ios-screenshots" and .key != "intro-videos")
+                  )
+                )
+            ]
+            | length == 0
+          ' >/dev/null; then
+            echo "::error::One or more required jobs failed or skipped unexpectedly"
             exit 1
           fi
 
@@ -1024,7 +1039,7 @@ jobs:
   # the one thing we never want to cut from a red commit.
   release:
     name: Create Release
-    needs: [version, prewarm-nix, rust-tests, macos-build, ios-smoke, ios-build, ios-screenshots, macos-uitests, macos-marketing]
+    needs: [version, prewarm-nix, rust-tests, macos-build, ios-smoke, ios-build, ios-screenshots, macos-uitests, macos-marketing, intro-videos]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
     runs-on: macos-26
     env:

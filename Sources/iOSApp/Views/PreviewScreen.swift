@@ -21,7 +21,9 @@ struct PreviewScreen: View {
 
     @State private var showDeleteConfirmation = false
 
-    private let isUITestPreviewDebugEnabled = CommandLine.arguments.contains("--use-simulated-db")
+    #if ENABLE_TEST_FIXTURES
+        private let isUITestPreviewDebugEnabled = CommandLine.arguments.contains("--use-simulated-db")
+    #endif
     private static let detailDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .long
@@ -102,43 +104,47 @@ struct PreviewScreen: View {
             }
         }
         .overlay(alignment: .topLeading) {
-            if isUITestPreviewDebugEnabled {
-                Color.clear
-                    .frame(width: 1, height: 1)
-                    .allowsHitTesting(false)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(previewHighlightDebugLabel(
-                        for: selectedItemState
-                    ))
-                    .accessibilityIdentifier("PreviewHighlightDebug")
+            #if ENABLE_TEST_FIXTURES
+                if isUITestPreviewDebugEnabled {
+                    Color.clear
+                        .frame(width: 1, height: 1)
+                        .allowsHitTesting(false)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(previewHighlightDebugLabel(
+                            for: selectedItemState
+                        ))
+                        .accessibilityIdentifier("PreviewHighlightDebug")
+                }
+            #endif
+        }
+    }
+
+    #if ENABLE_TEST_FIXTURES
+        private func previewHighlightDebugLabel(for content: SelectedItemState) -> String {
+            let text = content.item.content.textContent
+            let itemId = content.item.itemMetadata.itemId
+            let state: String
+            let fragments: [String]
+
+            switch content.previewState {
+            case .plain:
+                state = "plain"
+                fragments = []
+            case .loadingDecoration(previous: nil):
+                state = "loading-decoration"
+                fragments = []
+            case let .loadingDecoration(previous: .some(decoration)):
+                state = "loading-decoration-stale"
+                fragments = HighlightAttributedStringBuilder.fragments(in: text, highlights: decoration.highlights)
+            case let .highlighted(decoration):
+                state = "highlighted"
+                fragments = HighlightAttributedStringBuilder.fragments(in: text, highlights: decoration.highlights)
             }
+
+            let joinedFragments = fragments.isEmpty ? "none" : fragments.joined(separator: "|")
+            return "item=\(itemId);state=\(state);highlights=\(joinedFragments)"
         }
-    }
-
-    private func previewHighlightDebugLabel(for content: SelectedItemState) -> String {
-        let text = content.item.content.textContent
-        let itemId = content.item.itemMetadata.itemId
-        let state: String
-        let fragments: [String]
-
-        switch content.previewState {
-        case .plain:
-            state = "plain"
-            fragments = []
-        case .loadingDecoration(previous: nil):
-            state = "loading-decoration"
-            fragments = []
-        case let .loadingDecoration(previous: .some(decoration)):
-            state = "loading-decoration-stale"
-            fragments = HighlightAttributedStringBuilder.fragments(in: text, highlights: decoration.highlights)
-        case let .highlighted(decoration):
-            state = "highlighted"
-            fragments = HighlightAttributedStringBuilder.fragments(in: text, highlights: decoration.highlights)
-        }
-
-        let joinedFragments = fragments.isEmpty ? "none" : fragments.joined(separator: "|")
-        return "item=\(itemId);state=\(state);highlights=\(joinedFragments)"
-    }
+    #endif
 
     @ViewBuilder
     private func contentSection(for selectedItemState: SelectedItemState) -> some View {

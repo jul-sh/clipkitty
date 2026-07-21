@@ -87,15 +87,22 @@ The important idea is that search quality does not come from doing expensive wor
 ```bash
 git clone https://github.com/jul-sh/clipkitty
 cd clipkitty
-make
+nix build .#clipkitty-debug
 ```
 
-Build a specific variant by setting `CONFIGURATION`. If you want the hardened one, you are building a different binary with different capabilities, not the same app with a few checkboxes unchecked.
+Run the debug app, materialize the generated Xcode workspace, or verify repository invariants with the supported entry points:
 
 ```bash
-make all CONFIGURATION=SparkleRelease  # With auto-update support
-make all CONFIGURATION=Hardened        # Hardened (no network/files/sync)
-make -C distribution hardened          # Hardened signed DMG
+nix run .#run
+make workspace
+make check
 ```
 
-Requires macOS 15+ and Swift 6.2+.
+Build a release variant through its explicit Nix package. The hardened build is a different binary with network, broad filesystem access, and sync compiled out.
+
+```bash
+nix build .#clipkitty-sparkle
+nix build .#clipkitty-hardened
+```
+
+Run `make help` for the complete automation surface. Building requires macOS 15+, Xcode with Swift 6.2+, and Nix with flakes enabled.
