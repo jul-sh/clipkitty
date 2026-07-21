@@ -990,11 +990,16 @@ final class ClipKittyUITests: XCTestCase {
 
         /// Helper to type with natural delays. Skips the post-delay on the
         /// first input unit when the search field is currently empty, so the
-        /// first match appears without artificial latency. Localized videos
-        /// type in small chunks to avoid XCUITest per-character overhead from
-        /// pushing raw recordings past the App Store preview ceiling.
+        /// first match appears without artificial latency. Latin-script
+        /// localized videos type in small chunks to avoid XCUITest overhead.
+        /// Cyrillic and CJK input must remain character-by-character: XCTest's
+        /// synthetic keyboard intermittently rejects multi-character events
+        /// for those scripts.
         func typeSlowly(_ text: String, scene: String? = nil, delay: TimeInterval = 0.0055) {
             let startedEmpty = (searchField.value as? String)?.isEmpty ?? true
+            if startedEmpty {
+                searchField.click()
+            }
             let units = typingUnits(for: text)
             var latenciesMs: [Double] = []
             latenciesMs.reserveCapacity(text.count)
@@ -1011,10 +1016,26 @@ final class ClipKittyUITests: XCTestCase {
             if let scene {
                 typingSamples.append((scene: scene, query: text, latenciesMs: latenciesMs))
             }
+            XCTAssertEqual(
+                searchField.value as? String,
+                text,
+                "Search field did not receive the complete \(scene ?? "warm-up") query"
+            )
         }
 
         func typingUnits(for text: String) -> [String] {
             guard screenshotLocale != nil else {
+                return text.map(String.init)
+            }
+
+            // Keep the chunking optimization for Latin-script translations,
+            // where it is reliable. A scalar above Latin Extended Additional
+            // indicates one of the Cyrillic/CJK marketing locales and uses the
+            // proven character-at-a-time path instead.
+            let containsNonLatinScript = text.unicodeScalars.contains { scalar in
+                scalar.value > 0x024F && !(0x1E00 ... 0x1EFF).contains(scalar.value)
+            }
+            if containsNonLatinScript {
                 return text.map(String.init)
             }
 
@@ -1042,6 +1063,17 @@ final class ClipKittyUITests: XCTestCase {
         /// should hit the empty field immediately.
         func clearSearch() {
             searchField.typeKey(.delete, modifierFlags: .command)
+            if !waitForCondition(timeout: 1.0, {
+                (searchField.value as? String)?.isEmpty == true
+            }) {
+                // A results refresh can occasionally steal focus. Recover once
+                // before failing with a useful assertion instead of sending the
+                // next query to whichever control became first responder.
+                searchField.click()
+                searchField.typeKey("a", modifierFlags: .command)
+                searchField.typeKey(.delete, modifierFlags: [])
+            }
+            XCTAssertEqual(searchField.value as? String, "", "Search field did not clear")
         }
 
         // Load locale-specific search queries from JSON (written by rust-data-gen --video-only)

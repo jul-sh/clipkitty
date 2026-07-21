@@ -19,11 +19,14 @@ pub fn run(dry_run: bool, reporter: &Reporter) -> Result<()> {
     let _ = SideEffectLevel::ReadOnly;
     let repo = RepoRoot::discover(reporter)?;
     if dry_run {
-        reporter.info("[dry-run] would verify pinned inputs, pinned GitHub Actions, and product copy alignment");
+        reporter.info(
+            "[dry-run] would verify pinned inputs, pinned GitHub Actions, site layout, and product copy alignment",
+        );
         return Ok(());
     }
     check_pinned_actions(&repo, false, reporter)?;
     check_pins(&repo, false, reporter)?;
+    check_site_layout(&repo, reporter)?;
     crate::cmd::copy::check_synced(&repo, reporter)
 }
 
@@ -33,6 +36,54 @@ const STRAY_SWIFT_RESOLVED: &[&str] = &[
     "Tuist/Package.resolved",
     "distribution/SparkleUpdater/Package.resolved",
 ];
+
+const REQUIRED_SITE_SOURCES: &[&str] = &[
+    "site/public/privacy.html",
+    "site/public/site.css",
+    "site/templates/index.html",
+];
+const FORBIDDEN_ROOT_SITE_SOURCES: &[&str] = &["privacy.html", "site.css"];
+
+fn check_site_layout(repo: &RepoRoot, reporter: &Reporter) -> Result<()> {
+    let mut errors = Vec::new();
+    for rel in REQUIRED_SITE_SOURCES {
+        if !repo.join(rel).as_std_path().is_file() {
+            errors.push(format!("MISSING SITE SOURCE: {rel}"));
+        }
+    }
+    for rel in FORBIDDEN_ROOT_SITE_SOURCES {
+        if repo.join(rel).as_std_path().exists() {
+            errors.push(format!(
+                "ROOT SITE SOURCE: {rel} (move public web assets under site/)"
+            ));
+        }
+    }
+
+    let template_path = repo.join("site/templates/index.html");
+    if template_path.as_std_path().is_file() {
+        let template = fs::read_to_string(template_path.as_std_path())
+            .with_context(|| format!("reading {template_path}"))?;
+        let marker_count = template
+            .matches(crate::cmd::site::README_CONTENT_MARKER)
+            .count();
+        if marker_count != 1 {
+            errors.push(format!(
+                "INVALID SITE TEMPLATE: {template_path} must contain {:?} exactly once; found {marker_count}",
+                crate::cmd::site::README_CONTENT_MARKER
+            ));
+        }
+    }
+
+    if errors.is_empty() {
+        reporter.success("Public site sources use the canonical site/ layout.");
+        Ok(())
+    } else {
+        for error in errors {
+            reporter.info(&error);
+        }
+        Err(anyhow!("Public-site source layout is invalid."))
+    }
+}
 
 fn check_pins(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
     if dry_run {

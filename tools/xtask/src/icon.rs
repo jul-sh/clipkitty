@@ -4,9 +4,9 @@
 //! macOS asset catalog PNG are rendered from it so README and App Store
 //! distribution cannot drift when the Icon Composer document changes.
 
-use std::path::Path;
+use std::{fs, path::Path};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 
 use crate::output::Reporter;
 use crate::process::Runner;
@@ -45,7 +45,9 @@ pub(crate) fn render_app_icon(
 ) -> Result<()> {
     let icon_bundle = repo.join("AppIcon.icon");
     let (output, width, height, scale, label) = match target {
-        AppIconRenderTarget::PublicSite => (repo.join("icon.png"), "512", "512", "1", "icon"),
+        AppIconRenderTarget::PublicSite => {
+            (repo.join("build/site/icon.png"), "512", "512", "1", "icon")
+        }
         AppIconRenderTarget::MacAssetCatalog => (
             repo.join("Sources/MacApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png"),
             "512",
@@ -63,6 +65,10 @@ pub(crate) fn render_app_icon(
     let ictool = ictool_path()?;
     if !icon_bundle.as_std_path().is_dir() {
         return Err(anyhow!("icon bundle not found: {icon_bundle}"));
+    }
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent.as_std_path())
+            .with_context(|| format!("creating icon output directory: {parent}"))?;
     }
 
     Runner::new(reporter, ictool)

@@ -61,7 +61,6 @@ marketing_*.png
 # Generated assets
 AppIcon.icns
 Assets.car
-icon.png
 
 # macOS
 .DS_Store

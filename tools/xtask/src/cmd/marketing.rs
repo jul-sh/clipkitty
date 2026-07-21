@@ -33,7 +33,7 @@ const SCREENSHOT_DB_FILE: &str = "/tmp/clipkitty_screenshot_db.txt";
 const IOS_SCREENSHOT_LOCALE_FILE: &str = "/tmp/clipkitty_ios_screenshot_locale.txt";
 const IOS_SCREENSHOT_DB_FILE: &str = "/tmp/clipkitty_ios_screenshot_db.txt";
 const IOS_SCREENSHOT_DEVICE_FILE: &str = "/tmp/clipkitty_ios_screenshot_device.txt";
-const SCREENSHOT_LOCALES_ENV: &str = "CLIPKITTY_SCREENSHOT_LOCALES";
+const MARKETING_LOCALES_ENV: &str = "CLIPKITTY_MARKETING_LOCALES";
 const VIDEO_RESULT_BUNDLE: &str = "/tmp/clipkitty_video_result.xcresult";
 const VIDEO_ATTACHMENTS_DIR: &str = "/tmp/xcresult-attachments";
 const VIDEO_BOUNDS_FILE: &str = "/tmp/clipkitty_window_bounds.txt";
@@ -128,7 +128,7 @@ impl MarketingLocale {
     }
 
     fn selected_from_env() -> Result<Vec<Self>> {
-        let Ok(raw) = env::var(SCREENSHOT_LOCALES_ENV) else {
+        let Ok(raw) = env::var(MARKETING_LOCALES_ENV) else {
             return Ok(Self::ALL.to_vec());
         };
         let trimmed = raw.trim();
@@ -141,7 +141,7 @@ impl MarketingLocale {
             let code = token.trim();
             let Some(locale) = Self::parse(code) else {
                 return Err(anyhow!(
-                    "{SCREENSHOT_LOCALES_ENV} contains unsupported locale `{code}`"
+                    "{MARKETING_LOCALES_ENV} contains unsupported locale `{code}`"
                 ));
             };
             locales.push(locale);
@@ -205,18 +205,6 @@ enum CaptureRuntime {
     Ios { udid: String },
 }
 
-#[derive(Debug, Clone, Copy)]
-enum ScreenshotDbMode {
-    LocalizedDatabases,
-    SharedEnglishDatabase,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum MissingScreenshotPolicy {
-    Fail,
-    Warn,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ScreenshotCopy {
     Complete { count: usize },
@@ -243,8 +231,6 @@ struct ScreenshotPlan {
     destination: &'static str,
     derived_data: &'static str,
     only_testing: &'static str,
-    db_mode: ScreenshotDbMode,
-    missing_policy: MissingScreenshotPolicy,
     prepare_macos_environment: bool,
 }
 
@@ -259,8 +245,6 @@ impl ScreenshotPlan {
             destination: "platform=macOS",
             derived_data: "DerivedData-marketing",
             only_testing: "ClipKittyUITests/ClipKittyUITests/testTakeMarketingScreenshots",
-            db_mode: ScreenshotDbMode::LocalizedDatabases,
-            missing_policy: MissingScreenshotPolicy::Fail,
             prepare_macos_environment: true,
         }
     }
@@ -276,8 +260,6 @@ impl ScreenshotPlan {
             derived_data: "DerivedData",
             only_testing:
                 "ClipKittyiOSUITests/ClipKittyiOSScreenshotTests/testTakeMarketingScreenshots",
-            db_mode: ScreenshotDbMode::LocalizedDatabases,
-            missing_policy: MissingScreenshotPolicy::Fail,
             prepare_macos_environment: false,
         }
     }
@@ -293,8 +275,6 @@ impl ScreenshotPlan {
             derived_data: "DerivedData",
             only_testing:
                 "ClipKittyiOSUITests/ClipKittyiOSScreenshotTests/testTakeMarketingScreenshots",
-            db_mode: ScreenshotDbMode::LocalizedDatabases,
-            missing_policy: MissingScreenshotPolicy::Fail,
             prepare_macos_environment: false,
         }
     }
@@ -330,17 +310,12 @@ fn run_screenshot_plan(
             "[dry-run] would capture {:?} marketing screenshots into {}",
             plan.platform, plan.marketing_root
         ));
-        if matches!(plan.db_mode, ScreenshotDbMode::LocalizedDatabases) {
-            reporter.info("[dry-run] would refresh localized demo databases first");
-        }
+        reporter.info("[dry-run] would refresh localized demo databases first");
         return Ok(());
     }
 
     build::generate(repo, false, reporter)?;
-
-    if matches!(plan.db_mode, ScreenshotDbMode::LocalizedDatabases) {
-        patch_demo_items(repo, false, reporter)?;
-    }
+    patch_demo_items(repo, false, reporter)?;
 
     let runtime = match plan.platform {
         CapturePlatform::MacOs => CaptureRuntime::MacOs,
@@ -373,11 +348,8 @@ fn run_screenshot_plan(
 
         fs::write(plan.locale_file, format!("{locale_code}\n"))
             .with_context(|| format!("writing {}", plan.locale_file))?;
-        fs::write(
-            plan.db_file,
-            format!("{}\n", screenshot_db_name(locale, plan.db_mode)),
-        )
-        .with_context(|| format!("writing {}", plan.db_file))?;
+        fs::write(plan.db_file, format!("{}\n", screenshot_db_name(locale)))
+            .with_context(|| format!("writing {}", plan.db_file))?;
         if let Some(device_kind) = plan.ios_device_kind() {
             fs::write(
                 IOS_SCREENSHOT_DEVICE_FILE,
@@ -443,21 +415,10 @@ fn run_screenshot_plan(
                     reporter.info(&format!(
                         "--- xcodebuild log for {locale_code} (exit {status}) ---\n{log_tail}\n--- end log ---"
                     ));
-                    match plan.missing_policy {
-                        MissingScreenshotPolicy::Fail => {
-                            return Err(anyhow!(
-                                "{:?} screenshot capture produced {copied}/{expected} screenshots for {locale_code}; inspect {log_path}",
-                                plan.platform
-                            ));
-                        }
-                        MissingScreenshotPolicy::Warn => {
-                            reporter.info(&format!(
-                                "Warning: {:?} screenshot capture produced {copied}/{expected} screenshots for {locale_code}; inspect {log_path}",
-                                plan.platform
-                            ));
-                        }
-                    }
-                    break;
+                    return Err(anyhow!(
+                        "{:?} screenshot capture produced {copied}/{expected} screenshots for {locale_code}; inspect {log_path}",
+                        plan.platform
+                    ));
                 }
             }
         }
@@ -478,16 +439,11 @@ fn run_screenshot_plan(
     Ok(())
 }
 
-fn screenshot_db_name(locale: MarketingLocale, mode: ScreenshotDbMode) -> String {
-    match mode {
-        ScreenshotDbMode::LocalizedDatabases => {
-            if locale == MarketingLocale::En {
-                "SyntheticData.sqlite".to_string()
-            } else {
-                format!("SyntheticData_{}.sqlite", locale.as_code())
-            }
-        }
-        ScreenshotDbMode::SharedEnglishDatabase => "SyntheticData.sqlite".to_string(),
+fn screenshot_db_name(locale: MarketingLocale) -> String {
+    if locale == MarketingLocale::En {
+        "SyntheticData.sqlite".to_string()
+    } else {
+        format!("SyntheticData_{}.sqlite", locale.as_code())
     }
 }
 
@@ -941,8 +897,16 @@ fn copy_screenshots(
 }
 
 fn intro_video(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
+    let locales = MarketingLocale::selected_from_env()?;
     if dry_run {
-        reporter.info("[dry-run] would record localized intro videos into marketing/<locale>/");
+        let locale_codes = locales
+            .iter()
+            .map(|locale| locale.as_code())
+            .collect::<Vec<_>>()
+            .join(", ");
+        reporter.info(&format!(
+            "[dry-run] would record localized intro videos for {locale_codes} into marketing/<locale>/"
+        ));
         reporter.info("[dry-run] would refresh localized demo databases first");
         return Ok(());
     }
@@ -952,17 +916,14 @@ fn intro_video(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()
     let locale_file = Utf8PathBuf::from(SCREENSHOT_LOCALE_FILE);
     let _cleanup = TempSelectionFiles::new(&[locale_file.clone()]);
 
-    for locale in MarketingLocale::ALL {
+    for locale in locales {
         let locale_code = locale.as_code();
         reporter.info(&format!("Recording intro video for {locale_code}..."));
         fs::write(locale_file.as_std_path(), format!("{locale_code}\n"))
             .with_context(|| format!("writing {locale_file}"))?;
 
         let video_db = repo.join("distribution/SyntheticData_video.sqlite");
-        let source_db = repo.join(format!(
-            "distribution/{}",
-            screenshot_db_name(locale, ScreenshotDbMode::LocalizedDatabases)
-        ));
+        let source_db = repo.join(format!("distribution/{}", screenshot_db_name(locale)));
         fs::copy(source_db.as_std_path(), video_db.as_std_path())
             .with_context(|| format!("copying {source_db} to {video_db}"))?;
 
@@ -1380,16 +1341,18 @@ fn record_preview_video(
     let result_bundle = Utf8PathBuf::from(VIDEO_RESULT_BUNDLE);
     let attachments_dir = Utf8PathBuf::from(VIDEO_ATTACHMENTS_DIR);
     let db_file = Utf8PathBuf::from(SCREENSHOT_DB_FILE);
+    let output_dir = output_path
+        .parent()
+        .ok_or_else(|| anyhow!("output path has no parent: {output_path}"))?;
+    let diagnostics_dir = output_dir.join("diagnostics");
+    let xcodebuild_log = diagnostics_dir.join("xcodebuild.log");
 
     close_clipkitty(reporter);
     remove_if_exists(&result_bundle)?;
     remove_if_exists(&attachments_dir)?;
-    fs::create_dir_all(
-        output_path
-            .parent()
-            .ok_or_else(|| anyhow!("output path has no parent: {output_path}"))?
-            .as_std_path(),
-    )?;
+    remove_if_exists(&diagnostics_dir)?;
+    remove_if_exists(&Utf8PathBuf::from(VIDEO_TYPING_LATENCY_FILE))?;
+    fs::create_dir_all(output_dir.as_std_path())?;
     fs::write(db_file.as_std_path(), format!("{db_name}\n"))
         .with_context(|| format!("writing {db_file}"))?;
 
@@ -1429,16 +1392,33 @@ fn record_preview_video(
     }
     let output = runner.output_status()?;
     let combined = format!(
-        "{}{}",
+        "--- xcodebuild stdout ---\n{}\n--- xcodebuild stderr ---\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     for line in combined.lines() {
-        if line.contains("Test Case") || line.contains("passed") || line.contains("failed") {
+        if line.contains("Test Case")
+            || line.contains("passed")
+            || line.contains("failed")
+            || line.contains("error:")
+            || line.contains("Assertion Failure")
+        {
             reporter.info(line);
         }
     }
     fs::remove_file(db_file.as_std_path()).ok();
+
+    if !output.status.success() {
+        fs::create_dir_all(diagnostics_dir.as_std_path())
+            .with_context(|| format!("creating {diagnostics_dir}"))?;
+        fs::write(xcodebuild_log.as_std_path(), combined)
+            .with_context(|| format!("writing {xcodebuild_log}"))?;
+        close_clipkitty(reporter);
+        return Err(anyhow!(
+            "UI test {test_name} exited with {}; see {xcodebuild_log} and {result_bundle}",
+            output.status
+        ));
+    }
 
     if !result_bundle.as_std_path().is_dir() {
         return Err(anyhow!("xcresult bundle not found at {result_bundle}"));
@@ -1468,7 +1448,7 @@ fn record_preview_video(
             .with_context(|| format!("copying {raw_video} to {output_path}"))?;
     }
 
-    move_typing_latency_report(output_path, reporter);
+    move_typing_latency_report(output_path, reporter)?;
 
     remove_if_exists(&attachments_dir)?;
     remove_if_exists(&result_bundle)?;
@@ -1476,24 +1456,24 @@ fn record_preview_video(
     Ok(())
 }
 
-/// If the UI test wrote a typing-latency report, move it next to the video
+/// Move the UI test's completion report next to the video
 /// (`<video stem>_typing.json`) so it travels with the `.mov` as a CI artifact.
-fn move_typing_latency_report(video_path: &Utf8Path, reporter: &Reporter) {
+/// Missing reports are fatal: the test writes this only after every scene, so
+/// accepting a video without one could publish another truncated recording.
+fn move_typing_latency_report(video_path: &Utf8Path, reporter: &Reporter) -> Result<()> {
     let src = Utf8PathBuf::from(VIDEO_TYPING_LATENCY_FILE);
     if !src.as_std_path().exists() {
-        return;
+        return Err(anyhow!("intro-video completion report not found at {src}"));
     }
     let stem = video_path.file_stem().unwrap_or("intro_video");
     let dest = match video_path.parent() {
         Some(parent) => parent.join(format!("{stem}_typing.json")),
         None => Utf8PathBuf::from(format!("{stem}_typing.json")),
     };
-    match fs::rename(src.as_std_path(), dest.as_std_path()) {
-        Ok(()) => reporter.info(&format!("  saved {dest}")),
-        Err(err) => reporter.info(&format!(
-            "  warn: could not move typing latency report to {dest}: {err}"
-        )),
-    }
+    fs::rename(src.as_std_path(), dest.as_std_path())
+        .with_context(|| format!("moving intro-video completion report to {dest}"))?;
+    reporter.info(&format!("  saved {dest}"));
+    Ok(())
 }
 
 fn postprocess_video(
@@ -1780,7 +1760,7 @@ mod tests {
     use super::{
         copy_base_database_without_images, screenshot_source_prefix, CapturePlatform,
         IosDeviceKind, LocaleAsset, ManifestItem, MarketingLocale, ScreenshotCopy,
-        SCREENSHOT_LOCALES_ENV,
+        MARKETING_LOCALES_ENV,
     };
     use camino::Utf8PathBuf;
     use rusqlite::{params, Connection};
@@ -1793,9 +1773,9 @@ mod tests {
     }
 
     #[test]
-    fn selected_screenshot_locales_default_to_full_set() {
+    fn selected_marketing_locales_default_to_full_set() {
         let _guard = env_lock().lock().expect("env lock");
-        std::env::remove_var(SCREENSHOT_LOCALES_ENV);
+        std::env::remove_var(MARKETING_LOCALES_ENV);
 
         assert_eq!(
             MarketingLocale::selected_from_env().expect("selected locales"),
@@ -1804,9 +1784,9 @@ mod tests {
     }
 
     #[test]
-    fn selected_screenshot_locales_parse_comma_list() {
+    fn selected_marketing_locales_parse_comma_list() {
         let _guard = env_lock().lock().expect("env lock");
-        std::env::set_var(SCREENSHOT_LOCALES_ENV, "en, fr,pt-BR");
+        std::env::set_var(MARKETING_LOCALES_ENV, "en, fr,pt-BR");
 
         assert_eq!(
             MarketingLocale::selected_from_env().expect("selected locales"),
@@ -1816,19 +1796,19 @@ mod tests {
                 MarketingLocale::PtBr
             ]
         );
-        std::env::remove_var(SCREENSHOT_LOCALES_ENV);
+        std::env::remove_var(MARKETING_LOCALES_ENV);
     }
 
     #[test]
-    fn selected_screenshot_locales_reject_unknown_locale() {
+    fn selected_marketing_locales_reject_unknown_locale() {
         let _guard = env_lock().lock().expect("env lock");
-        std::env::set_var(SCREENSHOT_LOCALES_ENV, "en,it");
+        std::env::set_var(MARKETING_LOCALES_ENV, "en,it");
 
         let error = MarketingLocale::selected_from_env().expect_err("unknown locale");
         assert!(error
             .to_string()
-            .contains("CLIPKITTY_SCREENSHOT_LOCALES contains unsupported locale `it`"));
-        std::env::remove_var(SCREENSHOT_LOCALES_ENV);
+            .contains("CLIPKITTY_MARKETING_LOCALES contains unsupported locale `it`"));
+        std::env::remove_var(MARKETING_LOCALES_ENV);
     }
 
     #[test]

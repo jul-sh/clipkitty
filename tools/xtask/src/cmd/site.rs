@@ -4,9 +4,12 @@
 //! to HTML via `cmark-gfm`. Both are thin wrappers around host tools; the CLI
 //! exists to centralise pathing, dry-run, and env checks.
 
-use std::io::{self, Write};
+use std::{
+    fs,
+    io::{self, Write},
+};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use camino::Utf8PathBuf;
 
 use crate::cli::{SiteCmd, SiteRenderTarget};
@@ -33,9 +36,12 @@ fn icon(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
 
 fn landing_page(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
     let readme: Utf8PathBuf = repo.join("README.md");
+    let template_path: Utf8PathBuf = repo.join("site/templates/index.html");
 
     if dry_run {
-        reporter.info(&format!("[dry-run] would render {readme} → stdout"));
+        reporter.info(&format!(
+            "[dry-run] would render {readme} with {template_path} → stdout"
+        ));
         return Ok(());
     }
     if !readme.as_std_path().is_file() {
@@ -63,50 +69,49 @@ fn landing_page(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<(
         .replace("<h2>Alternatives</h2>", "<h2 id=\"alternatives\">Alternatives</h2>")
         .replace("<h2>Behind the Scenes</h2>", "<h2 id=\"behind-the-scenes\">Behind the Scenes</h2>");
 
+    let template = fs::read_to_string(template_path.as_std_path())
+        .with_context(|| format!("reading landing-page template: {template_path}"))?;
+    let page = render_landing_page(&template, &body)?;
+
     let mut stdout = io::stdout().lock();
-    stdout.write_all(LANDING_PAGE_HEAD.as_bytes())?;
-    stdout.write_all(body.as_bytes())?;
-    stdout.write_all(LANDING_PAGE_FOOT.as_bytes())?;
+    stdout.write_all(page.as_bytes())?;
     Ok(())
 }
 
-const LANDING_PAGE_HEAD: &str = r##"<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ClipKitty — Clipboard Manager for macOS</title>
-<meta name="description" content="Unlimited clipboard history with instant fuzzy search and multi-line previews. Private, fast, keyboard-driven. Free and open source for macOS.">
-<meta name="theme-color" content="#fbfaf8" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#111216" media="(prefers-color-scheme: dark)">
-<link rel="icon" href="icon.png">
-<link rel="stylesheet" href="site.css">
-</head>
-<body>
-<nav class="site-nav" aria-label="Primary">
-  <a class="brand" href="./"><img src="icon.png" alt="">ClipKitty</a>
-  <div class="nav-links">
-    <a href="#features">Features</a>
-    <a href="#installation">Download</a>
-    <a href="https://github.com/jul-sh/clipkitty">GitHub</a>
-  </div>
-</nav>
-<main>
-"##;
+pub(crate) const README_CONTENT_MARKER: &str = "<!-- README_CONTENT -->";
 
-const LANDING_PAGE_FOOT: &str = r##"
-</main>
-<footer>
-  <div class="footer-inner">
-    <p>&copy; 2025–2026 Juliette Pluto</p>
-    <div class="footer-links">
-      <a href="https://github.com/jul-sh/clipkitty">GitHub</a>
-      <a href="privacy.html">Privacy</a>
-      <a href="mailto:apple@jul.sh">Contact</a>
-    </div>
-  </div>
-</footer>
+fn render_landing_page(template: &str, body: &str) -> Result<String> {
+    let marker_count = template.matches(README_CONTENT_MARKER).count();
+    if marker_count != 1 {
+        return Err(anyhow!(
+            "landing-page template must contain {README_CONTENT_MARKER:?} exactly once; found {marker_count}"
+        ));
+    }
+    Ok(template.replacen(README_CONTENT_MARKER, body, 1))
+}
 
-</body>
-</html>
-"##;
+#[cfg(test)]
+mod tests {
+    use super::{render_landing_page, README_CONTENT_MARKER};
+
+    #[test]
+    fn landing_page_replaces_its_single_content_marker() {
+        let rendered = render_landing_page(
+            &format!("<main>{README_CONTENT_MARKER}</main>"),
+            "<h1>ClipKitty</h1>",
+        )
+        .expect("valid landing template");
+
+        assert_eq!(rendered, "<main><h1>ClipKitty</h1></main>");
+    }
+
+    #[test]
+    fn landing_page_rejects_missing_or_duplicate_markers() {
+        assert!(render_landing_page("<main></main>", "body").is_err());
+        assert!(render_landing_page(
+            &format!("{README_CONTENT_MARKER}{README_CONTENT_MARKER}"),
+            "body"
+        )
+        .is_err());
+    }
+}

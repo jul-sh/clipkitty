@@ -62,25 +62,25 @@ release-appcast-generate: guard-STATE_PATH guard-OUTPUT_PATH ## Render appcast X
 release-appcast-update: guard-STATE_PATH guard-CHANNEL guard-VERSION guard-BUILD_NUMBER guard-URL guard-SIGNATURE guard-LENGTH ## Update appcast state. Use STATE_PATH=... CHANNEL=stable|beta VERSION=... BUILD_NUMBER=... URL=... SIGNATURE=... LENGTH=...
 	@$(XTASK) release appcast update-state --state-path "$(STATE_PATH)" --channel "$(CHANNEL)" --version "$(VERSION)" --build-number "$(BUILD_NUMBER)" --url "$(URL)" --signature "$(SIGNATURE)" --length "$(LENGTH)"
 
-screenshots-macos: ## Capture localized macOS screenshots.
+screenshots-macos: ## Capture macOS screenshots. Optional CLIPKITTY_MARKETING_LOCALES=en,fr.
 	@$(XTASK) marketing screenshots macos
 
-screenshots-ios: ## Capture localized iOS screenshots.
+screenshots-ios: ## Capture iOS screenshots. Optional CLIPKITTY_MARKETING_LOCALES=en,fr.
 	@$(XTASK) marketing screenshots ios
 
-screenshots-ipad: ## Capture localized iPad screenshots.
+screenshots-ipad: ## Capture iPad screenshots. Optional CLIPKITTY_MARKETING_LOCALES=en,fr.
 	@$(XTASK) marketing screenshots ipad
 
-intro-video: ## Generate localized intro videos.
+intro-video: ## Generate intro videos. Optional CLIPKITTY_MARKETING_LOCALES=en,fr.
 	@$(XTASK) marketing intro-video
 
 perf: ## Run the supported performance trace flow. Optional PERF_HANG_THRESHOLD=... PERF_FAIL_ON_HANGS=0|1
 	@$(XTASK) perf --hang-threshold "$(PERF_HANG_THRESHOLD)" $(if $(filter 1 true yes,$(PERF_FAIL_ON_HANGS)),--fail-on-hangs,)
 
-site-icon: ## Render the public icon PNG.
+site-icon: ## Render the public icon to build/site/icon.png.
 	@$(XTASK) site render icon
 
-site-landing-page: ## Render the landing page HTML to stdout.
+site-landing-page: ## Render site/templates/index.html with README content to stdout.
 	@$(XTASK) site render landing-page
 
 secrets-asc-auth: guard-FIELD ## Resolve one ASC auth field. Use FIELD=key-id|issuer-id|private-key-b64

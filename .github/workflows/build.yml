@@ -13,7 +13,7 @@ name: Build and Release
 #   ios-screenshots ─────┤   (matrix: iphone, ipad)
 #   macos-uitests ───────┤
 #   macos-marketing ─────┤
-#   intro-videos ────────┘
+#   intro-video-capture ── intro-videos ─┘   (matrix: two balanced locale shards)
 #         │
 #         ├─ build         (aggregate status check; required by branch protection)
 #         ├─ release       (GitHub release + Homebrew tap)
@@ -907,18 +907,28 @@ jobs:
         with:
           name: assets
           path: |
-            icon.png
+            build/site/icon.png
             marketing/*/screenshot_*.png
           if-no-files-found: error
 
-  # Generate localized intro videos for App Store previews.
-  # Runs only on pushes to main/release or manual dispatch (not on PRs).
-  # Uses Xcode's built-in UI test screen recording (xcresult bundle) which
-  # does not require TCC Screen Recording permission.
-  intro-videos:
+  # Generate App Store preview videos in two balanced shards. A single
+  # 10-locale job held one hosted runner under Xcode/ffmpeg load for nearly an
+  # hour and could lose runner communication near the end. Two shards bound
+  # runner lifetime while amortizing the expensive workspace setup; one job
+  # per locale would repeat that setup ten times.
+  intro-video-capture:
+    name: Intro Videos (${{ matrix.shard }})
     needs: prewarm-nix
     runs-on: macos-26
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: a
+            locales: en,zh-Hans,ja,fr,pt-BR
+          - shard: b
+            locales: es,zh-Hant,ko,de,ru
 
     steps:
       - name: Checkout
@@ -972,6 +982,12 @@ jobs:
       - name: Verify repo invariants
         run: make check
 
+      # Materialize the heavy shared workspace outside the bounded capture
+      # step. If the Actions cache is throttled, Nix can rebuild here without
+      # consuming the per-locale recording budget.
+      - name: Generate Xcode Workspace
+        run: make workspace
+
       - name: Create Virtual Retina Display
         run: |
           xcrun clang -framework CoreGraphics -framework Foundation \
@@ -981,18 +997,78 @@ jobs:
           sleep 5
 
       - name: Generate Localized Intro Videos
+        timeout-minutes: 40
         run: |
           unset TOOLCHAINS
           SKIP_SIGNING=1 LOCKED=1 make intro-video
         env:
           KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          CLIPKITTY_MARKETING_LOCALES: ${{ matrix.locales }}
 
       - name: Teardown Virtual Display
         if: always()
         run: kill "$(cat /tmp/retina-display.pid 2>/dev/null)" 2>/dev/null || true
 
+      - name: Collect Intro Video Diagnostics
+        if: failure()
+        run: |
+          diagnostics=$(find marketing -type d -name diagnostics -print -quit 2>/dev/null || true)
+          if test -z "$diagnostics"; then
+            diagnostics="marketing/shard-${{ matrix.shard }}-failure/diagnostics"
+            mkdir -p "$diagnostics"
+          fi
+          if test -d /tmp/clipkitty_video_result.xcresult; then
+            ditto /tmp/clipkitty_video_result.xcresult \
+              "$diagnostics/clipkitty_video_result.xcresult"
+          fi
+
+      - name: Upload Intro Video Diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: intro-video-diagnostics-${{ matrix.shard }}
+          path: marketing/*/diagnostics
+          if-no-files-found: warn
+
       - name: Verify lockfiles unchanged after build
         run: make check
+
+      - name: Upload Intro Video Fragment
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: intro-video-${{ matrix.shard }}
+          path: marketing
+          if-no-files-found: error
+
+  # Reassemble locale fragments into the stable artifact consumed by the
+  # aggregate check and App Store publisher. Keeping this job lightweight
+  # also gives downstream jobs one explicit completeness boundary.
+  intro-videos:
+    name: Intro Videos
+    needs: intro-video-capture
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Intro Video Fragments
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: intro-video-*
+          path: marketing
+          merge-multiple: true
+
+      - name: Verify Localized Intro Videos
+        run: |
+          set -euo pipefail
+          for locale in en es zh-Hans zh-Hant ja ko fr de pt-BR ru; do
+            test -s "marketing/$locale/intro_video.mov"
+            test -s "marketing/$locale/intro_video_typing.json"
+            jq -e --arg locale "$locale" '
+              .locale == $locale and
+              ([.scenes[].name] | sort) ==
+              (["fast", "find_forever", "multiline", "secure_private"] | sort)
+            ' "marketing/$locale/intro_video_typing.json" >/dev/null
+          done
 
       - name: Upload Intro Videos
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -1001,6 +1077,7 @@ jobs:
           path: |
             marketing/*/intro_video.mov
             marketing/*/intro_video_typing.json
+          if-no-files-found: error
 
   # Aggregate status check: branch protection requires a check named "build",
   # and PR authors get one canonical pass/fail without enumerating jobs.
@@ -1174,8 +1251,8 @@ jobs:
 
   # Deploy the site even when other jobs failed (matching the old always()
   # behavior), but only when the marketing assets actually exist — the
-  # previous mono-job version died on a missing icon.png whenever an earlier
-  # step had failed. The appcast is skipped gracefully when macos-build
+  # previous mono-job version died on a missing generated site icon whenever
+  # an earlier step had failed. The appcast is skipped gracefully when macos-build
   # produced no signature (its outputs read as empty strings).
   gh-pages:
     name: Deploy to gh-pages
@@ -1246,9 +1323,9 @@ jobs:
             git reset --hard
           fi
 
-          cp "$GITHUB_WORKSPACE/icon.png" .
-          cp "$GITHUB_WORKSPACE/privacy.html" .
-          cp "$GITHUB_WORKSPACE/site.css" .
+          cp "$GITHUB_WORKSPACE/build/site/icon.png" icon.png
+          cp "$GITHUB_WORKSPACE/site/public/privacy.html" privacy.html
+          cp "$GITHUB_WORKSPACE/site/public/site.css" site.css
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_1.png" marketing_1.png
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_2.png" marketing_2.png
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_3.png" marketing_3.png
