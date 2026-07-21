@@ -236,10 +236,12 @@ public final class BrowserViewModel {
     /// Draft text for the currently-editing item, if any.
     /// Callers should prefer matching `editSession` directly.
     public var draftText: (itemId: String, text: String)? {
-        if case let .dirty(itemId, draft) = editSession {
+        switch editSession {
+        case let .dirty(itemId, draft), let .suspendedDirty(itemId, draft):
             return (itemId, draft)
+        case .inactive, .focused:
+            return nil
         }
-        return nil
     }
 
     public func onAppear(initialSearchQuery: String, contentRevision: Int = 0) {
@@ -425,8 +427,10 @@ public final class BrowserViewModel {
         switch editSession {
         case let .focused(focusedId) where focusedId != itemId:
             editSession = .inactive
-        case let .dirty(dirtyId, _) where dirtyId != itemId:
-            editSession = .inactive
+        case let .dirty(dirtyId, draft) where dirtyId != itemId:
+            editSession = .suspendedDirty(itemId: dirtyId, draft: draft)
+        case let .suspendedDirty(dirtyId, draft) where dirtyId == itemId:
+            editSession = .dirty(itemId: dirtyId, draft: draft)
         default:
             break
         }
@@ -579,6 +583,7 @@ public final class BrowserViewModel {
     }
 
     public func clearAll() {
+        editSession = .inactive
         mutationState = .clearing(ClearTransaction(
             snapshot: contentState,
             selectionSnapshot: selectionState
@@ -632,13 +637,27 @@ public final class BrowserViewModel {
     }
 
     public func effectiveContent(for item: ClipboardItem) -> ClipboardContent {
-        if case let .dirty(dirtyId, draft) = editSession, dirtyId == item.itemMetadata.itemId {
+        switch editSession {
+        case let .dirty(dirtyId, draft) where dirtyId == item.itemMetadata.itemId:
             return .text(value: draft)
+        case let .suspendedDirty(dirtyId, draft) where dirtyId == item.itemMetadata.itemId:
+            return .text(value: draft)
+        case .inactive, .focused, .dirty, .suspendedDirty:
+            return item.content
         }
-        return item.content
     }
 
     public func onTextEdit(_ newText: String, for itemId: String, originalText: String) {
+        switch editSession {
+        case let .dirty(dirtyId, _) where dirtyId != itemId,
+             let .suspendedDirty(dirtyId, _) where dirtyId != itemId:
+            // Only one draft may exist at a time. The owner must be saved or
+            // discarded before another item's preview can enter edit mode.
+            return
+        case .inactive, .focused, .dirty, .suspendedDirty:
+            break
+        }
+
         if newText == originalText {
             // Text matches original — drop back to focused (not dirty)
             editSession = .focused(itemId: itemId)
@@ -649,11 +668,17 @@ public final class BrowserViewModel {
 
     public func onEditingStateChange(_ isEditing: Bool, for itemId: String) {
         if isEditing {
-            // Only transition to focused if not already dirty for this item
-            if case let .dirty(dirtyId, _) = editSession, dirtyId == itemId {
+            switch editSession {
+            case let .dirty(dirtyId, _) where dirtyId == itemId:
                 return
+            case let .suspendedDirty(dirtyId, draft) where dirtyId == itemId:
+                editSession = .dirty(itemId: dirtyId, draft: draft)
+            case .dirty, .suspendedDirty:
+                // Preserve the existing draft until its owner is selected.
+                return
+            case .inactive, .focused:
+                editSession = .focused(itemId: itemId)
             }
-            editSession = .focused(itemId: itemId)
         } else {
             switch editSession {
             case let .focused(focusedId) where focusedId == itemId:
@@ -669,18 +694,21 @@ public final class BrowserViewModel {
     }
 
     public func commitCurrentEdit() {
-        guard case let .dirty(id, editedText) = editSession,
-              !editedText.isEmpty
-        else {
+        guard case let .dirty(id, editedText) = editSession else { return }
+        guard !editedText.isEmpty else {
             editSession = .inactive
             return
         }
-        editSession = .inactive
 
-        guard let selectedItemState else {
-            showSnackbarNotification(.passive(message: String(localized: "Saved"), iconSystemName: "checkmark.circle.fill"), nil)
+        // A dirty draft can survive navigation to another row. Only the row
+        // that owns the draft may commit it, otherwise metadata from the
+        // current selection could be paired with the wrong item identifier.
+        guard let selectedItemState,
+              selectedItemState.item.itemMetadata.itemId == id
+        else {
             return
         }
+        editSession = .inactive
 
         let currentItem = selectedItemState.item
         let updatedContent = ClipboardContent.text(value: editedText)
@@ -992,7 +1020,7 @@ public final class BrowserViewModel {
             if case let .suggested(suggestion, keyboardTarget: .results) = pendingFilterState {
                 pendingFilterState = .suggested(suggestion, keyboardTarget: .suggestion)
             }
-            clearInactiveEdits()
+            reconcileEditSessionWithSelection()
             finishTagMutationSettleIfNeeded()
             return
         }
@@ -1011,7 +1039,7 @@ public final class BrowserViewModel {
             let nextItemId = newOrder[0]
             setDisplayedSelection(.loading(itemId: nextItemId, origin: .automatic))
             loadSelectedItem(itemId: nextItemId, origin: .automatic)
-            clearInactiveEdits()
+            reconcileEditSessionWithSelection()
             finishTagMutationSettleIfNeeded()
             return
         }
@@ -1022,7 +1050,7 @@ public final class BrowserViewModel {
             response: response,
             previousSelectedItemState: previousSelectedItemState
         )
-        clearInactiveEdits()
+        reconcileEditSessionWithSelection()
         finishTagMutationSettleIfNeeded()
     }
 
@@ -1436,6 +1464,7 @@ public final class BrowserViewModel {
     }
 
     private func applyOptimisticDelete(itemId: String) {
+        discardEdit(for: itemId)
         guard let response = currentResponse else { return }
         let filteredItems = response.items.filter { $0.itemMetadata.itemId != itemId }
         resolvedMatchedExcerptsByItemId.removeValue(forKey: itemId)
@@ -1458,7 +1487,7 @@ public final class BrowserViewModel {
         } else if deletedSelectedItem {
             setDisplayedSelection(.none)
         }
-        clearInactiveEdits()
+        reconcileEditSessionWithSelection()
     }
 
     private func commitPendingDelete() {
@@ -1529,7 +1558,7 @@ public final class BrowserViewModel {
             setDisplayedSelection(selection)
         }
         syncPreviewPayloadCacheToDisplayedState()
-        clearInactiveEdits()
+        reconcileEditSessionWithSelection()
     }
 
     private func nextSelectionAfterDelete(deleting _: String) -> String? {
@@ -1670,7 +1699,7 @@ public final class BrowserViewModel {
             let updatedMetadata = applyingTagMutation(to: cachedItem.itemMetadata, tag: tag, shouldInclude: shouldInclude)
             prefetchCache[itemId] = ClipboardItem(itemMetadata: updatedMetadata, content: cachedItem.content)
         }
-        clearInactiveEdits()
+        reconcileEditSessionWithSelection()
     }
 
     private func scheduleTagMutationSettleFallback(itemId: String, tag: ItemTag, shouldInclude: Bool) {
@@ -2060,16 +2089,25 @@ public final class BrowserViewModel {
         }
     }
 
-    private func clearInactiveEdits() {
-        guard let selectedItemId else {
-            editSession = .inactive
-            return
-        }
-
+    private func reconcileEditSessionWithSelection() {
         switch editSession {
         case let .focused(focusedId) where focusedId != selectedItemId:
             editSession = .inactive
-        case let .dirty(dirtyId, _) where dirtyId != selectedItemId:
+        case let .dirty(dirtyId, draft) where selectedItemId != dirtyId:
+            editSession = .suspendedDirty(itemId: dirtyId, draft: draft)
+        case let .suspendedDirty(dirtyId, draft) where selectedItemId == dirtyId:
+            editSession = .dirty(itemId: dirtyId, draft: draft)
+        default:
+            break
+        }
+    }
+
+    private func discardEdit(for itemId: String) {
+        switch editSession {
+        case let .focused(editingItemId) where editingItemId == itemId:
+            editSession = .inactive
+        case let .dirty(editingItemId, _), let .suspendedDirty(editingItemId, _)
+            where editingItemId == itemId:
             editSession = .inactive
         default:
             break

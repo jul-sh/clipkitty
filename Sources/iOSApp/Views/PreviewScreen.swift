@@ -152,10 +152,14 @@ struct PreviewScreen: View {
         switch item.content {
         case let .text(value):
             let previewText: String = {
-                if case let .dirty(dirtyId, draft) = viewModel.editSession, dirtyId == item.itemMetadata.itemId {
+                switch viewModel.editSession {
+                case let .dirty(dirtyId, draft) where dirtyId == item.itemMetadata.itemId:
                     return draft
+                case let .suspendedDirty(dirtyId, draft) where dirtyId == item.itemMetadata.itemId:
+                    return draft
+                case .inactive, .focused, .dirty, .suspendedDirty:
+                    return value
                 }
-                return value
             }()
             let decoration = isDirty ? nil : previewDecoration(for: selectedItemState)
             TextPreviewView(
@@ -163,7 +167,15 @@ struct PreviewScreen: View {
                 text: previewText,
                 highlights: decoration?.highlights ?? [],
                 initialScrollHighlightIndex: decoration?.initialScrollHighlightIndex,
-                isEditable: true,
+                isEditable: {
+                    switch viewModel.editSession {
+                    case let .dirty(dirtyId, _) where dirtyId != item.itemMetadata.itemId,
+                         let .suspendedDirty(dirtyId, _) where dirtyId != item.itemMetadata.itemId:
+                        return false
+                    case .inactive, .focused, .dirty, .suspendedDirty:
+                        return true
+                    }
+                }(),
                 fontPreference: settings.fontPreference,
                 previewStyle: settings.previewFontPreference,
                 onTextChange: { newText in

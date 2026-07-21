@@ -336,4 +336,9 @@ public enum PreviewEditSession: Equatable {
 
     /// User has unsaved edits. The draft text lives inside the editing state.
     case dirty(itemId: String, draft: String)
+
+    /// User navigated away from an unsaved edit. Keeping this distinct from
+    /// `dirty` prevents save/discard controls for another selected item while
+    /// preserving the draft until its owner is selected again.
+    case suspendedDirty(itemId: String, draft: String)
 }

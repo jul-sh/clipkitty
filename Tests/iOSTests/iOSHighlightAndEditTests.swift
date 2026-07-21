@@ -272,7 +272,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
         )
     }
 
-    func testSelectingDifferentItemClearsDirtyState() async {
+    func testSelectingDifferentItemSuspendsAndRestoresDirtyState() async {
         let client = MockiOSBrowserStoreClient()
         let viewModel = makeViewModel(client: client)
 
@@ -304,12 +304,19 @@ final class iOSHighlightAndEditTests: XCTestCase {
             XCTFail("Expected dirty edit session for item 1")
         }
 
-        // Select item 2 — dirty state for item 1 should be cleared
+        // Selecting item 2 suspends item 1's draft without showing edit
+        // controls for the wrong selection.
         client.resumeFetch(id: "2", with: item2)
         viewModel.select(itemId: "2", origin: .click)
         await flushMainActor()
 
-        XCTAssertEqual(viewModel.editSession, .inactive)
+        XCTAssertEqual(viewModel.editSession, .suspendedDirty(itemId: "1", draft: "Changed"))
+
+        // Returning to item 1 restores its active dirty state.
+        viewModel.select(itemId: "1", origin: .click)
+        await flushMainActor()
+
+        XCTAssertEqual(viewModel.editSession, .dirty(itemId: "1", draft: "Changed"))
     }
 
     // MARK: - Helpers

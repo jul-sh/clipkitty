@@ -130,10 +130,14 @@ struct BrowserPreviewPane: View {
         switch item.content {
         case .text, .color:
             let previewText: String = {
-                if case let .dirty(dirtyId, draft) = viewModel.editSession, dirtyId == item.itemMetadata.itemId {
+                switch viewModel.editSession {
+                case let .dirty(dirtyId, draft) where dirtyId == item.itemMetadata.itemId:
                     return draft
+                case let .suspendedDirty(dirtyId, draft) where dirtyId == item.itemMetadata.itemId:
+                    return draft
+                case .inactive, .focused, .dirty, .suspendedDirty:
+                    return item.content.textContent
                 }
-                return item.content.textContent
             }()
             let decoration = previewDecoration(for: content)
             let _ = { TextPreviewView.textCache[item.itemMetadata.itemId] = previewText }()
@@ -153,31 +157,45 @@ struct BrowserPreviewPane: View {
                         return content.origin.isUserInitiated ? .trackHighlight : .autoScroll
                     }
                 }(),
-                interaction: .editable(actions: TextPreviewEditingActions(
-                    onTextChange: { newText in
-                        viewModel.onTextEdit(newText, for: item.itemMetadata.itemId, originalText: item.content.textContent)
-                    },
-                    onEditingStateChange: { editing in
-                        viewModel.onEditingStateChange(editing, for: item.itemMetadata.itemId)
-                    },
-                    onCmdReturn: {
-                        viewModel.confirmSelection()
-                    },
-                    onCmdK: {
-                        guard case .inactive = viewModel.editSession else { return }
-                        viewModel.openActionsOverlay(highlight: .index(0))
-                    },
-                    onSave: {
-                        viewModel.commitCurrentEdit()
-                        focusSearchField()
-                    },
-                    onEscape: {
-                        if case let .dirty(dirtyId, _) = viewModel.editSession, dirtyId == item.itemMetadata.itemId {
-                            viewModel.discardCurrentEdit()
-                        }
-                        focusSearchField()
+                interaction: {
+                    switch viewModel.editSession {
+                    case let .dirty(dirtyId, _) where dirtyId != item.itemMetadata.itemId,
+                         let .suspendedDirty(dirtyId, _) where dirtyId != item.itemMetadata.itemId:
+                        return .readOnly
+                    case .inactive, .focused, .dirty, .suspendedDirty:
+                        break
                     }
-                ))
+                    return .editable(actions: TextPreviewEditingActions(
+                        onTextChange: { newText in
+                            viewModel.onTextEdit(newText, for: item.itemMetadata.itemId, originalText: item.content.textContent)
+                        },
+                        onEditingStateChange: { editing in
+                            viewModel.onEditingStateChange(editing, for: item.itemMetadata.itemId)
+                        },
+                        onCmdReturn: {
+                            viewModel.confirmSelection()
+                        },
+                        onCmdK: {
+                            switch viewModel.editSession {
+                            case .inactive, .suspendedDirty:
+                                break
+                            case .focused, .dirty:
+                                return
+                            }
+                            viewModel.openActionsOverlay(highlight: .index(0))
+                        },
+                        onSave: {
+                            viewModel.commitCurrentEdit()
+                            focusSearchField()
+                        },
+                        onEscape: {
+                            if case let .dirty(dirtyId, _) = viewModel.editSession, dirtyId == item.itemMetadata.itemId {
+                                viewModel.discardCurrentEdit()
+                            }
+                            focusSearchField()
+                        }
+                    ))
+                }()
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topLeading) {
@@ -280,7 +298,7 @@ struct BrowserPreviewPane: View {
     private func metadataFooter(for item: ClipboardItem) -> some View {
         return HStack(spacing: 12) {
             switch viewModel.editSession {
-            case .dirty:
+            case let .dirty(dirtyId, _) where dirtyId == item.itemMetadata.itemId:
                 // Edit mode: show Discard, Save, and confirm buttons
                 Button {
                     viewModel.discardCurrentEdit()
@@ -323,7 +341,7 @@ struct BrowserPreviewPane: View {
                 .buttonStyle(.plain)
                 .fixedSize()
 
-            case .focused:
+            case let .focused(focusedId) where focusedId == item.itemMetadata.itemId:
                 // Preview focused but not yet edited — Cmd+K is not active here
                 Spacer(minLength: 0)
 
@@ -338,7 +356,7 @@ struct BrowserPreviewPane: View {
                 .buttonStyle(.plain)
                 .fixedSize()
 
-            case .inactive:
+            case .inactive, .focused, .dirty, .suspendedDirty:
                 // Normal mode: show metadata and paste button
                 Label(item.timeAgo, systemImage: "clock")
                     .lineLimit(1)

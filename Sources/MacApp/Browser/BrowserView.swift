@@ -36,7 +36,13 @@ struct BrowserView: View {
                     case .results: return viewModel.selectedItem != nil
                     }
                 }(),
-                hasPendingEdit: { if case .dirty = viewModel.editSession { return true }; return false }(),
+                hasPendingEdit: {
+                    guard let selectedItemId = viewModel.selectedItemId else { return false }
+                    if case let .dirty(dirtyId, _) = viewModel.editSession {
+                        return dirtyId == selectedItemId
+                    }
+                    return false
+                }(),
                 focusTarget: $focusTarget,
                 onMoveSelection: viewModel.moveSelection(by:),
                 onConfirm: viewModel.confirmSelection,

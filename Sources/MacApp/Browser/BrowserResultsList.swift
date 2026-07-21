@@ -72,10 +72,14 @@ struct BrowserResultsList: View {
                         isContextMenuTargeted: row.metadata.itemId == contextMenuItemId,
                         hasUserNavigated: viewModel.hasUserNavigated,
                         hasPendingEdit: {
-                            if case let .dirty(dirtyId, _) = viewModel.editSession, dirtyId == row.metadata.itemId {
+                            switch viewModel.editSession {
+                            case let .dirty(dirtyId, _) where dirtyId == row.metadata.itemId:
                                 return true
+                            case let .suspendedDirty(dirtyId, _) where dirtyId == row.metadata.itemId:
+                                return true
+                            case .inactive, .focused, .dirty, .suspendedDirty:
+                                return false
                             }
-                            return false
                         }(),
                         onTap: {
                             viewModel.select(itemId: row.metadata.itemId, origin: .click)
