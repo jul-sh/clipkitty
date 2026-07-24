@@ -17,19 +17,65 @@ struct AppSuspensionContext {
     let task: Task<Void, Never>
 }
 
+enum AppResumePhase: Equatable {
+    /// Keep rendering the previous session during the grace period.
+    case waitingForSpinner
+    /// The store open outlasted the grace period, so render the launch spinner.
+    case showingSpinner
+}
+
+struct AppResumeContext {
+    let id: UUID
+    let previous: AppSession
+    var phase: AppResumePhase
+    let spinnerTask: Task<Void, Never>
+    let openTask: Task<Void, Never>
+}
+
+/// A suspended app may still have a superseded store open draining in the
+/// background. Keeping that task in the state that requires it ensures the
+/// next resume cannot open a second store against the same index concurrently.
+enum AppSuspendedState {
+    case withoutPreviousSession
+    case resting(previous: AppSession)
+    case waitingForSupersededResume(previous: AppSession, openTask: Task<Void, Never>)
+}
+
+enum AppResumeCallbackDisposition {
+    case current(AppResumeContext)
+    case superseded
+}
+
 enum AppLaunchState {
     case launching
     case ready(AppSession)
     case suspending(AppSuspensionContext)
-    /// Database released. Keeps the outgoing session so the next foreground
-    /// can keep rendering the last known state while a fresh container
-    /// bootstraps; nil when the app never reached `.ready`.
-    case suspended(previous: AppSession?)
+    /// Database released. The suspended state keeps the outgoing session so
+    /// the next foreground can render it while a fresh container bootstraps.
+    case suspended(AppSuspendedState)
     /// Re-bootstrapping after a foreground activation: the previous session
     /// stays on screen, and the spinner only appears once the resume
     /// outlasts its grace period.
-    case resuming(previous: AppSession, spinnerVisible: Bool)
+    case resuming(AppResumeContext)
     case failed(String)
+
+    func resumeCallbackDisposition(for resumeID: UUID) -> AppResumeCallbackDisposition {
+        guard case let .resuming(context) = self, context.id == resumeID else {
+            return .superseded
+        }
+        return .current(context)
+    }
+
+    mutating func advanceResumeSpinner(for resumeID: UUID) {
+        guard case var .resuming(context) = self, context.id == resumeID else { return }
+        switch context.phase {
+        case .waitingForSpinner:
+            context.phase = .showingSpinner
+            self = .resuming(context)
+        case .showingSpinner:
+            break
+        }
+    }
 }
 
 /// What the window actually renders, derived from ``AppLaunchState``. The
@@ -374,12 +420,23 @@ struct ClipKittyiOSApp: App {
             return .session(session)
         case let .suspending(context):
             return .session(context.session)
-        case let .suspended(previous):
+        case let .suspended(suspended):
             // Rendering the last known state here also keeps the app
             // switcher snapshot on content instead of a spinner.
-            return previous.map(LaunchPresentation.session) ?? .spinner
-        case let .resuming(previous, spinnerVisible):
-            return spinnerVisible ? .spinner : .session(previous)
+            switch suspended {
+            case .withoutPreviousSession:
+                return .spinner
+            case let .resting(previous),
+                 let .waitingForSupersededResume(previous, _):
+                return .session(previous)
+            }
+        case let .resuming(context):
+            switch context.phase {
+            case .waitingForSpinner:
+                return .session(context.previous)
+            case .showingSpinner:
+                return .spinner
+            }
         case let .failed(message):
             return .failure(message)
         }
@@ -415,16 +472,19 @@ struct ClipKittyiOSApp: App {
     private static let resumeSpinnerGrace: Duration = .milliseconds(150)
     private static let resumeWarmupDeadline: Duration = .seconds(2)
 
+    private var databasePathOverride: String? {
+        #if ENABLE_TEST_FIXTURES
+            ProcessInfo.processInfo.environment["CLIPKITTY_SCREENSHOT_DB"]
+        #else
+            nil
+        #endif
+    }
+
     private func performBootstrap() {
         // The screenshot-DB override injects a synthetic store for automated
         // App Store screenshots. It must never exist in shipping builds, so the
         // build-variant capability compiles it into test fixtures only.
-        #if ENABLE_TEST_FIXTURES
-            let customPath = ProcessInfo.processInfo.environment["CLIPKITTY_SCREENSHOT_DB"]
-        #else
-            let customPath: String? = nil
-        #endif
-        switch AppContainer.bootstrap(databasePath: customPath) {
+        switch AppContainer.bootstrap(databasePath: databasePathOverride) {
         case let .success(container):
             let session = makeSession(container: container)
             launchState = .ready(session)
@@ -437,11 +497,11 @@ struct ClipKittyiOSApp: App {
     /// Wires the service graph around a freshly-bootstrapped container: the
     /// shortcut runtime, the UI coordinator, and (when enabled) iCloud sync.
     private func makeSession(container: AppContainer) -> AppSession {
-        ClipKittyShortcutRuntime.useRepositoryProvider { [weak container] in
+        ClipKittyShortcutRuntime.useStoreProvider { [weak container] in
             guard let container else {
                 return .unavailable("ClipKitty is suspended.")
             }
-            return container.shortcutRepositoryAvailability()
+            return container.shortcutStoreAvailability()
         }
         let appState = AppState(container: container)
         #if ENABLE_ICLOUD_SYNC
@@ -467,51 +527,81 @@ struct ClipKittyiOSApp: App {
     /// period, and the fresh session is adopted only once its feed has
     /// content, so the UI goes straight from last known state to fresh
     /// content without an empty flash.
-    private func beginResume(previous: AppSession) {
-        launchState = .resuming(previous: previous, spinnerVisible: false)
+    private func beginResume(
+        previous: AppSession,
+        after supersededOpen: Task<Void, Never>? = nil
+    ) {
+        let resumeID = UUID()
         // Screenshot-DB override is fixture-only; shipping builds always resume
         // the real store (custom path nil). See `performBootstrap`.
-        #if ENABLE_TEST_FIXTURES
-            let customPath = ProcessInfo.processInfo.environment["CLIPKITTY_SCREENSHOT_DB"]
-        #else
-            let customPath: String? = nil
-        #endif
+        let customPath = databasePathOverride
 
-        Task { @MainActor in
+        let spinnerTask = Task { @MainActor in
             try? await Task.sleep(for: Self.resumeSpinnerGrace)
-            if case let .resuming(previous, spinnerVisible: false) = launchState {
-                launchState = .resuming(previous: previous, spinnerVisible: true)
-            }
+            guard !Task.isCancelled else { return }
+            launchState.advanceResumeSpinner(for: resumeID)
         }
 
         // Chain on any superseded resume so its store is released before a
         // new one opens — two live stores would contend for the index lock.
-        let supersededOpen = resumeOpenTask
-        resumeOpenTask = Task { @MainActor in
+        let openTask = Task { @MainActor in
             await supersededOpen?.value
+
+            // This resume may have been suspended or superseded while it was
+            // waiting for the previous open to drain. In that case the next
+            // foreground transition owns opening a fresh store.
+            switch launchState.resumeCallbackDisposition(for: resumeID) {
+            case .current:
+                break
+            case .superseded:
+                return
+            }
 
             let outcome = await Task.detached(priority: .userInitiated) {
                 AppContainer.openStore(databasePath: customPath)
             }.value
+            await handleResumeOpenOutcome(outcome, resumeID: resumeID)
+        }
 
-            switch outcome {
-            case let .success(store):
-                guard case .resuming = launchState else {
-                    // Backgrounded again mid-open: release the fresh store
-                    // rather than leaving the database locked.
-                    store.prepareForSuspend()
-                    return
-                }
-                await adoptResumedStore(store)
-            case let .failure(error):
-                guard case .resuming = launchState else { return }
+        launchState = .resuming(AppResumeContext(
+            id: resumeID,
+            previous: previous,
+            phase: .waitingForSpinner,
+            spinnerTask: spinnerTask,
+            openTask: openTask
+        ))
+    }
+
+    private func handleResumeOpenOutcome(
+        _ outcome: Result<StoreSession, AppContainer.BootstrapError>,
+        resumeID: UUID
+    ) async {
+        switch outcome {
+        case let .success(storeSession):
+            switch launchState.resumeCallbackDisposition(for: resumeID) {
+            case .current:
+                await adoptResumedStore(storeSession, resumeID: resumeID)
+            case .superseded:
+                // Backgrounded or replaced mid-open: release this store before
+                // the next resume's chained open is allowed to proceed.
+                storeSession.store.prepareForSuspend()
+            }
+        case let .failure(error):
+            switch launchState.resumeCallbackDisposition(for: resumeID) {
+            case let .current(context):
+                context.spinnerTask.cancel()
                 launchState = .failed(error.localizedDescription)
+            case .superseded:
+                break
             }
         }
     }
 
-    private func adoptResumedStore(_ store: ClipKittyRust.ClipboardStore) async {
-        let container = AppContainer.assemble(store: store)
+    private func adoptResumedStore(
+        _ storeSession: StoreSession,
+        resumeID: UUID
+    ) async {
+        let container = AppContainer.assemble(storeSession: storeSession)
         let session = makeSession(container: container)
 
         // Warm the fresh feed while the previous state is still showing.
@@ -520,13 +610,19 @@ struct ClipKittyiOSApp: App {
         while session.appState.viewModel.contentState.displayedContent == nil,
               ContinuousClock.now < deadline
         {
-            guard case .resuming = launchState else {
+            switch launchState.resumeCallbackDisposition(for: resumeID) {
+            case .current:
+                break
+            case .superseded:
                 return discardUnadoptedSession(container: container)
             }
             try? await Task.sleep(for: .milliseconds(16))
         }
 
-        guard case .resuming = launchState else {
+        switch launchState.resumeCallbackDisposition(for: resumeID) {
+        case let .current(context):
+            context.spinnerTask.cancel()
+        case .superseded:
             return discardUnadoptedSession(container: container)
         }
 
@@ -560,11 +656,14 @@ struct ClipKittyiOSApp: App {
 
     private func handleForegroundActivation() {
         switch launchState {
-        case let .suspended(previous):
-            if let previous {
-                beginResume(previous: previous)
-            } else {
+        case let .suspended(suspended):
+            switch suspended {
+            case .withoutPreviousSession:
                 performBootstrap()
+            case let .resting(previous):
+                beginResume(previous: previous)
+            case let .waitingForSupersededResume(previous, openTask):
+                beginResume(previous: previous, after: openTask)
             }
         case let .ready(session):
             resumeReadySession(session)
@@ -591,12 +690,16 @@ struct ClipKittyiOSApp: App {
         guard case let .ready(session) = launchState else {
             switch launchState {
             case .launching:
-                launchState = .suspended(previous: nil)
-            case let .resuming(previous, _):
+                launchState = .suspended(.withoutPreviousSession)
+            case let .resuming(context):
                 // The fresh container was never adopted; the in-flight open
                 // releases its store when it observes this state. The
                 // previous session's store is already suspended.
-                launchState = .suspended(previous: previous)
+                context.spinnerTask.cancel()
+                launchState = .suspended(.waitingForSupersededResume(
+                    previous: context.previous,
+                    openTask: context.openTask
+                ))
             case .ready, .suspending, .suspended, .failed:
                 break
             }
@@ -654,7 +757,7 @@ struct ClipKittyiOSApp: App {
         // Keep the outgoing session: its store is suspended, but its view
         // model still holds the last displayed content, which the next
         // resume renders instead of a spinner.
-        launchState = .suspended(previous: session)
+        launchState = .suspended(.resting(previous: session))
         if scenePhase == .active {
             handleForegroundActivation()
         }
