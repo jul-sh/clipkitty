@@ -151,7 +151,7 @@ pub struct DmgArgs {}
 
 #[derive(Subcommand, Debug)]
 pub enum AppcastCmd {
-    /// Render appcast.xml from state JSON.
+    /// Generate appcast.xml with Sparkle from channel state and an archive.
     Generate(AppcastGenerateArgs),
     /// Mutate the release state JSON atomically.
     UpdateState(AppcastUpdateStateArgs),
@@ -163,6 +163,13 @@ pub struct AppcastGenerateArgs {
     pub state_path: Utf8PathBuf,
     #[arg(long)]
     pub output_path: Utf8PathBuf,
+    /// Channel whose archive is available locally for this generation.
+    #[arg(long, value_enum)]
+    pub channel: ReleaseChannel,
+    /// Signed, notarized update archive for `channel`. Existing feed history
+    /// is preserved from `output_path`.
+    #[arg(long)]
+    pub archive_path: Utf8PathBuf,
 }
 
 #[derive(Args, Debug)]
@@ -177,10 +184,6 @@ pub struct AppcastUpdateStateArgs {
     pub build_number: String,
     #[arg(long)]
     pub url: String,
-    #[arg(long)]
-    pub signature: String,
-    #[arg(long)]
-    pub length: u64,
 }
 
 #[derive(Subcommand, Debug)]

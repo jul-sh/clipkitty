@@ -19,6 +19,14 @@ use crate::output::Reporter;
 use crate::process::Runner;
 use crate::repo::RepoRoot;
 
+pub(crate) const SPARKLE_CLI_INSTALL_DIR: &str = "/tmp/sparkle";
+
+pub(crate) fn sparkle_cli_tool_path(tool: &str) -> Utf8PathBuf {
+    Utf8PathBuf::from(SPARKLE_CLI_INSTALL_DIR)
+        .join("bin")
+        .join(tool)
+}
+
 pub fn run(cmd: &EnvCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
     match cmd {
         EnvCmd::Install(args) => install(args, dry_run, reporter),
@@ -77,9 +85,11 @@ exec nix develop --no-update-lock-file --experimental-features 'nix-command flak
 }
 
 fn install_sparkle_cli(dry_run: bool, reporter: &Reporter) -> Result<()> {
-    const SPARKLE_VERSION: &str = "2.9.0";
-    const SPARKLE_SHA256: &str = "01e0f0ebf6614061ea816d414de50f937d64ffa6822ad572243031ca3676fe19";
-    let install_dir = Utf8PathBuf::from("/tmp/sparkle");
+    // Keep the publishing tools aligned with Tuist/Package.resolved. The
+    // appcast generator and runtime must agree on the newest feed features.
+    const SPARKLE_VERSION: &str = "2.9.4";
+    const SPARKLE_SHA256: &str = "ce89daf967db1e1893ed3ebd67575ed82d3902563e3191ca92aaec9164fbdef9";
+    let install_dir = Utf8PathBuf::from(SPARKLE_CLI_INSTALL_DIR);
     let archive_dir = tempdir().context("creating temporary Sparkle download dir")?;
     let archive_dir = Utf8PathBuf::from_path_buf(archive_dir.path().to_path_buf())
         .map_err(|p| anyhow!("non-UTF-8 temp path: {p:?}"))?;
@@ -127,7 +137,7 @@ fn install_sparkle_cli(dry_run: bool, reporter: &Reporter) -> Result<()> {
     }
 
     reporter.success(&format!(
-        "Sparkle CLI {SPARKLE_VERSION} installed to {install_dir}"
+        "Sparkle CLI {SPARKLE_VERSION} installed to {install_dir}; xtask resolves its tools there even when the current shell PATH is unchanged"
     ));
     Ok(())
 }

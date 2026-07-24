@@ -7,15 +7,14 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;
-use std::fmt::Write as _;
 use std::fs;
+use std::io::Write;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
 use base64::Engine;
 use camino::{Utf8Path, Utf8PathBuf};
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tempfile::{tempdir, NamedTempFile};
@@ -28,7 +27,7 @@ use crate::cmd::build;
 use crate::cmd::secrets;
 use crate::cmd::sign;
 use crate::filesystem::{copy_directory, remove_if_exists};
-use crate::model::{AscAuthField, MacVariant, SetupAction};
+use crate::model::{AscAuthField, MacVariant, ReleaseChannel, SetupAction};
 use crate::output::Reporter;
 use crate::process::{command_exists, Runner};
 use crate::repo::RepoRoot;
@@ -2174,7 +2173,12 @@ fn asc_command_output(
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
 ) -> Result<crate::process::CommandOutput> {
-    let mut runner = Runner::new(reporter, "asc").cwd(repo.as_path());
+    // ASC 1+ selects table output on a TTY and JSON when piped. Pin JSON
+    // explicitly because all callers parse stdout and release behavior must
+    // not depend on the runner's terminal attachment.
+    let mut runner = Runner::new(reporter, "asc")
+        .cwd(repo.as_path())
+        .env("ASC_DEFAULT_OUTPUT", "json");
     for arg in args {
         runner = runner.arg(*arg);
     }
@@ -2409,25 +2413,125 @@ fn appcast(repo: &RepoRoot, sub: &AppcastCmd, dry_run: bool, reporter: &Reporter
 }
 
 fn appcast_generate(
-    _repo: &RepoRoot,
+    repo: &RepoRoot,
     args: &AppcastGenerateArgs,
     dry_run: bool,
     reporter: &Reporter,
 ) -> Result<()> {
+    let state = read_appcast_state(&args.state_path)?;
+    let release = state.release(args.channel).ok_or_else(|| {
+        anyhow!(
+            "appcast state {} has no {} release for local archive {}",
+            args.state_path,
+            args.channel.as_str(),
+            args.archive_path
+        )
+    })?;
+    if !args.archive_path.as_std_path().is_file() {
+        return Err(anyhow!("update archive not found: {}", args.archive_path));
+    }
+    let location = AppcastDownloadLocation::parse(&release.url)?;
+    let build_number = appcast_build_number(release)?;
+
     if dry_run {
         reporter.info(&format!(
-            "[dry-run] would render {} → {}",
-            args.state_path, args.output_path
+            "[dry-run] would ask Sparkle generate_appcast to update {} with {} {} ({build_number}) from {}",
+            args.output_path,
+            args.channel.as_str(),
+            release.version,
+            args.archive_path,
         ));
         return Ok(());
     }
 
-    let state = read_appcast_state(&args.state_path)?;
-    let xml = render_appcast_xml(&state)?;
-    fs::write(args.output_path.as_std_path(), xml)
-        .with_context(|| format!("writing {}", args.output_path))?;
-    reporter.success(&format!("Rendered appcast → {}", args.output_path));
+    let pinned_generator = crate::cmd::env::sparkle_cli_tool_path("generate_appcast");
+    let generator_program = resolve_generate_appcast_command(command_exists, &pinned_generator)
+        .ok_or_else(|| {
+            anyhow!(
+                "Sparkle generate_appcast was not found on PATH or at {pinned_generator}. Run `make install-sparkle-cli`; appcast generation will then use the pinned installation automatically."
+            )
+        })?;
+    let private_key = match env::var("SPARKLE_EDDSA_KEY") {
+        Ok(value) if !value.trim().is_empty() => value.into_bytes(),
+        _ => secrets::read_secret(&repo.join("secrets/SPARKLE_EDDSA_KEY.age"), reporter)
+            .context("decrypting Sparkle EdDSA key for generate_appcast")?,
+    };
+    let generation = tempdir().context("creating Sparkle appcast generation directory")?;
+    let generation = Utf8PathBuf::from_path_buf(generation.path().to_path_buf())
+        .map_err(|path| anyhow!("non-UTF-8 appcast generation path: {path:?}"))?;
+    let staged_appcast = generation.join("appcast.xml");
+    if args.output_path.as_std_path().is_file() {
+        fs::copy(args.output_path.as_std_path(), staged_appcast.as_std_path())
+            .with_context(|| format!("staging existing feed from {}", args.output_path))?;
+        if let ReleaseChannel::Stable = args.channel {
+            promote_existing_appcast_item(&staged_appcast, &build_number)?;
+        }
+    }
+    let staged_archive = generation.join(&location.file_name);
+    fs::copy(
+        args.archive_path.as_std_path(),
+        staged_archive.as_std_path(),
+    )
+    .with_context(|| format!("staging {} as {staged_archive}", args.archive_path))?;
+
+    reporter.info(&format!(
+        "Generating {} appcast entry for {} ({build_number}) with Sparkle...",
+        args.channel.as_str(),
+        release.version
+    ));
+    let mut generator = Runner::new(
+        reporter,
+        generator_program.as_std_path().as_os_str().to_owned(),
+    )
+    .arg("--ed-key-file")
+    .arg("-")
+    .arg("--download-url-prefix")
+    .arg(&location.prefix)
+    .arg("--link")
+    .arg("https://jul-sh.github.io/clipkitty/")
+    .arg("--versions")
+    .arg(&build_number)
+    .arg("--maximum-deltas")
+    .arg("0");
+    if let ReleaseChannel::Beta = args.channel {
+        generator = generator.arg("--channel").arg("beta");
+    }
+    generator
+        .arg("-o")
+        .arg(staged_appcast.as_std_path())
+        .arg(generation.as_std_path())
+        .stdin_bytes(private_key)
+        .run()
+        .with_context(|| {
+            format!(
+                "Sparkle generate_appcast failed for {} {}",
+                args.channel.as_str(),
+                release.version
+            )
+        })?;
+    validate_generated_appcast(&staged_appcast, args.channel, release, &build_number)?;
+
+    let bytes = fs::read(staged_appcast.as_std_path())
+        .with_context(|| format!("reading generated appcast {staged_appcast}"))?;
+    write_atomically(&args.output_path, &bytes)?;
+    reporter.success(&format!(
+        "Generated appcast with Sparkle → {}",
+        args.output_path
+    ));
     Ok(())
+}
+
+fn resolve_generate_appcast_command(
+    path_command_exists: impl Fn(&str) -> bool,
+    pinned_path: &Utf8Path,
+) -> Option<Utf8PathBuf> {
+    if path_command_exists("generate_appcast") {
+        return Some(Utf8PathBuf::from("generate_appcast"));
+    }
+    pinned_path
+        .as_std_path()
+        .is_file()
+        .then(|| pinned_path.to_path_buf())
 }
 
 fn appcast_update_state(
@@ -2438,33 +2542,45 @@ fn appcast_update_state(
 ) -> Result<()> {
     if dry_run {
         reporter.info(&format!(
-            "[dry-run] would update {} ({}) → v{} ({}) @ {} ({} bytes)",
+            "[dry-run] would update {} ({}) → v{} ({}) @ {}",
             args.state_path,
             args.channel.as_str(),
             args.version,
             args.build_number,
-            args.url,
-            args.length
+            args.url
         ));
         return Ok(());
     }
 
     let mut state = read_appcast_state(&args.state_path)?;
+    let unchanged = state.release(args.channel).is_some_and(|existing| {
+        existing.version == args.version
+            && existing
+                .build_number
+                .as_deref()
+                .is_some_and(|build| build == args.build_number)
+            && existing.url == args.url
+    });
+    if unchanged {
+        reporter.success(&format!(
+            "Appcast state already records {} {} ({})",
+            args.channel.as_str(),
+            args.version,
+            args.build_number
+        ));
+        return Ok(());
+    }
     let entry = AppcastRelease {
         version: args.version.clone(),
         build_number: Some(args.build_number.clone()),
         url: args.url.clone(),
-        signature: args.signature.clone(),
-        length: args.length,
-        published_at: Utc::now().to_rfc3339(),
     };
     match args.channel {
         crate::model::ReleaseChannel::Stable => state.stable = Some(entry),
         crate::model::ReleaseChannel::Beta => state.beta = Some(entry),
     }
     let json = serde_json::to_string_pretty(&state)?;
-    fs::write(args.state_path.as_std_path(), format!("{json}\n"))
-        .with_context(|| format!("writing {}", args.state_path))?;
+    write_atomically(&args.state_path, format!("{json}\n").as_bytes())?;
     reporter.success(&format!("Updated appcast state → {}", args.state_path));
     Ok(())
 }
@@ -2477,15 +2593,21 @@ struct AppcastState {
     stable: Option<AppcastRelease>,
 }
 
+impl AppcastState {
+    fn release(&self, channel: ReleaseChannel) -> Option<&AppcastRelease> {
+        match channel {
+            ReleaseChannel::Stable => self.stable.as_ref(),
+            ReleaseChannel::Beta => self.beta.as_ref(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AppcastRelease {
     version: String,
     #[serde(default)]
     build_number: Option<String>,
     url: String,
-    signature: String,
-    length: u64,
-    published_at: String,
 }
 
 fn read_appcast_state(path: &Utf8Path) -> Result<AppcastState> {
@@ -2496,68 +2618,143 @@ fn read_appcast_state(path: &Utf8Path) -> Result<AppcastState> {
     serde_json::from_str(&raw).with_context(|| format!("parsing {path}"))
 }
 
-fn render_appcast_xml(state: &AppcastState) -> Result<String> {
-    let mut xml = String::from(
-        r#"<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
-  <channel>
-    <title>ClipKitty Updates</title>
-    <link>https://jul-sh.github.io/clipkitty/appcast.xml</link>
-    <language>en</language>
-"#,
-    );
-
-    if let Some(release) = &state.beta {
-        push_appcast_item(&mut xml, "beta", release)?;
-    }
-    if let Some(release) = &state.stable {
-        push_appcast_item(&mut xml, "stable", release)?;
-    }
-
-    xml.push_str("  </channel>\n</rss>\n");
-    Ok(xml)
+struct AppcastDownloadLocation {
+    prefix: String,
+    file_name: String,
 }
 
-fn push_appcast_item(xml: &mut String, channel: &str, release: &AppcastRelease) -> Result<()> {
-    let pub_date = format_pub_date(Some(&release.published_at))?;
-    let build_number = appcast_build_number(release)?;
-    let title = if channel == "beta" {
-        format!("ClipKitty {} Beta", release.version)
-    } else {
-        format!("ClipKitty {}", release.version)
-    };
-    writeln!(xml, "    <item>").unwrap();
-    writeln!(xml, "      <title>{}</title>", xml_escape(&title)).unwrap();
-    writeln!(
-        xml,
-        "      <sparkle:version>{}</sparkle:version>",
-        xml_escape(&build_number)
-    )
-    .unwrap();
-    writeln!(
-        xml,
-        "      <sparkle:shortVersionString>{}</sparkle:shortVersionString>",
-        xml_escape(&release.version)
-    )
-    .unwrap();
-    writeln!(
-        xml,
-        "      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>"
-    )
-    .unwrap();
-    if channel == "beta" {
-        writeln!(xml, "      <sparkle:channel>beta</sparkle:channel>").unwrap();
+impl AppcastDownloadLocation {
+    fn parse(url: &str) -> Result<Self> {
+        if url.contains(['?', '#']) {
+            return Err(anyhow!(
+                "appcast archive URL must not contain a query or fragment: {url}"
+            ));
+        }
+        let (parent, file_name) = url
+            .rsplit_once('/')
+            .filter(|(parent, file_name)| !parent.is_empty() && !file_name.is_empty())
+            .ok_or_else(|| anyhow!("appcast archive URL has no file name: {url}"))?;
+        Ok(Self {
+            prefix: format!("{parent}/"),
+            file_name: file_name.to_string(),
+        })
     }
-    writeln!(xml, "      <pubDate>{}</pubDate>", xml_escape(&pub_date)).unwrap();
-    writeln!(
-        xml,
-        "      <enclosure url=\"{}\" type=\"application/octet-stream\" sparkle:edSignature=\"{}\" length=\"{}\" />",
-        xml_escape(&release.url),
-        xml_escape(&release.signature),
-        release.length
-    )
-    .unwrap();
-    writeln!(xml, "    </item>").unwrap();
+}
+
+/// Moving a build from beta to Sparkle's default channel is ClipKitty policy,
+/// not feed generation. Remove only that marker from the existing parsed item;
+/// `generate_appcast` then owns the updated enclosure, signature, metadata,
+/// and serialization for the staged archive.
+fn promote_existing_appcast_item(path: &Utf8Path, build_number: &str) -> Result<()> {
+    let mut xml = fs::read_to_string(path.as_std_path())
+        .with_context(|| format!("reading existing appcast {path}"))?;
+    let channel_range = {
+        let document = roxmltree::Document::parse(&xml)
+            .with_context(|| format!("parsing existing appcast {path}"))?;
+        let item = document
+            .descendants()
+            .filter(|node| node.has_tag_name("item"))
+            .find(|item| {
+                item.children().any(|child| {
+                    child.is_element()
+                        && child.tag_name().name() == "version"
+                        && child.text() == Some(build_number)
+                })
+            });
+        let Some(item) = item else {
+            return Ok(());
+        };
+        let channel = item
+            .children()
+            .find(|child| child.is_element() && child.tag_name().name() == "channel");
+        match channel {
+            None => return Ok(()),
+            Some(channel) if channel.text() == Some("beta") => Some(channel.range()),
+            Some(channel) => {
+                return Err(anyhow!(
+                    "cannot promote build {build_number} from unknown Sparkle channel `{}`",
+                    channel.text().unwrap_or_default()
+                ));
+            }
+        }
+    };
+    if let Some(range) = channel_range {
+        xml.replace_range(range, "");
+        write_atomically(path, xml.as_bytes())?;
+    }
+    Ok(())
+}
+
+fn validate_generated_appcast(
+    path: &Utf8Path,
+    channel: ReleaseChannel,
+    release: &AppcastRelease,
+    build_number: &str,
+) -> Result<()> {
+    let xml = fs::read_to_string(path.as_std_path())
+        .with_context(|| format!("reading Sparkle-generated appcast {path}"))?;
+    let document = roxmltree::Document::parse(&xml)
+        .with_context(|| format!("parsing Sparkle-generated appcast {path}"))?;
+    let item = document
+        .descendants()
+        .filter(|node| node.has_tag_name("item"))
+        .find(|item| {
+            item.children().any(|child| {
+                child.is_element()
+                    && child.tag_name().name() == "version"
+                    && child.text() == Some(build_number)
+            })
+        })
+        .ok_or_else(|| {
+            anyhow!(
+                "generate_appcast did not emit build {build_number} for {}",
+                release.version
+            )
+        })?;
+
+    let child_text = |name: &str| {
+        item.children()
+            .find(|child| child.is_element() && child.tag_name().name() == name)
+            .and_then(|child| child.text())
+    };
+    if child_text("shortVersionString") != Some(release.version.as_str()) {
+        return Err(anyhow!(
+            "generate_appcast emitted a different short version for build {build_number}"
+        ));
+    }
+    match channel {
+        ReleaseChannel::Stable if child_text("channel").is_some() => {
+            return Err(anyhow!(
+                "generate_appcast unexpectedly assigned a channel to stable build {build_number}"
+            ));
+        }
+        ReleaseChannel::Beta if child_text("channel") != Some("beta") => {
+            return Err(anyhow!(
+                "generate_appcast did not assign beta channel to build {build_number}"
+            ));
+        }
+        ReleaseChannel::Stable | ReleaseChannel::Beta => {}
+    }
+
+    let enclosure = item
+        .children()
+        .find(|child| child.has_tag_name("enclosure"))
+        .ok_or_else(|| anyhow!("generated build {build_number} has no enclosure"))?;
+    if enclosure.attribute("url") != Some(release.url.as_str()) {
+        return Err(anyhow!(
+            "generate_appcast emitted the wrong download URL for build {build_number}"
+        ));
+    }
+    let signature = enclosure
+        .attributes()
+        .find(|attribute| attribute.name() == "edSignature")
+        .map(|attribute| attribute.value())
+        .filter(|signature| !signature.is_empty());
+    if signature.is_none() {
+        return Err(anyhow!(
+            "generated build {build_number} is missing Sparkle's EdDSA signature"
+        ));
+    }
     Ok(())
 }
 
@@ -2585,59 +2782,46 @@ fn appcast_build_number(release: &AppcastRelease) -> Result<String> {
         })
 }
 
-fn format_pub_date(value: Option<&str>) -> Result<String> {
-    if let Some(value) = value.filter(|value| !value.is_empty()) {
-        let normalized = value.replace('Z', "+00:00");
-        let dt = DateTime::parse_from_rfc3339(&normalized)
-            .with_context(|| format!("parsing RFC3339 timestamp `{value}`"))?;
-        Ok(dt
-            .with_timezone(&Utc)
-            .format("%a, %d %b %Y %H:%M:%S GMT")
-            .to_string())
-    } else {
-        Ok(Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string())
-    }
-}
-
-fn xml_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+fn write_atomically(path: &Utf8Path, bytes: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_str().is_empty())
+        .unwrap_or_else(|| Utf8Path::new("."));
+    fs::create_dir_all(parent.as_std_path()).with_context(|| format!("creating {parent}"))?;
+    let mut temporary = NamedTempFile::new_in(parent.as_std_path())
+        .with_context(|| format!("creating temporary file beside {path}"))?;
+    temporary
+        .write_all(bytes)
+        .with_context(|| format!("writing temporary file for {path}"))?;
+    temporary
+        .as_file()
+        .sync_all()
+        .with_context(|| format!("syncing temporary file for {path}"))?;
+    temporary
+        .persist(path.as_std_path())
+        .map_err(|error| error.error)
+        .with_context(|| format!("atomically replacing {path}"))?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         app_preview_state, appcast_build_number, collect_ids, is_preview_upload_in_progress_error,
-        looks_like_locale_dir, media_ids_with_attribute, render_appcast_xml,
-        screenshot_display_type_matches, AppPreviewState, AppcastRelease, AppcastState,
-        ReleaseTarget,
+        looks_like_locale_dir, media_ids_with_attribute, promote_existing_appcast_item,
+        resolve_generate_appcast_command, screenshot_display_type_matches, write_atomically,
+        AppPreviewState, AppcastDownloadLocation, AppcastRelease, AppcastState, ReleaseTarget,
     };
+    use camino::Utf8PathBuf;
     use serde_json::json;
+    use tempfile::tempdir;
 
     fn appcast_release(version: &str, build_number: Option<&str>) -> AppcastRelease {
         AppcastRelease {
             version: version.to_string(),
             build_number: build_number.map(ToString::to_string),
             url: "https://example.com/ClipKitty.dmg".to_string(),
-            signature: "signature".to_string(),
-            length: 1234,
-            published_at: "2026-06-06T00:00:00Z".to_string(),
         }
-    }
-
-    #[test]
-    fn appcast_uses_build_number_for_sparkle_version() {
-        let xml = render_appcast_xml(&AppcastState {
-            beta: None,
-            stable: Some(appcast_release("1.13.1342", Some("1342"))),
-        })
-        .expect("render appcast");
-
-        assert!(xml.contains("<sparkle:version>1342</sparkle:version>"));
-        assert!(xml.contains("<sparkle:shortVersionString>1.13.1342</sparkle:shortVersionString>"));
     }
 
     #[test]
@@ -2645,6 +2829,99 @@ mod tests {
         let release = appcast_release("1.12.2317", None);
 
         assert_eq!(appcast_build_number(&release).unwrap(), "2317");
+    }
+
+    #[test]
+    fn legacy_signed_state_remains_readable() {
+        let state: AppcastState = serde_json::from_value(json!({
+            "stable": {
+                "version": "1.12.2317",
+                "url": "https://example.com/ClipKitty.dmg",
+                "signature": "legacy-signature",
+                "length": 1234,
+                "published_at": "2026-06-06T00:00:00Z"
+            }
+        }))
+        .expect("deserialize legacy state");
+
+        assert_eq!(
+            appcast_build_number(state.stable.as_ref().unwrap()).unwrap(),
+            "2317"
+        );
+    }
+
+    #[test]
+    fn archive_url_is_split_without_reconstructing_it() {
+        let location = AppcastDownloadLocation::parse(
+            "https://github.com/jul-sh/clipkitty/releases/download/v1/ClipKitty.dmg",
+        )
+        .expect("parse download URL");
+
+        assert_eq!(
+            location.prefix,
+            "https://github.com/jul-sh/clipkitty/releases/download/v1/"
+        );
+        assert_eq!(location.file_name, "ClipKitty.dmg");
+        assert!(AppcastDownloadLocation::parse("https://example.com/update.dmg?token=x").is_err());
+    }
+
+    #[test]
+    fn appcast_generator_prefers_a_path_provided_tool() {
+        let missing_pinned_path = Utf8PathBuf::from("/definitely/missing/generate_appcast");
+
+        let resolved = resolve_generate_appcast_command(
+            |program| program == "generate_appcast",
+            &missing_pinned_path,
+        );
+
+        assert_eq!(resolved, Some(Utf8PathBuf::from("generate_appcast")));
+    }
+
+    #[test]
+    fn appcast_generator_falls_back_to_the_pinned_installation() {
+        let directory = tempdir().unwrap();
+        let pinned_path =
+            Utf8PathBuf::from_path_buf(directory.path().join("generate_appcast")).unwrap();
+        std::fs::write(pinned_path.as_std_path(), b"test generator").unwrap();
+
+        let resolved = resolve_generate_appcast_command(|_| false, &pinned_path);
+
+        assert_eq!(resolved, Some(pinned_path));
+    }
+
+    #[test]
+    fn appcast_generator_reports_missing_when_neither_source_exists() {
+        let missing_pinned_path = Utf8PathBuf::from("/definitely/missing/generate_appcast");
+
+        let resolved = resolve_generate_appcast_command(|_| false, &missing_pinned_path);
+
+        assert_eq!(resolved, None);
+    }
+
+    #[test]
+    fn promotion_removes_only_the_matching_beta_channel_marker() {
+        let directory = tempdir().unwrap();
+        let path = Utf8PathBuf::from_path_buf(directory.path().join("appcast.xml")).unwrap();
+        let feed = r#"<?xml version="1.0"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <item><sparkle:version>42</sparkle:version><sparkle:channel>beta</sparkle:channel></item>
+    <item><sparkle:version>43</sparkle:version><sparkle:channel>beta</sparkle:channel></item>
+  </channel>
+</rss>"#;
+        write_atomically(&path, feed.as_bytes()).unwrap();
+
+        promote_existing_appcast_item(&path, "42").unwrap();
+        let promoted = std::fs::read_to_string(path).unwrap();
+
+        assert_eq!(
+            promoted
+                .matches("<sparkle:channel>beta</sparkle:channel>")
+                .count(),
+            1
+        );
+        assert!(promoted.contains("<sparkle:version>42</sparkle:version>"));
+        assert!(promoted.contains("<sparkle:version>43</sparkle:version>"));
     }
 
     #[test]
