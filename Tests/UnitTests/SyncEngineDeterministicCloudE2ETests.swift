@@ -464,12 +464,14 @@ final class SyncEngineDeterministicCloudE2ETests: XCTestCase {
 
         sourceStore.setSyncDeviceId(deviceId: "snapshot-source")
         let itemId = try sourceStore.saveFiles(
-            paths: ["/tmp/resync-document.txt"],
-            filenames: ["resync-document.txt"],
-            fileSizes: [UInt64(bookmark.count)],
-            utis: ["public.plain-text"],
-            bookmarkDataList: [bookmark],
-            previewSnapshots: [.unavailable(reason: .notCaptured)],
+            files: [NewFileInput(
+                path: "/tmp/resync-document.txt",
+                filename: "resync-document.txt",
+                fileSize: UInt64(bookmark.count),
+                uti: "public.plain-text",
+                bookmarkData: bookmark,
+                preview: .unavailable(reason: .notCaptured)
+            )],
             sourceApp: nil,
             sourceAppBundleId: nil
         )
