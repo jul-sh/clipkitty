@@ -49,6 +49,123 @@ final class BrowserEditingTests: XCTestCase {
         XCTAssertEqual(viewModel.editSession, .inactive)
     }
 
+    func testSaveAndPastePersistsBeforeSelectingIncludingEmptyDraft() async {
+        for draft in ["edited text", ""] {
+            let client = MockBrowserStoreClient()
+            var selectedContent: ClipboardContent?
+            let viewModel = await makeLoadedTextViewModel(
+                client: client,
+                onSelect: { _, content in selectedContent = content }
+            )
+            editText(draft, in: viewModel)
+
+            viewModel.confirmSelection()
+
+            XCTAssertNil(selectedContent, "Save & Paste must wait for persistence")
+            guard case .saving = viewModel.mutationState else {
+                XCTFail("Expected the edit save to be in flight")
+                continue
+            }
+            let didPaste = await settle { selectedContent != nil }
+            XCTAssertTrue(didPaste)
+            XCTAssertEqual(client.updatedTexts.first?.text, draft)
+            XCTAssertEqual(selectedContent, .text(value: draft))
+        }
+    }
+
+    func testSaveAndPasteRejectedByConcurrentMutationPreservesDraft() async {
+        let client = MockBrowserStoreClient()
+        var selectedContent: ClipboardContent?
+        let viewModel = await makeLoadedTextViewModel(
+            client: client,
+            onSelect: { _, content in selectedContent = content }
+        )
+        editText("edited text", in: viewModel)
+        viewModel.addTag(.bookmark, toItem: "1")
+
+        viewModel.confirmSelection()
+
+        XCTAssertNil(selectedContent)
+        XCTAssertTrue(client.updatedTexts.isEmpty)
+        XCTAssertEqual(viewModel.editSession, .dirty(itemId: "1", draft: "edited text"))
+    }
+
+    func testSaveAndPasteFailureDoesNotPasteOrDiscardDraft() async {
+        let client = MockBrowserStoreClient()
+        client.updateTextResult = .failure(.databaseOperationFailed(
+            operation: "update text",
+            underlying: NSError(domain: "BrowserEditingTests", code: 1)
+        ))
+        var didSelect = false
+        let viewModel = await makeLoadedTextViewModel(
+            client: client,
+            onSelect: { _, _ in didSelect = true }
+        )
+        editText("edited text", in: viewModel)
+
+        viewModel.confirmSelection()
+        let didFail = await settle {
+            if case .failed = viewModel.mutationState { return true }
+            return false
+        }
+
+        XCTAssertTrue(didFail)
+        XCTAssertFalse(didSelect)
+        XCTAssertEqual(viewModel.editSession, .dirty(itemId: "1", draft: "edited text"))
+    }
+
+    func testNewerDraftCancelsPendingSaveAndPasteFollowUp() async {
+        let client = MockBrowserStoreClient()
+        var didSelect = false
+        let viewModel = await makeLoadedTextViewModel(
+            client: client,
+            onSelect: { _, _ in didSelect = true }
+        )
+        editText("first draft", in: viewModel)
+        viewModel.confirmSelection()
+
+        viewModel.onTextEdit(
+            "newer draft",
+            for: "1",
+            originalContent: .text(value: "first draft")
+        )
+        await flushMainActor()
+
+        XCTAssertFalse(didSelect)
+        XCTAssertEqual(viewModel.editSession, .dirty(itemId: "1", draft: "newer draft"))
+        guard case .idle = viewModel.mutationState else {
+            return XCTFail("Expected the older save to settle without consuming the newer draft")
+        }
+    }
+
+    func testDisplayResetCancelsPendingSaveAndPasteCompletionButPersistsEdit() async {
+        let client = MockBrowserStoreClient()
+        var didSelect = false
+        let viewModel = await makeLoadedTextViewModel(
+            client: client,
+            onSelect: { _, _ in didSelect = true }
+        )
+        editText("edited text", in: viewModel)
+        viewModel.confirmSelection()
+        guard case .saving = viewModel.mutationState else {
+            return XCTFail("Expected Save & Paste persistence to be in flight")
+        }
+
+        // FloatingPanelController calls resetForDisplay after an explicit
+        // panel dismissal. Persistence must finish, but its now-stale action
+        // must not paste or dismiss a subsequently displayed session.
+        viewModel.handleDisplayReset(initialSearchQuery: "")
+        let didSettle = await settle {
+            if case .idle = viewModel.mutationState { return true }
+            return false
+        }
+
+        XCTAssertTrue(didSettle)
+        XCTAssertEqual(client.updatedTexts.first?.text, "edited text")
+        XCTAssertFalse(didSelect)
+        XCTAssertEqual(viewModel.editSession, .inactive)
+    }
+
     func testDiscardEditClearsPendingState() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
@@ -267,10 +384,11 @@ final class BrowserEditingTests: XCTestCase {
             totalCount: 2
         ))
 
+        var didCopyAnotherItem = false
         let viewModel = BrowserViewModel(
             client: client,
             onSelect: { _, _ in },
-            onCopyOnly: { _, _ in },
+            onCopyOnly: { _, _ in didCopyAnotherItem = true },
             onDismiss: {}
         )
 
@@ -294,6 +412,8 @@ final class BrowserEditingTests: XCTestCase {
             for: "2",
             originalContent: .text(value: "second")
         )
+        viewModel.copyOnlyItem(itemId: "2")
+        XCTAssertFalse(didCopyAnotherItem)
         XCTAssertEqual(viewModel.editSession, .suspendedDirty(itemId: "1", draft: "first edited"))
 
         viewModel.moveSelection(by: -1)
@@ -388,5 +508,34 @@ final class BrowserEditingTests: XCTestCase {
         viewModel.discardCurrentEdit()
 
         XCTAssertEqual(viewModel.editSession, .inactive)
+    }
+
+    private func makeLoadedTextViewModel(
+        client: MockBrowserStoreClient,
+        onSelect: @escaping (String, ClipboardContent) -> Void
+    ) async -> BrowserViewModel {
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "original text")],
+            firstItem: makeItem(id: "1", text: "original text"),
+            totalCount: 1
+        ))
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: onSelect,
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        return viewModel
+    }
+
+    private func editText(_ text: String, in viewModel: BrowserViewModel) {
+        viewModel.onTextEdit(
+            text,
+            for: "1",
+            originalContent: .text(value: "original text")
+        )
     }
 }

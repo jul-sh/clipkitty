@@ -439,9 +439,7 @@ public final class BrowserViewModel {
             applyPendingFilterSuggestion()
         case .results:
             guard let item = selectedItem else { return }
-            let content = effectiveContent(for: item)
-            commitCurrentEdit()
-            onSelect(item.itemMetadata.itemId, content)
+            performSelectedItemAction(item, handler: onSelect)
         }
     }
 
@@ -451,13 +449,33 @@ public final class BrowserViewModel {
 
     public func copyOnlySelection() {
         guard let item = selectedItem else { return }
-        let content = effectiveContent(for: item)
-        commitCurrentEdit()
-        onCopyOnly(item.itemMetadata.itemId, content)
+        performSelectedItemAction(item, handler: onCopyOnly)
     }
 
     public func copyOnlyItem(itemId: String) {
         performItemAction(itemId: itemId, handler: onCopyOnly)
+    }
+
+    /// Routes actions on the selected row through persistence when that row
+    /// owns an unsaved draft. The callback is then part of the save
+    /// transaction and cannot paste or dismiss the browser until persistence
+    /// succeeds. A draft owned by another row blocks the action rather than
+    /// being silently discarded by the resulting display reset.
+    private func performSelectedItemAction(
+        _ item: ClipboardItem,
+        handler: @escaping (String, ClipboardContent) -> Void
+    ) {
+        let itemId = item.itemMetadata.itemId
+        switch editSession {
+        case let .dirty(dirtyItemId, draft) where dirtyItemId == itemId:
+            beginCurrentEditSave {
+                handler(itemId, .text(value: draft))
+            }
+        case .dirty, .suspendedDirty:
+            return
+        case .inactive, .focused:
+            handler(itemId, item.content)
+        }
     }
 
     public func loadMatchedExcerptsForItems(_ ids: [String]) {
@@ -705,11 +723,11 @@ public final class BrowserViewModel {
     }
 
     public func commitCurrentEdit() {
+        beginCurrentEditSave()
+    }
+
+    private func beginCurrentEditSave(onSuccess: @escaping () -> Void = {}) {
         guard case let .dirty(id, editedText) = editSession else { return }
-        guard !editedText.isEmpty else {
-            editSession = .inactive
-            return
-        }
 
         switch mutationState {
         case .idle, .failed:
@@ -782,7 +800,11 @@ public final class BrowserViewModel {
             guard let self else { return }
             let result = await self.client.updateTextItem(itemId: id, text: editedText)
             await MainActor.run {
-                self.finishTextSave(transactionID: transaction.id, result: result)
+                if self.finishTextSave(transactionID: transaction.id, result: result),
+                   transaction.queryGeneration == self.queryGeneration
+                {
+                    onSuccess()
+                }
             }
         }
     }
@@ -790,25 +812,26 @@ public final class BrowserViewModel {
     private func finishTextSave(
         transactionID: UUID,
         result: Result<Void, ClipboardError>
-    ) {
+    ) -> Bool {
         guard case let .saving(transaction) = mutationState,
               transaction.id == transactionID
-        else { return }
+        else { return false }
 
         switch result {
         case .success:
             mutationState = .idle
             switch editSession {
-            case let .dirty(itemId, draft)
-                where itemId == transaction.itemId && draft == transaction.draft:
+            case let .dirty(itemId, draft), let .suspendedDirty(itemId, draft):
+                guard itemId == transaction.itemId, draft == transaction.draft else {
+                    return false
+                }
                 editSession = .inactive
-            case let .suspendedDirty(itemId, draft)
-                where itemId == transaction.itemId && draft == transaction.draft:
-                editSession = .inactive
-            case .inactive, .focused, .dirty, .suspendedDirty:
+                return true
+            case .inactive, .focused:
                 // A different draft was authored while this save was in
-                // flight. It remains the current unsaved state.
-                break
+                // flight (or the edit was explicitly discarded). Keep the
+                // current user state and do not run a stale paste action.
+                return false
             }
 
         case let .failure(error):
@@ -848,6 +871,7 @@ public final class BrowserViewModel {
                     : .suspendedDirty(itemId: transaction.itemId, draft: transaction.draft)
             }
             mutationState = .failed(ActionFailure(message: error.localizedDescription))
+            return false
         }
     }
 
@@ -2211,12 +2235,19 @@ public final class BrowserViewModel {
         handler: @escaping (String, ClipboardContent) -> Void
     ) {
         if let selectedItem, selectedItem.itemMetadata.itemId == itemId {
-            handler(selectedItem.itemMetadata.itemId, selectedItem.content)
+            performSelectedItemAction(selectedItem, handler: handler)
             return
         }
 
+        switch editSession {
+        case .dirty, .suspendedDirty:
+            return
+        case .inactive, .focused:
+            break
+        }
+
         if let cachedItem = prefetchCache[itemId] {
-            handler(cachedItem.itemMetadata.itemId, cachedItem.content)
+            performSelectedItemAction(cachedItem, handler: handler)
             return
         }
 
@@ -2224,7 +2255,10 @@ public final class BrowserViewModel {
             guard let self else { return }
             guard let item = await self.client.fetchItem(id: itemId) else { return }
             await MainActor.run {
-                handler(item.itemMetadata.itemId, item.content)
+                // Re-check edit ownership after the fetch. A draft may have
+                // started while this item was loading, and that draft must
+                // not be discarded by a late callback.
+                self.performSelectedItemAction(item, handler: handler)
             }
         }
     }
