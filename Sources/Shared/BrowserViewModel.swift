@@ -67,6 +67,11 @@ public final class BrowserViewModel {
         }
     }
 
+    private enum TextSaveFollowUp {
+        case showSavedNotification
+        case performSelectionAction(action: @MainActor () -> Void)
+    }
+
     private struct PreviewRequest: Equatable {
         let token = UUID()
         let itemId: String
@@ -468,9 +473,9 @@ public final class BrowserViewModel {
         let itemId = item.itemMetadata.itemId
         switch editSession {
         case let .dirty(dirtyItemId, draft) where dirtyItemId == itemId:
-            beginCurrentEditSave {
+            beginCurrentEditSave(followUp: .performSelectionAction {
                 handler(itemId, .text(value: draft))
-            }
+            })
         case .dirty, .suspendedDirty:
             return
         case .inactive, .focused:
@@ -723,10 +728,10 @@ public final class BrowserViewModel {
     }
 
     public func commitCurrentEdit() {
-        beginCurrentEditSave()
+        beginCurrentEditSave(followUp: .showSavedNotification)
     }
 
-    private func beginCurrentEditSave(onSuccess: @escaping () -> Void = {}) {
+    private func beginCurrentEditSave(followUp: TextSaveFollowUp) {
         guard case let .dirty(id, editedText) = editSession else { return }
 
         switch mutationState {
@@ -800,10 +805,19 @@ public final class BrowserViewModel {
             guard let self else { return }
             let result = await self.client.updateTextItem(itemId: id, text: editedText)
             await MainActor.run {
-                if self.finishTextSave(transactionID: transaction.id, result: result),
-                   transaction.queryGeneration == self.queryGeneration
-                {
-                    onSuccess()
+                guard self.finishTextSave(transactionID: transaction.id, result: result) else {
+                    return
+                }
+
+                switch followUp {
+                case .showSavedNotification:
+                    self.showSnackbarNotification(.passive(
+                        message: String(localized: "Saved"),
+                        iconSystemName: "checkmark.circle.fill"
+                    ))
+                case let .performSelectionAction(action):
+                    guard transaction.queryGeneration == self.queryGeneration else { return }
+                    action()
                 }
             }
         }

@@ -49,6 +49,57 @@ final class BrowserEditingTests: XCTestCase {
         XCTAssertEqual(viewModel.editSession, .inactive)
     }
 
+    func testCommitEditShowsSavedNotificationAfterSearchRefresh() async {
+        let client = MockBrowserStoreClient()
+        var notification: NotificationRequest?
+        let viewModel = await makeLoadedTextViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            showSnackbarNotification: { notification = $0 }
+        )
+        editText("edited text", in: viewModel)
+
+        viewModel.commitCurrentEdit()
+        guard case .saving = viewModel.mutationState else {
+            return XCTFail("Expected persistence to be in flight")
+        }
+        viewModel.updateSearchText("")
+        XCTAssertEqual(viewModel.editSession, .dirty(itemId: "1", draft: "edited text"))
+
+        let didShowNotification = await settle { notification != nil }
+        XCTAssertTrue(didShowNotification)
+        guard case let .passive(message, iconSystemName)? = notification else {
+            return XCTFail("Expected a passive saved notification")
+        }
+        XCTAssertEqual(message, String(localized: "Saved"))
+        XCTAssertEqual(iconSystemName, "checkmark.circle.fill")
+    }
+
+    func testCommitEditFailureDoesNotShowSavedNotification() async {
+        let client = MockBrowserStoreClient()
+        client.updateTextResult = .failure(.databaseOperationFailed(
+            operation: "update text",
+            underlying: NSError(domain: "BrowserEditingTests", code: 1)
+        ))
+        var notification: NotificationRequest?
+        let viewModel = await makeLoadedTextViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            showSnackbarNotification: { notification = $0 }
+        )
+        editText("edited text", in: viewModel)
+
+        viewModel.commitCurrentEdit()
+
+        let didFail = await settle {
+            if case .failed = viewModel.mutationState { return true }
+            return false
+        }
+        XCTAssertTrue(didFail)
+        XCTAssertNil(notification)
+        XCTAssertEqual(viewModel.editSession, .dirty(itemId: "1", draft: "edited text"))
+    }
+
     func testSaveAndPastePersistsBeforeSelectingIncludingEmptyDraft() async {
         for draft in ["edited text", ""] {
             let client = MockBrowserStoreClient()
@@ -512,7 +563,8 @@ final class BrowserEditingTests: XCTestCase {
 
     private func makeLoadedTextViewModel(
         client: MockBrowserStoreClient,
-        onSelect: @escaping (String, ClipboardContent) -> Void
+        onSelect: @escaping (String, ClipboardContent) -> Void,
+        showSnackbarNotification: @escaping (NotificationRequest) -> Void = { _ in }
     ) async -> BrowserViewModel {
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
@@ -524,7 +576,8 @@ final class BrowserEditingTests: XCTestCase {
             client: client,
             onSelect: onSelect,
             onCopyOnly: { _, _ in },
-            onDismiss: {}
+            onDismiss: {},
+            showSnackbarNotification: showSnackbarNotification
         )
         viewModel.onAppear(initialSearchQuery: "")
         await flushMainActor()
