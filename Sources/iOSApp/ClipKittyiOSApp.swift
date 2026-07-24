@@ -236,7 +236,7 @@ final class AppState {
             let sourceApp = "Share Sheet"
 
             let result: Result<String, ClipboardError>
-            switch entry.item {
+            switch entry.payload {
             case let .text(text):
                 result = await container.repository.saveText(
                     text: text,
@@ -249,11 +249,10 @@ final class AppState {
                     sourceApp: sourceApp,
                     sourceAppBundleId: nil
                 )
-            case .image:
-                guard let imageData = entry.imageData else { continue }
+            case let .image(imageData, thumbnail):
                 result = await saveImage(
                     imageData: imageData,
-                    thumbnail: entry.thumbnailData,
+                    thumbnail: thumbnail,
                     sourceApp: sourceApp,
                     sourceAppBundleId: nil,
                     isAnimated: false
