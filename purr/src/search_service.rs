@@ -10,15 +10,6 @@ use crate::search_result_builder::{uses_short_query_path, SearchResultAssembler,
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-#[cfg(test)]
-use crate::interface::{ContentTypeFilter, ItemTag};
-
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(crate) mod test_support {
-    pub(crate) use crate::match_presentation::test_support::*;
-}
-
 pub(crate) struct SearchContext {
     pub(crate) db: Arc<Database>,
     pub(crate) indexer: Arc<Indexer>,
@@ -105,50 +96,6 @@ pub(crate) fn load_preview_payload(
     query: String,
 ) -> Result<Option<PreviewPayload>, ClipKittyError> {
     MatchPresentation::new(db, cache).load_preview_payload(item_id, query)
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) fn search_short_query_sync(
-    db: &Database,
-    cache: &HighlightAnalysisCache,
-    query: &str,
-    mode: ShortQueryMode,
-    token: &CancellationToken,
-    runtime: &tokio::runtime::Handle,
-    filter: Option<&ContentTypeFilter>,
-    tag: Option<ItemTag>,
-) -> Result<Vec<ItemMatch>, ClipKittyError> {
-    SearchResultAssembler::new(
-        db,
-        cache,
-        token,
-        runtime,
-        ListPresentationProfile::CompactRow,
-    )
-    .search_short_query(query, mode, filter, tag)
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) fn search_trigram_query_sync(
-    db: &Database,
-    indexer: &Indexer,
-    cache: &HighlightAnalysisCache,
-    query: &search::SearchQuery,
-    token: &CancellationToken,
-    runtime: &tokio::runtime::Handle,
-    filter: Option<&ContentTypeFilter>,
-    tag: Option<ItemTag>,
-) -> Result<Vec<ItemMatch>, ClipKittyError> {
-    SearchResultAssembler::new(
-        db,
-        cache,
-        token,
-        runtime,
-        ListPresentationProfile::CompactRow,
-    )
-    .search_trigram_query(indexer, query, filter, tag)
 }
 
 fn execute_search_sync(

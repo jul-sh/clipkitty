@@ -304,7 +304,21 @@ impl LinkMetadataState {
     }
 }
 
-/// A single file entry within a file clipboard item.
+/// A file supplied by a caller when creating a file clipboard item.
+///
+/// Keeping each file's metadata together prevents the FFI boundary from
+/// representing mismatched parallel arrays.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct NewFileInput {
+    pub path: String,
+    pub filename: String,
+    pub file_size: u64,
+    pub uti: String,
+    pub bookmark_data: Vec<u8>,
+    pub preview: FilePreviewSnapshot,
+}
+
+/// A stored file entry within a file clipboard item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum FilePreviewUnavailableReason {
     NotCaptured,
@@ -897,30 +911,10 @@ pub trait ClipboardStoreApi: Send + Sync {
         is_animated: bool,
     ) -> Result<String, ClipKittyError>;
 
-    /// Save a file item. Returns new item's stable ID, or empty string if duplicate.
-    #[allow(clippy::too_many_arguments)]
-    fn save_file(
-        &self,
-        path: String,
-        filename: String,
-        file_size: u64,
-        uti: String,
-        bookmark_data: Vec<u8>,
-        preview: FilePreviewSnapshot,
-        source_app: Option<String>,
-        source_app_bundle_id: Option<String>,
-    ) -> Result<String, ClipKittyError>;
-
     /// Save multiple file items as a single grouped entry. Returns new item's stable ID, or empty string if duplicate.
-    #[allow(clippy::too_many_arguments)]
     fn save_files(
         &self,
-        paths: Vec<String>,
-        filenames: Vec<String>,
-        file_sizes: Vec<u64>,
-        utis: Vec<String>,
-        bookmark_data_list: Vec<Vec<u8>>,
-        preview_snapshots: Vec<FilePreviewSnapshot>,
+        files: Vec<NewFileInput>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Result<String, ClipKittyError>;

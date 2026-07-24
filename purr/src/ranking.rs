@@ -163,15 +163,6 @@ impl<'a> PreparedDocument<'a> {
         }
     }
 
-    fn for_each_fast_token(&self, mut visit: impl FnMut(usize, &'a str) -> bool) {
-        match self {
-            Self::LargeFast(doc) => {
-                for_each_prepared_token(doc.content, &doc.token_spans, &mut visit)
-            }
-            Self::Small(_) => {}
-        }
-    }
-
     fn starts_with_case_insensitive(&self, needle_folded: &str) -> bool {
         match self {
             Self::Small(doc) => doc.content_folded.starts_with(needle_folded),
@@ -193,10 +184,6 @@ impl<'a> PreparedDocument<'a> {
             },
         }
     }
-
-    fn is_fast_mode(&self) -> bool {
-        matches!(self, Self::LargeFast(_))
-    }
 }
 
 impl<'a> SmallPreparedDocument<'a> {
@@ -206,6 +193,12 @@ impl<'a> SmallPreparedDocument<'a> {
 
     fn folded_token(&self, index: usize) -> &str {
         self.folded_tokens[index].as_str()
+    }
+}
+
+impl<'a> LargeFastPreparedDocument<'a> {
+    fn for_each_token(&self, mut visit: impl FnMut(usize, &'a str) -> bool) {
+        for_each_prepared_token(self.content, &self.token_spans, &mut visit)
     }
 }
 
@@ -871,7 +864,7 @@ fn plan_document_quality_signals(
     let prefix_preference_score =
         compute_prefix_preference_score_case_insensitive(document, prefix_preference);
 
-    if document.is_fast_mode() {
+    if let PreparedDocument::LargeFast(_) = document {
         return DocumentQualityPlan::Fast(compute_fast_quality_signals(
             document,
             query,
@@ -1002,8 +995,7 @@ fn build_match_query_plan(
     document: &PreparedDocument<'_>,
     query: &PreparedQuery,
 ) -> MatchQueryPlan {
-    if document.is_fast_mode() && query.tokens.len() == 1 {
-        let token = &query.tokens[0];
+    if let (PreparedDocument::LargeFast(document), [token]) = (document, query.tokens.as_slice()) {
         let (word_match, raw_candidate_count) = match_single_query_word_fast_with_count(
             document,
             &token.raw,
@@ -1126,20 +1118,16 @@ fn base_match_weight(qw: &str) -> u16 {
 }
 
 fn match_single_query_word_fast_with_count(
-    document: &PreparedDocument<'_>,
+    document: &LargeFastPreparedDocument<'_>,
     query_word: &str,
     query_word_folded: &str,
     prefix_match: PrefixMatch,
 ) -> (WordMatch, usize) {
-    if !document.is_fast_mode() {
-        return (WordMatch::unmatched(query_word), 0);
-    }
-
     let mut raw_candidate_count = 0usize;
     let mut best_exact = None;
     let mut best_prefix = None;
 
-    document.for_each_fast_token(|dpos, doc_token| {
+    document.for_each_token(|dpos, doc_token| {
         let Some(candidate) = classify_fast_match_candidate(
             query_word,
             query_word_folded,
@@ -1221,9 +1209,9 @@ fn collect_match_candidates_impl(
                 }
             })
             .collect(),
-        PreparedDocument::LargeFast(_) => {
+        PreparedDocument::LargeFast(document) => {
             let mut candidates = Vec::new();
-            document.for_each_fast_token(|dpos, doc_token| {
+            document.for_each_token(|dpos, doc_token| {
                 if let Some(candidate) = classify_fast_match_candidate(
                     query_word,
                     query_word_folded,
@@ -1966,7 +1954,7 @@ mod tests {
         let filler = "noise ".repeat((LARGE_DOC_THRESHOLD_BYTES / 6) + 32);
         let content = format!("{filler} errorlog {filler} error");
         let document = prepare_document_for_ranking(&content);
-        assert!(document.is_fast_mode());
+        assert!(matches!(document, PreparedDocument::LargeFast(_)));
 
         let query = PreparedQuery::new("error");
         let matches = match_query_words(&document, &query);
@@ -1980,8 +1968,14 @@ mod tests {
         let content_prefix = format!("error {filler}");
         let later_exact = format!("{filler}error");
 
-        assert!(prepare_document_for_ranking(&content_prefix).is_fast_mode());
-        assert!(prepare_document_for_ranking(&later_exact).is_fast_mode());
+        assert!(matches!(
+            prepare_document_for_ranking(&content_prefix),
+            PreparedDocument::LargeFast(_)
+        ));
+        assert!(matches!(
+            prepare_document_for_ranking(&later_exact),
+            PreparedDocument::LargeFast(_)
+        ));
 
         let prefix_score = score(&content_prefix, &["error"], false, None, now - 3600, now);
         let later_score = score(&later_exact, &["error"], false, None, now - 3600, now);
@@ -1997,7 +1991,7 @@ mod tests {
         let filler = "данные ".repeat((LARGE_DOC_THRESHOLD_BYTES / "данные ".len()) + 32);
         let content = format!("{filler} ошибка {filler}");
         let document = prepare_document_for_ranking(&content);
-        assert!(document.is_fast_mode());
+        assert!(matches!(document, PreparedDocument::LargeFast(_)));
 
         let query = PreparedQuery::new("ошибка ");
         let matches = match_query_words(&document, &query);
@@ -2009,7 +2003,7 @@ mod tests {
         let filler = "данные ".repeat((LARGE_DOC_THRESHOLD_BYTES / "данные ".len()) + 32);
         let content = format!("{filler} ошибках {filler}");
         let document = prepare_document_for_ranking(&content);
-        assert!(document.is_fast_mode());
+        assert!(matches!(document, PreparedDocument::LargeFast(_)));
 
         let query = PreparedQuery::new("ошиб");
         let matches = match_query_words(&document, &query);

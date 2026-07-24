@@ -97,6 +97,19 @@ pub(crate) struct SearchRowMetadata {
     pub(crate) row_metadata: RowMetadata,
 }
 
+pub(crate) fn hydrate_item_metadata_tags<'a>(
+    db: &Database,
+    metadata: impl IntoIterator<Item = &'a mut ItemMetadata>,
+) -> DatabaseResult<()> {
+    let metadata: Vec<_> = metadata.into_iter().collect();
+    let item_ids: Vec<_> = metadata.iter().map(|item| item.item_id.clone()).collect();
+    let tags_by_id = db.get_tags_for_item_ids(&item_ids)?;
+    for item in metadata {
+        item.tags = tags_by_id.get(&item.item_id).cloned().unwrap_or_default();
+    }
+    Ok(())
+}
+
 /// Parse timestamp string from database to DateTime<Utc>
 fn parse_db_timestamp(timestamp_str: &str) -> DateTime<Utc> {
     chrono::NaiveDateTime::parse_from_str(timestamp_str, "%Y-%m-%d %H:%M:%S%.f")
