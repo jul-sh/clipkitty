@@ -31,6 +31,7 @@ pub fn run(dry_run: bool, reporter: &Reporter) -> Result<()> {
 const PINNED_LOCKFILES: &[&str] = &["Cargo.lock", "flake.lock"];
 const STRAY_SWIFT_RESOLVED: &[&str] = &[
     "Package.resolved",
+    ".package.resolved",
     "Tuist/Package.resolved",
     "distribution/SparkleUpdater/Package.resolved",
 ];

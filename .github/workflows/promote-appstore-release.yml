@@ -6,27 +6,26 @@ on:
     # Poll the public App Store listing and mirror the live version into GitHub.
     - cron: "17 * * * *"
   workflow_dispatch:
-    inputs:
-      app_store_version:
-        description: "Optional App Store version override, e.g. 1.13.1299"
-        required: false
-        type: string
 
 permissions:
+  attestations: read
   contents: write
 
 concurrency:
-  group: promote-appstore-release
+  # One repository-wide publication lock covers immutable beta release reads,
+  # stable release creation, gh-pages, Sparkle, and Homebrew publication.
+  group: clipkitty-publication
+  queue: max
   cancel-in-progress: false
 
 jobs:
   promote:
-    runs-on: ubuntu-latest
+    # Sparkle's maintained generate_appcast utility is a macOS executable.
+    runs-on: macos-26
     env:
       APP_STORE_ID: "6759137247"
       APP_STORE_COUNTRY: us
       GH_TOKEN: ${{ github.token }}
-      OVERRIDE_VERSION: ${{ inputs.app_store_version }}
 
     steps:
       - name: Checkout
@@ -40,23 +39,65 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -n "$OVERRIDE_VERSION" ]; then
-            VERSION="$OVERRIDE_VERSION"
-            RELEASE_DATE="manual override"
-            STORE_URL="https://apps.apple.com/app/id${APP_STORE_ID}"
-          else
-            LOOKUP_JSON="$(curl -fsSL --retry 3 --retry-delay 5 \
-              "https://itunes.apple.com/lookup?id=${APP_STORE_ID}&country=${APP_STORE_COUNTRY}")"
+          LOOKUP_JSON="$(curl -fsSL --retry 3 --retry-delay 5 \
+            "https://itunes.apple.com/lookup?id=${APP_STORE_ID}&country=${APP_STORE_COUNTRY}")"
 
-            VERSION="$(python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["results"][0]["version"])' <<<"$LOOKUP_JSON")"
-            RELEASE_DATE="$(python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["results"][0].get("currentVersionReleaseDate", ""))' <<<"$LOOKUP_JSON")"
-            STORE_URL="$(python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["results"][0].get("trackViewUrl", ""))' <<<"$LOOKUP_JSON")"
-          fi
+          VERSION="$(python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["results"][0]["version"])' <<<"$LOOKUP_JSON")"
+          RELEASE_DATE="$(python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["results"][0].get("currentVersionReleaseDate") or "")' <<<"$LOOKUP_JSON")"
+          STORE_URL="$(python3 -c 'import json, sys; data = json.load(sys.stdin); print(data["results"][0].get("trackViewUrl") or "")' <<<"$LOOKUP_JSON")"
 
           if ! [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
             echo "::error::Unexpected App Store version: $VERSION"
             exit 1
           fi
+
+          if [ -z "$RELEASE_DATE" ]; then
+            echo "::error::App Store lookup returned no release date."
+            exit 1
+          fi
+          if [ -z "$STORE_URL" ]; then
+            STORE_URL="https://apps.apple.com/app/id${APP_STORE_ID}"
+          fi
+          python3 - "$RELEASE_DATE" "$STORE_URL" <<'PY'
+          import datetime
+          import re
+          import sys
+          from urllib.parse import urlparse
+
+          release_date, store_url = sys.argv[1:]
+          for label, value, limit in (
+              ("release date", release_date, 128),
+              ("App Store URL", store_url, 2048),
+          ):
+              if len(value) > limit or any(ord(character) < 32 for character in value):
+                  raise SystemExit(f"unsafe {label} returned by App Store lookup")
+          try:
+              parsed_date = datetime.datetime.fromisoformat(
+                  release_date.replace("Z", "+00:00")
+              )
+          except ValueError as error:
+              raise SystemExit(f"unexpected App Store release date: {release_date}") from error
+          if parsed_date.tzinfo is None:
+              raise SystemExit("App Store release date must include a timezone")
+
+          parsed = urlparse(store_url)
+          if (
+              parsed.scheme != "https"
+              or parsed.hostname != "apps.apple.com"
+              or parsed.username is not None
+              or parsed.password is not None
+              or parsed.port not in (None, 443)
+              or parsed.fragment
+              or any(character.isspace() for character in store_url)
+              or not parsed.path.rstrip("/").endswith("/id6759137247")
+              or re.fullmatch(
+                  r"https://apps\.apple\.com/[A-Za-z0-9._~/%+-]+"
+                  r"(?:\?[A-Za-z0-9._~%&=+-]*)?",
+                  store_url,
+              ) is None
+          ):
+              raise SystemExit(f"unexpected App Store URL: {store_url}")
+          PY
 
           echo "Live App Store version: $VERSION"
           echo "App Store release date: $RELEASE_DATE"
@@ -65,38 +106,382 @@ jobs:
           echo "release_date=$RELEASE_DATE" >> "$GITHUB_OUTPUT"
           echo "store_url=$STORE_URL" >> "$GITHUB_OUTPUT"
 
-      - name: Promote matching GitHub release
+      - name: Reject stable version regressions
         shell: bash
+        env:
+          VERSION: ${{ steps.app-store.outputs.version }}
         run: |
           set -euo pipefail
 
-          VERSION="${{ steps.app-store.outputs.version }}"
+          BUILD_NUMBER="${VERSION##*.}"
+          REPO="$GITHUB_REPOSITORY"
+          STATE_FILE="$(mktemp)"
+          APPCAST_FILE="$(mktemp)"
+          cleanup() {
+            rm -f "$STATE_FILE" "$APPCAST_FILE"
+          }
+          trap cleanup EXIT
+
+          compare_versions() {
+            python3 - "$1" "$2" <<'PY'
+          import sys
+
+          def numeric_version(value):
+              return tuple(int(component) for component in value.split("."))
+
+          left, right = map(numeric_version, sys.argv[1:])
+          width = max(len(left), len(right))
+          left += (0,) * (width - len(left))
+          right += (0,) * (width - len(right))
+          print((left > right) - (left < right))
+          PY
+          }
+
+          # This repository already has stable releases. A 404, authentication
+          # failure, or transient API error is unsafe to treat as "no history."
+          LATEST_STABLE_TAG="$(gh api "repos/${REPO}/releases/latest" --jq .tag_name)"
+          if ! [[ "$LATEST_STABLE_TAG" =~ ^v[0-9]+(\.[0-9]+){1,3}$ ]]; then
+            echo "::error::Latest GitHub stable release has an unexpected tag: ${LATEST_STABLE_TAG}"
+            exit 1
+          fi
+          LATEST_STABLE_VERSION="${LATEST_STABLE_TAG#v}"
+          if [ "$(compare_versions "$VERSION" "$LATEST_STABLE_VERSION")" -lt 0 ]; then
+            echo "::error::Refusing to regress GitHub latest from ${LATEST_STABLE_VERSION} to ${VERSION}."
+            exit 1
+          fi
+
+          git fetch origin gh-pages
+          git show origin/gh-pages:appcast-state.json > "$STATE_FILE"
+          git show origin/gh-pages:appcast.xml > "$APPCAST_FILE"
+          python3 - "$STATE_FILE" "$APPCAST_FILE" "$VERSION" "$REPO" <<'PY'
+          import json
+          import re
+          import sys
+          import xml.etree.ElementTree as ET
+
+          state_path, appcast_path, candidate_version, repository = sys.argv[1:]
+          version_pattern = re.compile(r"^[0-9]+(?:\.[0-9]+){1,3}$")
+          candidate_build = int(candidate_version.rsplit(".", 1)[1])
+
+          with open(state_path, encoding="utf-8") as handle:
+              state = json.load(handle)
+          if not isinstance(state, dict) or "beta" not in state or "stable" not in state:
+              raise SystemExit("published appcast state must contain beta and stable fields")
+
+          def parse_release(channel):
+              release = state[channel]
+              if release is None:
+                  return None
+              if not isinstance(release, dict):
+                  raise SystemExit(f"published {channel} appcast state is not an object")
+              version = release.get("version")
+              build = release.get("build_number")
+              url = release.get("url")
+              if not isinstance(version, str) or not version_pattern.fullmatch(version):
+                  raise SystemExit(f"published {channel} version is malformed")
+              if not isinstance(build, str) or not build.isascii() or not build.isdecimal():
+                  raise SystemExit(f"published {channel} build number is malformed")
+              if int(version.rsplit(".", 1)[1]) != int(build):
+                  raise SystemExit(f"published {channel} version/build identity is inconsistent")
+              suffix = "-beta" if channel == "beta" else ""
+              expected_url = (
+                  f"https://github.com/{repository}/releases/download/"
+                  f"v{version}{suffix}/ClipKitty.dmg"
+              )
+              if url != expected_url:
+                  raise SystemExit(f"published {channel} URL is not canonical")
+              return version, int(build), url
+
+          beta = parse_release("beta")
+          stable = parse_release("stable")
+          if stable is None:
+              raise SystemExit("published appcast state has no stable release")
+          if beta is not None and beta[1] <= stable[1]:
+              raise SystemExit("published beta build must be newer than the stable build")
+
+          expected_stable_url = (
+              f"https://github.com/{repository}/releases/download/"
+              f"v{candidate_version}/ClipKitty.dmg"
+          )
+          if candidate_build < stable[1]:
+              raise SystemExit(
+                  f"refusing to regress stable appcast build {stable[1]} to {candidate_build}"
+              )
+          if candidate_build == stable[1]:
+              if stable != (candidate_version, candidate_build, expected_stable_url):
+                  raise SystemExit(
+                      f"stable build {candidate_build} is already bound to another release"
+                  )
+              raise SystemExit(0)
+
+          # A new stable build must already be present in the published feed as
+          # the exact beta item. This prevents promotion from interleaving in
+          # the gap between beta release creation and beta appcast publication.
+          root = ET.parse(appcast_path).getroot()
+          def local_name(element):
+              return element.tag.rsplit("}", 1)[-1]
+
+          matching_items = []
+          for item in (element for element in root.iter() if local_name(element) == "item"):
+              versions = [
+                  child.text for child in item
+                  if local_name(child) == "version"
+              ]
+              if versions == [str(candidate_build)]:
+                  matching_items.append(item)
+          if len(matching_items) != 1:
+              raise SystemExit(
+                  f"published appcast has {len(matching_items)} items for beta build {candidate_build}"
+              )
+          item = matching_items[0]
+          child_text = {
+              local_name(child): child.text
+              for child in item
+              if local_name(child) != "enclosure"
+          }
+          if child_text.get("shortVersionString") != candidate_version:
+              raise SystemExit("published beta appcast has the wrong short version")
+          if child_text.get("channel") != "beta":
+              raise SystemExit("candidate appcast item is not on the beta channel")
+          enclosures = [child for child in item if local_name(child) == "enclosure"]
+          expected_beta_url = (
+              f"https://github.com/{repository}/releases/download/"
+              f"v{candidate_version}-beta/ClipKitty.dmg"
+          )
+          if len(enclosures) != 1 or enclosures[0].get("url") != expected_beta_url:
+              raise SystemExit("published beta appcast has the wrong enclosure URL")
+          PY
+
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
+
+      - name: Install release publishing tools
+        run: |
+          nix profile install --no-update-lock-file --inputs-from . keytap#default
+          make install-sparkle-cli
+
+      - name: Validate publication credentials
+        env:
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          keytap decrypt clipkitty < secrets/SPARKLE_EDDSA_KEY.age >/dev/null
+          keytap decrypt clipkitty < secrets/HOMEBREW_TAP_TOKEN.age >/dev/null
+
+      - name: Validate Sparkle signing identity
+        shell: bash
+        env:
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          VERSION: ${{ steps.app-store.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          VERIFY_DIR="$(mktemp -d)"
+          APPCAST_FILE="$(mktemp)"
+          cleanup() {
+            rm -rf "$VERIFY_DIR"
+            rm -f "$APPCAST_FILE"
+          }
+          trap cleanup EXIT
+
+          BETA_TAG="v${VERSION}-beta"
+          BUILD_NUMBER="${VERSION##*.}"
+          gh release download "$BETA_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir "$VERIFY_DIR" \
+            --pattern "ClipKitty.dmg"
+          BETA_ARCHIVE="$VERIFY_DIR/ClipKitty.dmg"
+          if [ ! -s "$BETA_ARCHIVE" ]; then
+            echo "::error::Cannot validate Sparkle key without ${BETA_TAG}/ClipKitty.dmg."
+            exit 1
+          fi
+
+          git show origin/gh-pages:appcast.xml > "$APPCAST_FILE"
+          EXPECTED_SIGNATURE="$(python3 - "$APPCAST_FILE" "$BUILD_NUMBER" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          appcast_path, build_number = sys.argv[1:]
+          root = ET.parse(appcast_path).getroot()
+          def local_name(name):
+              return name.rsplit("}", 1)[-1]
+
+          matching = []
+          for item in (element for element in root.iter() if local_name(element.tag) == "item"):
+              versions = [
+                  child.text for child in item
+                  if local_name(child.tag) == "version"
+              ]
+              if versions == [build_number]:
+                  matching.append(item)
+          if len(matching) != 1:
+              raise SystemExit(
+                  f"published appcast has {len(matching)} items for build {build_number}"
+              )
+          enclosures = [
+              child for child in matching[0]
+              if local_name(child.tag) == "enclosure"
+          ]
+          if len(enclosures) != 1:
+              raise SystemExit(f"published build {build_number} has no unique enclosure")
+          signatures = [
+              value for name, value in enclosures[0].attrib.items()
+              if local_name(name) == "edSignature"
+          ]
+          if len(signatures) != 1 or not signatures[0]:
+              raise SystemExit(f"published build {build_number} has no EdDSA signature")
+          print(signatures[0])
+          PY
+          )"
+          GENERATED_SIGNATURE="$(
+            keytap decrypt clipkitty < secrets/SPARKLE_EDDSA_KEY.age \
+              | /tmp/sparkle/bin/sign_update --ed-key-file - -p "$BETA_ARCHIVE"
+          )"
+          if [ -z "$GENERATED_SIGNATURE" ] || [ "$GENERATED_SIGNATURE" != "$EXPECTED_SIGNATURE" ]; then
+            echo "::error::Sparkle private key does not reproduce the published signature for build ${BUILD_NUMBER}."
+            exit 1
+          fi
+
+      - name: Reject Homebrew version regressions
+        shell: bash
+        env:
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          VERSION: ${{ steps.app-store.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          TAP_DIR="$(mktemp -d)"
+          trap 'rm -rf "$TAP_DIR"' EXIT
+          HOMEBREW_TAP_TOKEN="$(keytap decrypt clipkitty < secrets/HOMEBREW_TAP_TOKEN.age)"
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "::error::Homebrew tap token decrypted to an empty value."
+            exit 1
+          fi
+          echo "::add-mask::$HOMEBREW_TAP_TOKEN"
+          git clone --depth 1 \
+            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/jul-sh/homebrew-clipkitty.git" \
+            "$TAP_DIR"
+          git -C "$TAP_DIR" config user.name "github-actions[bot]"
+          git -C "$TAP_DIR" config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C "$TAP_DIR" commit --allow-empty -m "Verify Homebrew write access"
+          git -C "$TAP_DIR" push --dry-run origin HEAD:main
+
+          CASK_PATH="$TAP_DIR/Casks/clipkitty.rb"
+          if [ -f "$CASK_PATH" ]; then
+            CURRENT_VERSION="$(awk -F '"' '/^[[:space:]]*version "/ { print $2; exit }' "$CASK_PATH")"
+            if [ -z "$CURRENT_VERSION" ] || ! [[ "$CURRENT_VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+              echo "::error::Existing Homebrew cask has an invalid version: ${CURRENT_VERSION:-missing}."
+              exit 1
+            fi
+            python3 - "$VERSION" "$CURRENT_VERSION" <<'PY'
+          import sys
+
+          def numeric_version(value):
+              return tuple(int(component) for component in value.split("."))
+
+          candidate, current = map(numeric_version, sys.argv[1:])
+          width = max(len(candidate), len(current))
+          candidate += (0,) * (width - len(candidate))
+          current += (0,) * (width - len(current))
+          if candidate < current:
+              raise SystemExit(
+                  f"refusing to regress Homebrew from {sys.argv[2]} to {sys.argv[1]}"
+              )
+          PY
+          fi
+
+      - name: Promote matching GitHub release
+        shell: bash
+        env:
+          VERSION: ${{ steps.app-store.outputs.version }}
+          APP_STORE_RELEASE_DATE: ${{ steps.app-store.outputs.release_date }}
+          APP_STORE_URL: ${{ steps.app-store.outputs.store_url }}
+        run: |
+          set -euo pipefail
+
           STABLE_TAG="v${VERSION}"
           BETA_TAG="v${VERSION}-beta"
-          REPO="${GITHUB_REPOSITORY}"
+          REPO="$GITHUB_REPOSITORY"
           REQUIRED_ASSETS=("ClipKitty.dmg" "ClipKitty-Hardened.zip")
+          ARCHIVES="$(mktemp -d)"
+          BODY_FILE="$(mktemp)"
+          mkdir -p "$ARCHIVES/beta" "$ARCHIVES/stable"
+          cleanup() {
+            rm -rf "$ARCHIVES"
+            rm -f "$BODY_FILE"
+          }
+          trap cleanup EXIT
 
           echo "Ensuring stable GitHub release ${STABLE_TAG} matches App Store ${VERSION}..."
 
-          LATEST_STABLE_TAG="$(gh api "repos/${REPO}/releases/latest" --jq .tag_name 2>/dev/null || true)"
-          if gh release view "$STABLE_TAG" --repo "$REPO" >/dev/null 2>&1; then
-            IS_DRAFT="$(gh release view "$STABLE_TAG" --repo "$REPO" --json isDraft --jq .isDraft)"
-            IS_PRERELEASE="$(gh release view "$STABLE_TAG" --repo "$REPO" --json isPrerelease --jq .isPrerelease)"
-
-            if [ "$IS_DRAFT" = "false" ] && [ "$IS_PRERELEASE" = "false" ] && [ "$LATEST_STABLE_TAG" = "$STABLE_TAG" ]; then
-              echo "Stable release ${STABLE_TAG} already exists and is the latest GitHub release."
-              exit 0
+          resolve_tag_commit() {
+            local tag="$1"
+            local object_type object_sha depth
+            object_type="$(gh api "repos/${REPO}/git/ref/tags/${tag}" --jq .object.type)"
+            object_sha="$(gh api "repos/${REPO}/git/ref/tags/${tag}" --jq .object.sha)"
+            depth=0
+            while [ "$object_type" = "tag" ]; do
+              depth=$((depth + 1))
+              if [ "$depth" -gt 8 ]; then
+                echo "::error::Tag ${tag} has an unexpectedly deep annotated-tag chain." >&2
+                return 1
+              fi
+              object_type="$(gh api "repos/${REPO}/git/tags/${object_sha}" --jq .object.type)"
+              object_sha="$(gh api "repos/${REPO}/git/tags/${object_sha}" --jq .object.sha)"
+            done
+            if [ "$object_type" != "commit" ]; then
+              echo "::error::Tag ${tag} resolves to ${object_type}, not a commit." >&2
+              return 1
             fi
+            printf '%s\n' "$object_sha"
+          }
 
-            echo "Stable release ${STABLE_TAG} exists; publishing it as the latest stable release."
-            gh release edit "$STABLE_TAG" \
+          verify_asset_names() {
+            local tag="$1"
+            local asset asset_count asset_names
+            asset_count="$(gh release view "$tag" --repo "$REPO" --json assets --jq '.assets | length')"
+            asset_names="$(gh release view "$tag" --repo "$REPO" --json assets --jq '.assets[].name')"
+            if [ "$asset_count" -ne "${#REQUIRED_ASSETS[@]}" ]; then
+              echo "::error::${tag} must contain exactly ${#REQUIRED_ASSETS[@]} assets; found ${asset_count}."
+              return 1
+            fi
+            for asset in "${REQUIRED_ASSETS[@]}"; do
+              if ! grep -Fxq "$asset" <<<"$asset_names"; then
+                echo "::error::${tag} is missing required asset ${asset}."
+                return 1
+              fi
+            done
+          }
+
+          download_release_assets() {
+            local tag="$1"
+            local destination="$2"
+            local asset
+            verify_asset_names "$tag"
+            gh release download "$tag" \
               --repo "$REPO" \
-              --draft=false \
-              --prerelease=false \
-              --latest \
-              --title "ClipKitty v${VERSION}"
-            exit 0
-          fi
+              --dir "$destination" \
+              --clobber \
+              --pattern "ClipKitty.dmg" \
+              --pattern "ClipKitty-Hardened.zip"
+            for asset in "${REQUIRED_ASSETS[@]}"; do
+              if [ ! -s "$destination/$asset" ]; then
+                echo "::error::Downloaded ${tag}/${asset} is missing or empty."
+                return 1
+              fi
+            done
+          }
+
+          verify_stable_assets_match_beta() {
+            local asset
+            download_release_assets "$STABLE_TAG" "$ARCHIVES/stable"
+            for asset in "${REQUIRED_ASSETS[@]}"; do
+              if ! cmp -s "$ARCHIVES/stable/$asset" "$ARCHIVES/beta/$asset"; then
+                echo "::error::${asset} in ${STABLE_TAG} is not byte-for-byte identical to immutable ${BETA_TAG}."
+                return 1
+              fi
+            done
+          }
 
           if ! gh release view "$BETA_TAG" --repo "$REPO" >/dev/null 2>&1; then
             echo "::error::App Store version ${VERSION} is live, but matching GitHub prerelease ${BETA_TAG} does not exist."
@@ -104,79 +489,154 @@ jobs:
           fi
 
           BETA_DRAFT="$(gh release view "$BETA_TAG" --repo "$REPO" --json isDraft --jq .isDraft)"
-          BETA_TARGET="$(gh release view "$BETA_TAG" --repo "$REPO" --json targetCommitish --jq .targetCommitish)"
+          BETA_PRERELEASE="$(gh release view "$BETA_TAG" --repo "$REPO" --json isPrerelease --jq .isPrerelease)"
           if [ "$BETA_DRAFT" != "false" ]; then
             echo "::error::Matching GitHub prerelease ${BETA_TAG} is still a draft."
             exit 1
           fi
-
-          BETA_ASSETS="$(gh release view "$BETA_TAG" --repo "$REPO" --json assets --jq '.assets[].name')"
+          if [ "$BETA_PRERELEASE" != "true" ]; then
+            echo "::error::Matching GitHub release ${BETA_TAG} is not marked as a prerelease."
+            exit 1
+          fi
+          BETA_TARGET="$(resolve_tag_commit "$BETA_TAG")"
+          download_release_assets "$BETA_TAG" "$ARCHIVES/beta"
           for asset in "${REQUIRED_ASSETS[@]}"; do
-            if ! grep -Fxq "$asset" <<<"$BETA_ASSETS"; then
-              echo "::error::Matching GitHub prerelease ${BETA_TAG} is missing required asset ${asset}."
-              exit 1
-            fi
+            gh attestation verify "$ARCHIVES/beta/$asset" \
+              --repo "$REPO" \
+              --signer-workflow "${REPO}/.github/workflows/build.yml" \
+              --source-ref refs/heads/main \
+              --source-digest "$BETA_TARGET" \
+              --deny-self-hosted-runners
           done
 
-          ASSET_DIR="$(mktemp -d)"
-          BODY_FILE="$(mktemp)"
-          trap 'rm -rf "$ASSET_DIR" "$BODY_FILE"' EXIT
-
-          gh release view "$BETA_TAG" --repo "$REPO" --json body --jq .body > "$BODY_FILE"
-          {
-            echo
-            echo "---"
-            echo
-            echo "Promoted automatically after App Store version ${VERSION} became live."
-            echo "App Store release date: ${{ steps.app-store.outputs.release_date }}"
-            echo "App Store URL: ${{ steps.app-store.outputs.store_url }}"
-          } >> "$BODY_FILE"
-
-          gh release download "$BETA_TAG" \
-            --repo "$REPO" \
-            --dir "$ASSET_DIR" \
-            --clobber \
-            --pattern "ClipKitty.dmg" \
-            --pattern "ClipKitty-Hardened.zip"
-
-          for asset in "${REQUIRED_ASSETS[@]}"; do
-            if [ ! -f "${ASSET_DIR}/${asset}" ]; then
-              echo "::error::Failed to download ${asset} from ${BETA_TAG}."
+          if gh release view "$STABLE_TAG" --repo "$REPO" >/dev/null 2>&1; then
+            IS_DRAFT="$(gh release view "$STABLE_TAG" --repo "$REPO" --json isDraft --jq .isDraft)"
+            if ! gh api "repos/${REPO}/git/ref/tags/${STABLE_TAG}" >/dev/null 2>&1; then
+              echo "::error::Existing ${STABLE_TAG} has no immutable tag ref."
               exit 1
             fi
-          done
+            STABLE_TARGET="$(resolve_tag_commit "$STABLE_TAG")"
+            if [ "$STABLE_TARGET" != "$BETA_TARGET" ]; then
+              echo "::error::${STABLE_TAG} points to ${STABLE_TARGET}, but ${BETA_TAG} points to ${BETA_TARGET}; stable tags are immutable."
+              exit 1
+            fi
 
-          gh release create "$STABLE_TAG" \
-            --repo "$REPO" \
-            --target "$BETA_TARGET" \
-            --title "ClipKitty v${VERSION}" \
-            --notes-file "$BODY_FILE" \
-            --latest \
-            "${ASSET_DIR}/ClipKitty.dmg" \
-            "${ASSET_DIR}/ClipKitty-Hardened.zip"
+            if [ "$IS_DRAFT" = "true" ]; then
+              # Repair only unpublished drafts. Once public, stable assets are
+              # immutable and any mismatch is a hard failure.
+              gh release upload "$STABLE_TAG" \
+                --repo "$REPO" \
+                --clobber \
+                "$ARCHIVES/beta/ClipKitty.dmg" \
+                "$ARCHIVES/beta/ClipKitty-Hardened.zip"
+            fi
+            verify_stable_assets_match_beta
+          else
+            if gh api "repos/${REPO}/git/ref/tags/${STABLE_TAG}" >/dev/null 2>&1; then
+              STABLE_TARGET="$(resolve_tag_commit "$STABLE_TAG")"
+              if [ "$STABLE_TARGET" != "$BETA_TARGET" ]; then
+                echo "::error::Orphan tag ${STABLE_TAG} points to ${STABLE_TARGET}, expected ${BETA_TARGET}."
+                exit 1
+              fi
+            else
+              gh api --method POST "repos/${REPO}/git/refs" \
+                -f ref="refs/tags/${STABLE_TAG}" \
+                -f sha="$BETA_TARGET" >/dev/null
+            fi
 
-          echo "Promoted ${BETA_TAG} to stable release ${STABLE_TAG}."
+            gh release view "$BETA_TAG" --repo "$REPO" --json body --jq .body > "$BODY_FILE"
+            {
+              printf '\n---\n\n'
+              printf 'Promoted automatically after App Store version %s became live.\n' "$VERSION"
+              printf 'App Store release date: %s\n' "$APP_STORE_RELEASE_DATE"
+              printf 'App Store URL: %s\n' "$APP_STORE_URL"
+            } >> "$BODY_FILE"
+
+            gh release create "$STABLE_TAG" \
+              --repo "$REPO" \
+              --verify-tag \
+              --title "ClipKitty v${VERSION}" \
+              --notes-file "$BODY_FILE" \
+              --draft \
+              "$ARCHIVES/beta/ClipKitty.dmg" \
+              "$ARCHIVES/beta/ClipKitty-Hardened.zip"
+
+            STABLE_TARGET="$(resolve_tag_commit "$STABLE_TAG")"
+            if [ "$STABLE_TARGET" != "$BETA_TARGET" ]; then
+              echo "::error::New ${STABLE_TAG} points to ${STABLE_TARGET}, expected ${BETA_TARGET}."
+              exit 1
+            fi
+            verify_stable_assets_match_beta
+          fi
+
+          LATEST_STABLE_TAG="$(gh api "repos/${REPO}/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          IS_DRAFT="$(gh release view "$STABLE_TAG" --repo "$REPO" --json isDraft --jq .isDraft)"
+          IS_PRERELEASE="$(gh release view "$STABLE_TAG" --repo "$REPO" --json isPrerelease --jq .isPrerelease)"
+          RELEASE_TITLE="$(gh release view "$STABLE_TAG" --repo "$REPO" --json name --jq .name)"
+          if [ "$IS_DRAFT" != "false" ] || [ "$IS_PRERELEASE" != "false" ] \
+            || [ "$LATEST_STABLE_TAG" != "$STABLE_TAG" ] || [ "$RELEASE_TITLE" != "ClipKitty v${VERSION}" ]; then
+            gh release edit "$STABLE_TAG" \
+              --repo "$REPO" \
+              --draft=false \
+              --prerelease=false \
+              --latest \
+              --title "ClipKitty v${VERSION}"
+          fi
+
+          if [ "$(gh api "repos/${REPO}/releases/latest" --jq .tag_name)" != "$STABLE_TAG" ] \
+            || [ "$(gh release view "$STABLE_TAG" --repo "$REPO" --json isDraft --jq .isDraft)" != "false" ] \
+            || [ "$(gh release view "$STABLE_TAG" --repo "$REPO" --json isPrerelease --jq .isPrerelease)" != "false" ] \
+            || [ "$(gh release view "$STABLE_TAG" --repo "$REPO" --json name --jq .name)" != "ClipKitty v${VERSION}" ]; then
+            echo "::error::${STABLE_TAG} was not published with the required latest stable metadata."
+            exit 1
+          fi
+
+          echo "Verified stable release ${STABLE_TAG} from immutable ${BETA_TAG} at ${BETA_TARGET}."
 
       - name: Update Sparkle stable appcast
         shell: bash
+        env:
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          VERSION: ${{ steps.app-store.outputs.version }}
         run: |
           set -euo pipefail
 
-          VERSION="${{ steps.app-store.outputs.version }}"
+          BUILD_NUMBER="${VERSION##*.}"
           STABLE_TAG="v${VERSION}"
-          REPO="${GITHUB_REPOSITORY}"
+          BETA_TAG="v${VERSION}-beta"
+          REPO="$GITHUB_REPOSITORY"
           STABLE_URL="https://github.com/${REPO}/releases/download/${STABLE_TAG}/ClipKitty.dmg"
+          ARCHIVES="$(mktemp -d)"
+          WORKTREE="${RUNNER_TEMP}/clipkitty-gh-pages-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          WORKTREE_ADDED=false
+          cleanup() {
+            cd "$GITHUB_WORKSPACE"
+            if [ "$WORKTREE_ADDED" = "true" ]; then
+              git worktree remove "$WORKTREE" --force || true
+            fi
+            rm -rf "$ARCHIVES"
+          }
+          trap cleanup EXIT
 
-          STABLE_ASSET_LENGTH="$(
-            gh release view "$STABLE_TAG" \
-              --repo "$REPO" \
-              --json assets \
-              --jq '.assets[] | select(.name == "ClipKitty.dmg") | .size' \
-              | head -n 1
-          )"
+          if ! [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "::error::Cannot infer Sparkle build number from ${VERSION}."
+            exit 1
+          fi
 
-          if [ -z "$STABLE_ASSET_LENGTH" ]; then
-            echo "::error::Stable release ${STABLE_TAG} is missing ClipKitty.dmg."
+          mkdir -p "$ARCHIVES/stable" "$ARCHIVES/beta"
+          gh release download "$STABLE_TAG" --repo "$REPO" \
+            --dir "$ARCHIVES/stable" --clobber --pattern "ClipKitty.dmg"
+          gh release download "$BETA_TAG" --repo "$REPO" \
+            --dir "$ARCHIVES/beta" --clobber --pattern "ClipKitty.dmg"
+
+          STABLE_ARCHIVE="$ARCHIVES/stable/ClipKitty.dmg"
+          BETA_ARCHIVE="$ARCHIVES/beta/ClipKitty.dmg"
+          if [ ! -s "$STABLE_ARCHIVE" ] || [ ! -s "$BETA_ARCHIVE" ]; then
+            echo "::error::Stable and beta releases must both contain ClipKitty.dmg."
+            exit 1
+          fi
+          if ! cmp -s "$STABLE_ARCHIVE" "$BETA_ARCHIVE"; then
+            echo "::error::Stable ${STABLE_TAG} is not byte-for-byte identical to signed ${BETA_TAG}."
             exit 1
           fi
 
@@ -187,129 +647,24 @@ jobs:
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
 
           git fetch origin gh-pages
-          rm -rf /tmp/gh-pages
-          git worktree add /tmp/gh-pages origin/gh-pages
-          trap 'cd "$GITHUB_WORKSPACE"; git worktree remove /tmp/gh-pages --force' EXIT
+          git worktree add --force -B gh-pages "$WORKTREE" origin/gh-pages
+          WORKTREE_ADDED=true
+          cd "$WORKTREE"
 
-          cd /tmp/gh-pages
-          git switch -C gh-pages
+          make -C "$GITHUB_WORKSPACE" release-appcast-update \
+            STATE_PATH="$(pwd)/appcast-state.json" \
+            CHANNEL="stable" \
+            VERSION="$VERSION" \
+            BUILD_NUMBER="$BUILD_NUMBER" \
+            URL="$STABLE_URL"
 
-          VERSION="$VERSION" \
-          STABLE_URL="$STABLE_URL" \
-          STABLE_ASSET_LENGTH="$STABLE_ASSET_LENGTH" \
-          python3 <<'PY'
-          import json
-          import os
-          import subprocess
-          import sys
-          from datetime import datetime, timezone
-          from email.utils import format_datetime
-          from html import escape
-          from pathlib import Path
+          make -C "$GITHUB_WORKSPACE" release-appcast-generate \
+            STATE_PATH="$(pwd)/appcast-state.json" \
+            OUTPUT_PATH="$(pwd)/appcast.xml" \
+            CHANNEL="stable" \
+            ARCHIVE_PATH="$STABLE_ARCHIVE"
 
-          version = os.environ["VERSION"]
-          stable_url = os.environ["STABLE_URL"]
-          stable_asset_length = int(os.environ["STABLE_ASSET_LENGTH"])
-          state_path = Path("appcast-state.json")
-
-          def read_json_at(commit):
-              try:
-                  raw = subprocess.check_output(
-                      ["git", "show", f"{commit}:appcast-state.json"],
-                      text=True,
-                      stderr=subprocess.DEVNULL,
-                  )
-              except subprocess.CalledProcessError:
-                  return None
-              return json.loads(raw)
-
-          commits = subprocess.check_output(
-              ["git", "log", "--format=%H", "--", "appcast-state.json"],
-              text=True,
-          ).splitlines()
-
-          beta_release = None
-          for commit in commits:
-              state_at_commit = read_json_at(commit)
-              if not state_at_commit:
-                  continue
-              beta = state_at_commit.get("beta") or {}
-              if beta.get("version") == version:
-                  beta_release = beta
-                  break
-
-          if beta_release is None:
-              print(f"::error::No beta appcast metadata found for {version}.", file=sys.stderr)
-              sys.exit(1)
-
-          if int(beta_release["length"]) != stable_asset_length:
-              print(
-                  "::error::Stable ClipKitty.dmg length does not match "
-                  f"the signed beta appcast metadata for {version}: "
-                  f"{stable_asset_length} != {beta_release['length']}.",
-                  file=sys.stderr,
-              )
-              sys.exit(1)
-
-          state = json.loads(state_path.read_text()) if state_path.exists() else {}
-          stable_release = {
-              "version": version,
-              "build_number": beta_release.get("build_number") or version.rsplit(".", 1)[-1],
-              "url": stable_url,
-              "signature": beta_release["signature"],
-              "length": stable_asset_length,
-              "published_at": datetime.now(timezone.utc).isoformat(),
-          }
-          state["stable"] = stable_release
-          state_path.write_text(json.dumps(state, indent=2) + "\n")
-
-          def appcast_build_number(release):
-              build_number = release.get("build_number")
-              if build_number:
-                  return str(build_number)
-              candidate = str(release["version"]).rsplit(".", 1)[-1]
-              if not candidate.isdigit():
-                  raise ValueError(f"appcast release version `{release['version']}` does not contain an inferable build number")
-              return candidate
-
-          def pub_date(value):
-              dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-              return format_datetime(dt.astimezone(timezone.utc), usegmt=True)
-
-          def push_item(lines, channel, release):
-              title = f"ClipKitty {release['version']} Beta" if channel == "beta" else f"ClipKitty {release['version']}"
-              lines.append("    <item>")
-              lines.append(f"      <title>{escape(title)}</title>")
-              lines.append(f"      <sparkle:version>{escape(appcast_build_number(release))}</sparkle:version>")
-              lines.append(f"      <sparkle:shortVersionString>{escape(release['version'])}</sparkle:shortVersionString>")
-              lines.append("      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>")
-              if channel == "beta":
-                  lines.append("      <sparkle:channel>beta</sparkle:channel>")
-              lines.append(f"      <pubDate>{escape(pub_date(release['published_at']))}</pubDate>")
-              lines.append(
-                  "      <enclosure "
-                  f"url=\"{escape(release['url'], quote=True)}\" "
-                  "type=\"application/octet-stream\" "
-                  f"sparkle:edSignature=\"{escape(release['signature'], quote=True)}\" "
-                  f"length=\"{release['length']}\" />"
-              )
-              lines.append("    </item>")
-
-          lines = [
-              '<?xml version="1.0" encoding="utf-8"?>',
-              '<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">',
-              "  <channel>",
-              "    <title>ClipKitty Updates</title>",
-              "    <link>https://jul-sh.github.io/clipkitty/appcast.xml</link>",
-              "    <language>en</language>",
-          ]
-          if state.get("beta"):
-              push_item(lines, "beta", state["beta"])
-          if state.get("stable"):
-              push_item(lines, "stable", state["stable"])
-          lines.extend(["  </channel>", "</rss>"])
-          Path("appcast.xml").write_text("\n".join(lines) + "\n")
-          PY
+          xmllint --noout appcast.xml
 
           git add appcast-state.json appcast.xml
           if git diff --cached --quiet; then
@@ -317,4 +672,101 @@ jobs:
           else
             git commit --no-verify -m "Promote Sparkle appcast stable ${VERSION} [skip ci]"
             git push origin gh-pages
+          fi
+
+      - name: Publish verified stable release to Homebrew
+        shell: bash
+        env:
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          VERSION: ${{ steps.app-store.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          STABLE_TAG="v${VERSION}"
+          BETA_TAG="v${VERSION}-beta"
+          REPO="$GITHUB_REPOSITORY"
+          ARCHIVES="$(mktemp -d)"
+          TAP_DIR="$(mktemp -d)"
+          cleanup() {
+            rm -rf "$ARCHIVES" "$TAP_DIR"
+          }
+          trap cleanup EXIT
+          mkdir -p "$ARCHIVES/stable" "$ARCHIVES/beta"
+
+          gh release download "$STABLE_TAG" --repo "$REPO" \
+            --dir "$ARCHIVES/stable" --clobber --pattern "ClipKitty.dmg"
+          gh release download "$BETA_TAG" --repo "$REPO" \
+            --dir "$ARCHIVES/beta" --clobber --pattern "ClipKitty.dmg"
+          STABLE_ARCHIVE="$ARCHIVES/stable/ClipKitty.dmg"
+          BETA_ARCHIVE="$ARCHIVES/beta/ClipKitty.dmg"
+          if [ ! -s "$STABLE_ARCHIVE" ] || [ ! -s "$BETA_ARCHIVE" ] \
+            || ! cmp -s "$STABLE_ARCHIVE" "$BETA_ARCHIVE"; then
+            echo "::error::Homebrew publication requires byte-identical stable and immutable beta DMGs."
+            exit 1
+          fi
+          SHA256="$(shasum -a 256 "$STABLE_ARCHIVE" | cut -d' ' -f1)"
+
+          HOMEBREW_TAP_TOKEN="$(keytap decrypt clipkitty < secrets/HOMEBREW_TAP_TOKEN.age)"
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "::error::Homebrew tap token decrypted to an empty value."
+            exit 1
+          fi
+          echo "::add-mask::$HOMEBREW_TAP_TOKEN"
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/jul-sh/homebrew-clipkitty.git" "$TAP_DIR"
+          cd "$TAP_DIR"
+
+          CASK_PATH="Casks/clipkitty.rb"
+          if [ -f "$CASK_PATH" ]; then
+            CURRENT_VERSION="$(awk -F '"' '/^[[:space:]]*version "/ { print $2; exit }' "$CASK_PATH")"
+            if [ -z "$CURRENT_VERSION" ] || ! [[ "$CURRENT_VERSION" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
+              echo "::error::Existing Homebrew cask has an invalid version: ${CURRENT_VERSION:-missing}."
+              exit 1
+            fi
+            if ! python3 - "$VERSION" "$CURRENT_VERSION" <<'PY'
+          import sys
+
+          def numeric_version(value):
+              return tuple(int(component) for component in value.split("."))
+
+          candidate, current = map(numeric_version, sys.argv[1:])
+          width = max(len(candidate), len(current))
+          candidate += (0,) * (width - len(candidate))
+          current += (0,) * (width - len(current))
+          raise SystemExit(0 if candidate >= current else 1)
+          PY
+            then
+              echo "::error::Refusing to regress Homebrew from ${CURRENT_VERSION} to ${VERSION}."
+              exit 1
+            fi
+          fi
+
+          mkdir -p Casks
+          printf '%s\n' \
+            'cask "clipkitty" do' \
+            "  version \"$VERSION\"" \
+            "  sha256 \"$SHA256\"" \
+            '' \
+            "  url \"https://github.com/jul-sh/clipkitty/releases/download/$STABLE_TAG/ClipKitty.dmg\"" \
+            '  name "ClipKitty"' \
+            '  desc "Clipboard history manager with instant fuzzy search"' \
+            '  homepage "https://github.com/jul-sh/clipkitty"' \
+            '' \
+            '  app "ClipKitty.app"' \
+            '' \
+            '  postflight do' \
+            '    system_command "/usr/sbin/chown",' \
+            '                   args: ["-R", "#{ENV["USER"]}:staff", "#{appdir}/ClipKitty.app"],' \
+            '                   sudo: true' \
+            '  end' \
+            'end' > "$CASK_PATH"
+          ruby -c "$CASK_PATH"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$CASK_PATH"
+          if git diff --cached --quiet; then
+            echo "Homebrew already publishes ClipKitty ${VERSION}."
+          else
+            git commit -m "Update ClipKitty to ${VERSION}"
+            git push origin main
           fi

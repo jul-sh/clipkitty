@@ -36,6 +36,7 @@ const OVERLAY_FILES: &[&str] = &[
 ];
 const STRAY_SWIFTPM: &[&str] = &[
     "Package.resolved",
+    ".package.resolved",
     "Tuist/Package.resolved",
     "distribution/SparkleUpdater/Package.resolved",
 ];

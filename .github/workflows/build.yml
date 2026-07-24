@@ -1,9 +1,10 @@
 name: Build and Release
 
 # Job graph is deliberately wide: every check job starts immediately and runs
-# in parallel so failures surface as fast as possible. Only the publishing
-# jobs (release, gh-pages, appstore, ios-appstore) fan in, because publishing
-# is the only work that genuinely depends on everything else being green.
+# in parallel so failures surface as fast as possible. Artifact publication
+# fans in on the checks that establish its inputs. The site depends only on
+# its marketing assets; the appcast waits for the site attempt only to serialize
+# gh-pages writes, but an unrelated site failure cannot block update delivery.
 #
 #   version ─────────────┐
 #   rust-tests ──────────┤
@@ -16,26 +17,26 @@ name: Build and Release
 #   intro-video-capture ── intro-videos ─┘   (matrix: two balanced locale shards)
 #         │
 #         ├─ build         (aggregate status check; required by branch protection)
-#         ├─ release       (GitHub release + Homebrew tap)
-#         ├─ gh-pages      (site, appcast, screenshot tag)
+#         ├─ release ─┐    (immutable GitHub beta prerelease)
+#         │           ├─ appcast (verified released archive -> Sparkle feed)
+#         ├─ gh-pages ┘    (site + screenshot tag)
 #         ├─ appstore      (macOS App Store Connect upload)
 #         └─ ios-appstore  (iOS App Store Connect upload)
 
 on:
   push:
-    branches: [main, release]
+    branches: [main]
   pull_request:
-    branches: [main, release]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read
 
 # Superseded PR runs are cancelled to free runners for the newest commit.
-# Push/dispatch runs are never cancelled: they publish releases and sites,
-# and killing one mid-publish leaves half-finished state.
+# In-progress push/dispatch runs are never cancelled. GitHub may coalesce
+# whole workflow runs that are still pending, but every publication job that
+# becomes eligible enters the explicit FIFO publication queue below.
 concurrency:
   group: build-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -73,7 +74,6 @@ jobs:
       - name: Resolve Release Version
         id: resolve-version
         run: |
-          TARGET_BRANCH="${GITHUB_BASE_REF:-${GITHUB_REF#refs/heads/}}"
           BASE_VERSION=$(awk -F '"' '/"MARKETING_VERSION"[[:space:]]*:/ { print $4; exit }' Project.swift)
           if [ -z "$BASE_VERSION" ]; then
             echo "::error::Could not resolve MARKETING_VERSION from Project.swift"
@@ -84,20 +84,12 @@ jobs:
           VERSION="${MAJOR_MINOR}.${COMMIT_COUNT}"
           echo "Resolved release version: $VERSION"
 
-          if [ "$TARGET_BRANCH" = "release" ]; then
-            # Stable releases come only from the release branch.
-            CHANNEL="stable"
-            RELEASE_TAG="v${VERSION}"
-            RELEASE_TITLE="ClipKitty v${VERSION}"
-            RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}/ClipKitty.dmg"
-          else
-            # Main, PRs targeting main, and manually-dispatched feature branches
-            # all use non-stable metadata. Publishing remains branch-gated below.
-            CHANNEL="beta"
-            RELEASE_TAG="v${VERSION}-beta"
-            RELEASE_TITLE="ClipKitty v${VERSION} Beta"
-            RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}-beta/ClipKitty.dmg"
-          fi
+          # Every build is a beta. The App Store promotion workflow is the sole
+          # authority that can publish the corresponding immutable stable tag.
+          CHANNEL="beta"
+          RELEASE_TAG="v${VERSION}-beta"
+          RELEASE_TITLE="ClipKitty v${VERSION} Beta"
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION}-beta/ClipKitty.dmg"
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "build_number=$COMMIT_COUNT" >> "$GITHUB_OUTPUT"
@@ -138,14 +130,8 @@ jobs:
         with:
           lfs: true
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Build shared workspace graph
         timeout-minutes: 45
@@ -161,18 +147,8 @@ jobs:
         with:
           lfs: true
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Restore the Nix store from the shared GitHub Actions cache. The
-      # purr-* Rust artifacts are built once up front by prewarm-nix; every
-      # other Nix job restores them here instead of recompiling. See that
-      # job for why prewarming is a separate step rather than a free-for-all.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Verify lockfile integrity
         run: make check
@@ -194,9 +170,6 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
-    outputs:
-      ed_signature: ${{ steps.eddsa-sign.outputs.ed_signature }}
-      file_length: ${{ steps.eddsa-sign.outputs.file_length }}
 
     steps:
       - name: Checkout
@@ -205,20 +178,8 @@ jobs:
           lfs: true
           fetch-depth: 0 # Full history for commit count versioning
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: |
@@ -484,33 +445,8 @@ jobs:
           echo "Stapling failed after 10 attempts"
           exit 1
 
-      - name: Install Sparkle CLI Tools
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
-        run: make install-sparkle-cli
-
-      - name: Sign DMG with EdDSA
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
-        id: eddsa-sign
-        run: |
-          SIGNATURE=$(echo "$SPARKLE_EDDSA_KEY" | sign_update ClipKitty.dmg --ed-key-file -)
-          # sign_update outputs: sparkle:edSignature="..." length="..."
-          ED_SIGNATURE=$(echo "$SIGNATURE" | sed 's/.*sparkle:edSignature="\([^"]*\)".*/\1/')
-          FILE_LENGTH=$(echo "$SIGNATURE" | sed 's/.*length="\([^"]*\)".*/\1/')
-          echo "ed_signature=$ED_SIGNATURE" >> "$GITHUB_OUTPUT"
-          echo "file_length=$FILE_LENGTH" >> "$GITHUB_OUTPUT"
-        env:
-          SPARKLE_EDDSA_KEY: ${{ steps.secrets.outputs.SPARKLE_EDDSA_KEY }}
-
-      - name: Verify lockfiles unchanged before attestation
+      - name: Verify lockfiles unchanged before publication
         run: make check
-
-      - name: Attest Build Provenance
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
-        with:
-          subject-path: |
-            ClipKitty.dmg
-            DerivedData/Build/Products/SparkleRelease/ClipKitty.app/Contents/MacOS/ClipKitty
-            ClipKitty-Hardened.zip
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -530,6 +466,53 @@ jobs:
           name: ClipKitty-Hardened
           path: ClipKitty-Hardened.zip
 
+      - name: Upload Release Binary for Attestation
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ClipKitty-Release-Binary
+          path: DerivedData/Build/Products/SparkleRelease/ClipKitty.app/Contents/MacOS/ClipKitty
+          if-no-files-found: error
+
+  # OIDC and attestation write authority live in this minimal job; none of the
+  # PR-controlled build steps can mint attestations or request an OIDC token.
+  macos-attestation:
+    name: Attest macOS Release Artifacts
+    needs: macos-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Download DMG
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ClipKitty-Builds
+          path: subjects/dmg
+
+      - name: Download Hardened Build
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ClipKitty-Hardened
+          path: subjects/hardened
+
+      - name: Download Release Binary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ClipKitty-Release-Binary
+          path: subjects/binary
+
+      - name: Attest Build Provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: |
+            subjects/dmg/ClipKitty.dmg
+            subjects/binary/ClipKitty
+            subjects/hardened/ClipKitty-Hardened.zip
+
   # Hermetic nix build proving the iOS target compiles; no signing, no
   # workspace, so it gives the fastest iOS compile feedback we have.
   ios-smoke:
@@ -543,20 +526,8 @@ jobs:
         with:
           lfs: true
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Build iOS Smoke Test
         # 50 min, not 15: unlike the other Nix jobs, this one has no separate
@@ -587,20 +558,8 @@ jobs:
         with:
           lfs: true
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: |
@@ -668,20 +627,8 @@ jobs:
         with:
           lfs: true
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: |
@@ -732,20 +679,8 @@ jobs:
           defaults write -g AppleShowScrollBars -string WhenScrolling
           killall cfprefsd || true
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: |
@@ -835,20 +770,8 @@ jobs:
           defaults write -g AppleShowScrollBars -string WhenScrolling
           killall cfprefsd || true
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: |
@@ -937,20 +860,8 @@ jobs:
           lfs: true
           fetch-depth: 0
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: |
@@ -958,21 +869,6 @@ jobs:
           nix profile install --no-update-lock-file --inputs-from . nixpkgs#ffmpeg
           nix profile install --no-update-lock-file .#tuist
           tuist version
-
-      - name: Decrypt secrets
-        run: |
-          for f in secrets/*.age; do
-            name=$(basename "$f" .age)
-            value=$(keytap decrypt clipkitty < "$f")
-            echo "::add-mask::$value"
-            {
-              echo "${name}<<AGEDELIM"
-              echo "$value"
-              echo "AGEDELIM"
-            } >> "$GITHUB_OUTPUT"
-          done
-        env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Setup Swift
         uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
@@ -1112,53 +1008,25 @@ jobs:
             exit 1
           fi
 
-  # Publish the GitHub release. Gated on every check job because a release is
-  # the one thing we never want to cut from a red commit.
+  # Publish the immutable GitHub beta prerelease. Gated on every check job
+  # because a release is the one thing we never want to cut from a red commit.
+  # Stable publication belongs exclusively to promote-appstore-release.yml.
   release:
-    name: Create Release
-    needs: [version, prewarm-nix, rust-tests, macos-build, ios-smoke, ios-build, ios-screenshots, macos-uitests, macos-marketing, intro-videos]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
-    runs-on: macos-26
-    env:
-      VERSION: ${{ needs.version.outputs.version }}
+    name: Publish Beta Release
+    needs: [version, prewarm-nix, rust-tests, macos-build, macos-attestation, ios-smoke, ios-build, ios-screenshots, macos-uitests, macos-marketing, intro-videos]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: clipkitty-publication
+      queue: max
+      cancel-in-progress: false
+    permissions:
+      attestations: read
+      contents: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
-
-      - name: Install CI tools from Nix
-        run: nix profile install --no-update-lock-file --inputs-from . keytap#default
-
-      - name: Decrypt secrets
-        id: secrets
-        run: |
-          for f in secrets/*.age; do
-            name=$(basename "$f" .age)
-            value=$(keytap decrypt clipkitty < "$f")
-            echo "::add-mask::$value"
-            {
-              echo "${name}<<AGEDELIM"
-              echo "$value"
-              echo "AGEDELIM"
-            } >> "$GITHUB_OUTPUT"
-          done
-        env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Download DMG
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -1172,19 +1040,107 @@ jobs:
           name: ClipKitty-Hardened
           path: .
 
-      - name: Create Channel Release
+      - name: Publish immutable beta release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.version.outputs.release_tag }}
+          RELEASE_TITLE: ${{ needs.version.outputs.release_title }}
         run: |
-          gh release delete "${{ needs.version.outputs.release_tag }}" --yes --cleanup-tag 2>/dev/null || true
+          set -euo pipefail
 
-          cat > /tmp/release-notes-prepend.md <<'EOF'
+          REPO="$GITHUB_REPOSITORY"
+          REQUIRED_ASSETS=("ClipKitty.dmg" "ClipKitty-Hardened.zip")
+          VERIFY_DIR="$(mktemp -d)"
+          NOTES_FILE="$(mktemp)"
+          cleanup() {
+            rm -rf "$VERIFY_DIR"
+            rm -f "$NOTES_FILE"
+          }
+          trap cleanup EXIT
+
+          for asset in "${REQUIRED_ASSETS[@]}"; do
+            if [ ! -s "$asset" ]; then
+              echo "::error::Attested release input is missing or empty: ${asset}."
+              exit 1
+            fi
+            gh attestation verify "$asset" \
+              --repo "$REPO" \
+              --signer-workflow "${REPO}/.github/workflows/build.yml" \
+              --source-ref refs/heads/main \
+              --source-digest "$GITHUB_SHA" \
+              --deny-self-hosted-runners
+          done
+
+          resolve_tag_commit() {
+            local tag="$1"
+            local object_type object_sha depth
+            object_type="$(gh api "repos/${REPO}/git/ref/tags/${tag}" --jq .object.type)"
+            object_sha="$(gh api "repos/${REPO}/git/ref/tags/${tag}" --jq .object.sha)"
+            depth=0
+            while [ "$object_type" = "tag" ]; do
+              depth=$((depth + 1))
+              if [ "$depth" -gt 8 ]; then
+                echo "::error::Tag ${tag} has an unexpectedly deep annotated-tag chain." >&2
+                return 1
+              fi
+              object_type="$(gh api "repos/${REPO}/git/tags/${object_sha}" --jq .object.type)"
+              object_sha="$(gh api "repos/${REPO}/git/tags/${object_sha}" --jq .object.sha)"
+            done
+            if [ "$object_type" != "commit" ]; then
+              echo "::error::Tag ${tag} resolves to ${object_type}, not a commit." >&2
+              return 1
+            fi
+            printf '%s\n' "$object_sha"
+          }
+
+          verify_release_assets() {
+            local compare_with_current_build="$1"
+            local asset asset_count
+            asset_count="$(gh release view "$RELEASE_TAG" --repo "$REPO" --json assets --jq '.assets | length')"
+            if [ "$asset_count" -ne "${#REQUIRED_ASSETS[@]}" ]; then
+              echo "::error::${RELEASE_TAG} must contain exactly ${#REQUIRED_ASSETS[@]} release assets; found ${asset_count}."
+              return 1
+            fi
+            for asset in "${REQUIRED_ASSETS[@]}"; do
+              if ! gh release view "$RELEASE_TAG" --repo "$REPO" --json assets --jq '.assets[].name' | grep -Fxq "$asset"; then
+                echo "::error::${RELEASE_TAG} is missing required asset ${asset}."
+                return 1
+              fi
+            done
+            gh release download "$RELEASE_TAG" \
+              --repo "$REPO" \
+              --dir "$VERIFY_DIR" \
+              --clobber \
+              --pattern "ClipKitty.dmg" \
+              --pattern "ClipKitty-Hardened.zip"
+            for asset in "${REQUIRED_ASSETS[@]}"; do
+              if [ ! -s "$VERIFY_DIR/$asset" ]; then
+                echo "::error::Downloaded release asset is missing or empty: ${asset}."
+                return 1
+              fi
+              gh attestation verify "$VERIFY_DIR/$asset" \
+                --repo "$REPO" \
+                --signer-workflow "${REPO}/.github/workflows/build.yml" \
+                --source-ref refs/heads/main \
+                --source-digest "$GITHUB_SHA" \
+                --deny-self-hosted-runners
+              if [ "$compare_with_current_build" = "true" ] \
+                && ! cmp -s "$asset" "$VERIFY_DIR/$asset"; then
+                echo "::error::Existing ${RELEASE_TAG}/${asset} differs from this run's attested artifact; release tags are immutable."
+                return 1
+              fi
+            done
+          }
+
+          cat > "$NOTES_FILE" <<'EOF'
           ## Downloads
 
           - **`ClipKitty.dmg`** — the standard build. Install this one.
-          - **`ClipKitty-Hardened.zip`** — a stripped-down build for particularly security sensitive enviroments.
+          - **`ClipKitty-Hardened.zip`** — a stripped-down build for particularly security-sensitive environments.
 
           ## About the hardened build
 
-          The hardened build is a separate ClipKitty binary with features that touches the network or filesystem compiled out — no auto-updates, no iCloud sync, no link previews, no file clipboard items, etc. What remains runs under a macOS App Sandbox that further restricts access to the network and filesystem.
+          The hardened build is a separate ClipKitty binary with features that touch the network or filesystem compiled out — no auto-updates, no iCloud sync, no link previews, no file clipboard items, etc. What remains runs under a macOS App Sandbox that further restricts access to the network and filesystem.
 
           It ships as a separate app (`com.eviljuliette.clipkitty.hardened`) with its own sandbox container, so it coexists with the standard build without sharing data. Because auto-updates are compiled out, you update it by downloading the next release yourself.
 
@@ -1194,94 +1150,109 @@ jobs:
 
           EOF
 
-          args=(
-            release create "${{ needs.version.outputs.release_tag }}"
-            --title "${{ needs.version.outputs.release_title }}"
-            --notes-file /tmp/release-notes-prepend.md
-            --generate-notes
-            --target "$GITHUB_SHA"
-            ClipKitty.dmg
-            ClipKitty-Hardened.zip
-          )
+          COMPARE_WITH_CURRENT_BUILD=true
+          if gh release view "$RELEASE_TAG" --repo "$REPO" >/dev/null 2>&1; then
+            IS_DRAFT="$(gh release view "$RELEASE_TAG" --repo "$REPO" --json isDraft --jq .isDraft)"
+            if ! gh api "repos/${REPO}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+              echo "::error::Existing ${RELEASE_TAG} has no immutable tag ref."
+              exit 1
+            fi
+            TAG_COMMIT="$(resolve_tag_commit "$RELEASE_TAG")"
+            if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then
+              echo "::error::${RELEASE_TAG} points to ${TAG_COMMIT}, expected ${GITHUB_SHA}; refusing to move an immutable release tag."
+              exit 1
+            fi
 
-          if [ "${{ needs.version.outputs.channel }}" = "beta" ]; then
-            args+=(--prerelease)
+            IS_PRERELEASE="$(gh release view "$RELEASE_TAG" --repo "$REPO" --json isPrerelease --jq .isPrerelease)"
+            if [ "$IS_DRAFT" = "true" ]; then
+              # A prior interrupted draft is safe to repair because it has
+              # never been public. Public release assets are never replaced.
+              gh release upload "$RELEASE_TAG" \
+                --repo "$REPO" \
+                --clobber \
+                ClipKitty.dmg \
+                ClipKitty-Hardened.zip
+            elif [ "$IS_PRERELEASE" != "true" ]; then
+              echo "::error::Existing public ${RELEASE_TAG} is not a prerelease."
+              exit 1
+            else
+              # A public release's attested immutable assets are authoritative;
+              # signed/notarized rebuilds of the same commit are byte-unstable.
+              COMPARE_WITH_CURRENT_BUILD=false
+            fi
+          else
+            if gh api "repos/${REPO}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+              TAG_COMMIT="$(resolve_tag_commit "$RELEASE_TAG")"
+              if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then
+                echo "::error::Existing tag ${RELEASE_TAG} points to ${TAG_COMMIT}, expected ${GITHUB_SHA}."
+                exit 1
+              fi
+            else
+              gh api --method POST "repos/${REPO}/git/refs" \
+                -f ref="refs/tags/${RELEASE_TAG}" \
+                -f sha="$GITHUB_SHA" >/dev/null
+            fi
+            gh release create "$RELEASE_TAG" \
+              --repo "$REPO" \
+              --verify-tag \
+              --title "$RELEASE_TITLE" \
+              --notes-file "$NOTES_FILE" \
+              --generate-notes \
+              --draft \
+              --prerelease \
+              ClipKitty.dmg \
+              ClipKitty-Hardened.zip
           fi
 
-          gh "${args[@]}"
-        env:
-          GH_TOKEN: ${{ github.token }}
+          TAG_COMMIT="$(resolve_tag_commit "$RELEASE_TAG")"
+          if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then
+            echo "::error::${RELEASE_TAG} resolves to ${TAG_COMMIT}, expected ${GITHUB_SHA}."
+            exit 1
+          fi
+          verify_release_assets "$COMPARE_WITH_CURRENT_BUILD"
 
-      - name: Update Homebrew Tap
-        if: github.ref == 'refs/heads/release'
-        run: |
-          TAG="v$VERSION"
-          SHA256=$(shasum -a 256 ClipKitty.dmg | cut -d' ' -f1)
+          IS_DRAFT="$(gh release view "$RELEASE_TAG" --repo "$REPO" --json isDraft --jq .isDraft)"
+          CURRENT_TITLE="$(gh release view "$RELEASE_TAG" --repo "$REPO" --json name --jq .name)"
+          if [ "$IS_DRAFT" = "true" ] || [ "$CURRENT_TITLE" != "$RELEASE_TITLE" ]; then
+            gh release edit "$RELEASE_TAG" \
+              --repo "$REPO" \
+              --draft=false \
+              --prerelease \
+              --title "$RELEASE_TITLE"
+          fi
 
-          git clone https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/jul-sh/homebrew-clipkitty.git /tmp/homebrew-tap
-          cd /tmp/homebrew-tap
+          if [ "$(gh release view "$RELEASE_TAG" --repo "$REPO" --json isDraft --jq .isDraft)" != "false" ] \
+            || [ "$(gh release view "$RELEASE_TAG" --repo "$REPO" --json isPrerelease --jq .isPrerelease)" != "true" ] \
+            || [ "$(gh release view "$RELEASE_TAG" --repo "$REPO" --json name --jq .name)" != "$RELEASE_TITLE" ]; then
+            echo "::error::${RELEASE_TAG} was not published with the required prerelease metadata."
+            exit 1
+          fi
 
-          mkdir -p Casks
-          printf '%s\n' \
-            'cask "clipkitty" do' \
-            "  version \"$VERSION\"" \
-            "  sha256 \"$SHA256\"" \
-            '' \
-            "  url \"https://github.com/jul-sh/clipkitty/releases/download/$TAG/ClipKitty.dmg\"" \
-            '  name "ClipKitty"' \
-            '  desc "Clipboard history manager with instant fuzzy search"' \
-            '  homepage "https://github.com/jul-sh/clipkitty"' \
-            '' \
-            '  app "ClipKitty.app"' \
-            '' \
-            '  postflight do' \
-            '    system_command "/usr/sbin/chown",' \
-            '                   args: ["-R", "#{ENV["USER"]}:staff", "#{appdir}/ClipKitty.app"],' \
-            '                   sudo: true' \
-            '  end' \
-            'end' > Casks/clipkitty.rb
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/clipkitty.rb
-          git diff --cached --quiet || git commit -m "Update ClipKitty to $VERSION"
-          git push origin main
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ steps.secrets.outputs.HOMEBREW_TAP_TOKEN }}
-
-  # Deploy the site even when other jobs failed (matching the old always()
-  # behavior), but only when the marketing assets actually exist — the
-  # previous mono-job version died on a missing generated site icon whenever
-  # an earlier step had failed. The appcast is skipped gracefully when macos-build
-  # produced no signature (its outputs read as empty strings).
+  # Deploy the site whenever its marketing inputs succeeded, even when
+  # unrelated checks failed. Sparkle publication is deliberately separate:
+  # the appcast must not advertise an archive until the release exists.
   gh-pages:
     name: Deploy to gh-pages
-    needs: [version, macos-build, macos-marketing]
+    needs: [macos-marketing, release]
     if: >-
       !cancelled()
       && needs.macos-marketing.result == 'success'
       && github.event_name == 'push'
-      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
+      && github.ref == 'refs/heads/main'
     runs-on: macos-26
+    concurrency:
+      group: clipkitty-publication
+      queue: max
+      cancel-in-progress: false
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: nix profile install --no-update-lock-file --inputs-from . nixpkgs#cmark-gfm
@@ -1296,6 +1267,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+
+          WORKTREE="${RUNNER_TEMP}/clipkitty-gh-pages-site-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          WORKTREE_ADDED=false
+          cleanup() {
+            cd "$GITHUB_WORKSPACE"
+            if [ "$WORKTREE_ADDED" = "true" ]; then
+              git worktree remove "$WORKTREE" --force || true
+            fi
+          }
+          trap cleanup EXIT
+
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -1310,18 +1293,10 @@ jobs:
           git config --global --unset-all "http.https://github.com/.extraheader" || true
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
 
-          git fetch origin gh-pages || true
-          rm -rf /tmp/gh-pages
-          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
-            git worktree add /tmp/gh-pages gh-pages
-            cd /tmp/gh-pages
-            git pull origin gh-pages || true
-          else
-            git worktree add --detach /tmp/gh-pages
-            cd /tmp/gh-pages
-            git checkout --orphan gh-pages
-            git reset --hard
-          fi
+          git fetch origin gh-pages
+          git worktree add --force -B gh-pages "$WORKTREE" origin/gh-pages
+          WORKTREE_ADDED=true
+          cd "$WORKTREE"
 
           cp "$GITHUB_WORKSPACE/build/site/icon.png" icon.png
           cp "$GITHUB_WORKSPACE/site/public/privacy.html" privacy.html
@@ -1330,32 +1305,10 @@ jobs:
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_2.png" marketing_2.png
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_3.png" marketing_3.png
 
-          if [ -n "${{ needs.macos-build.outputs.ed_signature }}" ] && [ -n "${{ needs.macos-build.outputs.file_length }}" ]; then
-            [ -f appcast-state.json ] || printf '{}\n' > appcast-state.json
-
-            make -C "$GITHUB_WORKSPACE" release-appcast-update \
-              STATE_PATH="$(pwd)/appcast-state.json" \
-              CHANNEL="${{ needs.version.outputs.channel }}" \
-              VERSION="${{ needs.version.outputs.version }}" \
-              BUILD_NUMBER="${{ needs.version.outputs.build_number }}" \
-              URL="${{ needs.version.outputs.release_url }}" \
-              SIGNATURE="${{ needs.macos-build.outputs.ed_signature }}" \
-              LENGTH="${{ needs.macos-build.outputs.file_length }}"
-
-            make -C "$GITHUB_WORKSPACE" release-appcast-generate \
-              STATE_PATH="$(pwd)/appcast-state.json" \
-              OUTPUT_PATH="$(pwd)/appcast.xml"
-
-            xmllint --noout appcast.xml
-          else
-            echo "Skipping appcast update because the signed update metadata was not produced."
-          fi
-
           # Generate landing page from README.md (cmark-gfm installed via Nix)
           make -C "$GITHUB_WORKSPACE" site-landing-page > index.html
 
           git add icon.png privacy.html site.css marketing_1.png marketing_2.png marketing_3.png index.html
-          git add appcast.xml appcast-state.json 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
@@ -1363,11 +1316,17 @@ jobs:
           fi
           git push origin gh-pages
 
-          git tag "screenshots/${GITHUB_SHA::7}"
-          git push origin "screenshots/${GITHUB_SHA::7}"
-
-          cd -
-          git worktree remove /tmp/gh-pages --force
+          SCREENSHOT_TAG="screenshots/${GITHUB_SHA}"
+          EXISTING_SCREENSHOT_TAG="$(
+            git ls-remote --tags origin "refs/tags/${SCREENSHOT_TAG}" \
+              | awk 'NR == 1 { print $1 }'
+          )"
+          if [ -n "$EXISTING_SCREENSHOT_TAG" ]; then
+            echo "Screenshot tag ${SCREENSHOT_TAG} already exists; leaving it immutable."
+          else
+            git tag "$SCREENSHOT_TAG"
+            git push origin "$SCREENSHOT_TAG"
+          fi
 
           REPO="${{ github.repository }}"
           echo "Icon: https://raw.githubusercontent.com/$REPO/gh-pages/icon.png"
@@ -1375,11 +1334,123 @@ jobs:
           echo "Marketing 2: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_2.png"
           echo "Marketing 3: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_3.png"
 
+  # Publish Sparkle only after the immutable GitHub beta release exists. The
+  # gh-pages dependency orders the two writers, but site success is deliberately
+  # not required. Verify the served asset byte-for-byte before updating the feed.
+  appcast:
+    name: Publish Sparkle appcast
+    needs: [version, release, gh-pages]
+    if: >-
+      !cancelled()
+      && needs.version.result == 'success'
+      && needs.release.result == 'success'
+      && github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+    runs-on: macos-26
+    concurrency:
+      group: clipkitty-publication
+      queue: max
+      cancel-in-progress: false
+    permissions:
+      attestations: read
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
+
+      - name: Install Sparkle publishing tools
+        run: make install-sparkle-cli
+
+      - name: Download and verify released archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          RELEASE_DIR="${RUNNER_TEMP}/appcast-release-archive"
+          RELEASE_ARCHIVE="${RELEASE_DIR}/ClipKitty.dmg"
+
+          mkdir -p "$RELEASE_DIR"
+          gh release download "${{ needs.version.outputs.release_tag }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir "$RELEASE_DIR" \
+            --clobber \
+            --pattern "ClipKitty.dmg"
+
+          if [ ! -s "$RELEASE_ARCHIVE" ]; then
+            echo "::error::GitHub release asset is missing or empty: ${RELEASE_ARCHIVE}"
+            exit 1
+          fi
+
+          gh attestation verify "$RELEASE_ARCHIVE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/build.yml" \
+            --source-ref refs/heads/main \
+            --source-digest "$GITHUB_SHA" \
+            --deny-self-hosted-runners
+
+          echo "Verified released archive: $(shasum -a 256 "$RELEASE_ARCHIVE" | cut -d' ' -f1)"
+
+      - name: Publish verified Sparkle appcast
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+
+          RELEASE_ARCHIVE="${RUNNER_TEMP}/appcast-release-archive/ClipKitty.dmg"
+          WORKTREE="${RUNNER_TEMP}/gh-pages-appcast"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local --unset-all "http.https://github.com/.extraheader" || true
+          git config --global --unset-all "http.https://github.com/.extraheader" || true
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+
+          git fetch origin gh-pages
+          git worktree add --force -B gh-pages "$WORKTREE" origin/gh-pages
+          cleanup() {
+            cd "$GITHUB_WORKSPACE"
+            git worktree remove "$WORKTREE" --force || true
+          }
+          trap cleanup EXIT
+
+          cd "$WORKTREE"
+          make -C "$GITHUB_WORKSPACE" release-appcast-update \
+            STATE_PATH="$(pwd)/appcast-state.json" \
+            CHANNEL="${{ needs.version.outputs.channel }}" \
+            VERSION="${{ needs.version.outputs.version }}" \
+            BUILD_NUMBER="${{ needs.version.outputs.build_number }}" \
+            URL="${{ needs.version.outputs.release_url }}"
+
+          # Sparkle owns archive signing, bundle metadata extraction,
+          # enclosure metadata, and feed serialization. xtask owns only the
+          # channel transition and atomically installs the generated feed.
+          make -C "$GITHUB_WORKSPACE" release-appcast-generate \
+            STATE_PATH="$(pwd)/appcast-state.json" \
+            OUTPUT_PATH="$(pwd)/appcast.xml" \
+            CHANNEL="${{ needs.version.outputs.channel }}" \
+            ARCHIVE_PATH="$RELEASE_ARCHIVE"
+
+          xmllint --noout appcast.xml
+
+          git add appcast.xml appcast-state.json
+          if git diff --cached --quiet; then
+            echo "Sparkle appcast already matches ${{ needs.version.outputs.version }}."
+          else
+            git commit --no-verify -m "Update Sparkle appcast ${{ needs.version.outputs.version }} [skip ci]"
+            git push origin gh-pages
+          fi
+
   # Upload to App Store Connect via ASC CLI
   appstore:
     runs-on: macos-26
     needs: [rust-tests, macos-build, macos-uitests, macos-marketing, intro-videos]
-    if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'release')
+    if: github.event_name == 'push' && github.ref_name == 'main'
 
     steps:
       - name: Checkout
@@ -1387,20 +1458,8 @@ jobs:
         with:
           fetch-depth: 0 # Full history for commit count versioning
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: |
@@ -1511,22 +1570,48 @@ jobs:
       - name: Verify lockfiles unchanged
         run: make check
 
-      - name: Attest App Store Build Provenance
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+      - name: Upload App Store Attestation Subjects
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          subject-path: |
+          name: ClipKitty-AppStore-Attestation-Subjects
+          path: |
             ClipKitty.pkg
             DerivedData/Build/Products/AppStore/ClipKitty.app/Contents/MacOS/ClipKitty
+          if-no-files-found: error
 
       - name: Cleanup
         if: always()
         run: rm -f "$GITHUB_WORKSPACE/ClipKitty.provisionprofile"
 
+  appstore-attestation:
+    name: Attest App Store Build
+    needs: appstore
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Download App Store Attestation Subjects
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ClipKitty-AppStore-Attestation-Subjects
+          path: subjects
+
+      - name: Attest App Store Build Provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: |
+            subjects/ClipKitty.pkg
+            subjects/DerivedData/Build/Products/AppStore/ClipKitty.app/Contents/MacOS/ClipKitty
+
   # Upload iOS app to App Store Connect
   ios-appstore:
     runs-on: macos-26
     needs: [rust-tests, ios-build, ios-screenshots]
-    if: github.event_name == 'push' && (github.ref_name == 'main' || github.ref_name == 'release')
+    if: github.event_name == 'push' && github.ref_name == 'main'
 
     steps:
       - name: Checkout
@@ -1534,20 +1619,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: |

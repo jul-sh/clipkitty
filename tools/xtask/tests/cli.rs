@@ -82,17 +82,35 @@ fn parses_release_appcast_update_state() {
         "42",
         "--url",
         "https://example.com/app.dmg",
-        "--signature",
-        "sig",
-        "--length",
-        "1234",
     ]);
     let TopLevel::Release(ReleaseCmd::Appcast(AppcastCmd::UpdateState(args))) = cli.command else {
         panic!("expected release appcast update-state");
     };
     assert_eq!(args.channel, ReleaseChannel::Beta);
     assert_eq!(args.build_number, "42");
-    assert_eq!(args.length, 1234);
+}
+
+#[test]
+fn parses_release_appcast_generate() {
+    let cli = Cli::parse_from([
+        "clipkitty",
+        "release",
+        "appcast",
+        "generate",
+        "--state-path",
+        "/tmp/state.json",
+        "--output-path",
+        "/tmp/appcast.xml",
+        "--channel",
+        "stable",
+        "--archive-path",
+        "/tmp/ClipKitty.dmg",
+    ]);
+    let TopLevel::Release(ReleaseCmd::Appcast(AppcastCmd::Generate(args))) = cli.command else {
+        panic!("expected release appcast generate");
+    };
+    assert_eq!(args.channel, ReleaseChannel::Stable);
+    assert_eq!(args.archive_path.as_str(), "/tmp/ClipKitty.dmg");
 }
 
 #[test]

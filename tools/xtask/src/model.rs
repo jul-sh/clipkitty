@@ -8,21 +8,12 @@
 use clap::ValueEnum;
 
 /// macOS build/distribution variant — maps 1:1 to nix package names.
-///
-/// Value names match the canonical build/signing names used throughout the
-/// repository (`Release`, `Debug`, `Hardened`, `SparkleRelease`, `AppStore`),
-/// with lowercase aliases for call sites that prefer kebab-case.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MacVariant {
-    #[value(name = "Debug", alias = "debug")]
     Debug,
-    #[value(name = "Release", alias = "release")]
     Release,
-    #[value(name = "SparkleRelease", alias = "sparkle-release")]
     SparkleRelease,
-    #[value(name = "Hardened", alias = "hardened")]
     Hardened,
-    #[value(name = "AppStore", alias = "app-store")]
     AppStore,
 }
 
