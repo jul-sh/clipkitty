@@ -77,7 +77,7 @@ public enum ErrorReporter {
     private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "ClipKitty", category: "Error")
 
     /// Callback for showing notification snackbars. Set by FloatingPanelController on init.
-    public static var showNotification: ((NotificationKind) -> Void)?
+    public static var showNotification: ((NotificationRequest) -> Void)?
 
     /// Report an error, optionally showing a notification to the user
     public static func report(

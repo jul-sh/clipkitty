@@ -79,12 +79,12 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         snackbarWindow = SnackbarWindow(coordinator: coordinator)
         super.init()
 
-        coordinator.showNotification = { [weak self] kind in
-            self?.snackbarWindow.showNotification(kind)
+        coordinator.showNotification = { [weak self] request in
+            self?.snackbarWindow.showNotification(request)
         }
 
-        ErrorReporter.showNotification = { [weak self] kind in
-            self?.snackbarWindow.showNotification(kind)
+        ErrorReporter.showNotification = { [weak self] request in
+            self?.snackbarWindow.showNotification(request)
         }
 
         setupPanel()
@@ -162,8 +162,8 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             onDismiss: { [weak self] in
                 self?.hide()
             },
-            showSnackbarNotification: { [weak self] kind, action in
-                self?.snackbarWindow.showNotification(kind, onAction: action)
+            showSnackbarNotification: { [weak self] request in
+                self?.snackbarWindow.showNotification(request)
             },
             dismissSnackbarNotification: { [weak self] in
                 self?.snackbarWindow.dismissNotification()
@@ -487,11 +487,18 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             .actionable(
                 message: String(localized: "Copied. Enable Accessibility to paste automatically"),
                 iconSystemName: "exclamationmark.triangle.fill",
-                actionTitle: String(localized: "Enable")
-            ),
-            onAction: {
-                NotificationCenter.default.post(name: .clipKittyOpenSettings, object: nil)
-            }
+                actionTitle: String(localized: "Enable"),
+                action: {
+                    NotificationCenter.default.post(name: .clipKittyOpenSettings, object: nil)
+                }
+            )
         )
+    }
+
+    private func showCopiedNotification() {
+        snackbarWindow.showNotification(.passive(
+            message: String(localized: "Copied"),
+            iconSystemName: "checkmark.circle.fill"
+        ))
     }
 }

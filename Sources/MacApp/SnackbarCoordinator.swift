@@ -5,7 +5,7 @@ import Foundation
 @MainActor
 final class SnackbarCoordinator {
     private let makeEnvironment: @MainActor () -> SnackbarEnvironment
-    var showNotification: ((NotificationKind) -> Void)?
+    var showNotification: ((NotificationRequest) -> Void)?
 
     init(
         store: ClipboardStore? = nil,

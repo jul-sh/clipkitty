@@ -7,7 +7,7 @@ struct ContentView: View {
     let onSelect: (String, ClipboardContent) -> Void
     let onCopyOnly: (String, ClipboardContent) -> Void
     let onDismiss: () -> Void
-    let showSnackbarNotification: (NotificationKind, (() -> Void)?) -> Void
+    let showSnackbarNotification: (NotificationRequest) -> Void
     let dismissSnackbarNotification: () -> Void
     var initialSearchQuery: String = ""
 
@@ -27,7 +27,7 @@ struct ContentView: View {
         onSelect: @escaping (String, ClipboardContent) -> Void,
         onCopyOnly: @escaping (String, ClipboardContent) -> Void,
         onDismiss: @escaping () -> Void,
-        showSnackbarNotification: @escaping (NotificationKind, (() -> Void)?) -> Void,
+        showSnackbarNotification: @escaping (NotificationRequest) -> Void,
         dismissSnackbarNotification: @escaping () -> Void,
         initialSearchQuery: String = ""
     ) {

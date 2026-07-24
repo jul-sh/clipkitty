@@ -31,7 +31,8 @@ public struct BrowserSearchResponse {
 
 public enum QueryLoadPhase {
     case debouncing
-    case running(spinnerVisible: Bool)
+    case runningWaitingForSpinner
+    case runningShowingSpinner
 }
 
 public enum BrowserContentState {
@@ -85,11 +86,6 @@ public enum BrowserContentState {
             return nil
         }
     }
-
-    public var isSearchSpinnerVisible: Bool {
-        guard case let .loading(_, _, .running(spinnerVisible)) = self else { return false }
-        return spinnerVisible
-    }
 }
 
 public struct LoadedBrowserContent {
@@ -126,31 +122,65 @@ public enum SelectionOrigin {
     /// The user moved selection via keyboard (arrow keys, Cmd+N, etc.).
     /// The target may be outside the current viewport.
     case keyboard
+}
 
-    /// True when the user explicitly picked this item (click or keyboard),
-    /// as opposed to a programmatic selection landing on the current item.
-    public var isUserInitiated: Bool {
-        switch self {
-        case .automatic: return false
-        case .click, .keyboard: return true
-        }
-    }
-
-    /// Whether the results list should scroll the newly-selected item into
-    /// view. A click targets a visible row; anything else may not be visible.
-    public var requiresScrollIntoView: Bool {
-        switch self {
-        case .click: return false
-        case .automatic, .keyboard: return true
-        }
-    }
+public enum PreviewLoadPhase: Equatable {
+    case waitingForSpinner
+    case showingSpinner
 }
 
 public enum SelectedPreviewState: Equatable {
     case plain
-    case loadingDecoration(previous: PreviewDecoration?)
+    case loadingDecoration(previous: PreviewDecoration?, phase: PreviewLoadPhase)
     case highlighted(PreviewDecoration)
+
+    /// The decoration currently suitable for display. A loading state retains
+    /// its previous value so the preview can remain stable while refreshing.
+    public var decoration: PreviewDecoration? {
+        switch self {
+        case .plain:
+            return nil
+        case let .loadingDecoration(previous, .waitingForSpinner),
+             let .loadingDecoration(previous, .showingSpinner):
+            return previous
+        case let .highlighted(decoration):
+            return decoration
+        }
+    }
 }
+
+#if DEBUG
+    public enum PreviewDebugLabelFormatter {
+        public static func label(
+            text: String,
+            itemId: String,
+            previewState: SelectedPreviewState
+        ) -> String {
+            let state: String
+            let fragments: [String]
+
+            switch previewState {
+            case .plain:
+                state = "plain"
+                fragments = []
+            case .loadingDecoration(previous: nil, phase: .waitingForSpinner),
+                 .loadingDecoration(previous: nil, phase: .showingSpinner):
+                state = "loading-decoration"
+                fragments = []
+            case let .loadingDecoration(previous: decoration?, phase: .waitingForSpinner),
+                 let .loadingDecoration(previous: decoration?, phase: .showingSpinner):
+                state = "loading-decoration-stale"
+                fragments = HighlightAttributedStringBuilder.fragments(in: text, highlights: decoration.highlights)
+            case let .highlighted(decoration):
+                state = "highlighted"
+                fragments = HighlightAttributedStringBuilder.fragments(in: text, highlights: decoration.highlights)
+            }
+
+            let joinedFragments = fragments.isEmpty ? "none" : fragments.joined(separator: "|")
+            return "item=\(itemId);state=\(state);highlights=\(joinedFragments)"
+        }
+    }
+#endif
 
 public struct SelectedItemState: Equatable {
     public let item: ClipboardItem
@@ -162,11 +192,26 @@ public struct SelectedItemState: Equatable {
         self.origin = origin
         self.previewState = previewState
     }
+
+    /// Decoration whose offsets describe the text currently on screen.
+    /// Search decoration belongs to persisted content, so it must be hidden
+    /// while either active or suspended draft text is being rendered.
+    public func displayDecoration(for editSession: PreviewEditSession) -> PreviewDecoration? {
+        let itemId = item.itemMetadata.itemId
+        switch editSession {
+        case let .dirty(draftItemId, _) where draftItemId == itemId:
+            return nil
+        case let .suspendedDirty(draftItemId, _) where draftItemId == itemId:
+            return nil
+        case .inactive, .focused, .dirty, .suspendedDirty:
+            return previewState.decoration
+        }
+    }
 }
 
 public enum SelectionState {
     case none
-    case loading(itemId: String, origin: SelectionOrigin)
+    case loading(itemId: String, origin: SelectionOrigin, phase: PreviewLoadPhase)
     case selected(SelectedItemState)
     case failed(itemId: String, origin: SelectionOrigin)
 
@@ -174,7 +219,9 @@ public enum SelectionState {
         switch self {
         case .none:
             return nil
-        case let .loading(itemId, _), let .failed(itemId, _):
+        case let .loading(itemId, _, .waitingForSpinner),
+             let .loading(itemId, _, .showingSpinner),
+             let .failed(itemId, _):
             return itemId
         case let .selected(selectedItem):
             return selectedItem.item.itemMetadata.itemId
@@ -185,7 +232,9 @@ public enum SelectionState {
         switch self {
         case .none:
             return nil
-        case let .loading(_, origin), let .failed(_, origin):
+        case let .loading(_, origin, .waitingForSpinner),
+             let .loading(_, origin, .showingSpinner),
+             let .failed(_, origin):
             return origin
         case let .selected(selectedItem):
             return selectedItem.origin
@@ -201,7 +250,9 @@ public enum SelectionState {
     public var poiLabel: String {
         switch self {
         case .none: return "none"
-        case let .loading(itemId, _): return "loading(\(itemId))"
+        case let .loading(itemId, _, .waitingForSpinner),
+             let .loading(itemId, _, .showingSpinner):
+            return "loading(\(itemId))"
         case let .selected(state): return "selected(\(state.item.itemMetadata.itemId))"
         case let .failed(itemId, _): return "failed(\(itemId))"
         }
@@ -260,10 +311,42 @@ public enum BrowserKeyboardTarget: Equatable {
 
 public enum MutationState {
     case idle
+    case saving(TextSaveTransaction)
     case deleting(DeleteMutation)
     case tagging(TagMutation)
     case clearing(ClearTransaction)
     case failed(ActionFailure)
+}
+
+enum SnapshotValue<Value> {
+    case absent
+    case present(Value)
+
+    init(_ value: Value?) {
+        switch value {
+        case let .some(value):
+            self = .present(value)
+        case .none:
+            self = .absent
+        }
+    }
+}
+
+/// Everything required to identify, settle, or roll back one optimistic text
+/// save. The draft remains in ``PreviewEditSession`` while this transaction is
+/// in flight; this value owns persistence lifecycle and rollback data only.
+public struct TextSaveTransaction {
+    let id: UUID
+    public let itemId: String
+    let draft: String
+    let itemSnapshot: ClipboardItem
+    let contentSnapshot: BrowserContentState
+    let selectionSnapshot: SelectionState
+    let previewPayloadSnapshot: SnapshotValue<PreviewPayload>
+    let resolvedExcerptSnapshot: SnapshotValue<MatchedExcerpt>
+    let prefetchedItemSnapshot: SnapshotValue<ClipboardItem>
+    let queryGeneration: Int
+    let selectionGeneration: Int
 }
 
 public enum DeleteMutation {
