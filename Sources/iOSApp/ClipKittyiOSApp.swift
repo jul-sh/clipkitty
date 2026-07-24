@@ -96,15 +96,14 @@ final class AppState {
     private let container: AppContainer
     let viewModel: BrowserViewModel
 
-    var toast: ToastState = .init()
+    var toast: ToastState = .hidden
     var contentRevision: Int = 0
 
-    /// A transient snackbar notification (with optional inline action). The
-    /// underlying value is a shared `NotificationKind` so iOS and Mac can use
-    /// the same snackbar model; see `SnackbarItem` in `ClipKittyShared`.
-    struct ToastState {
-        var kind: NotificationKind?
-        var action: (() -> Void)?
+    /// A transient snackbar request plus presentation identity. The request
+    /// structurally owns its action only when it is actionable.
+    enum ToastState {
+        case hidden
+        case visible(id: UUID, request: NotificationRequest)
     }
 
     init(container: AppContainer) {
@@ -116,22 +115,20 @@ final class AppState {
         let haptics = container.haptics
         let settings = container.settings
 
+        let copyItem: (String, ClipboardContent) -> Void = { _, content in
+            clipboardService.copy(content: content)
+            haptics.fire(.copy)
+            toastBox.show?(ToastMessage.copied.notificationRequest)
+        }
+
         viewModel = BrowserViewModel(
             client: container.storeClient,
             shouldGenerateLinkPreviews: { settings.generateLinkPreviews },
-            onSelect: { _, content in
-                clipboardService.copy(content: content)
-                haptics.fire(.copy)
-                toastBox.show?(ToastMessage.copied.notificationKind, nil)
-            },
-            onCopyOnly: { _, content in
-                clipboardService.copy(content: content)
-                haptics.fire(.copy)
-                toastBox.show?(ToastMessage.copied.notificationKind, nil)
-            },
+            onSelect: copyItem,
+            onCopyOnly: copyItem,
             onDismiss: {},
-            showSnackbarNotification: { kind, action in
-                toastBox.show?(kind, action)
+            showSnackbarNotification: { request in
+                toastBox.show?(request)
             },
             dismissSnackbarNotification: {
                 toastBox.dismiss?()
@@ -139,33 +136,44 @@ final class AppState {
         )
 
         // Wire the box to self after all stored properties are initialized
-        toastBox.show = { [weak self] kind, action in
-            self?.showNotification(kind, action: action)
+        toastBox.show = { [weak self] request in
+            self?.showNotification(request)
         }
         toastBox.dismiss = { [weak self] in
-            withAnimation(.bouncy) {
-                self?.toast = .init()
-            }
+            self?.dismissToast()
         }
     }
 
-    func showToast(_ message: ToastMessage, action: (() -> Void)? = nil) {
-        showNotification(message.notificationKind, action: action)
+    func showToast(_ message: ToastMessage) {
+        showNotification(message.notificationRequest)
     }
 
-    /// Show a shared-model snackbar notification. The iOS overlay renders this
-    /// from the same `NotificationKind` cases the Mac uses (see Mac's
-    /// `SnackbarView`), keeping presentation aligned across platforms.
-    func showNotification(_ kind: NotificationKind, action: (() -> Void)? = nil) {
+    /// Show a shared notification request. The overlay projects its
+    /// closure-free kind for rendering and matches the request to run actions.
+    func showNotification(_ request: NotificationRequest) {
+        let id = UUID()
+        let duration = request.kind.duration
         withAnimation(.bouncy) {
-            toast = ToastState(kind: kind, action: action)
+            toast = .visible(id: id, request: request)
         }
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(kind.duration))
-            guard let self, self.toast.kind == kind else { return }
-            withAnimation(.bouncy) {
-                self.toast = .init()
-            }
+            try? await Task.sleep(for: .seconds(duration))
+            self?.dismissToast(id: id)
+        }
+    }
+
+    func dismissToast() {
+        withAnimation(.bouncy) {
+            toast = .hidden
+        }
+    }
+
+    func dismissToast(id: UUID) {
+        switch toast {
+        case let .visible(currentID, _) where currentID == id:
+            dismissToast()
+        case .hidden, .visible:
+            break
         }
     }
 
@@ -216,7 +224,7 @@ final class AppState {
 
     func prepareForSuspension() {
         viewModel.prepareForSuspension()
-        toast = .init()
+        toast = .hidden
     }
 
     func processPendingShareItems() async -> Int {
@@ -313,19 +321,16 @@ final class AppState {
 // MARK: - Toast Message
 
 /// Sugar for the most common iOS-internal transient notifications. Each case
-/// builds a shared `NotificationKind` so the snackbar slot can be rendered
-/// from the same `SnackbarItem` model the Mac uses.
+/// builds a shared `NotificationRequest` for the platform transport.
 enum ToastMessage: Equatable {
     case copied
     case bookmarked
     case unbookmarked
-    case saved
-    case deleted
     case addSucceeded
     case addFailed(String)
     case clipboardEmpty
 
-    var notificationKind: NotificationKind {
+    var notificationRequest: NotificationRequest {
         switch self {
         case .copied:
             return .passive(message: String(localized: "Copied to clipboard"), iconSystemName: "doc.on.doc")
@@ -333,10 +338,6 @@ enum ToastMessage: Equatable {
             return .passive(message: String(localized: "Bookmarked"), iconSystemName: "bookmark.fill")
         case .unbookmarked:
             return .passive(message: String(localized: "Removed bookmark"), iconSystemName: "bookmark.slash")
-        case .saved:
-            return .passive(message: String(localized: "Saved"), iconSystemName: "checkmark.circle")
-        case .deleted:
-            return .passive(message: String(localized: "Deleted"), iconSystemName: "trash")
         case .addSucceeded:
             return .passive(message: String(localized: "Added"), iconSystemName: "plus.circle")
         case let .addFailed(reason):
@@ -358,7 +359,7 @@ enum ToastMessage: Equatable {
 /// so they must be provided at construction time — this box bridges that gap.
 @MainActor
 private final class ToastCallbackBox {
-    var show: ((NotificationKind, (() -> Void)?) -> Void)?
+    var show: ((NotificationRequest) -> Void)?
     var dismiss: (() -> Void)?
 }
 
@@ -367,9 +368,6 @@ private final class ToastCallbackBox {
 @main
 struct ClipKittyiOSApp: App {
     @State private var launchState: AppLaunchState = .launching
-    /// The in-flight store open of the current resume, chained so a
-    /// superseded open always releases its store before the next one starts.
-    @State private var resumeOpenTask: Task<Void, Never>?
     @Environment(\.scenePhase) private var scenePhase
 
     #if ENABLE_ICLOUD_SYNC
