@@ -1,3 +1,4 @@
+import ClipKittyCore
 import Foundation
 
 /// UserDefaults-backed settings for the iOS app.
@@ -7,22 +8,22 @@ final class iOSSettingsStore {
     // MARK: - Settings
 
     var hapticsEnabled: Bool {
-        didSet { save() }
+        didSet { defaults.set(hapticsEnabled, forKey: hapticsEnabledKey) }
     }
 
     var generateLinkPreviews: Bool {
-        didSet { save() }
+        didSet { defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey) }
     }
 
     var autoAddFromClipboard: Bool {
-        didSet { save() }
+        didSet { defaults.set(autoAddFromClipboard, forKey: autoAddFromClipboardKey) }
     }
 
     /// Whether Shortcuts intents may read clipboard history. Default ON; the
     /// read-intents are gated on this so a privacy-conscious user can turn off
     /// history access for automations while still allowing them to save clips.
     var allowShortcutsReadAccess: Bool {
-        didSet { save() }
+        didSet { defaults.set(allowShortcutsReadAccess, forKey: allowShortcutsReadAccessKey) }
     }
 
     /// Whether to capture clips the source marked as sensitive (passwords, OTPs,
@@ -30,42 +31,42 @@ final class iOSSettingsStore {
     /// password-manager and other secret clips are not added to history unless
     /// the user opts in.
     var captureSensitiveClips: Bool {
-        didSet { save() }
+        didSet { defaults.set(captureSensitiveClips, forKey: captureSensitiveClipsKey) }
     }
 
     /// The UI typeface used across the app. Mirrors the macOS `fontPreference`.
     var fontPreference: AppFontPreference {
-        didSet { save() }
+        didSet { defaults.set(fontPreference.rawValue, forKey: fontPreferenceKey) }
     }
 
     /// Character spacing for preview text — monospaced vs proportional.
     /// Mirrors the macOS `previewFontPreference`.
     var previewFontPreference: PreviewFontPreference {
-        didSet { save() }
+        didSet { defaults.set(previewFontPreference.rawValue, forKey: previewFontPreferenceKey) }
     }
 
     /// Whether the user has dismissed the clipboard-permission hint in Settings.
     var permissionHintDismissed: Bool {
-        didSet { save() }
+        didSet { defaults.set(permissionHintDismissed, forKey: permissionHintDismissedKey) }
     }
 
     /// Maximum database size in gigabytes; oldest items are pruned beyond it.
     /// Matches the macOS default of 7 GB.
     var maxDatabaseSizeGB: Double {
-        didSet { save() }
+        didSet { defaults.set(maxDatabaseSizeGB, forKey: maxDatabaseSizeGBKey) }
     }
 
     #if ENABLE_ICLOUD_SYNC
         var syncEnabled: Bool {
-            didSet { save() }
+            didSet { defaults.set(syncEnabled, forKey: syncEnabledKey) }
         }
     #endif
 
     // MARK: - Pasteboard ingest state
 
     /// The pasteboard `changeCount` already ingested by auto-add. This is
-    /// state, not a user-facing preference, so it bypasses the
-    /// `isInitializing`/`save()` flow and writes straight to UserDefaults.
+    /// state, not a user-facing preference, but it uses the same per-key
+    /// persistence strategy as the user-facing settings.
     /// Persistence is required because backgrounding tears down the container
     /// and rebootstraps on foreground.
     @ObservationIgnored
@@ -94,9 +95,6 @@ final class iOSSettingsStore {
     @ObservationIgnored
     private let defaults: UserDefaults
 
-    @ObservationIgnored
-    private var isInitializing = true
-
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
@@ -115,24 +113,6 @@ final class iOSSettingsStore {
 
         #if ENABLE_ICLOUD_SYNC
             syncEnabled = defaults.object(forKey: syncEnabledKey) as? Bool ?? false
-        #endif
-
-        isInitializing = false
-    }
-
-    private func save() {
-        guard !isInitializing else { return }
-        defaults.set(hapticsEnabled, forKey: hapticsEnabledKey)
-        defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
-        defaults.set(autoAddFromClipboard, forKey: autoAddFromClipboardKey)
-        defaults.set(allowShortcutsReadAccess, forKey: allowShortcutsReadAccessKey)
-        defaults.set(captureSensitiveClips, forKey: captureSensitiveClipsKey)
-        defaults.set(maxDatabaseSizeGB, forKey: maxDatabaseSizeGBKey)
-        defaults.set(fontPreference.rawValue, forKey: fontPreferenceKey)
-        defaults.set(previewFontPreference.rawValue, forKey: previewFontPreferenceKey)
-        defaults.set(permissionHintDismissed, forKey: permissionHintDismissedKey)
-        #if ENABLE_ICLOUD_SYNC
-            defaults.set(syncEnabled, forKey: syncEnabledKey)
         #endif
     }
 }

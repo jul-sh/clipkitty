@@ -13,9 +13,8 @@ import SwiftUI
     /// A settings view for configuring paste behavior with a radio-button style picker.
     struct PasteItemsSettingView: View {
         @ObservedObject private var settings = AppSettings.shared
+        @State private var permissionMonitor = AppRuntimeState.shared.accessibilityPermissionMonitor
         @State private var showingPermissionSheet = false
-        /// Track permission state locally for reactive updates (bridged from @Observable monitor)
-        @State private var hasPermission: Bool = AppSettings.shared.accessibilityPermissionMonitor.isGranted
 
         /// Binding that maps autoPasteEnabled to our selection enum
         private var selection: Binding<PasteItemsSelection> {
@@ -29,7 +28,7 @@ import SwiftUI
 
         /// Whether to show the permission prompt (user selected active app but no permission)
         private var showPermissionPrompt: Bool {
-            settings.autoPasteEnabled && !hasPermission
+            settings.autoPasteEnabled && !permissionMonitor.isGranted
         }
 
         var body: some View {
@@ -73,28 +72,12 @@ import SwiftUI
                 AccessibilityPermissionSheet(isPresented: $showingPermissionSheet)
             }
             .onAppear {
-                // Sync initial state
-                hasPermission = settings.accessibilityPermissionMonitor.isGranted
-                // Start monitoring when the view appears (if needed)
-                if !hasPermission {
-                    settings.accessibilityPermissionMonitor.start()
+                if !permissionMonitor.isGranted {
+                    permissionMonitor.start()
                 }
             }
             .onDisappear {
-                // Stop monitoring when view disappears
-                settings.accessibilityPermissionMonitor.stop()
-            }
-            .task {
-                // Poll permission state to update UI reactively
-                // This bridges the @Observable monitor to SwiftUI state
-                let monitor = settings.accessibilityPermissionMonitor
-                while !Task.isCancelled {
-                    let granted = monitor.isGranted
-                    if granted != hasPermission {
-                        hasPermission = granted
-                    }
-                    try? await Task.sleep(for: .milliseconds(100))
-                }
+                permissionMonitor.stop()
             }
         }
     }
@@ -115,21 +98,8 @@ import SwiftUI
         var body: some View {
             Button(action: onSelect) {
                 HStack(alignment: .top, spacing: 8) {
-                    // Radio button
-                    ZStack {
-                        Circle()
-                            .fill(isSelected ? Color.accentColor : Color.clear)
-                            .frame(width: 14, height: 14)
-                        Circle()
-                            .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.5), lineWidth: 1.5)
-                            .frame(width: 14, height: 14)
-                        if isSelected {
-                            Circle()
-                                .fill(Color.white)
-                                .frame(width: 5, height: 5)
-                        }
-                    }
-                    .padding(.top, 3)
+                    RadioDot(isSelected: isSelected)
+                        .padding(.top, 3)
 
                     // Text content
                     VStack(alignment: .leading, spacing: 2) {

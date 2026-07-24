@@ -1,5 +1,5 @@
+import ClipKittyCore
 import ClipKittyMacPlatform
-import ClipKittyShared
 import Foundation
 
 @MainActor
@@ -14,8 +14,7 @@ final class SnackbarCoordinator {
         if let makeEnvironment {
             self.makeEnvironment = makeEnvironment
         } else {
-            weak var weakStore = store
-            self.makeEnvironment = { LiveSnackbarEnvironment(store: weakStore) }
+            self.makeEnvironment = { [weak store] in LiveSnackbarEnvironment(store: store) }
         }
     }
 
@@ -24,11 +23,11 @@ final class SnackbarCoordinator {
     }
 
     func handleNudgeAction(_ kind: NudgeKind) {
-        AppSettings.shared.lastNudgeInteractionDate = Date()
+        AppLifecycleState.shared.lastNudgeInteractionDate = Date()
 
         switch kind {
         case .launchAtLogin:
-            AppSettings.shared.launchAtLoginPromptDismissed = true
+            AppLifecycleState.shared.launchAtLoginPromptDismissed = true
             AppSettings.shared.launchAtLoginEnabled = true
             LaunchAtLogin.shared.enable()
             showNotification?(.passive(message: String(localized: "Launch at login enabled"), iconSystemName: "checkmark.circle.fill"))
@@ -36,23 +35,25 @@ final class SnackbarCoordinator {
     }
 
     func handleNudgeDismiss(_ kind: NudgeKind) {
-        AppSettings.shared.lastNudgeInteractionDate = Date()
+        AppLifecycleState.shared.lastNudgeInteractionDate = Date()
 
         switch kind {
         case .launchAtLogin:
-            AppSettings.shared.launchAtLoginPromptDismissed = true
+            AppLifecycleState.shared.launchAtLoginPromptDismissed = true
         }
     }
 
     func handleInfoDismiss() {
-        AppSettings.shared.lastInfoDismissDate = Date()
+        AppLifecycleState.shared.lastInfoDismissDate = Date()
     }
 
     func syncWithSystem() {
         let settings = AppSettings.shared
-        if settings.launchAtLoginEnabled, !LaunchAtLogin.shared.isEnabled {
+        if settings.launchAtLoginEnabled,
+           case .disabled = LaunchAtLogin.shared.state.registrationStatus
+        {
             settings.launchAtLoginEnabled = false
-            settings.launchAtLoginPromptDismissed = false
+            AppLifecycleState.shared.launchAtLoginPromptDismissed = false
         }
     }
 }

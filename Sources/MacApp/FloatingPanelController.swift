@@ -1,7 +1,7 @@
 import AppKit
+import ClipKittyCore
 import ClipKittyMacPlatform
 import ClipKittyRust
-import ClipKittyShared
 import Combine
 import SwiftUI
 
@@ -89,7 +89,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
         setupPanel()
 
-        textScaleCancellable = AppSettings.shared.$textScale
+        textScaleCancellable = AppRuntimeState.shared.$textScale
             .dropFirst()
             .sink { [weak self] _ in
                 self?.handleTextScaleChange()
@@ -265,7 +265,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     private static let basePanelSize = NSSize(width: 778, height: 518)
     private static var panelSize: NSSize {
-        let s = AppSettings.shared.textScale
+        let s = AppRuntimeState.shared.textScale
         var size = NSSize(width: basePanelSize.width * s, height: basePanelSize.height * s)
         if let screen = NSScreen.main?.visibleFrame {
             size.width = min(size.width, screen.width - 40)
@@ -273,6 +273,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         }
         return size
     }
+
     private static let animationScale: CGFloat = 1.05
     private static var animationMargin: CGFloat {
         ceil(max(panelSize.width, panelSize.height) * (animationScale - 1) / 2) + 2
@@ -427,16 +428,16 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             let targetApp = hide()
             Task { @MainActor in
                 guard await pasteReportingProgress(itemId: itemId, content: content) else { return }
-                switch AppSettings.shared.pasteMode {
+                switch AppRuntimeState.shared.pasteMode {
                 case .autoPaste:
                     switch activationService.syntheticPasteBehavior(for: targetApp) {
                     case let .paste(targetApp):
                         activationService.simulatePaste(to: targetApp)
                     case .copyOnly:
-                        snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
+                        showCopiedNotification()
                     }
                 case .copyOnly:
-                    snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
+                    showCopiedNotification()
                 case .noPermission:
                     showCopiedWithPermissionNotice()
                 }
@@ -445,7 +446,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             hide()
             Task { @MainActor in
                 guard await pasteReportingProgress(itemId: itemId, content: content) else { return }
-                snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
+                showCopiedNotification()
             }
         #endif
     }
@@ -454,7 +455,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         hide()
         Task { @MainActor in
             guard await pasteReportingProgress(itemId: itemId, content: content) else { return }
-            snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
+            showCopiedNotification()
         }
     }
 
@@ -479,7 +480,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     /// permission is missing; tell the user how to enable it, once per launch.
     private func showCopiedWithPermissionNotice() {
         if hasShownNoPermissionNotice {
-            snackbarWindow.showNotification(.passive(message: String(localized: "Copied"), iconSystemName: "checkmark.circle.fill"))
+            showCopiedNotification()
             return
         }
         hasShownNoPermissionNotice = true

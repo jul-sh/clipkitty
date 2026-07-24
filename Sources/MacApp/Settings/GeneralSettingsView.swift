@@ -1,14 +1,15 @@
 import AppKit
-import ClipKittyAppleServices
+import ClipKittyCore
 import ClipKittyMacPlatform
-import ClipKittyShared
 #if ENABLE_ICLOUD_SYNC
+    import ClipKittyCloudSync
     import CloudKit
 #endif
 import SwiftUI
 
 struct GeneralSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var runtimeState = AppRuntimeState.shared
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
     #if ENABLE_BUILD_ATTESTATION_LINK
         @State private var attestationURL: URL?
@@ -48,27 +49,21 @@ struct GeneralSettingsView: View {
         Form {
             Section(String(localized: "Behavior")) {
                 Toggle(String(localized: "Launch at login"), isOn: launchAtLoginBinding)
-                    .disabled(!launchAtLogin.state.canToggle)
 
                 if let message = launchAtLogin.state.displayMessage {
                     Text(message)
                         .font(.subheadline)
-                        .foregroundStyle(
-                            launchAtLogin.state.hasFailureNotice
-                                ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary)
-                        )
+                        .foregroundStyle(.red)
 
-                    if launchAtLogin.state.hasFailureNotice {
-                        Button(String(localized: "Open Login Items Settings")) {
-                            NSWorkspace.shared.open(
-                                URL(
-                                    string:
-                                    "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
-                                )!
-                            )
-                        }
-                        .font(.subheadline)
+                    Button(String(localized: "Open Login Items Settings")) {
+                        NSWorkspace.shared.open(
+                            URL(
+                                string:
+                                "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
+                            )!
+                        )
                     }
+                    .font(.subheadline)
                 }
 
                 #if ENABLE_ICLOUD_SYNC
@@ -180,7 +175,7 @@ struct GeneralSettingsView: View {
                 isOn: $settings.autoInstallUpdates
             )
 
-            if !settings.autoInstallUpdates, settings.updateCheckState == .available {
+            if !settings.autoInstallUpdates, runtimeState.updateCheckState == .available {
                 Button(String(localized: "Install Update")) {
                     onInstallUpdate?()
                 }
@@ -277,7 +272,12 @@ struct GeneralSettingsView: View {
 
     private var launchAtLoginBinding: Binding<Bool> {
         Binding(
-            get: { launchAtLogin.isEnabled },
+            get: {
+                switch launchAtLogin.state.registrationStatus {
+                case .enabled: true
+                case .disabled: false
+                }
+            },
             set: { newValue in
                 if launchAtLogin.setEnabled(newValue) {
                     settings.launchAtLoginEnabled = newValue
