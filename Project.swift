@@ -794,7 +794,7 @@ let project = Project(
             product: .unitTests,
             bundleId: "com.eviljuliette.clipkitty.tests",
             deploymentTargets: .macOS("14.0"),
-            sources: ["Tests/UnitTests/**"],
+            sources: ["Tests/TestSupport/**", "Tests/UnitTests/**"],
             dependencies: [
                 .target(name: "ClipKitty"),
                 .target(name: "ClipKittyRust"),

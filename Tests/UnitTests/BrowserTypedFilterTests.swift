@@ -1,6 +1,5 @@
 @testable import ClipKitty
-@testable import ClipKittyBrowser
-import ClipKittyCore
+@testable import ClipKittyShared
 import ClipKittyRust
 import XCTest
 

@@ -1,4 +1,4 @@
-@testable import ClipKittyBrowser
+@testable import ClipKittyShared
 import ClipKittyRust
 import XCTest
 
