@@ -178,9 +178,6 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
-    outputs:
-      ed_signature: ${{ steps.eddsa-sign.outputs.ed_signature }}
-      file_length: ${{ steps.eddsa-sign.outputs.file_length }}
 
     steps:
       - name: Checkout
@@ -455,23 +452,6 @@ jobs:
           done
           echo "Stapling failed after 10 attempts"
           exit 1
-
-      - name: Install Sparkle CLI Tools
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
-        run: make install-sparkle-cli
-
-      - name: Sign DMG with EdDSA
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
-        id: eddsa-sign
-        run: |
-          SIGNATURE=$(echo "$SPARKLE_EDDSA_KEY" | sign_update ClipKitty.dmg --ed-key-file -)
-          # sign_update outputs: sparkle:edSignature="..." length="..."
-          ED_SIGNATURE=$(echo "$SIGNATURE" | sed 's/.*sparkle:edSignature="\([^"]*\)".*/\1/')
-          FILE_LENGTH=$(echo "$SIGNATURE" | sed 's/.*length="\([^"]*\)".*/\1/')
-          echo "ed_signature=$ED_SIGNATURE" >> "$GITHUB_OUTPUT"
-          echo "file_length=$FILE_LENGTH" >> "$GITHUB_OUTPUT"
-        env:
-          SPARKLE_EDDSA_KEY: ${{ steps.secrets.outputs.SPARKLE_EDDSA_KEY }}
 
       - name: Verify lockfiles unchanged before attestation
         run: make check
@@ -1122,11 +1102,9 @@ jobs:
         env:
           HOMEBREW_TAP_TOKEN: ${{ steps.secrets.outputs.HOMEBREW_TAP_TOKEN }}
 
-  # Deploy the site even when other jobs failed (matching the old always()
-  # behavior), but only when the marketing assets actually exist — the
-  # previous mono-job version died on a missing generated site icon whenever
-  # an earlier step had failed. The appcast is skipped gracefully when macos-build
-  # produced no signature (its outputs read as empty strings).
+  # Deploy the site even when unrelated jobs failed. If the notarized update
+  # archive exists, Sparkle's official generator signs it while rebuilding the
+  # appcast; otherwise the existing feed is left untouched.
   gh-pages:
     name: Deploy to gh-pages
     needs: [version, macos-build, macos-marketing]
@@ -1147,15 +1125,27 @@ jobs:
       - name: Install CI tools from Nix
         run: nix profile install --no-update-lock-file --inputs-from . nixpkgs#cmark-gfm
 
+      - name: Install Sparkle publishing tools
+        if: needs.macos-build.result == 'success'
+        run: make install-sparkle-cli
+
       - name: Download marketing assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: assets
           path: .
 
+      - name: Download notarized update archive
+        if: needs.macos-build.result == 'success'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ClipKitty-Builds
+          path: ${{ runner.temp }}/appcast-archive
+
       - name: Deploy to gh-pages
         env:
           GH_TOKEN: ${{ github.token }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -1191,25 +1181,27 @@ jobs:
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_2.png" marketing_2.png
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_3.png" marketing_3.png
 
-          if [ -n "${{ needs.macos-build.outputs.ed_signature }}" ] && [ -n "${{ needs.macos-build.outputs.file_length }}" ]; then
-            [ -f appcast-state.json ] || printf '{}\n' > appcast-state.json
-
+          UPDATE_ARCHIVE="${RUNNER_TEMP}/appcast-archive/ClipKitty.dmg"
+          if [ -f "$UPDATE_ARCHIVE" ]; then
             make -C "$GITHUB_WORKSPACE" release-appcast-update \
               STATE_PATH="$(pwd)/appcast-state.json" \
               CHANNEL="${{ needs.version.outputs.channel }}" \
               VERSION="${{ needs.version.outputs.version }}" \
               BUILD_NUMBER="${{ needs.version.outputs.build_number }}" \
-              URL="${{ needs.version.outputs.release_url }}" \
-              SIGNATURE="${{ needs.macos-build.outputs.ed_signature }}" \
-              LENGTH="${{ needs.macos-build.outputs.file_length }}"
+              URL="${{ needs.version.outputs.release_url }}"
 
+            # Sparkle owns archive signing, bundle metadata extraction,
+            # enclosure metadata, and feed serialization. xtask owns only the
+            # channel transition and atomically installs the generated feed.
             make -C "$GITHUB_WORKSPACE" release-appcast-generate \
               STATE_PATH="$(pwd)/appcast-state.json" \
-              OUTPUT_PATH="$(pwd)/appcast.xml"
+              OUTPUT_PATH="$(pwd)/appcast.xml" \
+              CHANNEL="${{ needs.version.outputs.channel }}" \
+              ARCHIVE_PATH="$UPDATE_ARCHIVE"
 
             xmllint --noout appcast.xml
           else
-            echo "Skipping appcast update because the signed update metadata was not produced."
+            echo "Skipping appcast update because macOS did not produce a notarized archive."
           fi
 
           # Generate landing page from README.md (cmark-gfm installed via Nix)

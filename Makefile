@@ -35,7 +35,7 @@ workspace: ## Materialize the generated Xcode workspace/project.
 install-hooks: ## Install the repo-managed git hooks.
 	@$(XTASK) env install hooks
 
-install-sparkle-cli: ## Install Sparkle CLI tools into /tmp/sparkle.
+install-sparkle-cli: ## Install pinned Sparkle CLI tools into xtask's /tmp/sparkle fallback.
 	@$(XTASK) env install sparkle-cli
 
 app-hardened: ## Stage the signed hardened macOS app.
@@ -56,11 +56,11 @@ release-ios-appstore: guard-VERSION guard-BUILD_NUMBER ## Publish the iOS App St
 release-version: guard-FIELD ## Resolve release version. Use FIELD=version|build-number
 	@$(XTASK) release version "$(FIELD)"
 
-release-appcast-generate: guard-STATE_PATH guard-OUTPUT_PATH ## Render appcast XML. Use STATE_PATH=... OUTPUT_PATH=...
-	@$(XTASK) release appcast generate --state-path "$(STATE_PATH)" --output-path "$(OUTPUT_PATH)"
+release-appcast-generate: guard-STATE_PATH guard-OUTPUT_PATH guard-CHANNEL guard-ARCHIVE_PATH ## Generate appcast with Sparkle. Use STATE_PATH=... OUTPUT_PATH=... CHANNEL=... ARCHIVE_PATH=...
+	@$(XTASK) release appcast generate --state-path "$(STATE_PATH)" --output-path "$(OUTPUT_PATH)" --channel "$(CHANNEL)" --archive-path "$(ARCHIVE_PATH)"
 
-release-appcast-update: guard-STATE_PATH guard-CHANNEL guard-VERSION guard-BUILD_NUMBER guard-URL guard-SIGNATURE guard-LENGTH ## Update appcast state. Use STATE_PATH=... CHANNEL=stable|beta VERSION=... BUILD_NUMBER=... URL=... SIGNATURE=... LENGTH=...
-	@$(XTASK) release appcast update-state --state-path "$(STATE_PATH)" --channel "$(CHANNEL)" --version "$(VERSION)" --build-number "$(BUILD_NUMBER)" --url "$(URL)" --signature "$(SIGNATURE)" --length "$(LENGTH)"
+release-appcast-update: guard-STATE_PATH guard-CHANNEL guard-VERSION guard-BUILD_NUMBER guard-URL ## Update appcast policy state. Use STATE_PATH=... CHANNEL=stable|beta VERSION=... BUILD_NUMBER=... URL=...
+	@$(XTASK) release appcast update-state --state-path "$(STATE_PATH)" --channel "$(CHANNEL)" --version "$(VERSION)" --build-number "$(BUILD_NUMBER)" --url "$(URL)"
 
 screenshots-macos: ## Capture macOS screenshots. Optional CLIPKITTY_MARKETING_LOCALES=en,fr.
 	@$(XTASK) marketing screenshots macos
