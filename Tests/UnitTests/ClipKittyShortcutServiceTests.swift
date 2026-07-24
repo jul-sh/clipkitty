@@ -1,6 +1,6 @@
 import ClipKittyRust
-import ClipKittyShared
 @testable import ClipKittyShortcuts
+import ClipKittyStore
 import XCTest
 
 final class ClipKittyShortcutServiceTests: TemporaryDirectoryTestCase {
