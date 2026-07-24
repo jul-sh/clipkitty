@@ -1,3 +1,4 @@
+import ClipKittyCore
 import SwiftUI
 import UIKit
 
@@ -10,14 +11,7 @@ struct GeneralSettingsSection: View {
 
         Section(String(localized: "General")) {
             Toggle(String(localized: "Haptic Feedback"), isOn: $settings.hapticsEnabled)
-            Toggle(String(localized: "Generate Link Previews"), isOn: $settings.generateLinkPreviews)
             Toggle(String(localized: "Auto-Add from Clipboard"), isOn: $settings.autoAddFromClipboard)
-        }
-
-        Section {
-            Toggle(String(localized: "Capture Sensitive Clips"), isOn: $settings.captureSensitiveClips)
-        } footer: {
-            Text(String(localized: "When off, clips that an app marks as sensitive (such as passwords and one-time codes from a password manager) are not saved to history. Turn this on only if you want those clips captured too."))
         }
 
         if !settings.permissionHintDismissed {
@@ -52,5 +46,38 @@ struct GeneralSettingsSection: View {
     private func openAppSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         openURL(url)
+    }
+}
+
+struct PrivacySettingsSection: View {
+    @Environment(iOSSettingsStore.self) private var settings
+
+    var body: some View {
+        @Bindable var settings = settings
+
+        SettingsPrivacySection(
+            captureSensitiveClips: $settings.captureSensitiveClips,
+            linkPreviews: .available($settings.generateLinkPreviews),
+            additionalContent: { EmptyView() }
+        )
+    }
+}
+
+struct ShortcutsSettingsSection: View {
+    @Environment(iOSSettingsStore.self) private var settings
+
+    var body: some View {
+        @Bindable var settings = settings
+
+        Section(String(localized: "Shortcuts")) {
+            SettingsToggleRow(
+                title: String(localized: "Allow Shortcuts to Read History"),
+                description: String(
+                    localized:
+                    "When off, Shortcuts can still save new clips but cannot read or search history."
+                ),
+                isOn: $settings.allowShortcutsReadAccess
+            )
+        }
     }
 }

@@ -3,8 +3,8 @@ import XCTest
 /// UI tests for the iOS app's core navigation, settings, and interaction flows.
 ///
 /// These tests verify the app's UI at the integration level:
-/// - Tab navigation between Library and Settings
-/// - Settings screen structure and toggle behavior
+/// - Settings sheet presentation and dismissal
+/// - Shared Settings section structure and toggle behavior
 /// - Clear history confirmation flow
 /// - Card swipe actions (bookmark, delete)
 final class ClipKittyiOSUITests: XCTestCase {
@@ -16,80 +16,82 @@ final class ClipKittyiOSUITests: XCTestCase {
         app.launch()
 
         // Wait for the app to finish bootstrapping
-        let libraryTab = app.tabBars.buttons["Library"]
+        let settingsButton = app.buttons["home.settingsButton"]
         XCTAssertTrue(
-            libraryTab.waitForExistence(timeout: 10),
-            "App should finish launching and show the Library tab"
+            settingsButton.waitForExistence(timeout: 10),
+            "App should finish launching and show the Library"
         )
     }
 
-    // MARK: - Tab Navigation
+    // MARK: - Navigation
 
-    func testLibraryTabIsSelectedByDefault() {
-        let libraryTab = app.tabBars.buttons["Library"]
-        XCTAssertTrue(libraryTab.isSelected, "Library tab should be selected on launch")
+    func testLibraryIsShownByDefault() {
+        XCTAssertTrue(app.navigationBars["ClipKitty"].exists, "Library should be visible on launch")
+        XCTAssertTrue(app.buttons["home.settingsButton"].isHittable)
     }
 
-    func testNavigateToSettingsTab() {
-        let settingsTab = app.tabBars.buttons["Settings"]
-        XCTAssertTrue(settingsTab.exists)
+    func testOpenSettings() {
+        openSettings()
+    }
 
-        settingsTab.tap()
+    func testDismissSettingsReturnsToLibrary() {
+        openSettings()
 
-        // Verify settings screen is visible
-        let settingsTitle = app.navigationBars["Settings"]
+        let doneButton = app.buttons["Done"]
+        XCTAssertTrue(doneButton.waitForExistence(timeout: 3), "Settings should have a Done button")
+        doneButton.tap()
+
         XCTAssertTrue(
-            settingsTitle.waitForExistence(timeout: 5),
-            "Settings navigation title should be visible"
+            app.navigationBars["Settings"].waitForNonExistence(timeout: 5),
+            "Settings sheet should dismiss"
         )
-    }
-
-    func testNavigateBackToLibraryFromSettings() {
-        // Go to settings
-        app.tabBars.buttons["Settings"].tap()
-        let settingsTitle = app.navigationBars["Settings"]
-        XCTAssertTrue(settingsTitle.waitForExistence(timeout: 5))
-
-        // Go back to library
-        app.tabBars.buttons["Library"].tap()
-
-        // Verify we're back on the library (search button should be visible)
-        let searchButton = app.buttons["Search"]
         XCTAssertTrue(
-            searchButton.waitForExistence(timeout: 5),
-            "Search button should be visible after returning to Library"
+            app.buttons["home.settingsButton"].waitForExistence(timeout: 5),
+            "Library should be visible after dismissing Settings"
         )
     }
 
     // MARK: - Settings Screen Structure
 
-    func testSettingsScreenShowsAllSections() {
-        app.tabBars.buttons["Settings"].tap()
-        let settingsTitle = app.navigationBars["Settings"]
-        XCTAssertTrue(settingsTitle.waitForExistence(timeout: 5))
+    func testSettingsScreenShowsSharedSections() {
+        openSettings()
 
-        // General section
-        XCTAssertTrue(app.staticTexts["General"].exists, "General section should exist")
-        XCTAssertTrue(app.switches["Haptic Feedback"].exists, "Haptic Feedback toggle should exist")
-        XCTAssertTrue(app.switches["Generate Link Previews"].exists, "Generate Link Previews toggle should exist")
+        assertSettingsTextIsReachable("General")
+        assertSettingsControlIsReachable(settingsSwitch(named: "Haptic Feedback"), named: "Haptic Feedback")
 
-        // History section
-        XCTAssertTrue(app.staticTexts["History"].exists, "History section should exist")
-        XCTAssertTrue(app.staticTexts["Database Size"].exists, "Database Size label should exist")
+        assertSettingsTextIsReachable("Privacy")
+        assertSettingsControlIsReachable(
+            settingsSwitch(named: "Capture Sensitive Clips"),
+            named: "Capture Sensitive Clips"
+        )
+        assertSettingsControlIsReachable(
+            settingsSwitch(named: "Generate Link Previews"),
+            named: "Generate Link Previews"
+        )
 
-        // About section
-        XCTAssertTrue(app.staticTexts["About"].exists, "About section should exist")
-        XCTAssertTrue(app.staticTexts["Version"].exists, "Version label should exist")
-        XCTAssertTrue(app.staticTexts["Build"].exists, "Build label should exist")
+        assertSettingsTextIsReachable("Appearance")
+        assertSettingsTextIsReachable("App Typeface")
+        assertSettingsTextIsReachable("Preview Spacing")
+
+        // Permissions and iCloud Sync are conditional; Shortcuts is the next
+        // section shared by every build after those optional sections.
+        assertSettingsTextIsReachable("Shortcuts")
+        assertSettingsControlIsReachable(
+            settingsSwitch(named: "Allow Shortcuts to Read History"),
+            named: "Allow Shortcuts to Read History"
+        )
+
+        expandAdvancedSettings()
+        for label in ["Storage Limit", "History", "About", "Version", "Build"] {
+            assertSettingsTextIsReachable(label)
+        }
     }
 
     func testHapticFeedbackToggle() {
-        app.tabBars.buttons["Settings"].tap()
-        let settingsTitle = app.navigationBars["Settings"]
-        XCTAssertTrue(settingsTitle.waitForExistence(timeout: 5))
+        openSettings()
 
-        let toggle = app.switches["Haptic Feedback"]
-        XCTAssertTrue(toggle.exists)
+        let toggle = settingsSwitch(named: "Haptic Feedback")
+        XCTAssertTrue(revealInSettings(toggle), "Haptic Feedback toggle should be reachable")
 
         let initialValue = toggle.value as? String
         toggle.tap()
@@ -102,12 +104,10 @@ final class ClipKittyiOSUITests: XCTestCase {
     }
 
     func testLinkPreviewsToggle() {
-        app.tabBars.buttons["Settings"].tap()
-        let settingsTitle = app.navigationBars["Settings"]
-        XCTAssertTrue(settingsTitle.waitForExistence(timeout: 5))
+        openSettings()
 
-        let toggle = app.switches["Generate Link Previews"]
-        XCTAssertTrue(toggle.exists)
+        let toggle = settingsSwitch(named: "Generate Link Previews")
+        XCTAssertTrue(revealInSettings(toggle), "Generate Link Previews toggle should be reachable")
 
         let initialValue = toggle.value as? String
         toggle.tap()
@@ -122,13 +122,11 @@ final class ClipKittyiOSUITests: XCTestCase {
     // MARK: - Clear History Confirmation Flow
 
     func testClearHistoryRequiresConfirmation() {
-        app.tabBars.buttons["Settings"].tap()
-        let settingsTitle = app.navigationBars["Settings"]
-        XCTAssertTrue(settingsTitle.waitForExistence(timeout: 5))
+        openSettings()
+        expandAdvancedSettings()
 
-        // First tap shows confirmation
         let clearButton = app.buttons["Clear History"]
-        XCTAssertTrue(clearButton.exists, "Clear History button should exist")
+        XCTAssertTrue(revealInSettings(clearButton), "Clear History button should be reachable")
 
         clearButton.tap()
 
@@ -138,6 +136,83 @@ final class ClipKittyiOSUITests: XCTestCase {
             confirmButton.waitForExistence(timeout: 3),
             "Confirmation button should appear after first tap"
         )
+    }
+
+    // MARK: - Settings Helpers
+
+    private func openSettings() {
+        let settingsButton = app.buttons["home.settingsButton"]
+        XCTAssertTrue(settingsButton.waitForExistence(timeout: 5), "Settings button should exist")
+        settingsButton.tap()
+
+        XCTAssertTrue(
+            app.navigationBars["Settings"].waitForExistence(timeout: 5),
+            "Settings navigation title should be visible"
+        )
+    }
+
+    private func settingsSwitch(named name: String) -> XCUIElement {
+        app.switches.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", name)
+        ).firstMatch
+    }
+
+    private func expandAdvancedSettings() {
+        // SwiftUI can expose a DisclosureGroup under different control roles,
+        // so locate it by its stable label rather than a concrete element type.
+        let advanced = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label ==[c] %@", "Advanced")
+        ).firstMatch
+        XCTAssertTrue(revealInSettings(advanced), "Advanced settings should be reachable")
+        advanced.tap()
+    }
+
+    private func assertSettingsTextIsReachable(
+        _ label: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(
+            revealInSettings(app.staticTexts[label]),
+            "\(label) should be reachable in Settings",
+            file: file,
+            line: line
+        )
+    }
+
+    private func assertSettingsControlIsReachable(
+        _ element: XCUIElement,
+        named name: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(
+            revealInSettings(element),
+            "\(name) should be reachable in Settings",
+            file: file,
+            line: line
+        )
+    }
+
+    private func revealInSettings(_ element: XCUIElement, maximumSwipes: Int = 12) -> Bool {
+        if element.waitForExistence(timeout: 0.5), element.isHittable {
+            return true
+        }
+
+        let collectionView = app.collectionViews.firstMatch
+        let scrollView = app.scrollViews.firstMatch
+        let scrollContainer = collectionView.exists
+            ? collectionView
+            : (scrollView.exists ? scrollView : app!)
+
+        for _ in 0 ..< maximumSwipes {
+            scrollContainer.swipeUp()
+            if element.waitForExistence(timeout: 0.3), element.isHittable {
+                return true
+            }
+        }
+
+        return false
     }
 
     // MARK: - Search Interaction

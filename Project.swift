@@ -655,6 +655,11 @@ private let coreSources: SourceFilesList = [
     "Sources/Shared/PendingShareQueue.swift",
     "Sources/Shared/StorageBar.swift",
     "Sources/Shared/StorageLimitScale.swift",
+    "Sources/Shared/Settings/SettingsAdvancedSection.swift",
+    "Sources/Shared/Settings/SettingsAppearanceSection.swift",
+    "Sources/Shared/Settings/SettingsForm.swift",
+    "Sources/Shared/Settings/SettingsPrivacySection.swift",
+    "Sources/Shared/Settings/SettingsSyncSection.swift",
     "Sources/Shared/Utilities.swift",
 ]
 

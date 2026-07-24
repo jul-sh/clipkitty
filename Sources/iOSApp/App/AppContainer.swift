@@ -147,15 +147,17 @@ final class AppContainer {
     /// Prune the database to the user's storage limit, removing oldest items
     /// first. Runs once at bootstrap and again when the limit is lowered in
     /// Settings.
-    func pruneToStorageLimit() async {
+    @discardableResult
+    func pruneToStorageLimit() async -> Result<Void, ClipboardError> {
         let maxGB = settings.maxDatabaseSizeGB
-        guard maxGB > 0 else { return }
+        guard maxGB > 0 else { return .success(()) }
         let result = await repository.pruneToSize(
             maxBytes: Utilities.bytes(fromGB: maxGB)
         )
         if case let .failure(error) = result {
             Self.logger.error("Storage limit prune failed: \(error.localizedDescription)")
         }
+        return result.map { _ in () }
     }
 
     #if ENABLE_ICLOUD_SYNC

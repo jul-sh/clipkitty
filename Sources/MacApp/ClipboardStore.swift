@@ -179,6 +179,21 @@ final class ClipboardStore {
         }
     }
 
+    /// Loads the current database size for the shared Settings storage view.
+    func loadDatabaseSizeForSettings() async -> Result<Int64, ClipboardError> {
+        guard case let .ready(session, _) = state else {
+            return .failure(.databaseOperationFailed(
+                operation: "databaseSize",
+                underlying: NSError(
+                    domain: "ClipKitty",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Database is not ready yet."]
+                )
+            ))
+        }
+        return await session.repository.databaseSize()
+    }
+
     // MARK: - Database Setup
 
     /// Returns the database filename based on mode
@@ -1164,19 +1179,31 @@ final class ClipboardStore {
 
     /// Prune the database to the configured size limit, then refresh the
     /// cached size so observing views update.
-    func pruneToLimit() async {
+    @discardableResult
+    func pruneToLimit() async -> Result<Void, ClipboardError> {
         let maxSizeGB = AppSettings.shared.maxDatabaseSizeGB
-        guard maxSizeGB > 0,
-              case let .ready(session, _) = state
-        else { return }
+        guard maxSizeGB > 0 else { return .success(()) }
+        guard case let .ready(session, _) = state else {
+            return .failure(.databaseOperationFailed(
+                operation: "pruneToSize",
+                underlying: NSError(
+                    domain: "ClipKitty",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Database not available"]
+                )
+            ))
+        }
 
-        if case let .failure(error) = await session.repository.pruneToSize(
+        let result = await session.repository.pruneToSize(
             maxBytes: Utilities.bytes(fromGB: maxSizeGB)
-        ) {
+        )
+        invalidateContent()
+        if case let .failure(error) = result {
             ErrorReporter.report(error, showToast: false)
         }
         if case let .success(size) = await session.repository.databaseSize() {
             databaseSizeBytes = size
         }
+        return result.map { _ in () }
     }
 }

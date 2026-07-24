@@ -31,8 +31,7 @@ struct ShortcutsSettingsView: View {
     }
 
     var body: some View {
-        Form {
-            Section(String(localized: "Keyboard Shortcut")) {
+        Section(String(localized: "Shortcuts")) {
                 HStack {
                     KeyboardShortcuts.Recorder(
                         String(localized: "Open ClipKitty"),
@@ -62,7 +61,6 @@ struct ShortcutsSettingsView: View {
                 }
             }
         }
-        .formStyle(.grouped)
     }
 
     private func validateShowHistoryShortcut(

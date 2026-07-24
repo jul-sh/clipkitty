@@ -1,9 +1,10 @@
 import AppKit
+import ClipKittyCore
 import SwiftUI
 
 /// Represents an app that can be ignored
 struct IgnoredApp: Identifiable, Hashable {
-    let id: String  // bundle ID
+    let id: String // bundle ID
     let name: String
     let icon: NSImage?
 
@@ -16,12 +17,12 @@ struct IgnoredApp: Identifiable, Hashable {
     /// Create from a bundle ID by looking up app info
     static func fromBundleId(_ bundleId: String) -> IgnoredApp {
         if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId),
-            let bundle = Bundle(url: appURL)
+           let bundle = Bundle(url: appURL)
         {
             let name =
                 bundle.object(forInfoDictionaryKey: "CFBundleName") as? String
-                ?? bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
-                ?? appURL.deletingPathExtension().lastPathComponent
+                    ?? bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+                    ?? appURL.deletingPathExtension().lastPathComponent
             let icon = NSWorkspace.shared.icon(forFile: appURL.path)
             return IgnoredApp(bundleId: bundleId, name: name, icon: icon)
         }
@@ -34,25 +35,23 @@ struct PrivacySettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
-        Form {
-            Section(String(localized: "Content Filtering")) {
-                Toggle(isOn: $settings.ignoreConfidentialContent) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(String(localized: "Don't save passwords"))
-                        Text(String(localized: "Excludes passwords and sensitive data."))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Toggle(isOn: $settings.ignoreTransientContent) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(String(localized: "Don't save temporary data"))
-                        Text(String(localized: "Excludes transient content from other apps."))
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+        SettingsPrivacySection(
+            captureSensitiveClips: Binding(
+                get: { !settings.ignoreConfidentialContent },
+                set: { settings.ignoreConfidentialContent = !$0 }
+            ),
+            linkPreviews: linkPreviewPreference,
+            additionalContent: {
+                SettingsToggleRow(
+                    title: String(localized: "Capture Temporary Clips"),
+                    description: String(
+                        localized: "Save transient content copied from other apps."
+                    ),
+                    isOn: Binding(
+                        get: { !settings.ignoreTransientContent },
+                        set: { settings.ignoreTransientContent = !$0 }
+                    )
+                )
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(String(localized: "Excluded Apps"))
@@ -63,24 +62,15 @@ struct PrivacySettingsView: View {
                 }
                 .padding(.bottom, 4)
             }
+        )
+    }
 
-            #if ENABLE_LINK_PREVIEWS
-                Section(String(localized: "Network")) {
-                    Toggle(isOn: $settings.generateLinkPreviews) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(String(localized: "Show link previews"))
-                            Text(
-                                String(
-                                    localized: "Downloads web content. May trigger tracking links.")
-                            )
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            #endif
-        }
-        .formStyle(.grouped)
+    private var linkPreviewPreference: SettingsLinkPreviewPreference {
+        #if ENABLE_LINK_PREVIEWS
+            return .available($settings.generateLinkPreviews)
+        #else
+            return .unavailable
+        #endif
     }
 }
 
@@ -95,14 +85,14 @@ struct IgnoredAppsListView: View {
         var apps: [IgnoredApp] {
             switch self {
             case .empty: return []
-            case .populated(let apps, _): return apps
+            case let .populated(apps, _): return apps
             }
         }
 
         var selectedId: String? {
             switch self {
             case .empty: return nil
-            case .populated(_, let id): return id
+            case let .populated(_, id): return id
             }
         }
 
@@ -118,7 +108,7 @@ struct IgnoredAppsListView: View {
         }
 
         mutating func select(_ id: String?) {
-            guard case .populated(let apps, _) = self else { return }
+            guard case let .populated(apps, _) = self else { return }
             self = .populated(apps: apps, selectedId: id)
         }
     }
@@ -138,7 +128,7 @@ struct IgnoredAppsListView: View {
                 Text(String(localized: "No apps excluded"))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 60)
-            case .populated(let apps, _):
+            case let .populated(apps, _):
                 List(selection: selectedIdBinding) {
                     ForEach(apps) { app in
                         HStack(spacing: 10) {
@@ -184,7 +174,8 @@ struct IgnoredAppsListView: View {
                     {
                         if case .populated(_, .some) = listState { return false }
                         return true
-                    }())
+                    }()
+                )
 
                 Spacer()
             }
@@ -227,7 +218,7 @@ struct IgnoredAppsListView: View {
 
         for url in panel.urls {
             if let bundle = Bundle(url: url),
-                let bundleId = bundle.bundleIdentifier
+               let bundleId = bundle.bundleIdentifier
             {
                 settings.addIgnoredApp(bundleId: bundleId)
             }
@@ -235,13 +226,16 @@ struct IgnoredAppsListView: View {
     }
 
     private func removeSelectedApp() {
-        guard case .populated(_, let selectedId?) = listState else { return }
+        guard case let .populated(_, selectedId?) = listState else { return }
         settings.removeIgnoredApp(bundleId: selectedId)
         listState.select(nil)
     }
 }
 
 #Preview {
-    PrivacySettingsView()
-        .frame(width: 420, height: 400)
+    Form {
+        PrivacySettingsView()
+    }
+    .formStyle(.grouped)
+    .frame(width: 420, height: 400)
 }
