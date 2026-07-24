@@ -23,11 +23,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
         with:
-          source-tag: v3.17.3
-          flakehub: false
+          cache: "false"
 
       - name: Verify pinned actions
         run: make check
