@@ -2,6 +2,7 @@ import AppKit
 import ClipKittyMacPlatform
 import ClipKittyRust
 import ClipKittyShared
+import KeyboardShortcuts
 import Observation
 import SwiftUI
 
@@ -211,22 +212,24 @@ struct BrowserView: View {
             // Configurable delete-item shortcut (default ⌘-). Suppressed while
             // the pending filter chip is the keyboard target — row-only
             // shortcuts must not fire at the chip.
-            let deleteHotKey = AppSettings.shared.deleteHotKey
-            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if modifiers == deleteHotKey.modifierMask,
-               UInt32(event.keyCode) == deleteHotKey.keyCode,
-               !event.isARepeat
-            {
-                if viewModel.selectedItem != nil, case .results = viewModel.keyboardTarget {
+            switch AppSettings.shared.deleteItemShortcutSetting {
+            case let .enabled(shortcut):
+                if KeyboardShortcuts.Shortcut(event: event) == shortcut,
+                   !event.isARepeat,
+                   viewModel.selectedItem != nil,
+                   case .results = viewModel.keyboardTarget
+                {
                     viewModel.deleteSelectedItem()
                     return nil
                 }
+            case .disabled:
+                break
             }
 
             // While a delete is pending, Cmd+Z intentionally undoes the item
             // delete instead of text undo; otherwise the event passes through
             // unchanged so the field editor keeps its text undo.
-            if modifiers == .command,
+            if backspaceModifiers == .command,
                event.charactersIgnoringModifiers == "z",
                case .deleting(.pending) = viewModel.mutationState
             {

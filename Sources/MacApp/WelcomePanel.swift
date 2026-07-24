@@ -1,6 +1,6 @@
 import AppKit
 import ClipKittyMacPlatform
-import ClipKittyShared
+import KeyboardShortcuts
 import SwiftUI
 
 // MARK: - SwiftUI Views
@@ -50,13 +50,16 @@ private struct WelcomePageView: View {
 private struct QuickStartPageView: View {
     @ObservedObject private var launchAtLogin = LaunchAtLogin.shared
     @ObservedObject private var settings = AppSettings.shared
-    @State private var hotKeyState: HotKeyEditState = .idle
-    let onHotKeyChanged: (HotKey) -> Void
     let onComplete: () -> Void
 
     private var launchAtLoginBinding: Binding<Bool> {
         Binding(
-            get: { launchAtLogin.isEnabled },
+            get: {
+                switch launchAtLogin.state.registrationStatus {
+                case .enabled: true
+                case .disabled: false
+                }
+            },
             set: { newValue in
                 if launchAtLogin.setEnabled(newValue) {
                     settings.launchAtLoginEnabled = newValue
@@ -89,38 +92,9 @@ private struct QuickStartPageView: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button(action: { hotKeyState = .recording }) {
-                            let state = hotKeyState
-                            let labelAndBackground: (String, Color) = {
-                                switch state {
-                                case .recording:
-                                    return (
-                                        String(localized: "Press keys..."),
-                                        Color.accentColor.opacity(0.2)
-                                    )
-                                case .idle:
-                                    return (settings.hotKey.displayString, Color.secondary.opacity(0.1))
-                                }
-                            }()
-
-                            Text(labelAndBackground.0)
-                                .font(.system(size: 13, weight: .medium, design: .rounded))
-                                .frame(minWidth: 80)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 5)
-                                .background(labelAndBackground.1, in: RoundedRectangle(cornerRadius: 6))
-                        }
-                        .buttonStyle(.plain)
+                        KeyboardShortcuts.Recorder(for: .showClipboardHistory)
+                            .shortcutValidation(validateShowHistoryShortcut)
                     }
-                    .background(
-                        HotKeyRecorder(
-                            state: $hotKeyState,
-                            onHotKeyRecorded: { hotKey in
-                                settings.hotKey = hotKey
-                                onHotKeyChanged(hotKey)
-                            }
-                        )
-                    )
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
                 }
@@ -217,6 +191,17 @@ private struct QuickStartPageView: View {
         }
         .frame(maxWidth: .infinity)
     }
+
+    private func validateShowHistoryShortcut(
+        _ shortcut: KeyboardShortcuts.Shortcut
+    ) -> KeyboardShortcuts.ValidationResult {
+        switch settings.deleteItemShortcutSetting {
+        case let .enabled(deleteShortcut) where deleteShortcut == shortcut:
+            return .disallow(reason: shortcutConflictReason(for: String(localized: "Delete Item")))
+        case .enabled, .disabled:
+            return .allow
+        }
+    }
 }
 
 private struct ContentHeightPreferenceKey: PreferenceKey {
@@ -228,7 +213,6 @@ private struct ContentHeightPreferenceKey: PreferenceKey {
 
 private struct WelcomeContentView: View {
     @State private var currentPage = 0
-    let onHotKeyChanged: (HotKey) -> Void
     let onComplete: () -> Void
     let onContentHeightChanged: (CGFloat) -> Void
 
@@ -247,7 +231,6 @@ private struct WelcomeContentView: View {
                 ))
             } else {
                 QuickStartPageView(
-                    onHotKeyChanged: onHotKeyChanged,
                     onComplete: onComplete
                 )
                 .transition(.asymmetric(
@@ -266,27 +249,7 @@ private struct WelcomeContentView: View {
         .onPreferenceChange(ContentHeightPreferenceKey.self) { height in
             onContentHeightChanged(height)
         }
-        .welcomeGlassBackground()
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func welcomeGlassBackground() -> some View {
-        let radius = systemWindowCornerRadius
-        if #available(macOS 26.0, *) {
-            if let radius {
-                glassEffect(.regular.interactive(), in: .rect(cornerRadius: radius, style: .continuous))
-            } else {
-                glassEffect(.regular.interactive(), in: .rect)
-            }
-        } else {
-            if let radius {
-                background(.regularMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            } else {
-                background(.regularMaterial)
-            }
-        }
+        .clipKittyWindowGlassBackground()
     }
 }
 
@@ -296,7 +259,6 @@ private extension View {
 final class WelcomeWindowController {
     private(set) var window: NSWindow?
     var onComplete: (() -> Void)?
-    var onHotKeyChanged: ((HotKey) -> Void)?
     weak var windowDelegate: NSWindowDelegate?
 
     func showWindow() {
@@ -306,9 +268,6 @@ final class WelcomeWindowController {
         }
 
         let contentView = WelcomeContentView(
-            onHotKeyChanged: { [weak self] hotKey in
-                self?.onHotKeyChanged?(hotKey)
-            },
             onComplete: { [weak self] in
                 self?.complete()
             },
