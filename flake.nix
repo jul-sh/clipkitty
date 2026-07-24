@@ -58,19 +58,19 @@
           else { };
 
         # App Store Connect CLI — kept alongside the flake because it's
-        # historically been a convenience for release tooling, not part of
-        # the app graph. Not a package the rest of the flake depends on.
+        # release infrastructure, not part of the shipped app graph. Pin the
+        # maintained upstream release used by the publisher.
         asc =
           let
-            version = "0.43.0";
+            version = "3.1.0";
             src = {
               aarch64-darwin = pkgs.fetchurl {
-                url = "https://github.com/rudrankriyam/App-Store-Connect-CLI/releases/download/${version}/asc_${version}_macOS_arm64";
-                sha256 = "sha256-5xu0oGdk2WT44G75iSiqIOgWt4enBOHijls1mT5Jo4k=";
+                url = "https://github.com/rorkai/App-Store-Connect-CLI/releases/download/${version}/asc_${version}_macOS_arm64";
+                sha256 = "sha256-HHnm2oicpmVHD2zr4DO0iJc1KrABsEvKBFVahgIDaMk=";
               };
               x86_64-darwin = pkgs.fetchurl {
-                url = "https://github.com/rudrankriyam/App-Store-Connect-CLI/releases/download/${version}/asc_${version}_macOS_amd64";
-                sha256 = "sha256-KBTjyJ51TYsAW/9MtUT33yVxHupKk4g+Mqk3ZlBUchI=";
+                url = "https://github.com/rorkai/App-Store-Connect-CLI/releases/download/${version}/asc_${version}_macOS_amd64";
+                sha256 = "sha256-nZ/XHH7xBfNRDcJOmDOvU7HqTfOLYaimZjD7jDDTReU=";
               };
             }.${system} or null;
           in
