@@ -1,10 +1,4 @@
-import ClipKittyShared
 import SwiftUI
-
-enum HotKeyEditState: Equatable {
-    case idle
-    case recording
-}
 
 enum SettingsTab: String, CaseIterable {
     case general = "General"
@@ -16,7 +10,6 @@ struct SettingsView: View {
     @State private var selectedTab: SettingsTab = .general
 
     let store: ClipboardStore
-    let onHotKeyChanged: (HotKey) -> Void
     #if ENABLE_SPARKLE_UPDATES
         var onInstallUpdate: (() -> Void)? = nil
     #endif
@@ -37,7 +30,7 @@ struct SettingsView: View {
                 .tag(SettingsTab.privacy)
                 .accessibilityIdentifier("SettingsTab_Privacy")
 
-            ShortcutsSettingsView(onHotKeyChanged: onHotKeyChanged)
+            ShortcutsSettingsView()
                 .tabItem {
                     Label(String(localized: "Shortcuts"), systemImage: "keyboard")
                 }

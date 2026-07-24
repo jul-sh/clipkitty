@@ -13,9 +13,8 @@ final class LaunchAtLoginTests: XCTestCase {
         XCTAssertFalse(launchAtLogin.enable())
         XCTAssertEqual(
             launchAtLogin.state,
-            .available(status: .disabled, notice: .registrationFailed)
+            .registrationFailed(currentStatus: .disabled)
         )
-        XCTAssertTrue(launchAtLogin.state.canToggle)
     }
 
     func testSuccessfulRetryClearsFailureNotice() {
@@ -29,9 +28,18 @@ final class LaunchAtLoginTests: XCTestCase {
         service.status = .enabled
 
         XCTAssertTrue(launchAtLogin.enable())
+        XCTAssertEqual(launchAtLogin.state, .enabled)
+    }
+
+    func testUnregistrationFailurePreservesEnabledStatus() {
+        let service = MockLaunchAtLoginService(status: .enabled)
+        service.unregisterError = NSError(domain: "Test", code: 1)
+        let launchAtLogin = LaunchAtLogin(service: service)
+
+        XCTAssertFalse(launchAtLogin.disable())
         XCTAssertEqual(
             launchAtLogin.state,
-            .available(status: .enabled, notice: nil)
+            .unregistrationFailed(currentStatus: .enabled)
         )
     }
 }

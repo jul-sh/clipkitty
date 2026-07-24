@@ -3,15 +3,15 @@
 //! Types with uniffi derives are automatically exported to Swift.
 //! No need to duplicate definitions in the UDL file.
 
+use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use crate::interface::{
-    BaselineExcerpt, ClipboardContent, ClipboardItem, FileEntry, FilePreviewSnapshot, FileStatus,
-    ItemIcon, ItemMetadata, ListPresentationProfile,
+    ClipboardContent, ClipboardItem, FileEntry, FileStatus, ItemIcon, ItemMetadata, NewFileInput,
 };
 #[cfg(test)]
-use crate::interface::{IconType, LinkMetadataPayload, LinkMetadataState};
+use crate::interface::{FilePreviewSnapshot, IconType, LinkMetadataPayload, LinkMetadataState};
 use sha2::{Digest, Sha256};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -88,47 +88,20 @@ impl StoredItem {
         }
     }
 
-    /// Create a file item with explicit preview state.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_file(
-        path: String,
-        filename: String,
-        file_size: u64,
-        uti: String,
-        bookmark_data: Vec<u8>,
-        preview: FilePreviewSnapshot,
-        source_app: Option<String>,
-        source_app_bundle_id: Option<String>,
-    ) -> Self {
-        Self::new_files(
-            vec![path],
-            vec![filename],
-            vec![file_size],
-            vec![uti],
-            vec![bookmark_data],
-            vec![preview],
-            source_app,
-            source_app_bundle_id,
-        )
-    }
-
     /// Create a (possibly grouped) file item from multiple files with explicit previews.
-    #[allow(clippy::too_many_arguments)]
     pub fn new_files(
-        paths: Vec<String>,
-        filenames: Vec<String>,
-        file_sizes: Vec<u64>,
-        utis: Vec<String>,
-        bookmark_data_list: Vec<Vec<u8>>,
-        preview_snapshots: Vec<FilePreviewSnapshot>,
+        inputs: Vec<NewFileInput>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Self {
-        assert!(!paths.is_empty(), "new_files requires at least one file");
+        assert!(!inputs.is_empty(), "new_files requires at least one file");
 
         // Content hash: sort all paths, hash joined
-        let mut sorted_paths = paths.clone();
-        sorted_paths.sort();
+        let mut sorted_paths = inputs
+            .iter()
+            .map(|input| input.path.as_str())
+            .collect::<Vec<_>>();
+        sorted_paths.sort_unstable();
         let hash_input = sorted_paths
             .iter()
             .map(|p| format!("file://{}", p))
@@ -136,36 +109,10 @@ impl StoredItem {
             .join("\n");
         let content_hash = Self::hash_string(&hash_input);
 
-        let file_count = paths.len();
-        assert_eq!(
-            filenames.len(),
-            file_count,
-            "new_files requires filenames length to match paths length"
-        );
-        assert_eq!(
-            file_sizes.len(),
-            file_count,
-            "new_files requires file_sizes length to match paths length"
-        );
-        assert_eq!(
-            utis.len(),
-            file_count,
-            "new_files requires utis length to match paths length"
-        );
-        assert_eq!(
-            bookmark_data_list.len(),
-            file_count,
-            "new_files requires bookmark_data_list length to match paths length"
-        );
-        assert_eq!(
-            preview_snapshots.len(),
-            file_count,
-            "new_files requires preview_snapshots length to match paths length"
-        );
-
-        let folder_count = utis
+        let file_count = inputs.len();
+        let folder_count = inputs
             .iter()
-            .filter(|u| u.starts_with("public.folder"))
+            .filter(|input| input.uti.starts_with("public.folder"))
             .count();
         let file_only_count = file_count - folder_count;
 
@@ -185,22 +132,23 @@ impl StoredItem {
         };
 
         let items_summary = match file_count {
-            1 => filenames[0].clone(),
-            2 => format!("{}, {}", filenames[0], filenames[1]),
-            n => format!("{} and {} more", filenames[0], n - 1),
+            1 => inputs[0].filename.clone(),
+            2 => format!("{}, {}", inputs[0].filename, inputs[1].filename),
+            n => format!("{} and {} more", inputs[0].filename, n - 1),
         };
 
         let display_name = format!("{} {}", type_prefix, items_summary);
 
-        let files: Vec<FileEntry> = (0..file_count)
-            .map(|i| FileEntry {
-                path: paths[i].clone(),
-                filename: filenames[i].clone(),
-                file_size: file_sizes[i],
-                uti: utis[i].clone(),
-                bookmark_data: bookmark_data_list[i].clone(),
+        let files: Vec<FileEntry> = inputs
+            .into_iter()
+            .map(|input| FileEntry {
+                path: input.path,
+                filename: input.filename,
+                file_size: input.file_size,
+                uti: input.uti,
+                bookmark_data: input.bookmark_data,
                 file_status: FileStatus::Available,
-                preview: preview_snapshots[i].clone(),
+                preview: input.preview,
             })
             .collect();
 
@@ -220,8 +168,9 @@ impl StoredItem {
         }
     }
 
-    /// Get the index text for file items (all filenames and paths are searchable)
-    pub fn file_index_text(&self) -> Option<String> {
+    /// Canonical searchable text. File items include every filename and path;
+    /// other content can borrow its stored text without allocating.
+    pub fn searchable_text(&self) -> Cow<'_, str> {
         if let ClipboardContent::File {
             display_name,
             files,
@@ -234,9 +183,9 @@ impl StoredItem {
                 text.push('\n');
                 text.push_str(&file.path);
             }
-            Some(text)
+            Cow::Owned(text)
         } else {
-            None
+            Cow::Borrowed(self.text_content())
         }
     }
 
@@ -277,27 +226,6 @@ impl StoredItem {
         }
     }
 
-    /// Convert to ItemMetadata; row excerpts are modeled separately.
-    pub fn to_metadata_for_profile(&self, _profile: ListPresentationProfile) -> ItemMetadata {
-        ItemMetadata {
-            item_id: self.item_id.clone(),
-            icon: self.item_icon(),
-            source_app: self.source_app.clone(),
-            source_app_bundle_id: self.source_app_bundle_id.clone(),
-            timestamp_unix: self.timestamp_unix,
-            tags: Vec::new(),
-        }
-    }
-
-    pub fn baseline_excerpt_for_profile(
-        &self,
-        profile: ListPresentationProfile,
-    ) -> BaselineExcerpt {
-        BaselineExcerpt {
-            text: crate::search::generate_preview_for_profile(self.text_content(), profile),
-        }
-    }
-
     /// Convert to full ClipboardItem for preview pane
     pub fn to_clipboard_item(&self) -> ClipboardItem {
         ClipboardItem {
@@ -325,10 +253,39 @@ impl StoredItem {
 mod tests {
     use super::*;
 
-    fn not_captured_previews(count: usize) -> Vec<FilePreviewSnapshot> {
-        (0..count)
-            .map(|_| FilePreviewSnapshot::not_captured())
-            .collect()
+    fn file_input(
+        path: &str,
+        filename: &str,
+        file_size: u64,
+        uti: &str,
+        bookmark_data: Vec<u8>,
+        preview: FilePreviewSnapshot,
+    ) -> NewFileInput {
+        NewFileInput {
+            path: path.to_string(),
+            filename: filename.to_string(),
+            file_size,
+            uti: uti.to_string(),
+            bookmark_data,
+            preview,
+        }
+    }
+
+    fn not_captured_file(
+        path: &str,
+        filename: &str,
+        file_size: u64,
+        uti: &str,
+        bookmark_data: Vec<u8>,
+    ) -> NewFileInput {
+        file_input(
+            path,
+            filename,
+            file_size,
+            uti,
+            bookmark_data,
+            FilePreviewSnapshot::not_captured(),
+        )
     }
 
     #[test]
@@ -436,12 +393,10 @@ mod tests {
     fn test_stored_item_multi_file_display_text() {
         // 2 files: "a.txt, b.txt"
         let item = StoredItem::new_files(
-            vec!["/tmp/a.txt".into(), "/tmp/b.txt".into()],
-            vec!["a.txt".into(), "b.txt".into()],
-            vec![100, 200],
-            vec!["public.plain-text".into(), "public.plain-text".into()],
-            vec![vec![1], vec![2]],
-            not_captured_previews(2),
+            vec![
+                not_captured_file("/tmp/a.txt", "a.txt", 100, "public.plain-text", vec![1]),
+                not_captured_file("/tmp/b.txt", "b.txt", 200, "public.plain-text", vec![2]),
+            ],
             None,
             None,
         );
@@ -450,15 +405,10 @@ mod tests {
         // 3 files: "3 Files: a.txt and 2 more"
         let item = StoredItem::new_files(
             vec![
-                "/tmp/a.txt".into(),
-                "/tmp/b.txt".into(),
-                "/tmp/c.txt".into(),
+                not_captured_file("/tmp/a.txt", "a.txt", 100, "public.plain-text", vec![1]),
+                not_captured_file("/tmp/b.txt", "b.txt", 200, "public.plain-text", vec![2]),
+                not_captured_file("/tmp/c.txt", "c.txt", 300, "public.plain-text", vec![3]),
             ],
-            vec!["a.txt".into(), "b.txt".into(), "c.txt".into()],
-            vec![100, 200, 300],
-            vec!["public.plain-text".into(); 3],
-            vec![vec![1], vec![2], vec![3]],
-            not_captured_previews(3),
             None,
             None,
         );
@@ -466,12 +416,13 @@ mod tests {
 
         // 1 file: "File: filename"
         let item = StoredItem::new_files(
-            vec!["/tmp/solo.txt".into()],
-            vec!["solo.txt".into()],
-            vec![42],
-            vec!["public.plain-text".into()],
-            vec![vec![1]],
-            not_captured_previews(1),
+            vec![not_captured_file(
+                "/tmp/solo.txt",
+                "solo.txt",
+                42,
+                "public.plain-text",
+                vec![1],
+            )],
             None,
             None,
         );
@@ -479,25 +430,79 @@ mod tests {
     }
 
     #[test]
+    fn test_stored_item_multi_file_preserves_per_file_metadata_association() {
+        let previews = vec![
+            FilePreviewSnapshot::Text {
+                text: crate::interface::FileTextPreviewSnapshot::Complete {
+                    sample: "alpha preview".to_string(),
+                },
+            },
+            FilePreviewSnapshot::Image {
+                preview_data: vec![9, 8, 7],
+            },
+        ];
+        let item = StoredItem::new_files(
+            vec![
+                file_input(
+                    "/tmp/alpha.txt",
+                    "alpha.txt",
+                    11,
+                    "public.plain-text",
+                    vec![1, 2],
+                    previews[0].clone(),
+                ),
+                file_input(
+                    "/tmp/beta.png",
+                    "beta.png",
+                    22,
+                    "public.png",
+                    vec![3, 4],
+                    previews[1].clone(),
+                ),
+            ],
+            Some("Finder".into()),
+            Some("com.apple.finder".into()),
+        );
+
+        let ClipboardContent::File { files, .. } = item.content else {
+            panic!("expected file content");
+        };
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].path, "/tmp/alpha.txt");
+        assert_eq!(files[0].filename, "alpha.txt");
+        assert_eq!(files[0].file_size, 11);
+        assert_eq!(files[0].uti, "public.plain-text");
+        assert_eq!(files[0].bookmark_data, vec![1, 2]);
+        assert_eq!(files[0].preview, previews[0]);
+        assert_eq!(files[1].path, "/tmp/beta.png");
+        assert_eq!(files[1].filename, "beta.png");
+        assert_eq!(files[1].file_size, 22);
+        assert_eq!(files[1].uti, "public.png");
+        assert_eq!(files[1].bookmark_data, vec![3, 4]);
+        assert_eq!(files[1].preview, previews[1]);
+        assert_eq!(item.source_app.as_deref(), Some("Finder"));
+        assert_eq!(
+            item.source_app_bundle_id.as_deref(),
+            Some("com.apple.finder")
+        );
+    }
+
+    #[test]
     fn test_stored_item_multi_file_content_hash_order_independent() {
         let item1 = StoredItem::new_files(
-            vec!["/tmp/a.txt".into(), "/tmp/b.txt".into()],
-            vec!["a.txt".into(), "b.txt".into()],
-            vec![100, 200],
-            vec!["public.plain-text".into(); 2],
-            vec![vec![1], vec![2]],
-            not_captured_previews(2),
+            vec![
+                not_captured_file("/tmp/a.txt", "a.txt", 100, "public.plain-text", vec![1]),
+                not_captured_file("/tmp/b.txt", "b.txt", 200, "public.plain-text", vec![2]),
+            ],
             None,
             None,
         );
 
         let item2 = StoredItem::new_files(
-            vec!["/tmp/b.txt".into(), "/tmp/a.txt".into()],
-            vec!["b.txt".into(), "a.txt".into()],
-            vec![200, 100],
-            vec!["public.plain-text".into(); 2],
-            vec![vec![2], vec![1]],
-            not_captured_previews(2),
+            vec![
+                not_captured_file("/tmp/b.txt", "b.txt", 200, "public.plain-text", vec![2]),
+                not_captured_file("/tmp/a.txt", "a.txt", 100, "public.plain-text", vec![1]),
+            ],
             None,
             None,
         );
@@ -509,18 +514,16 @@ mod tests {
     }
 
     #[test]
-    fn test_stored_item_multi_file_index_text() {
+    fn test_stored_item_multi_file_searchable_text() {
         let item = StoredItem::new_files(
-            vec!["/tmp/a.txt".into(), "/tmp/b.txt".into()],
-            vec!["a.txt".into(), "b.txt".into()],
-            vec![100, 200],
-            vec!["public.plain-text".into(); 2],
-            vec![vec![1], vec![2]],
-            not_captured_previews(2),
+            vec![
+                not_captured_file("/tmp/a.txt", "a.txt", 100, "public.plain-text", vec![1]),
+                not_captured_file("/tmp/b.txt", "b.txt", 200, "public.plain-text", vec![2]),
+            ],
             None,
             None,
         );
-        let index_text = item.file_index_text().unwrap();
+        let index_text = item.searchable_text();
         assert!(
             index_text.contains("a.txt"),
             "Index text should contain first filename"

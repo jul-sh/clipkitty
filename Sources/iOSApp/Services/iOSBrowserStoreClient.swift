@@ -1,37 +1,9 @@
-import ClipKittyAppleServices
+import ClipKittyBrowser
+import ClipKittyContentServices
+import ClipKittyCore
 import ClipKittyRust
-import ClipKittyShared
+import ClipKittyStore
 import Foundation
-
-private final class RepositoryBrowserSearchOperation: BrowserSearchOperation {
-    let request: SearchRequest
-    private let operation: ClipboardSearchOperation
-
-    init(request: SearchRequest, operation: ClipboardSearchOperation) {
-        self.request = request
-        self.operation = operation
-    }
-
-    func cancel() {
-        operation.cancel()
-    }
-
-    func awaitOutcome() async -> BrowserSearchOutcome {
-        switch await operation.awaitOutcome() {
-        case let .success(result):
-            return .success(BrowserSearchResponse(
-                request: request,
-                items: result.matches,
-                firstPreviewPayload: result.firstPreviewPayload,
-                totalCount: Int(result.totalCount)
-            ))
-        case .cancelled:
-            return .cancelled
-        case let .failure(error):
-            return .failure(error)
-        }
-    }
-}
 
 @MainActor
 final class iOSBrowserStoreClient: BrowserStoreClient {

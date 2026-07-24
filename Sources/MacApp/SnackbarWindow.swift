@@ -1,5 +1,5 @@
 import AppKit
-import ClipKittyShared
+import ClipKittyCore
 import SwiftUI
 
 @MainActor
@@ -18,7 +18,6 @@ final class SnackbarWindow {
         let window: NSWindow
         let anchoredToPanel: Bool
         var dismissTask: Task<Void, Never>?
-        var action: (() -> Void)?
     }
 
     init(coordinator: SnackbarCoordinator) {
@@ -84,7 +83,7 @@ final class SnackbarWindow {
 
     // MARK: - Transient notifications (auto-dismiss, dual positioning)
 
-    func showNotification(_ kind: NotificationKind, onAction: (() -> Void)? = nil) {
+    func showNotification(_ request: NotificationRequest) {
         if let existing = notification {
             existing.dismissTask?.cancel()
             // Cross-fade: the old window fades while the new one animates in.
@@ -96,12 +95,18 @@ final class SnackbarWindow {
 
         if nudgeWindow != nil { dismissNudge() }
 
+        let kind = request.kind
         let item = SnackbarItem.notification(kind)
 
         let view = SnackbarView(
             item: item,
             onAction: { [weak self] in
-                onAction?()
+                switch request {
+                case .passive:
+                    break
+                case let .actionable(_, _, _, action):
+                    action()
+                }
                 self?.dismissNotification()
             },
             onDismiss: { [weak self] in
@@ -115,7 +120,7 @@ final class SnackbarWindow {
 
         let window = makeWindow(hostingView: hostingView)
 
-        if case .actionable = kind {
+        if case .actionable = request {
             window.ignoresMouseEvents = false
         }
 
@@ -144,8 +149,7 @@ final class SnackbarWindow {
         notification = ActiveNotification(
             window: window,
             anchoredToPanel: anchored,
-            dismissTask: scheduleDismiss(after: kind.duration),
-            action: onAction
+            dismissTask: scheduleDismiss(after: kind.duration)
         )
     }
 
@@ -202,12 +206,6 @@ final class SnackbarWindow {
         if notification?.anchoredToPanel == true {
             dismissNotification()
         }
-    }
-
-    func hideAll() {
-        dismissNudge()
-        dismissNotification()
-        dismissProgress()
     }
 
     // MARK: - Positioning

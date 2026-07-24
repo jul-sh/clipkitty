@@ -1,5 +1,5 @@
+@testable import ClipKittyBrowser
 import ClipKittyRust
-@testable import ClipKittyShared
 import XCTest
 
 /// Tests for iOS card highlight rendering from Rust matched excerpts,
@@ -50,12 +50,8 @@ final class iOSHighlightAndEditTests: XCTestCase {
             initialScrollHighlightIndex: 0
         )
         let state = SelectedPreviewState.highlighted(decoration)
-        if case let .highlighted(d) = state {
-            XCTAssertEqual(d.highlights.count, 2)
-            XCTAssertEqual(d.initialScrollHighlightIndex, 0)
-        } else {
-            XCTFail("Expected .highlighted state")
-        }
+        XCTAssertEqual(state.decoration?.highlights.count, 2)
+        XCTAssertEqual(state.decoration?.initialScrollHighlightIndex, 0)
     }
 
     func testPreviewDecorationFromLoadingWithPrevious() {
@@ -63,22 +59,16 @@ final class iOSHighlightAndEditTests: XCTestCase {
             highlights: [Utf16HighlightRange(utf16Start: 0, utf16End: 5, kind: .exact)],
             initialScrollHighlightIndex: nil
         )
-        let state = SelectedPreviewState.loadingDecoration(previous: previousDecoration)
-        if case let .loadingDecoration(previous) = state {
-            XCTAssertNotNil(previous)
-            XCTAssertEqual(previous?.highlights.count, 1)
-        } else {
-            XCTFail("Expected .loadingDecoration state")
-        }
+        let state = SelectedPreviewState.loadingDecoration(
+            previous: previousDecoration,
+            phase: .waitingForSpinner
+        )
+        XCTAssertEqual(state.decoration, previousDecoration)
     }
 
     func testPreviewDecorationFromPlainState() {
         let state = SelectedPreviewState.plain
-        if case .plain = state {
-            // No decoration available in plain state
-        } else {
-            XCTFail("Expected .plain state")
-        }
+        XCTAssertNil(state.decoration)
     }
 
     // MARK: - Inline Edit Transitions
@@ -130,7 +120,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
         XCTAssertEqual(viewModel.editSession, .focused(itemId: "1"))
 
         // Make a text change — should become dirty
-        viewModel.onTextEdit("Changed text", for: "1", originalText: "Original text")
+        viewModel.onTextEdit("Changed text", for: "1", originalContent: item.content)
         XCTAssertEqual(viewModel.editSession, .dirty(itemId: "1", draft: "Changed text"))
 
         // Commit the edit
@@ -163,7 +153,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
 
         // Edit and then cancel
         viewModel.onEditingStateChange(true, for: "1")
-        viewModel.onTextEdit("Changed text", for: "1", originalText: "Original text")
+        viewModel.onTextEdit("Changed text", for: "1", originalContent: item.content)
         if case let .dirty(dirtyId, _) = viewModel.editSession {
             XCTAssertEqual(dirtyId, "1")
         } else {
@@ -197,7 +187,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
         await flushMainActor()
 
         viewModel.onEditingStateChange(true, for: "1")
-        viewModel.onTextEdit("Same text", for: "1", originalText: "Same text")
+        viewModel.onTextEdit("Same text", for: "1", originalContent: item.content)
         // Same text as original — not dirty, just focused
         XCTAssertEqual(viewModel.editSession, .focused(itemId: "1"))
     }
@@ -228,7 +218,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
 
         // Edit and save
         viewModel.onEditingStateChange(true, for: "1")
-        viewModel.onTextEdit("changed text", for: "1", originalText: "search term here")
+        viewModel.onTextEdit("changed text", for: "1", originalContent: item.content)
         if case let .dirty(dirtyId, _) = viewModel.editSession {
             XCTAssertEqual(dirtyId, "1")
         } else {
@@ -297,7 +287,7 @@ final class iOSHighlightAndEditTests: XCTestCase {
 
         // Make item 1 dirty
         viewModel.onEditingStateChange(true, for: "1")
-        viewModel.onTextEdit("Changed", for: "1", originalText: "First item")
+        viewModel.onTextEdit("Changed", for: "1", originalContent: item1.content)
         if case let .dirty(dirtyId, _) = viewModel.editSession {
             XCTAssertEqual(dirtyId, "1")
         } else {

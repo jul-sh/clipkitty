@@ -1,9 +1,9 @@
 #if ENABLE_ICLOUD_SYNC
 
     import BackgroundTasks
-    import ClipKittyAppleServices
+    import ClipKittyCloudSync
+    import ClipKittyCore
     import ClipKittyRust
-    import ClipKittyShared
     import os
     import SwiftUI
     import UIKit

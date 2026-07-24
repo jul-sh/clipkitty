@@ -1,8 +1,8 @@
-import ClipKittyShared
+import ClipKittyCore
 import SwiftUI
 
 #if ENABLE_ICLOUD_SYNC
-    import ClipKittyAppleServices
+    import ClipKittyCloudSync
 #endif
 
 struct RootView: View {
@@ -26,15 +26,8 @@ struct RootView: View {
             .addClipDropTarget()
             .overlay(alignment: .bottom) {
                 if let item = activeSnackbar {
-                    SnackbarOverlay(item: item) {
-                        if case .notification(.actionable) = item, let action = appState.toast.action {
-                            action()
-                            withAnimation(.bouncy) {
-                                appState.toast = .init()
-                            }
-                        }
-                    }
-                    .padding(.bottom, 80)
+                    SnackbarOverlay(item: item, onAction: performSnackbarAction)
+                        .padding(.bottom, 80)
                 }
             }
             // Drive the slot's transition off the active value so info-state
@@ -52,13 +45,31 @@ struct RootView: View {
     // during a sync briefly replaces the sync capsule, exactly like the Mac.
 
     private var activeSnackbar: SnackbarItem? {
-        if let kind = appState.toast.kind {
-            return .notification(kind)
+        switch appState.toast {
+        case .hidden:
+            break
+        case let .visible(_, request):
+            return .notification(request.kind)
         }
         if let info = ongoingInfo {
             return .info(info)
         }
         return nil
+    }
+
+    private func performSnackbarAction() {
+        switch appState.toast {
+        case .hidden:
+            break
+        case let .visible(_, request):
+            switch request {
+            case .passive:
+                break
+            case let .actionable(_, _, _, action):
+                action()
+                appState.dismissToast()
+            }
+        }
     }
 
     private var ongoingInfo: InfoKind? {

@@ -1,4 +1,4 @@
-import ClipKittyShared
+import ClipKittyBrowser
 import SwiftUI
 
 struct BrowserActionsOverlay: View {

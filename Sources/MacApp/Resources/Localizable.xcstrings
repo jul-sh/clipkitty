@@ -1,6 +1,62 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Indexing…": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Indizierung…" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Indexing…" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Indexando…" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Indexation…" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "インデックス作成中…" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "색인 생성 중…" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Indexando…" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Индексация…" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在索引…" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在索引…" } }
+      }
+    },
+    "Restore Default": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Standard wiederherstellen" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Restore Default" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Restaurar valor predeterminado" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Rétablir la valeur par défaut" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "デフォルトに戻す" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "기본값 복원" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Restaurar padrão" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Восстановить значение по умолчанию" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "恢复默认设置" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "回復預設值" } }
+      }
+    },
+    "This shortcut is already used by %@.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Dieses Tastaturkürzel wird bereits von „%@“ verwendet." } },
+        "en": { "stringUnit": { "state": "translated", "value": "This shortcut is already used by %@." } },
+        "es": { "stringUnit": { "state": "translated", "value": "Este atajo ya lo usa %@." } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Ce raccourci est déjà utilisé par %@." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "このショートカットはすでに「%@」で使用されています。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "이 단축키는 이미 %@에서 사용 중입니다." } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Este atalho já é usado por %@." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Это сочетание клавиш уже используется для команды «%@»." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "此快捷键已被“%@”使用。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "此快捷鍵已被「%@」使用。" } }
+      }
+    },
+    "Catching up with iCloud": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "iCloud wird synchronisiert" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Catching up with iCloud" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Sincronizando con iCloud" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Synchronisation avec iCloud" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "iCloudと同期中" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "iCloud와 동기화 중" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Sincronizando com o iCloud" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Синхронизация с iCloud" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在与 iCloud 同步" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在與 iCloud 同步" } }
+      }
+    },
     "": {
       "localizations": {
         "de": {
@@ -958,70 +1014,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "全部"
-          }
-        }
-      }
-    },
-    "Another application may be using the clipboard.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Eine andere Anwendung verwendet möglicherweise die Zwischenablage."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Another application may be using the clipboard."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Otra aplicación puede estar usando el portapapeles."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Une autre application utilise peut-être le presse-papiers."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "別のアプリケーションがクリップボードを使用中の可能性があります。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "다른 애플리케이션이 클립보드를 사용 중일 수 있습니다."
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Outro aplicativo pode estar usando a área de transferência."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Другое приложение может использовать буфер обмена."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "另一个应用程序可能正在使用剪贴板。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "另一個應用程式可能正在使用剪貼板。"
           }
         }
       }
@@ -2206,70 +2198,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "檢查更新"
-          }
-        }
-      }
-    },
-    "Check that the file exists and you have permission to access it.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Überprüfen Sie, ob die Datei existiert und Sie Zugriffsberechtigung haben."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Check that the file exists and you have permission to access it."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Compruebe que el archivo existe y que tiene permiso para acceder a él."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Vérifiez que le fichier existe et que vous avez la permission d’y accéder."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ファイルが存在し、アクセス権があることを確認してください。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "파일이 존재하고 접근 권한이 있는지 확인하십시오."
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Verifique se o arquivo existe e se você tem permissão para acessá-lo."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Убедитесь, что файл существует и у вас есть права доступа."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "请检查文件是否存在以及您是否有访问权限。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "請檢查檔案是否存在以及您是否有存取權限。"
           }
         }
       }
@@ -5870,134 +5798,6 @@
         }
       }
     },
-    "Failed to access clipboard": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Zugriff auf die Zwischenablage fehlgeschlagen"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Failed to access clipboard"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Error al acceder al portapapeles"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Échec de l’accès au presse-papiers"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "クリップボードへのアクセスに失敗しました"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "클립보드에 접근하지 못했습니다"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Falha ao acessar a área de transferência"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Не удалось получить доступ к буферу обмена"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无法访问剪贴板"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "無法存取剪貼板"
-          }
-        }
-      }
-    },
-    "Failed to access file: %@": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Zugriff auf Datei fehlgeschlagen: %@"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Failed to access file: %@"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No se pudo acceder al archivo: %@"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Impossible d’accéder au fichier : %@"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ファイルにアクセスできませんでした: %@"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "파일에 접근하지 못했습니다: %@"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Falha ao acessar o arquivo: %@"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Не удалось получить доступ к файлу: %@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无法访问文件：%@"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "無法取用檔案：%@"
-          }
-        }
-      }
-    },
     "Failed to compress image": {
       "localizations": {
         "de": {
@@ -6058,70 +5858,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "圖片壓縮失敗"
-          }
-        }
-      }
-    },
-    "Failed to fetch link preview: %@": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Linkvorschau konnte nicht geladen werden: %@"
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Failed to fetch link preview: %@"
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No se pudo obtener la vista previa del enlace: %@"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Impossible de récupérer l’aperçu du lien : %@"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "リンクプレビューを取得できませんでした: %@"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "링크 미리보기를 가져오지 못했습니다: %@"
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Falha ao obter a pré-visualização do link: %@"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Не удалось загрузить предпросмотр ссылки: %@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "无法获取链接预览：%@"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "無法取得連結預覽：%@"
           }
         }
       }
@@ -11361,70 +11097,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "操作將自動重試。"
-          }
-        }
-      }
-    },
-    "The website may be unavailable or blocking previews.": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Die Website ist möglicherweise nicht erreichbar oder blockiert Vorschauen."
-          }
-        },
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "The website may be unavailable or blocking previews."
-          }
-        },
-        "es": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "El sitio web puede no estar disponible o estar bloqueando las vistas previas."
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Le site web est peut-être indisponible ou bloque les aperçus."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ウェブサイトが利用できないか、プレビューをブロックしている可能性があります。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "웹사이트를 사용할 수 없거나 미리보기를 차단하고 있을 수 있습니다."
-          }
-        },
-        "pt-BR": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "O site pode estar indisponível ou bloqueando pré-visualizações."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Веб-сайт может быть недоступен или блокировать предпросмотр."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "网站可能不可用或正在阻止预览。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "網站可能無法使用或正在阻止預覽。"
           }
         }
       }

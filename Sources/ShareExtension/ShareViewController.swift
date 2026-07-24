@@ -1,6 +1,5 @@
 import SwiftUI
 import UIKit
-import UniformTypeIdentifiers
 
 /// Principal class for the Share Extension. Hosts the SwiftUI `ShareView`
 /// and extracts attachments from the extension context.
@@ -14,10 +13,6 @@ final class ShareViewController: UIViewController {
             items: items,
             onComplete: { [weak self] in
                 self?.extensionContext?.completeRequest(returningItems: nil)
-            },
-            onCancel: { [weak self] in
-                let error = NSError(domain: "com.eviljuliette.clipkitty.share", code: 0)
-                self?.extensionContext?.cancelRequest(withError: error)
             }
         )
 

@@ -1,7 +1,8 @@
-import ClipKittyAppleServices
+import ClipKittyBrowser
+import ClipKittyCore
 import ClipKittyRust
-import ClipKittyShared
 import ClipKittyShortcuts
+import ClipKittyStore
 import SwiftUI
 
 // MARK: - App Launch State
@@ -17,19 +18,65 @@ struct AppSuspensionContext {
     let task: Task<Void, Never>
 }
 
+enum AppResumePhase: Equatable {
+    /// Keep rendering the previous session during the grace period.
+    case waitingForSpinner
+    /// The store open outlasted the grace period, so render the launch spinner.
+    case showingSpinner
+}
+
+struct AppResumeContext {
+    let id: UUID
+    let previous: AppSession
+    var phase: AppResumePhase
+    let spinnerTask: Task<Void, Never>
+    let openTask: Task<Void, Never>
+}
+
+/// A suspended app may still have a superseded store open draining in the
+/// background. Keeping that task in the state that requires it ensures the
+/// next resume cannot open a second store against the same index concurrently.
+enum AppSuspendedState {
+    case withoutPreviousSession
+    case resting(previous: AppSession)
+    case waitingForSupersededResume(previous: AppSession, openTask: Task<Void, Never>)
+}
+
+enum AppResumeCallbackDisposition {
+    case current(AppResumeContext)
+    case superseded
+}
+
 enum AppLaunchState {
     case launching
     case ready(AppSession)
     case suspending(AppSuspensionContext)
-    /// Database released. Keeps the outgoing session so the next foreground
-    /// can keep rendering the last known state while a fresh container
-    /// bootstraps; nil when the app never reached `.ready`.
-    case suspended(previous: AppSession?)
+    /// Database released. The suspended state keeps the outgoing session so
+    /// the next foreground can render it while a fresh container bootstraps.
+    case suspended(AppSuspendedState)
     /// Re-bootstrapping after a foreground activation: the previous session
     /// stays on screen, and the spinner only appears once the resume
     /// outlasts its grace period.
-    case resuming(previous: AppSession, spinnerVisible: Bool)
+    case resuming(AppResumeContext)
     case failed(String)
+
+    func resumeCallbackDisposition(for resumeID: UUID) -> AppResumeCallbackDisposition {
+        guard case let .resuming(context) = self, context.id == resumeID else {
+            return .superseded
+        }
+        return .current(context)
+    }
+
+    mutating func advanceResumeSpinner(for resumeID: UUID) {
+        guard case var .resuming(context) = self, context.id == resumeID else { return }
+        switch context.phase {
+        case .waitingForSpinner:
+            context.phase = .showingSpinner
+            self = .resuming(context)
+        case .showingSpinner:
+            break
+        }
+    }
 }
 
 /// What the window actually renders, derived from ``AppLaunchState``. The
@@ -50,15 +97,14 @@ final class AppState {
     private let container: AppContainer
     let viewModel: BrowserViewModel
 
-    var toast: ToastState = .init()
+    var toast: ToastState = .hidden
     var contentRevision: Int = 0
 
-    /// A transient snackbar notification (with optional inline action). The
-    /// underlying value is a shared `NotificationKind` so iOS and Mac can use
-    /// the same snackbar model; see `SnackbarItem` in `ClipKittyShared`.
-    struct ToastState {
-        var kind: NotificationKind?
-        var action: (() -> Void)?
+    /// A transient snackbar request plus presentation identity. The request
+    /// structurally owns its action only when it is actionable.
+    enum ToastState {
+        case hidden
+        case visible(id: UUID, request: NotificationRequest)
     }
 
     init(container: AppContainer) {
@@ -70,22 +116,20 @@ final class AppState {
         let haptics = container.haptics
         let settings = container.settings
 
+        let copyItem: (String, ClipboardContent) -> Void = { _, content in
+            clipboardService.copy(content: content)
+            haptics.fire(.copy)
+            toastBox.show?(ToastMessage.copied.notificationRequest)
+        }
+
         viewModel = BrowserViewModel(
             client: container.storeClient,
             shouldGenerateLinkPreviews: { settings.generateLinkPreviews },
-            onSelect: { _, content in
-                clipboardService.copy(content: content)
-                haptics.fire(.copy)
-                toastBox.show?(ToastMessage.copied.notificationKind, nil)
-            },
-            onCopyOnly: { _, content in
-                clipboardService.copy(content: content)
-                haptics.fire(.copy)
-                toastBox.show?(ToastMessage.copied.notificationKind, nil)
-            },
+            onSelect: copyItem,
+            onCopyOnly: copyItem,
             onDismiss: {},
-            showSnackbarNotification: { kind, action in
-                toastBox.show?(kind, action)
+            showSnackbarNotification: { request in
+                toastBox.show?(request)
             },
             dismissSnackbarNotification: {
                 toastBox.dismiss?()
@@ -93,33 +137,44 @@ final class AppState {
         )
 
         // Wire the box to self after all stored properties are initialized
-        toastBox.show = { [weak self] kind, action in
-            self?.showNotification(kind, action: action)
+        toastBox.show = { [weak self] request in
+            self?.showNotification(request)
         }
         toastBox.dismiss = { [weak self] in
-            withAnimation(.bouncy) {
-                self?.toast = .init()
-            }
+            self?.dismissToast()
         }
     }
 
-    func showToast(_ message: ToastMessage, action: (() -> Void)? = nil) {
-        showNotification(message.notificationKind, action: action)
+    func showToast(_ message: ToastMessage) {
+        showNotification(message.notificationRequest)
     }
 
-    /// Show a shared-model snackbar notification. The iOS overlay renders this
-    /// from the same `NotificationKind` cases the Mac uses (see Mac's
-    /// `SnackbarView`), keeping presentation aligned across platforms.
-    func showNotification(_ kind: NotificationKind, action: (() -> Void)? = nil) {
+    /// Show a shared notification request. The overlay projects its
+    /// closure-free kind for rendering and matches the request to run actions.
+    func showNotification(_ request: NotificationRequest) {
+        let id = UUID()
+        let duration = request.kind.duration
         withAnimation(.bouncy) {
-            toast = ToastState(kind: kind, action: action)
+            toast = .visible(id: id, request: request)
         }
         Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(kind.duration))
-            guard let self, self.toast.kind == kind else { return }
-            withAnimation(.bouncy) {
-                self.toast = .init()
-            }
+            try? await Task.sleep(for: .seconds(duration))
+            self?.dismissToast(id: id)
+        }
+    }
+
+    func dismissToast() {
+        withAnimation(.bouncy) {
+            toast = .hidden
+        }
+    }
+
+    func dismissToast(id: UUID) {
+        switch toast {
+        case let .visible(currentID, _) where currentID == id:
+            dismissToast()
+        case .hidden, .visible:
+            break
         }
     }
 
@@ -150,7 +205,10 @@ final class AppState {
         return result
     }
 
-    private func scheduleImageDescriptionUpdate(after result: Result<String, ClipboardError>, imageData: Data) {
+    private func scheduleImageDescriptionUpdate(
+        after result: Result<String, ClipboardError>,
+        imageData: Data
+    ) {
         guard case let .success(itemId) = result, !itemId.isEmpty else { return }
 
         Task { [weak self] in
@@ -170,7 +228,7 @@ final class AppState {
 
     func prepareForSuspension() {
         viewModel.prepareForSuspension()
-        toast = .init()
+        toast = .hidden
     }
 
     func processPendingShareItems() async -> Int {
@@ -182,7 +240,7 @@ final class AppState {
             let sourceApp = "Share Sheet"
 
             let result: Result<String, ClipboardError>
-            switch entry.item {
+            switch entry.payload {
             case let .text(text):
                 result = await container.repository.saveText(
                     text: text,
@@ -195,11 +253,10 @@ final class AppState {
                     sourceApp: sourceApp,
                     sourceAppBundleId: nil
                 )
-            case .image:
-                guard let imageData = entry.imageData else { continue }
+            case let .image(imageData, thumbnail):
                 result = await saveImage(
                     imageData: imageData,
-                    thumbnail: entry.thumbnailData,
+                    thumbnail: thumbnail,
                     sourceApp: sourceApp,
                     sourceAppBundleId: nil,
                     isAnimated: false
@@ -226,34 +283,7 @@ final class AppState {
 
         guard let content = container.clipboardService.readCurrentClipboard() else { return }
 
-        let result: Result<String, ClipboardError>
-
-        switch content {
-        case let .image(image):
-            guard let data = image.pngData() else { return }
-            let thumbnail = image.preparingThumbnail(of: CGSize(width: 200, height: 200))?.jpegData(
-                compressionQuality: 0.7
-            )
-            result = await saveImage(
-                imageData: data,
-                thumbnail: thumbnail,
-                sourceApp: "Pasteboard",
-                sourceAppBundleId: nil,
-                isAnimated: false
-            )
-        case let .link(url):
-            result = await container.repository.saveText(
-                text: url.absoluteString,
-                sourceApp: "Pasteboard",
-                sourceAppBundleId: nil
-            )
-        case let .text(text):
-            result = await container.repository.saveText(
-                text: text,
-                sourceApp: "Pasteboard",
-                sourceAppBundleId: nil
-            )
-        }
+        guard let result = await savePasteboardContent(content) else { return }
 
         switch result {
         case .success:
@@ -262,24 +292,54 @@ final class AppState {
             break
         }
     }
+
+    func savePasteboardContent(
+        _ content: PasteboardContent
+    ) async -> Result<String, ClipboardError>? {
+        switch content {
+        case let .image(image):
+            guard let data = image.pngData() else { return nil }
+            let thumbnail = image.preparingThumbnail(
+                of: CGSize(width: 200, height: 200)
+            )?.jpegData(compressionQuality: 0.7)
+            return await saveImage(
+                imageData: data,
+                thumbnail: thumbnail,
+                sourceApp: "Pasteboard",
+                sourceAppBundleId: nil,
+                isAnimated: false
+            )
+        case let .link(url):
+            return await savePasteboardText(url.absoluteString)
+        case let .text(text):
+            return await savePasteboardText(text)
+        }
+    }
+
+    private func savePasteboardText(
+        _ text: String
+    ) async -> Result<String, ClipboardError> {
+        await container.repository.saveText(
+            text: text,
+            sourceApp: "Pasteboard",
+            sourceAppBundleId: nil
+        )
+    }
 }
 
 // MARK: - Toast Message
 
 /// Sugar for the most common iOS-internal transient notifications. Each case
-/// builds a shared `NotificationKind` so the snackbar slot can be rendered
-/// from the same `SnackbarItem` model the Mac uses.
+/// builds a shared `NotificationRequest` for the platform transport.
 enum ToastMessage: Equatable {
     case copied
     case bookmarked
     case unbookmarked
-    case saved
-    case deleted
     case addSucceeded
     case addFailed(String)
     case clipboardEmpty
 
-    var notificationKind: NotificationKind {
+    var notificationRequest: NotificationRequest {
         switch self {
         case .copied:
             return .passive(message: String(localized: "Copied to clipboard"), iconSystemName: "doc.on.doc")
@@ -287,10 +347,6 @@ enum ToastMessage: Equatable {
             return .passive(message: String(localized: "Bookmarked"), iconSystemName: "bookmark.fill")
         case .unbookmarked:
             return .passive(message: String(localized: "Removed bookmark"), iconSystemName: "bookmark.slash")
-        case .saved:
-            return .passive(message: String(localized: "Saved"), iconSystemName: "checkmark.circle")
-        case .deleted:
-            return .passive(message: String(localized: "Deleted"), iconSystemName: "trash")
         case .addSucceeded:
             return .passive(message: String(localized: "Added"), iconSystemName: "plus.circle")
         case let .addFailed(reason):
@@ -312,7 +368,7 @@ enum ToastMessage: Equatable {
 /// so they must be provided at construction time — this box bridges that gap.
 @MainActor
 private final class ToastCallbackBox {
-    var show: ((NotificationKind, (() -> Void)?) -> Void)?
+    var show: ((NotificationRequest) -> Void)?
     var dismiss: (() -> Void)?
 }
 
@@ -321,9 +377,6 @@ private final class ToastCallbackBox {
 @main
 struct ClipKittyiOSApp: App {
     @State private var launchState: AppLaunchState = .launching
-    /// The in-flight store open of the current resume, chained so a
-    /// superseded open always releases its store before the next one starts.
-    @State private var resumeOpenTask: Task<Void, Never>?
     @Environment(\.scenePhase) private var scenePhase
 
     #if ENABLE_ICLOUD_SYNC
@@ -374,12 +427,23 @@ struct ClipKittyiOSApp: App {
             return .session(session)
         case let .suspending(context):
             return .session(context.session)
-        case let .suspended(previous):
+        case let .suspended(suspended):
             // Rendering the last known state here also keeps the app
             // switcher snapshot on content instead of a spinner.
-            return previous.map(LaunchPresentation.session) ?? .spinner
-        case let .resuming(previous, spinnerVisible):
-            return spinnerVisible ? .spinner : .session(previous)
+            switch suspended {
+            case .withoutPreviousSession:
+                return .spinner
+            case let .resting(previous),
+                 let .waitingForSupersededResume(previous, _):
+                return .session(previous)
+            }
+        case let .resuming(context):
+            switch context.phase {
+            case .waitingForSpinner:
+                return .session(context.previous)
+            case .showingSpinner:
+                return .spinner
+            }
         case let .failed(message):
             return .failure(message)
         }
@@ -415,16 +479,19 @@ struct ClipKittyiOSApp: App {
     private static let resumeSpinnerGrace: Duration = .milliseconds(150)
     private static let resumeWarmupDeadline: Duration = .seconds(2)
 
+    private var databasePathOverride: String? {
+        #if ENABLE_TEST_FIXTURES
+            ProcessInfo.processInfo.environment["CLIPKITTY_SCREENSHOT_DB"]
+        #else
+            nil
+        #endif
+    }
+
     private func performBootstrap() {
         // The screenshot-DB override injects a synthetic store for automated
         // App Store screenshots. It must never exist in shipping builds, so the
         // build-variant capability compiles it into test fixtures only.
-        #if ENABLE_TEST_FIXTURES
-            let customPath = ProcessInfo.processInfo.environment["CLIPKITTY_SCREENSHOT_DB"]
-        #else
-            let customPath: String? = nil
-        #endif
-        switch AppContainer.bootstrap(databasePath: customPath) {
+        switch AppContainer.bootstrap(databasePath: databasePathOverride) {
         case let .success(container):
             let session = makeSession(container: container)
             launchState = .ready(session)
@@ -437,11 +504,11 @@ struct ClipKittyiOSApp: App {
     /// Wires the service graph around a freshly-bootstrapped container: the
     /// shortcut runtime, the UI coordinator, and (when enabled) iCloud sync.
     private func makeSession(container: AppContainer) -> AppSession {
-        ClipKittyShortcutRuntime.useRepositoryProvider { [weak container] in
+        ClipKittyShortcutRuntime.useStoreProvider { [weak container] in
             guard let container else {
                 return .unavailable("ClipKitty is suspended.")
             }
-            return container.shortcutRepositoryAvailability()
+            return container.shortcutStoreAvailability()
         }
         let appState = AppState(container: container)
         #if ENABLE_ICLOUD_SYNC
@@ -467,51 +534,81 @@ struct ClipKittyiOSApp: App {
     /// period, and the fresh session is adopted only once its feed has
     /// content, so the UI goes straight from last known state to fresh
     /// content without an empty flash.
-    private func beginResume(previous: AppSession) {
-        launchState = .resuming(previous: previous, spinnerVisible: false)
+    private func beginResume(
+        previous: AppSession,
+        after supersededOpen: Task<Void, Never>? = nil
+    ) {
+        let resumeID = UUID()
         // Screenshot-DB override is fixture-only; shipping builds always resume
         // the real store (custom path nil). See `performBootstrap`.
-        #if ENABLE_TEST_FIXTURES
-            let customPath = ProcessInfo.processInfo.environment["CLIPKITTY_SCREENSHOT_DB"]
-        #else
-            let customPath: String? = nil
-        #endif
+        let customPath = databasePathOverride
 
-        Task { @MainActor in
+        let spinnerTask = Task { @MainActor in
             try? await Task.sleep(for: Self.resumeSpinnerGrace)
-            if case let .resuming(previous, spinnerVisible: false) = launchState {
-                launchState = .resuming(previous: previous, spinnerVisible: true)
-            }
+            guard !Task.isCancelled else { return }
+            launchState.advanceResumeSpinner(for: resumeID)
         }
 
         // Chain on any superseded resume so its store is released before a
         // new one opens — two live stores would contend for the index lock.
-        let supersededOpen = resumeOpenTask
-        resumeOpenTask = Task { @MainActor in
+        let openTask = Task { @MainActor in
             await supersededOpen?.value
+
+            // This resume may have been suspended or superseded while it was
+            // waiting for the previous open to drain. In that case the next
+            // foreground transition owns opening a fresh store.
+            switch launchState.resumeCallbackDisposition(for: resumeID) {
+            case .current:
+                break
+            case .superseded:
+                return
+            }
 
             let outcome = await Task.detached(priority: .userInitiated) {
                 AppContainer.openStore(databasePath: customPath)
             }.value
+            await handleResumeOpenOutcome(outcome, resumeID: resumeID)
+        }
 
-            switch outcome {
-            case let .success(store):
-                guard case .resuming = launchState else {
-                    // Backgrounded again mid-open: release the fresh store
-                    // rather than leaving the database locked.
-                    store.prepareForSuspend()
-                    return
-                }
-                await adoptResumedStore(store)
-            case let .failure(error):
-                guard case .resuming = launchState else { return }
+        launchState = .resuming(AppResumeContext(
+            id: resumeID,
+            previous: previous,
+            phase: .waitingForSpinner,
+            spinnerTask: spinnerTask,
+            openTask: openTask
+        ))
+    }
+
+    private func handleResumeOpenOutcome(
+        _ outcome: Result<StoreSession, AppContainer.BootstrapError>,
+        resumeID: UUID
+    ) async {
+        switch outcome {
+        case let .success(storeSession):
+            switch launchState.resumeCallbackDisposition(for: resumeID) {
+            case .current:
+                await adoptResumedStore(storeSession, resumeID: resumeID)
+            case .superseded:
+                // Backgrounded or replaced mid-open: release this store before
+                // the next resume's chained open is allowed to proceed.
+                storeSession.store.prepareForSuspend()
+            }
+        case let .failure(error):
+            switch launchState.resumeCallbackDisposition(for: resumeID) {
+            case let .current(context):
+                context.spinnerTask.cancel()
                 launchState = .failed(error.localizedDescription)
+            case .superseded:
+                break
             }
         }
     }
 
-    private func adoptResumedStore(_ store: ClipKittyRust.ClipboardStore) async {
-        let container = AppContainer.assemble(store: store)
+    private func adoptResumedStore(
+        _ storeSession: StoreSession,
+        resumeID: UUID
+    ) async {
+        let container = AppContainer.assemble(storeSession: storeSession)
         let session = makeSession(container: container)
 
         // Warm the fresh feed while the previous state is still showing.
@@ -520,13 +617,19 @@ struct ClipKittyiOSApp: App {
         while session.appState.viewModel.contentState.displayedContent == nil,
               ContinuousClock.now < deadline
         {
-            guard case .resuming = launchState else {
+            switch launchState.resumeCallbackDisposition(for: resumeID) {
+            case .current:
+                break
+            case .superseded:
                 return discardUnadoptedSession(container: container)
             }
             try? await Task.sleep(for: .milliseconds(16))
         }
 
-        guard case .resuming = launchState else {
+        switch launchState.resumeCallbackDisposition(for: resumeID) {
+        case let .current(context):
+            context.spinnerTask.cancel()
+        case .superseded:
             return discardUnadoptedSession(container: container)
         }
 
@@ -560,11 +663,14 @@ struct ClipKittyiOSApp: App {
 
     private func handleForegroundActivation() {
         switch launchState {
-        case let .suspended(previous):
-            if let previous {
-                beginResume(previous: previous)
-            } else {
+        case let .suspended(suspended):
+            switch suspended {
+            case .withoutPreviousSession:
                 performBootstrap()
+            case let .resting(previous):
+                beginResume(previous: previous)
+            case let .waitingForSupersededResume(previous, openTask):
+                beginResume(previous: previous, after: openTask)
             }
         case let .ready(session):
             resumeReadySession(session)
@@ -591,12 +697,16 @@ struct ClipKittyiOSApp: App {
         guard case let .ready(session) = launchState else {
             switch launchState {
             case .launching:
-                launchState = .suspended(previous: nil)
-            case let .resuming(previous, _):
+                launchState = .suspended(.withoutPreviousSession)
+            case let .resuming(context):
                 // The fresh container was never adopted; the in-flight open
                 // releases its store when it observes this state. The
                 // previous session's store is already suspended.
-                launchState = .suspended(previous: previous)
+                context.spinnerTask.cancel()
+                launchState = .suspended(.waitingForSupersededResume(
+                    previous: context.previous,
+                    openTask: context.openTask
+                ))
             case .ready, .suspending, .suspended, .failed:
                 break
             }
@@ -654,7 +764,7 @@ struct ClipKittyiOSApp: App {
         // Keep the outgoing session: its store is suspended, but its view
         // model still holds the last displayed content, which the next
         // resume renders instead of a spinner.
-        launchState = .suspended(previous: session)
+        launchState = .suspended(.resting(previous: session))
         if scenePhase == .active {
             handleForegroundActivation()
         }

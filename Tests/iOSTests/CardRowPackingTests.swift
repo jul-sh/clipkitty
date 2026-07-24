@@ -1,6 +1,6 @@
+import ClipKittyBrowser
 @testable import ClipKittyiOS
 import ClipKittyRust
-import ClipKittyShared
 import XCTest
 
 final class CardRowPackingTests: XCTestCase {

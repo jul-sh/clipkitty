@@ -11,15 +11,16 @@ use anyhow::{anyhow, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::apple;
+use crate::filesystem::remove_if_exists;
 use crate::icon::{render_app_icon, AppIconRenderTarget};
-use crate::model::{MacVariant, SideEffectLevel};
+use crate::model::MacVariant;
 use crate::nix;
 use crate::output::Reporter;
 use crate::process::Runner;
 use crate::repo::RepoRoot;
+use crate::version::ResolvedVersion;
 
 pub fn run_generate(dry_run: bool, reporter: &Reporter) -> Result<()> {
-    let _ = SideEffectLevel::LocalMutation;
     let repo = RepoRoot::discover(reporter)?;
     generate(&repo, dry_run, reporter)
 }
@@ -35,19 +36,18 @@ const OVERLAY_FILES: &[&str] = &[
 ];
 const STRAY_SWIFTPM: &[&str] = &[
     "Package.resolved",
+    ".package.resolved",
     "Tuist/Package.resolved",
     "distribution/SparkleUpdater/Package.resolved",
 ];
 
 pub(crate) struct BuildAppRequest {
     pub variant: MacVariant,
-    pub version: Option<String>,
-    pub build_number: Option<String>,
+    pub build_version: Option<ResolvedVersion>,
 }
 
 pub(crate) struct ArchiveIosRequest {
-    pub version: String,
-    pub build_number: String,
+    pub build_version: ResolvedVersion,
     pub archive_path: Option<Utf8PathBuf>,
 }
 
@@ -63,12 +63,12 @@ pub(crate) fn generate(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> R
     let out_link =
         nix::build_out_link(reporter, repo.as_path(), "clipkitty-generated", "generated")?;
 
-    remove_path(&repo.join(format!("{APP_NAME}.xcworkspace")))?;
-    remove_path(&repo.join(format!("{APP_NAME}.xcodeproj")))?;
-    remove_path(&repo.join("Tuist/.build"))?;
-    remove_path(&repo.join("Derived"))?;
+    remove_if_exists(&repo.join(format!("{APP_NAME}.xcworkspace")))?;
+    remove_if_exists(&repo.join(format!("{APP_NAME}.xcodeproj")))?;
+    remove_if_exists(&repo.join("Tuist/.build"))?;
+    remove_if_exists(&repo.join("Derived"))?;
     for stray in STRAY_SWIFTPM {
-        remove_path(&repo.join(stray))?;
+        remove_if_exists(&repo.join(stray))?;
     }
 
     copy_dir(
@@ -143,7 +143,7 @@ pub(crate) fn stage_app(
         reporter.info(&format!(
             "[dry-run] would `nix build .#{attr}` and stage it at {dest_app}"
         ));
-        if request.version.is_some() || request.build_number.is_some() {
+        if request.build_version.is_some() {
             reporter.info("[dry-run] would patch Info.plist with version/build metadata");
         }
         return Ok(());
@@ -153,7 +153,7 @@ pub(crate) fn stage_app(
     let out_link = nix::build_out_link(reporter, repo.as_path(), attr, configuration_dir)?;
 
     fs::create_dir_all(dest_dir.as_std_path()).with_context(|| format!("creating {dest_dir}"))?;
-    remove_path(&dest_app)?;
+    remove_if_exists(&dest_app)?;
     copy_dir(
         reporter,
         &out_link.join(format!("{APP_NAME}.app")),
@@ -162,11 +162,11 @@ pub(crate) fn stage_app(
     chmod_tree_user_writable(&dest_app)?;
 
     let plist = dest_app.join("Contents/Info.plist");
-    if let Some(version) = &request.version {
+    if let Some(build_version) = &request.build_version {
+        let version = &build_version.version;
+        let build_number = &build_version.build_number;
         reporter.info(&format!("Setting CFBundleShortVersionString = {version}"));
         apple::plist_set(reporter, &plist, "CFBundleShortVersionString", version)?;
-    }
-    if let Some(build_number) = &request.build_number {
         reporter.info(&format!("Setting CFBundleVersion = {build_number}"));
         apple::plist_set(reporter, &plist, "CFBundleVersion", build_number)?;
     }
@@ -202,7 +202,7 @@ pub(crate) fn archive_ios(
     if dry_run {
         reporter.info(&format!(
             "[dry-run] would archive iOS {} ({}) → {archive_path}, export → {export_dir}",
-            request.version, request.build_number
+            request.build_version.version, request.build_version.build_number
         ));
         return Ok(());
     }
@@ -220,7 +220,7 @@ pub(crate) fn archive_ios(
         .parent()
         .ok_or_else(|| anyhow!("archive path has no parent: {archive_path}"))?;
     fs::create_dir_all(archive_parent.as_std_path())?;
-    remove_path(&archive_path)?;
+    remove_if_exists(&archive_path)?;
 
     // Archive into a dedicated, freshly-cleaned derived-data path rather than
     // Xcode's shared global cache. Reusing a stale cache lets Xcode 26's
@@ -229,11 +229,11 @@ pub(crate) fn archive_ios(
     // resources but loses its top-level Mach-O, and App Store Connect rejects
     // the upload with "does not contain a bundle executable" (90207).
     let derived_data = repo.join("DerivedData/ios-archive");
-    remove_path(&derived_data)?;
+    remove_if_exists(&derived_data)?;
 
     reporter.info(&format!(
         "Archiving iOS {} ({}) → {archive_path}",
-        request.version, request.build_number
+        request.build_version.version, request.build_version.build_number
     ));
     Runner::new(reporter, "xcodebuild")
         .args(["archive", "-workspace"])
@@ -248,8 +248,14 @@ pub(crate) fn archive_ios(
         .arg(derived_data.as_std_path())
         .arg("-archivePath")
         .arg(archive_path.as_std_path())
-        .arg(format!("MARKETING_VERSION={}", request.version))
-        .arg(format!("CURRENT_PROJECT_VERSION={}", request.build_number))
+        .arg(format!(
+            "MARKETING_VERSION={}",
+            request.build_version.version
+        ))
+        .arg(format!(
+            "CURRENT_PROJECT_VERSION={}",
+            request.build_version.build_number
+        ))
         .cwd(repo.as_path())
         .sanitize_for_xcode()
         .run()?;
@@ -273,9 +279,9 @@ pub(crate) fn archive_ios(
     )?;
 
     let export_app = export_dir.join(format!("{APP_NAME}iOS.app"));
-    let _ = remove_path(&export_app);
+    let _ = remove_if_exists(&export_app);
     let exported_ipa = export_dir.join(format!("{APP_NAME}iOS.ipa"));
-    let _ = remove_path(&exported_ipa);
+    let _ = remove_if_exists(&exported_ipa);
 
     reporter.info(&format!("Exporting iOS archive → {export_dir}"));
     Runner::new(reporter, "xcodebuild")
@@ -322,7 +328,6 @@ fn verify_app_has_executable(
     let info = Runner::new(reporter, "lipo")
         .arg("-info")
         .arg(exe.as_std_path())
-        .capture_stdout()
         .capture_stderr()
         .output()
         .with_context(|| {
@@ -347,7 +352,6 @@ fn verify_app_has_executable(
     let platform = Runner::new(reporter, "otool")
         .args(["-l"])
         .arg(exe.as_std_path())
-        .capture_stdout()
         .capture_stderr()
         .output()
         .ok()
@@ -399,7 +403,6 @@ fn verify_ipa_has_executable(reporter: &Reporter, ipa: &Utf8Path, app: &str) -> 
             .arg(unpack_root.as_std_path())
             .arg("-maxdepth")
             .arg("3")
-            .capture_stdout()
             .output()
             .ok();
         return Err(anyhow!(
@@ -442,7 +445,6 @@ fn verify_bundle_executable(reporter: &Reporter, bundle: &Utf8Path, label: &str)
     let plutil = Runner::new(reporter, "plutil")
         .args(["-extract", "CFBundleExecutable", "raw", "-o", "-"])
         .arg(info_plist.as_std_path())
-        .capture_stdout()
         .capture_stderr()
         .output()
         .with_context(|| format!("reading CFBundleExecutable from {info_plist}"))?;
@@ -456,16 +458,6 @@ fn verify_bundle_executable(reporter: &Reporter, bundle: &Utf8Path, label: &str)
         "{label} {bundle} declares CFBundleExecutable = {executable_name}"
     ));
     verify_app_has_executable(reporter, bundle, &executable_name, label)
-}
-
-fn remove_path(path: &Utf8Path) -> Result<()> {
-    let std_path = path.as_std_path();
-    if std_path.is_symlink() || std_path.is_file() {
-        fs::remove_file(std_path).with_context(|| format!("removing {path}"))?;
-    } else if std_path.is_dir() {
-        fs::remove_dir_all(std_path).with_context(|| format!("removing {path}"))?;
-    }
-    Ok(())
 }
 
 fn copy_dir(reporter: &Reporter, src: &Utf8Path, dst: &Utf8Path) -> Result<()> {

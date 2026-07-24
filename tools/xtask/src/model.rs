@@ -7,13 +7,6 @@
 
 use clap::ValueEnum;
 
-/// Apple platform a build or release targets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum Platform {
-    MacOs,
-    Ios,
-}
-
 /// macOS build/distribution variant — maps 1:1 to nix package names.
 ///
 /// Value names match the canonical build/signing names used throughout the
@@ -55,36 +48,6 @@ impl MacVariant {
             Self::AppStore => "AppStore",
         }
     }
-
-    /// Whether this variant can be signed via `clipkitty sign app`.
-    pub fn signing_mode(self) -> Option<SigningMode> {
-        match self {
-            Self::Hardened => Some(SigningMode::DeveloperId),
-            Self::SparkleRelease => Some(SigningMode::DeveloperId),
-            Self::AppStore => Some(SigningMode::AppStore),
-            Self::Debug | Self::Release => None,
-        }
-    }
-}
-
-/// How the resulting `.app` is signed — determines codesign flags, identity,
-/// and entitlements profile.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SigningMode {
-    Unsigned,
-    DeveloperId,
-    AppStore,
-}
-
-/// Side-effect profile each subcommand must declare so `--dry-run` behaves
-/// predictably and operators can reason about blast radius.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SideEffectLevel {
-    ReadOnly,
-    LocalMutation,
-    Credentialed,
-    #[allow(dead_code)]
-    Networked,
 }
 
 /// What an internal signing-setup step is being asked to do.

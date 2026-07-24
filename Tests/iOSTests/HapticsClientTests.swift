@@ -3,8 +3,8 @@ import XCTest
 
 @MainActor
 final class HapticsClientTests: XCTestCase {
-    func testFireDoesNothingWhenHapticsDisabled() {
-        let defaults = UserDefaults(suiteName: "HapticsClientTests")!
+    func testFireDoesNothingWhenHapticsDisabled() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "HapticsClientTests"))
         defaults.removePersistentDomain(forName: "HapticsClientTests")
         defer { defaults.removePersistentDomain(forName: "HapticsClientTests") }
 
@@ -16,12 +16,10 @@ final class HapticsClientTests: XCTestCase {
         client.fire(.selection)
         client.fire(.success)
         client.fire(.destructive)
-        client.fire(.shortcutCompleted)
-        client.fire(.cardActionCommitted)
     }
 
-    func testFireDoesNotCrashWhenEnabled() {
-        let defaults = UserDefaults(suiteName: "HapticsClientTests2")!
+    func testFireDoesNotCrashWhenEnabled() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "HapticsClientTests2"))
         defaults.removePersistentDomain(forName: "HapticsClientTests2")
         defer { defaults.removePersistentDomain(forName: "HapticsClientTests2") }
 

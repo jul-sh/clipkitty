@@ -1,25 +1,24 @@
 //! `clipkitty sign` — codesign a previously-built ClipKitty bundle.
 //!
-//! Each supported variant carries a `SigningMode` plus the identity and
-//! entitlements profile it needs. The command refuses to sign variants
-//! (`Debug`, `Release`) that aren't valid codesign targets, making illegal
-//! signing states unrepresentable.
+//! The signing boundary accepts only the three signable macOS variants, so
+//! Debug and unsigned Release builds cannot reach signing code.
 
 use std::env;
 use std::fs;
 
 use anyhow::{anyhow, Result};
 use base64::Engine;
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use tempfile::NamedTempFile;
 use uuid::Uuid;
 
 use crate::apple::{self, CodesignArgs};
 use crate::cmd::build;
-use crate::model::{MacVariant, SetupAction, SigningMode};
+use crate::model::{MacVariant, SetupAction};
 use crate::output::Reporter;
 use crate::process::Runner;
 use crate::repo::RepoRoot;
+use crate::version::ResolvedVersion;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SetupFlow {
@@ -34,22 +33,37 @@ pub(crate) struct SetupRequest {
 }
 
 pub(crate) struct SignAppRequest {
-    pub variant: MacVariant,
-    pub version: Option<String>,
-    pub build_number: Option<String>,
+    pub target: SignableMacVariant,
+    pub build_version: ResolvedVersion,
 }
 
-/// Resolved signing plan. The two variants carry structurally different
-/// data — Developer ID needs `--timestamp` and never embeds a provisioning
-/// profile; App Store is the opposite — so capturing this as an enum kills
-/// the former `struct { identity, entitlements, include_timestamp: bool }` +
-/// `if args.configuration == AppStore { ... }` combo, both of which were
-/// parallel-boolean smells.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SignableMacVariant {
+    Hardened,
+    SparkleRelease,
+    AppStore,
+}
+
+impl SignableMacVariant {
+    fn build_variant(self) -> MacVariant {
+        match self {
+            Self::Hardened => MacVariant::Hardened,
+            Self::SparkleRelease => MacVariant::SparkleRelease,
+            Self::AppStore => MacVariant::AppStore,
+        }
+    }
+}
+
+/// A fully resolved plan for one signable target. The Developer ID cases are
+/// separate because only Sparkle builds embed a provisioning profile.
 enum SigningPlan {
-    DeveloperId {
+    Hardened {
         identity: String,
         entitlements: Utf8PathBuf,
-        embeds_provisioning_profile: bool,
+    },
+    SparkleRelease {
+        identity: String,
+        entitlements: Utf8PathBuf,
     },
     AppStore {
         identity: String,
@@ -62,24 +76,31 @@ enum SigningPlan {
     },
 }
 
-fn signing_plan(repo: &RepoRoot, variant: MacVariant) -> Result<SigningPlan> {
-    let mode = variant
-        .signing_mode()
-        .ok_or_else(|| anyhow!("variant `{:?}` is not a codesign target", variant))?;
-    match mode {
-        SigningMode::DeveloperId => Ok(SigningPlan::DeveloperId {
-            identity: env::var("SIGNING_IDENTITY")
-                .unwrap_or_else(|_| "Developer ID Application".to_string()),
-            entitlements: match variant {
-                MacVariant::SparkleRelease => {
-                    repo.join("Sources/MacApp/ClipKitty.sparkle.entitlements")
-                }
-                MacVariant::Hardened => repo.join("Sources/MacApp/ClipKitty.hardened.entitlements"),
-                _ => unreachable!("non-DeveloperId variant routed here"),
-            },
-            embeds_provisioning_profile: matches!(variant, MacVariant::SparkleRelease),
-        }),
-        SigningMode::AppStore => Ok(SigningPlan::AppStore {
+impl SigningPlan {
+    fn identity(&self) -> &str {
+        match self {
+            Self::Hardened { identity, .. }
+            | Self::SparkleRelease { identity, .. }
+            | Self::AppStore { identity, .. } => identity,
+        }
+    }
+}
+
+fn developer_id_identity() -> String {
+    env::var("SIGNING_IDENTITY").unwrap_or_else(|_| "Developer ID Application".to_string())
+}
+
+fn signing_plan(repo: &RepoRoot, target: SignableMacVariant) -> SigningPlan {
+    match target {
+        SignableMacVariant::Hardened => SigningPlan::Hardened {
+            identity: developer_id_identity(),
+            entitlements: repo.join("Sources/MacApp/ClipKitty.hardened.entitlements"),
+        },
+        SignableMacVariant::SparkleRelease => SigningPlan::SparkleRelease {
+            identity: developer_id_identity(),
+            entitlements: repo.join("Sources/MacApp/ClipKitty.sparkle.entitlements"),
+        },
+        SignableMacVariant::AppStore => SigningPlan::AppStore {
             identity: env::var("APPSTORE_SIGNING_IDENTITY")
                 .unwrap_or_else(|_| "3rd Party Mac Developer Application".to_string()),
             entitlements: repo.join("Sources/MacApp/ClipKitty.appstore.entitlements"),
@@ -87,8 +108,7 @@ fn signing_plan(repo: &RepoRoot, variant: MacVariant) -> Result<SigningPlan> {
                 .ok()
                 .filter(|p| !p.is_empty())
                 .map(Utf8PathBuf::from),
-        }),
-        SigningMode::Unsigned => unreachable!("Unsigned excluded above"),
+        },
     }
 }
 
@@ -98,22 +118,24 @@ pub(crate) fn sign_app(
     dry_run: bool,
     reporter: &Reporter,
 ) -> Result<()> {
-    let plan = signing_plan(repo, request.variant)?;
+    let plan = signing_plan(repo, request.target);
+    let variant = request.target.build_variant();
 
     if dry_run {
         match &plan {
-            SigningPlan::DeveloperId {
+            SigningPlan::Hardened {
                 identity,
                 entitlements,
-                embeds_provisioning_profile,
             } => reporter.info(&format!(
-                "[dry-run] would build + sign {:?} with identity `{identity}` using entitlements {entitlements}{}",
-                request.variant,
-                if *embeds_provisioning_profile {
-                    " and embed the Developer ID provisioning profile"
-                } else {
-                    ""
-                }
+                "[dry-run] would build + sign {:?} with identity `{identity}` using entitlements {entitlements}",
+                request.target,
+            )),
+            SigningPlan::SparkleRelease {
+                identity,
+                entitlements,
+            } => reporter.info(&format!(
+                "[dry-run] would build + sign {:?} with identity `{identity}` using entitlements {entitlements} and embed the Developer ID provisioning profile",
+                request.target,
             )),
             SigningPlan::AppStore {
                 identity,
@@ -126,61 +148,56 @@ pub(crate) fn sign_app(
                 };
                 reporter.info(&format!(
                     "[dry-run] would build + sign {:?} with identity `{identity}` using entitlements {entitlements}{profile}",
-                    request.variant
+                    request.target
                 ));
             }
         }
         return Ok(());
     }
 
-    match &plan {
-        SigningPlan::DeveloperId { identity, .. } | SigningPlan::AppStore { identity, .. } => {
-            if !apple::codesign_available(reporter, identity)? {
-                return Err(anyhow!(
-                    "signing identity '{identity}' not available in keychain search list"
-                ));
-            }
-        }
+    let identity = plan.identity();
+    if !apple::codesign_available(reporter, identity)? {
+        return Err(anyhow!(
+            "signing identity '{identity}' not available in keychain search list"
+        ));
     }
 
     build::stage_app(
         repo,
         &build::BuildAppRequest {
-            variant: request.variant,
-            version: request.version.clone(),
-            build_number: request.build_number.clone(),
+            variant,
+            build_version: Some(request.build_version.clone()),
         },
         false,
         reporter,
     )?;
 
-    let app_path = build::staged_app_path(repo, request.variant);
+    let app_path = build::staged_app_path(repo, variant);
     if !app_path.as_std_path().is_dir() {
         return Err(anyhow!("staged app not found at {app_path}"));
     }
 
     match &plan {
-        SigningPlan::DeveloperId {
+        SigningPlan::Hardened {
             identity,
             entitlements,
-            embeds_provisioning_profile,
         } => {
-            if *embeds_provisioning_profile {
-                embed_developer_id_profile(repo, &app_path, reporter)?;
-            }
             reporter.info(&format!(
                 "Signing {APP_NAME} ({:?}) with '{identity}'...",
-                request.variant
+                request.target
             ));
-            apple::codesign(
-                reporter,
-                CodesignArgs {
-                    identity,
-                    entitlements,
-                    include_timestamp: true,
-                    bundle: &app_path,
-                },
-            )?;
+            codesign_developer_id(reporter, identity, entitlements, &app_path)?;
+        }
+        SigningPlan::SparkleRelease {
+            identity,
+            entitlements,
+        } => {
+            embed_developer_id_profile(repo, &app_path, reporter)?;
+            reporter.info(&format!(
+                "Signing {APP_NAME} ({:?}) with '{identity}'...",
+                request.target
+            ));
+            codesign_developer_id(reporter, identity, entitlements, &app_path)?;
         }
         SigningPlan::AppStore {
             identity,
@@ -195,7 +212,7 @@ pub(crate) fn sign_app(
             }
             reporter.info(&format!(
                 "Signing {APP_NAME} ({:?}) with '{identity}'...",
-                request.variant
+                request.target
             ));
             apple::codesign(
                 reporter,
@@ -211,6 +228,23 @@ pub(crate) fn sign_app(
     apple::codesign_verify(reporter, &app_path)?;
     reporter.success(&format!("Signed app staged at {app_path}"));
     Ok(())
+}
+
+fn codesign_developer_id(
+    reporter: &Reporter,
+    identity: &str,
+    entitlements: &Utf8Path,
+    app_path: &Utf8Path,
+) -> Result<()> {
+    apple::codesign(
+        reporter,
+        CodesignArgs {
+            identity,
+            entitlements,
+            include_timestamp: true,
+            bundle: app_path,
+        },
+    )
 }
 
 fn embed_developer_id_profile(

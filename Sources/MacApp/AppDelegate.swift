@@ -1,8 +1,8 @@
 import AppKit
 import ClipKittyMacPlatform
 import ClipKittyRust
-import ClipKittyShared
 import Combine
+import KeyboardShortcuts
 import os
 import SwiftUI
 #if ENABLE_APP_SHORTCUTS
@@ -40,15 +40,14 @@ private enum LaunchMode {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     private let launchMode: LaunchMode = .fromCommandLine()
     private var panelController: FloatingPanelController!
-    private var hotKeyManager: HotKeyManager!
+    private var showHistoryShortcutTask: Task<Void, Never>?
     private var store: ClipboardStore!
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
     private var welcomeWindowController: WelcomeWindowController?
-    private var showHistoryMenuItem: NSMenuItem?
     private var statusMenu: NSMenu?
     private var cancellables = Set<AnyCancellable>()
     private var snackbarCoordinator: SnackbarCoordinator!
@@ -121,12 +120,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self.store.startMonitoring()
         }
 
-        hotKeyManager = HotKeyManager { [weak self] in
-            Task { @MainActor in
+        showHistoryShortcutTask = Task { [weak self] in
+            for await _ in KeyboardShortcuts.events(.keyDown, for: .showClipboardHistory) {
+                guard !Task.isCancelled else { return }
                 self?.panelController.toggle()
             }
         }
-        hotKeyManager.register(hotKey: AppSettings.shared.hotKey)
 
         setupMenuBar()
 
@@ -142,12 +141,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             sparkleUpdater.start { state in
                 // Convert SparkleUpdater.UpdateCheckState to app's UpdateCheckState
                 switch state {
-                case .idle: AppSettings.shared.updateCheckState = .idle
-                case .checking: AppSettings.shared.updateCheckState = .checking
-                case .downloading: AppSettings.shared.updateCheckState = .downloading
-                case .installing: AppSettings.shared.updateCheckState = .installing
-                case .available: AppSettings.shared.updateCheckState = .available
-                case let .checkFailed(msg): AppSettings.shared.updateCheckState = .checkFailed(errorMessage: msg)
+                case .idle: AppRuntimeState.shared.updateCheckState = .idle
+                case .checking: AppRuntimeState.shared.updateCheckState = .checking
+                case .downloading: AppRuntimeState.shared.updateCheckState = .downloading
+                case .installing: AppRuntimeState.shared.updateCheckState = .installing
+                case .available: AppRuntimeState.shared.updateCheckState = .available
+                case let .checkFailed(msg): AppRuntimeState.shared.updateCheckState = .checkFailed(errorMessage: msg)
                 }
             }
             updater = sparkleUpdater
@@ -167,7 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         #endif
 
         // Show welcome screen on first launch
-        if !AppSettings.shared.hasCompletedOnboarding, case .production = launchMode {
+        if !AppLifecycleState.shared.hasCompletedOnboarding, case .production = launchMode {
             showWelcome()
         }
 
@@ -187,12 +186,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     #if ENABLE_APP_SHORTCUTS
         private func configureShortcutRuntime() {
-            ClipKittyShortcutRuntime.useRepositoryProvider { [weak store] in
+            ClipKittyShortcutRuntime.useStoreProvider { [weak store] in
                 guard let store else {
                     return .unavailable("ClipKitty has not finished launching.")
                 }
                 await store.awaitReady()
-                return store.shortcutRepositoryAvailability()
+                return store.shortcutStoreAvailability()
             }
         }
     #endif
@@ -220,15 +219,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         let menu = NSMenu()
-        let hotKey = AppSettings.shared.hotKey
-        showHistoryMenuItem = NSMenuItem(title: NSLocalizedString("Show Clipboard History", comment: "Menu bar item to show clipboard history panel"), action: #selector(showPanel), keyEquivalent: hotKey.keyEquivalent)
-        showHistoryMenuItem?.keyEquivalentModifierMask = hotKey.modifierMask
-        menu.addItem(showHistoryMenuItem!)
+        let showHistoryMenuItem = NSMenuItem(
+            title: NSLocalizedString("Show Clipboard History", comment: "Menu bar item to show clipboard history panel"),
+            action: #selector(showPanel),
+            keyEquivalent: ""
+        )
+        showHistoryMenuItem.setShortcut(for: .showClipboardHistory)
+        menu.addItem(showHistoryMenuItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: NSLocalizedString("Settings...", comment: "Menu bar item to open settings window"), action: #selector(openSettings), keyEquivalent: ","))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: NSLocalizedString("Quit", comment: "Menu bar item to quit the app"), action: #selector(quit), keyEquivalent: "q"))
 
+        menu.delegate = self
         statusMenu = menu
         configureMenuBarBehavior()
     }
@@ -258,10 +261,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func updateMenuHotKey() {
-        let hotKey = AppSettings.shared.hotKey
-        showHistoryMenuItem?.keyEquivalent = hotKey.keyEquivalent
-        showHistoryMenuItem?.keyEquivalentModifierMask = hotKey.modifierMask
+    func menuWillOpen(_: NSMenu) {
+        // The package documents that Carbon events can be buffered while an
+        // NSMenu is tracking. Let the menu item's key equivalent own the event
+        // until tracking ends so one press cannot also toggle the panel later.
+        KeyboardShortcuts.disable(.showClipboardHistory)
+    }
+
+    func menuDidClose(_: NSMenu) {
+        KeyboardShortcuts.enable(.showClipboardHistory)
     }
 
     private func makeStatusItemImage() -> NSImage? {
@@ -288,21 +296,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             #if ENABLE_SPARKLE_UPDATES
                 let settingsView = SettingsView(
                     store: store,
-                    onHotKeyChanged: { [weak self] hotKey in
-                        self?.hotKeyManager.register(hotKey: hotKey)
-                        self?.updateMenuHotKey()
-                    },
                     onInstallUpdate: { [weak self] in
                         self?.updater?.installUpdate()
                     }
                 )
             #else
                 let settingsView = SettingsView(
-                    store: store,
-                    onHotKeyChanged: { [weak self] hotKey in
-                        self?.hotKeyManager.register(hotKey: hotKey)
-                        self?.updateMenuHotKey()
-                    }
+                    store: store
                 )
             #endif
 
@@ -329,16 +329,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func showWelcome() {
         let controller = WelcomeWindowController()
         controller.onComplete = { [weak self] in
-            AppSettings.shared.hasCompletedOnboarding = true
+            AppLifecycleState.shared.hasCompletedOnboarding = true
             // Also dismiss the launch-at-login prompt since onboarding covers it
-            AppSettings.shared.launchAtLoginPromptDismissed = true
+            AppLifecycleState.shared.launchAtLoginPromptDismissed = true
             self?.welcomeWindowController = nil
             self?.applyRestingActivationPolicy()
             self?.panelController.show()
-        }
-        controller.onHotKeyChanged = { [weak self] hotKey in
-            self?.hotKeyManager.register(hotKey: hotKey)
-            self?.updateMenuHotKey()
         }
         controller.windowDelegate = self
         welcomeWindowController = controller
@@ -353,8 +349,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                closedWindow == self.welcomeWindowController?.window
             {
                 // Welcome window closed via X button
-                AppSettings.shared.hasCompletedOnboarding = true
-                AppSettings.shared.launchAtLoginPromptDismissed = true
+                AppLifecycleState.shared.hasCompletedOnboarding = true
+                AppLifecycleState.shared.launchAtLoginPromptDismissed = true
                 self.welcomeWindowController = nil
             } else {
                 // Settings window closed
@@ -376,7 +372,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_: Notification) {
         store.stopMonitoring()
-        hotKeyManager.unregister()
+        showHistoryShortcutTask?.cancel()
+        showHistoryShortcutTask = nil
         #if ENABLE_ICLOUD_SYNC
             syncPreferenceController?.unbind()
             syncPreferenceController = nil

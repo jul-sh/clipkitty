@@ -1,6 +1,7 @@
-import ClipKittyAppleServices
+import ClipKittyContentServices
+import ClipKittyCore
 import ClipKittyRust
-import ClipKittyShared
+import ClipKittyStore
 import Foundation
 
 protocol ClipKittyShortcutServicing: Sendable {
@@ -10,8 +11,8 @@ protocol ClipKittyShortcutServicing: Sendable {
     func fetchRecentText(limit: Int) async throws -> [String]
 }
 
-public enum ClipKittyShortcutRepositoryAvailability: Sendable {
-    case ready(ClipboardRepository)
+public enum ClipKittyShortcutStoreAvailability: Sendable {
+    case ready(StoreSession)
     case unavailable(String)
 }
 
@@ -26,11 +27,11 @@ public enum ClipKittyShortcutRuntime {
         serviceFactory()
     }
 
-    public static func useRepositoryProvider(
-        _ provider: @escaping @MainActor @Sendable () async -> ClipKittyShortcutRepositoryAvailability
+    public static func useStoreProvider(
+        _ provider: @escaping @MainActor @Sendable () async -> ClipKittyShortcutStoreAvailability
     ) {
         registry.install {
-            ClipKittyShortcutService(repositoryProvider: provider)
+            ClipKittyShortcutService(sessionProvider: provider)
         }
     }
 }
@@ -106,24 +107,14 @@ enum ClipKittyShortcutError: Equatable, LocalizedError {
 /// The setting is persisted by the app to standard `UserDefaults` under the
 /// `allowShortcutsReadAccess` key. Reading it directly here (rather than
 /// threading the full settings store through the intent runtime) keeps this
-/// gate low-coupling and available in every context the intents run in. We
-/// also consult the App Group suite so the gate holds if the value is ever
-/// mirrored there.
+/// gate low-coupling and available in every context the intents run in.
 enum ShortcutReadAccessGate {
     static let settingKey = "allowShortcutsReadAccess"
-    private static let appGroupSuite = "group.com.eviljuliette.clipkitty"
 
     static var isReadAccessAllowed: Bool {
-        if let standard = UserDefaults.standard.object(forKey: settingKey) as? Bool {
-            return standard
-        }
-        if let group = UserDefaults(suiteName: appGroupSuite),
-           let shared = group.object(forKey: settingKey) as? Bool {
-            return shared
-        }
         // Default ON when the setting has never been written; the user can turn
         // it off to deny automations access to clipboard history.
-        return true
+        return UserDefaults.standard.object(forKey: settingKey) as? Bool ?? true
     }
 }
 
@@ -132,27 +123,13 @@ enum ShortcutSavedClip: Equatable {
     case duplicate
 }
 
-private enum ShortcutTextExtraction {
-    case value(String)
-    case unsupported
-
-    static func parse(_ content: ClipboardContent) -> Self {
-        switch content {
-        case let .text(value):
-            return .value(value)
-        case .color, .link, .image, .file:
-            return .unsupported
-        }
-    }
-}
-
-private enum ShortcutRepositorySource {
-    case appRepository(@MainActor @Sendable () async -> ClipKittyShortcutRepositoryAvailability)
+private enum ShortcutStoreSource {
+    case appSession(@MainActor @Sendable () async -> ClipKittyShortcutStoreAvailability)
     case databasePath(@Sendable () throws -> String)
 }
 
 final class ClipKittyShortcutService: ClipKittyShortcutServicing {
-    private let repositorySource: ShortcutRepositorySource
+    private let storeSource: ShortcutStoreSource
     private let pasteboardClient: ShortcutPasteboardClient
     private let imageDescriptionGenerator: @Sendable (Data) async -> String?
 
@@ -165,19 +142,19 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
             await ImageDescriptionGenerator.generateDescription(from: data)
         }
     ) {
-        repositorySource = .databasePath(databasePathProvider)
+        storeSource = .databasePath(databasePathProvider)
         self.pasteboardClient = pasteboardClient
         self.imageDescriptionGenerator = imageDescriptionGenerator
     }
 
     init(
-        repositoryProvider: @escaping @MainActor @Sendable () async -> ClipKittyShortcutRepositoryAvailability,
+        sessionProvider: @escaping @MainActor @Sendable () async -> ClipKittyShortcutStoreAvailability,
         pasteboardClient: ShortcutPasteboardClient = .live,
         imageDescriptionGenerator: @escaping @Sendable (Data) async -> String? = { data in
             await ImageDescriptionGenerator.generateDescription(from: data)
         }
     ) {
-        repositorySource = .appRepository(repositoryProvider)
+        storeSource = .appSession(sessionProvider)
         self.pasteboardClient = pasteboardClient
         self.imageDescriptionGenerator = imageDescriptionGenerator
     }
@@ -201,8 +178,8 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
             throw ClipKittyShortcutError.emptyText
         }
 
-        let repository = try await makeRepository()
-        let result = await repository.saveText(
+        let access = try await makeStoreAccess()
+        let result = await access.repository.saveText(
             text: text,
             sourceApp: "Shortcuts",
             sourceAppBundleId: "com.apple.shortcuts"
@@ -235,8 +212,8 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
         case let .text(text):
             return try await saveText(text)
         case let .image(data, thumbnail, isAnimated):
-            let repository = try await makeRepository()
-            let result = await repository.saveImage(
+            let access = try await makeStoreAccess()
+            let result = await access.repository.saveImage(
                 imageData: data,
                 thumbnail: thumbnail,
                 sourceApp: "Shortcuts",
@@ -245,7 +222,7 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
             )
             if case let .success(itemId) = result, !itemId.isEmpty {
                 _ = await ImageDescriptionUpdater(
-                    repository: repository,
+                    repository: access.repository,
                     generator: imageDescriptionGenerator
                 ).update(itemId: itemId, imageData: data)
             }
@@ -261,7 +238,7 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
             throw ClipKittyShortcutError.readAccessDisabled
         }
 
-        let repository = try await makeRepository()
+        let repository = try await makeStoreAccess().repository
         let result = await repository.search(
             query: query,
             filter: .contentType(contentType: .text),
@@ -284,33 +261,33 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
             guard let item = await repository.fetchItem(id: match.itemMetadata.itemId) else {
                 continue
             }
-            switch ShortcutTextExtraction.parse(item.content) {
-            case let .value(value):
+            switch item.content {
+            case let .text(value):
                 values.append(value)
-            case .unsupported:
+            case .color, .link, .image, .file:
                 continue
             }
         }
         return values
     }
 
-    private func makeRepository() async throws -> ClipboardRepository {
-        switch repositorySource {
-        case let .appRepository(provider):
+    private func makeStoreAccess() async throws -> StoreSession {
+        switch storeSource {
+        case let .appSession(provider):
             switch await provider() {
-            case let .ready(repository):
-                return repository
+            case let .ready(session):
+                return session
             case let .unavailable(reason):
                 throw ClipKittyShortcutError.databaseOpenFailed(reason)
             }
         case let .databasePath(databasePathProvider):
-            return try makeStandaloneRepository(databasePathProvider: databasePathProvider)
+            return try makeStandaloneSession(databasePathProvider: databasePathProvider)
         }
     }
 
-    private func makeStandaloneRepository(
+    private func makeStandaloneSession(
         databasePathProvider: @Sendable () throws -> String
-    ) throws -> ClipboardRepository {
+    ) throws -> StoreSession {
         let dbPath: String
         do {
             dbPath = try databasePathProvider()
@@ -320,36 +297,22 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
             throw ClipKittyShortcutError.databasePathUnavailable(error.localizedDescription)
         }
 
-        let plan: StoreBootstrapPlan
         do {
-            plan = try inspectStoreBootstrap(dbPath: dbPath)
+            return try StoreOpener.open(
+                path: dbPath,
+                repairStrategy: .rebuildImmediately
+            )
         } catch {
             throw ClipKittyShortcutError.databaseOpenFailed(error.localizedDescription)
         }
-
-        let store: ClipKittyRust.ClipboardStore
-        do {
-            store = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
-            switch plan {
-            case .ready:
-                break
-            case .rebuildIndex:
-                try store.rebuildIndex()
-            }
-        } catch {
-            throw ClipKittyShortcutError.databaseOpenFailed(error.localizedDescription)
-        }
-
-        return ClipboardRepository(store: store)
     }
 
-    private func savedClip(from result: Result<String, ClipboardError>) throws -> ShortcutSavedClip {
+    private func savedClip(
+        from result: Result<String, ClipboardError>
+    ) throws -> ShortcutSavedClip {
         switch result {
         case let .success(itemId):
-            if itemId.isEmpty {
-                return .duplicate
-            }
-            return .inserted(id: itemId)
+            return itemId.isEmpty ? .duplicate : .inserted(id: itemId)
         case let .failure(error):
             throw ClipKittyShortcutError.operationFailed(error.localizedDescription)
         }

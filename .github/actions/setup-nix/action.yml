@@ -1,0 +1,21 @@
+name: Set up Nix
+description: Install the pinned Nix release and connect the shared GitHub Actions cache.
+
+inputs:
+  cache:
+    description: Whether to connect the shared GitHub Actions Nix cache.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Install Nix
+      uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
+      with:
+        source-tag: v3.17.3
+        flakehub: false
+
+    - name: Set up Nix cache
+      if: ${{ inputs.cache == 'true' }}
+      uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14

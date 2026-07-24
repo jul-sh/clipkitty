@@ -1,5 +1,5 @@
+import ClipKittyBrowser
 import ClipKittyRust
-import ClipKittyShared
 import SwiftUI
 
 /// A left-to-right feed row of up to `JustifiedCardRow.maxCardsPerRow` clips,

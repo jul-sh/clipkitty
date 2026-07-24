@@ -4,7 +4,7 @@ import SwiftUI
 ///
 /// On macOS the source-app badge is the *real* app icon, fetched via
 /// `NSWorkspace.icon(forFile:)` from the app's bundle (see
-/// `RowIconCache.sourceAppImage` in `BrowserRenderingSupport.swift`). iOS has no
+/// `RowIconCache.sourceAppImage` in `BrowserItemRow.swift`). iOS has no
 /// equivalent: there is no API to turn another app's bundle identifier into its
 /// icon, and a sandboxed app can't introspect other installed apps. Items
 /// captured on iOS also carry no bundle id at all.

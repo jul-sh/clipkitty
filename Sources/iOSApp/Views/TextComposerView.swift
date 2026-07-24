@@ -1,4 +1,4 @@
-import ClipKittyShared
+import ClipKittyStore
 import SwiftUI
 
 struct TextComposerView: View {

@@ -1,4 +1,4 @@
-import ClipKittyShared
+import ClipKittyCore
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
@@ -8,7 +8,6 @@ import UniformTypeIdentifiers
 struct ShareView: View {
     let items: [NSItemProvider]
     let onComplete: () -> Void
-    let onCancel: () -> Void
 
     @State private var state: ShareState = .saving
 
@@ -158,10 +157,9 @@ struct ShareView: View {
             height: image.size.height * scale
         )
         let renderer = UIGraphicsImageRenderer(size: targetSize)
-        let thumbnailData = renderer.jpegData(withCompressionQuality: 0.7) { context in
+        return renderer.jpegData(withCompressionQuality: 0.7) { _ in
             image.draw(in: CGRect(origin: .zero, size: targetSize))
         }
-        return thumbnailData
     }
 
     private func dismissAfterDelay(seconds: TimeInterval) {

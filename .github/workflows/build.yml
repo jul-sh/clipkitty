@@ -138,14 +138,8 @@ jobs:
         with:
           lfs: true
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Build shared workspace graph
         timeout-minutes: 45
@@ -161,18 +155,8 @@ jobs:
         with:
           lfs: true
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Restore the Nix store from the shared GitHub Actions cache. The
-      # purr-* Rust artifacts are built once up front by prewarm-nix; every
-      # other Nix job restores them here instead of recompiling. See that
-      # job for why prewarming is a separate step rather than a free-for-all.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Verify lockfile integrity
         run: make check
@@ -194,9 +178,6 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
       BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
-    outputs:
-      ed_signature: ${{ steps.eddsa-sign.outputs.ed_signature }}
-      file_length: ${{ steps.eddsa-sign.outputs.file_length }}
 
     steps:
       - name: Checkout
@@ -205,20 +186,8 @@ jobs:
           lfs: true
           fetch-depth: 0 # Full history for commit count versioning
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: |
@@ -484,23 +453,6 @@ jobs:
           echo "Stapling failed after 10 attempts"
           exit 1
 
-      - name: Install Sparkle CLI Tools
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
-        run: make install-sparkle-cli
-
-      - name: Sign DMG with EdDSA
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/release')
-        id: eddsa-sign
-        run: |
-          SIGNATURE=$(echo "$SPARKLE_EDDSA_KEY" | sign_update ClipKitty.dmg --ed-key-file -)
-          # sign_update outputs: sparkle:edSignature="..." length="..."
-          ED_SIGNATURE=$(echo "$SIGNATURE" | sed 's/.*sparkle:edSignature="\([^"]*\)".*/\1/')
-          FILE_LENGTH=$(echo "$SIGNATURE" | sed 's/.*length="\([^"]*\)".*/\1/')
-          echo "ed_signature=$ED_SIGNATURE" >> "$GITHUB_OUTPUT"
-          echo "file_length=$FILE_LENGTH" >> "$GITHUB_OUTPUT"
-        env:
-          SPARKLE_EDDSA_KEY: ${{ steps.secrets.outputs.SPARKLE_EDDSA_KEY }}
-
       - name: Verify lockfiles unchanged before attestation
         run: make check
 
@@ -543,20 +495,8 @@ jobs:
         with:
           lfs: true
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Build iOS Smoke Test
         # 50 min, not 15: unlike the other Nix jobs, this one has no separate
@@ -587,20 +527,8 @@ jobs:
         with:
           lfs: true
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: |
@@ -668,20 +596,8 @@ jobs:
         with:
           lfs: true
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: |
@@ -732,20 +648,8 @@ jobs:
           defaults write -g AppleShowScrollBars -string WhenScrolling
           killall cfprefsd || true
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: |
@@ -835,20 +739,8 @@ jobs:
           defaults write -g AppleShowScrollBars -string WhenScrolling
           killall cfprefsd || true
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: |
@@ -937,20 +829,8 @@ jobs:
           lfs: true
           fetch-depth: 0
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: |
@@ -958,21 +838,6 @@ jobs:
           nix profile install --no-update-lock-file --inputs-from . nixpkgs#ffmpeg
           nix profile install --no-update-lock-file .#tuist
           tuist version
-
-      - name: Decrypt secrets
-        run: |
-          for f in secrets/*.age; do
-            name=$(basename "$f" .age)
-            value=$(keytap decrypt clipkitty < "$f")
-            echo "::add-mask::$value"
-            {
-              echo "${name}<<AGEDELIM"
-              echo "$value"
-              echo "AGEDELIM"
-            } >> "$GITHUB_OUTPUT"
-          done
-        env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Setup Swift
         uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
@@ -1126,20 +991,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: nix profile install --no-update-lock-file --inputs-from . keytap#default
@@ -1249,11 +1102,9 @@ jobs:
         env:
           HOMEBREW_TAP_TOKEN: ${{ steps.secrets.outputs.HOMEBREW_TAP_TOKEN }}
 
-  # Deploy the site even when other jobs failed (matching the old always()
-  # behavior), but only when the marketing assets actually exist — the
-  # previous mono-job version died on a missing generated site icon whenever
-  # an earlier step had failed. The appcast is skipped gracefully when macos-build
-  # produced no signature (its outputs read as empty strings).
+  # Deploy the site even when unrelated jobs failed. If the notarized update
+  # archive exists, Sparkle's official generator signs it while rebuilding the
+  # appcast; otherwise the existing feed is left untouched.
   gh-pages:
     name: Deploy to gh-pages
     needs: [version, macos-build, macos-marketing]
@@ -1268,23 +1119,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: nix profile install --no-update-lock-file --inputs-from . nixpkgs#cmark-gfm
+
+      - name: Install Sparkle publishing tools
+        if: needs.macos-build.result == 'success'
+        run: make install-sparkle-cli
 
       - name: Download marketing assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -1292,9 +1135,17 @@ jobs:
           name: assets
           path: .
 
+      - name: Download notarized update archive
+        if: needs.macos-build.result == 'success'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ClipKitty-Builds
+          path: ${{ runner.temp }}/appcast-archive
+
       - name: Deploy to gh-pages
         env:
           GH_TOKEN: ${{ github.token }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
@@ -1330,25 +1181,27 @@ jobs:
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_2.png" marketing_2.png
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_3.png" marketing_3.png
 
-          if [ -n "${{ needs.macos-build.outputs.ed_signature }}" ] && [ -n "${{ needs.macos-build.outputs.file_length }}" ]; then
-            [ -f appcast-state.json ] || printf '{}\n' > appcast-state.json
-
+          UPDATE_ARCHIVE="${RUNNER_TEMP}/appcast-archive/ClipKitty.dmg"
+          if [ -f "$UPDATE_ARCHIVE" ]; then
             make -C "$GITHUB_WORKSPACE" release-appcast-update \
               STATE_PATH="$(pwd)/appcast-state.json" \
               CHANNEL="${{ needs.version.outputs.channel }}" \
               VERSION="${{ needs.version.outputs.version }}" \
               BUILD_NUMBER="${{ needs.version.outputs.build_number }}" \
-              URL="${{ needs.version.outputs.release_url }}" \
-              SIGNATURE="${{ needs.macos-build.outputs.ed_signature }}" \
-              LENGTH="${{ needs.macos-build.outputs.file_length }}"
+              URL="${{ needs.version.outputs.release_url }}"
 
+            # Sparkle owns archive signing, bundle metadata extraction,
+            # enclosure metadata, and feed serialization. xtask owns only the
+            # channel transition and atomically installs the generated feed.
             make -C "$GITHUB_WORKSPACE" release-appcast-generate \
               STATE_PATH="$(pwd)/appcast-state.json" \
-              OUTPUT_PATH="$(pwd)/appcast.xml"
+              OUTPUT_PATH="$(pwd)/appcast.xml" \
+              CHANNEL="${{ needs.version.outputs.channel }}" \
+              ARCHIVE_PATH="$UPDATE_ARCHIVE"
 
             xmllint --noout appcast.xml
           else
-            echo "Skipping appcast update because the signed update metadata was not produced."
+            echo "Skipping appcast update because macOS did not produce a notarized archive."
           fi
 
           # Generate landing page from README.md (cmark-gfm installed via Nix)
@@ -1387,20 +1240,8 @@ jobs:
         with:
           fetch-depth: 0 # Full history for commit count versioning
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: |
@@ -1534,20 +1375,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Nix
-        uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
-        with:
-          source-tag: v3.17.3
-          flakehub: false
-
-      # Share the Nix store across jobs via the GitHub Actions cache. The
-      # repo-specific purr-* Rust static libs (~18 min from a cold store)
-      # are built once by whichever job reaches them first; every other job
-      # restores them instead of recompiling. Before the build graph was
-      # split into parallel jobs, a single monolithic job warmed its own
-      # store; now each job starts cold and needs this shared cache.
-      - name: Set up Nix cache
-        uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
 
       - name: Install CI tools from Nix
         run: |

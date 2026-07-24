@@ -1,5 +1,5 @@
+@testable import ClipKittyBrowser
 import ClipKittyRust
-@testable import ClipKittyShared
 import XCTest
 
 final class BrowserFilterCatalogTests: XCTestCase {

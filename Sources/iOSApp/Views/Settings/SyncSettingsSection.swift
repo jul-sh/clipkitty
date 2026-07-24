@@ -1,6 +1,6 @@
 #if ENABLE_ICLOUD_SYNC
 
-    import ClipKittyAppleServices
+    import ClipKittyCloudSync
     import SwiftUI
 
     struct SyncSettingsSection: View {

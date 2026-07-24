@@ -1,5 +1,6 @@
+import ClipKittyCore
 import ClipKittyRust
-import ClipKittyShared
+import ClipKittyStore
 import Foundation
 
 @MainActor
@@ -29,21 +30,12 @@ public final class PreviewLoader {
 
     #if ENABLE_LINK_PREVIEWS
         public func refreshLinkMetadata(url: String, itemId: String) async -> ClipboardItem? {
-            guard let metadata = await linkMetadataFetcher.fetchMetadata(for: url, itemId: itemId) else {
-                _ = await repository.updateLinkMetadata(
-                    itemId: itemId,
-                    title: "",
-                    description: nil,
-                    imageData: nil
-                )
-                return await repository.fetchItem(id: itemId)
-            }
-
+            let metadata = await linkMetadataFetcher.fetchMetadata(for: url, itemId: itemId)
             _ = await repository.updateLinkMetadata(
                 itemId: itemId,
-                title: metadata.title,
-                description: metadata.description,
-                imageData: metadata.imageData
+                title: metadata?.title ?? "",
+                description: metadata?.description,
+                imageData: metadata?.imageData
             )
             return await repository.fetchItem(id: itemId)
         }
