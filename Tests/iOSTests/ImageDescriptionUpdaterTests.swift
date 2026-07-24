@@ -1,28 +1,11 @@
-import ClipKittyAppleServices
+import ClipKittyContentServices
 import ClipKittyRust
-import ClipKittyShared
+import ClipKittyStore
 import XCTest
 
-final class ImageDescriptionUpdaterTests: XCTestCase {
-    private var tempDir: URL!
-
-    override func setUp() {
-        super.setUp()
-        tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("clipkitty-image-description-\(UUID().uuidString)")
-        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-    }
-
-    override func tearDown() {
-        if let tempDir {
-            try? FileManager.default.removeItem(at: tempDir)
-        }
-        tempDir = nil
-        super.tearDown()
-    }
-
+final class ImageDescriptionUpdaterTests: TemporaryDirectoryTestCase {
     func testUpdaterStoresGeneratedImageDescription() async throws {
-        let store = try ClipKittyRust.ClipboardStore(dbPath: dbPath())
+        let store = try ClipKittyRust.ClipboardStore(dbPath: databasePath())
         let repository = ClipboardRepository(store: store)
         let saveResult = await repository.saveImage(
             imageData: Data([0x01, 0x02, 0x03]),
@@ -48,7 +31,7 @@ final class ImageDescriptionUpdaterTests: XCTestCase {
     }
 
     func testUpdaterSkipsEmptyGeneratedDescription() async throws {
-        let store = try ClipKittyRust.ClipboardStore(dbPath: dbPath())
+        let store = try ClipKittyRust.ClipboardStore(dbPath: databasePath())
         let repository = ClipboardRepository(store: store)
         let saveResult = await repository.saveImage(
             imageData: Data([0x01, 0x02, 0x03]),
@@ -71,9 +54,5 @@ final class ImageDescriptionUpdaterTests: XCTestCase {
             return
         }
         XCTAssertEqual(description, "Image")
-    }
-
-    private func dbPath() -> String {
-        tempDir.appendingPathComponent("clipboard.sqlite").path
     }
 }

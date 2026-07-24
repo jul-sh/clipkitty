@@ -1,5 +1,6 @@
+import ClipKittyBrowser
+import ClipKittyCore
 import ClipKittyRust
-import ClipKittyShared
 import SwiftUI
 import UIKit
 
@@ -143,8 +144,6 @@ struct TextPreviewView: UIViewRepresentable {
 
     struct MatchRange {
         let range: NSTextRange
-        let utf16Start: UInt64
-        let utf16End: UInt64
         let kind: HighlightKind
     }
 
@@ -164,8 +163,6 @@ struct TextPreviewView: UIViewRepresentable {
             guard let textRange = NSTextRange(location: start, end: end) else { return nil }
             return MatchRange(
                 range: textRange,
-                utf16Start: highlight.utf16Start,
-                utf16End: highlight.utf16End,
                 kind: highlight.kind
             )
         }

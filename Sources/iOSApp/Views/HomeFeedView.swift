@@ -1,5 +1,5 @@
+import ClipKittyBrowser
 import ClipKittyRust
-import ClipKittyShared
 import SwiftUI
 
 struct HomeFeedView: View {
@@ -100,10 +100,13 @@ struct HomeFeedView: View {
         case let .loading(_, previous, phase):
             if previous != nil {
                 scrollableFeed
-            } else if phase.isSpinnerVisible {
-                loadingView
             } else {
-                Color.clear
+                switch phase {
+                case .runningShowingSpinner:
+                    loadingView
+                case .debouncing, .runningWaitingForSpinner:
+                    Color.clear
+                }
             }
 
         case .loaded:
@@ -272,14 +275,5 @@ struct HomeFeedView: View {
 
     private var isSearchOrFilterActive: Bool {
         !viewModel.searchText.isEmpty || viewModel.activeFilterKind != .all
-    }
-}
-
-// MARK: - QueryLoadPhase spinner helper
-
-private extension QueryLoadPhase {
-    var isSpinnerVisible: Bool {
-        guard case let .running(spinnerVisible) = self else { return false }
-        return spinnerVisible
     }
 }
