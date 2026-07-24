@@ -11,28 +11,30 @@ import os
 final class AppContainer {
     private nonisolated static let logger = Logger(subsystem: "com.clipkitty", category: "iOSBootstrap")
 
-    let store: ClipKittyRust.ClipboardStore
-    let repository: ClipboardRepository
-    let previewLoader: PreviewLoader
+    let storeSession: StoreSession
     let imageDescriptionUpdater: ImageDescriptionUpdater
     let storeClient: iOSBrowserStoreClient
     let clipboardService: iOSClipboardService
     let settings: iOSSettingsStore
     let haptics: HapticsClient
 
+    var store: ClipKittyRust.ClipboardStore {
+        storeSession.store
+    }
+
+    var repository: ClipboardRepository {
+        storeSession.repository
+    }
+
     private init(
-        store: ClipKittyRust.ClipboardStore,
-        repository: ClipboardRepository,
-        previewLoader: PreviewLoader,
+        storeSession: StoreSession,
         imageDescriptionUpdater: ImageDescriptionUpdater,
         storeClient: iOSBrowserStoreClient,
         clipboardService: iOSClipboardService,
         settings: iOSSettingsStore,
         haptics: HapticsClient
     ) {
-        self.store = store
-        self.repository = repository
-        self.previewLoader = previewLoader
+        self.storeSession = storeSession
         self.imageDescriptionUpdater = imageDescriptionUpdater
         self.storeClient = storeClient
         self.clipboardService = clipboardService
@@ -41,7 +43,7 @@ final class AppContainer {
     }
 
     static func bootstrap(databasePath customPath: String? = nil) -> Result<AppContainer, BootstrapError> {
-        openStore(databasePath: customPath).map(assemble(store:))
+        openStore(databasePath: customPath).map(assemble(storeSession:))
     }
 
     /// The heavy, blocking half of bootstrap: path resolution, migration,
@@ -50,7 +52,7 @@ final class AppContainer {
     /// keep rendering the last known state while the database reconnects.
     nonisolated static func openStore(
         databasePath customPath: String? = nil
-    ) -> Result<ClipKittyRust.ClipboardStore, BootstrapError> {
+    ) -> Result<StoreSession, BootstrapError> {
         // Migrate legacy Application Support database to App Group container
         // before resolving the path, so existing users keep their data.
         if customPath == nil {
@@ -64,69 +66,41 @@ final class AppContainer {
             return .failure(.databasePathFailed(error.localizedDescription))
         }
 
-        // Inspect the bootstrap plan first so we can rebuild the Tantivy
-        // index when it's missing or out-of-date relative to the sqlite
-        // file. This matches the macOS flow in Sources/MacApp/ClipboardStore.swift
-        // and is required for any scenario where the sqlite file is present
-        // but the sibling `tantivy_index_<version>/` directory isn't — e.g.
-        // a fresh install after an iCloud restore, or the UI screenshot
-        // test pointing at a synthetic DB copied to /tmp. Without this,
-        // searches silently return zero results.
-        let plan: StoreBootstrapPlan
+        let repairStrategy: StoreIndexRepairStrategy
+        #if ENABLE_ICLOUD_SYNC
+            repairStrategy = .custom { store in
+                switch try iOSIndexMaintenance.queueBootstrapRepairIfNeeded(
+                    plan: .rebuildIndex,
+                    store: store
+                ) {
+                case .notNeeded:
+                    break
+                case let .queued(itemCount):
+                    logger.info("Queued bootstrap index repair for \(itemCount) items")
+                }
+
+                do {
+                    let outcome = try iOSIndexMaintenance.processQueuedBatch(store: store)
+                    logIndexMaintenanceOutcome(outcome, context: "bootstrap")
+                } catch {
+                    logger.error("Bootstrap index maintenance failed: \(error.localizedDescription)")
+                }
+            }
+        #else
+            repairStrategy = .rebuildImmediately
+        #endif
+
         do {
-            plan = try inspectStoreBootstrap(dbPath: dbPath)
+            return try .success(StoreOpener.open(path: dbPath, repairStrategy: repairStrategy))
         } catch {
             return .failure(.databaseOpenFailed(error.localizedDescription))
         }
-
-        let store: ClipKittyRust.ClipboardStore
-        do {
-            store = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
-        } catch {
-            return .failure(.databaseOpenFailed(error.localizedDescription))
-        }
-
-        switch plan {
-        case .ready:
-            break
-        case .rebuildIndex:
-            #if ENABLE_ICLOUD_SYNC
-                do {
-                    switch try iOSIndexMaintenance.queueBootstrapRepairIfNeeded(
-                        plan: plan,
-                        store: store
-                    ) {
-                    case .notNeeded:
-                        break
-                    case let .queued(itemCount):
-                        logger.info("Queued bootstrap index repair for \(itemCount) items")
-                    }
-
-                    do {
-                        let outcome = try iOSIndexMaintenance.processQueuedBatch(store: store)
-                        logIndexMaintenanceOutcome(outcome, context: "bootstrap")
-                    } catch {
-                        logger.error("Bootstrap index maintenance failed: \(error.localizedDescription)")
-                    }
-                } catch {
-                    return .failure(.databaseOpenFailed("Index repair queue failed: \(error.localizedDescription)"))
-                }
-            #else
-                do {
-                    try store.rebuildIndex()
-                } catch {
-                    return .failure(.databaseOpenFailed("Index rebuild failed: \(error.localizedDescription)"))
-                }
-            #endif
-        }
-
-        return .success(store)
     }
 
     /// The cheap, main-actor half of bootstrap: wires the service graph
     /// around an already-opened store.
-    static func assemble(store: ClipKittyRust.ClipboardStore) -> AppContainer {
-        let repository = ClipboardRepository(store: store)
+    static func assemble(storeSession: StoreSession) -> AppContainer {
+        let repository = storeSession.repository
         let previewLoader = PreviewLoader(repository: repository)
         let imageDescriptionUpdater = ImageDescriptionUpdater(repository: repository)
         let storeClient = iOSBrowserStoreClient(
@@ -138,9 +112,7 @@ final class AppContainer {
         let haptics = HapticsClient(settings: settings)
 
         return AppContainer(
-            store: store,
-            repository: repository,
-            previewLoader: previewLoader,
+            storeSession: storeSession,
             imageDescriptionUpdater: imageDescriptionUpdater,
             storeClient: storeClient,
             clipboardService: clipboardService,
@@ -163,8 +135,8 @@ final class AppContainer {
         }
     }
 
-    func shortcutRepositoryAvailability() -> ClipKittyShortcutRepositoryAvailability {
-        .ready(repository)
+    func shortcutStoreAvailability() -> ClipKittyShortcutStoreAvailability {
+        .ready(storeSession)
     }
 
     func prepareForSuspension() {

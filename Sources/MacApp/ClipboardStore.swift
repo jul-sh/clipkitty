@@ -44,12 +44,6 @@ private final class MissingRepositorySearchOperation: ClipboardSearchOperation {
     }
 }
 
-/// Wraps the Rust store and repository created during bootstrap.
-struct StoreRuntime {
-    let store: ClipKittyRust.ClipboardStore
-    let repository: ClipboardRepository
-}
-
 /// Observable lifecycle state for the clipboard store.
 enum StoreLifecycle: Equatable {
     case initializing
@@ -63,13 +57,33 @@ enum StoreLifecycle: Equatable {
 final class ClipboardStore {
     // MARK: - Lifecycle
 
-    private(set) var lifecycle: StoreLifecycle = .initializing
+    private enum State {
+        case initializing
+        case rebuildingIndex(Task<StoreSession, Error>)
+        case ready(session: StoreSession, previewLoader: PreviewLoader)
+        case failed(String)
+
+        var lifecycle: StoreLifecycle {
+            switch self {
+            case .initializing:
+                .initializing
+            case .rebuildingIndex:
+                .rebuildingIndex
+            case .ready:
+                .ready
+            case let .failed(reason):
+                .failed(reason)
+            }
+        }
+    }
+
+    private var state: State = .initializing
+
+    var lifecycle: StoreLifecycle {
+        state.lifecycle
+    }
 
     // MARK: - Private State
-
-    /// Rust-backed repository facade (available after bootstrap completes)
-    private var repository: ClipboardRepository?
-    private var bootstrapTask: Task<StoreRuntime, Error>?
 
     private enum FilePreviewCandidate {
         case image
@@ -91,7 +105,6 @@ final class ClipboardStore {
     private let pasteService: PasteService
     private let workspace: WorkspaceProtocol
     private let fileManager: FileManagerProtocol
-    private var previewLoader: PreviewLoader?
     @ObservationIgnored private var pasteboardMonitor: PasteboardMonitor!
     #if ENABLE_ICLOUD_SYNC
         private enum SyncRuntime {
@@ -153,9 +166,9 @@ final class ClipboardStore {
 
     /// Refresh database size asynchronously
     func refreshDatabaseSize() {
-        guard let repository else { return }
+        guard case let .ready(session, _) = state else { return }
         Task {
-            let result = await repository.databaseSize()
+            let result = await session.repository.databaseSize()
             if case let .success(size) = result {
                 self.databaseSizeBytes = size
             }
@@ -176,11 +189,11 @@ final class ClipboardStore {
         // without an async hop when no rebuild is needed (the common case).
         let plan: StoreBootstrapPlan
         do {
-            plan = try inspectStoreBootstrap(dbPath: dbPath)
+            plan = try StoreOpener.inspect(path: dbPath)
         } catch {
             let dbError = ClipboardError.databaseInitFailed(underlying: error)
             ErrorReporter.reportCritical(dbError)
-            lifecycle = .failed(dbError.localizedDescription)
+            state = .failed(dbError.localizedDescription)
             return
         }
 
@@ -189,7 +202,6 @@ final class ClipboardStore {
             openSynchronously(dbPath: dbPath)
 
         case .rebuildIndex:
-            lifecycle = .rebuildingIndex
             openWithRebuild(dbPath: dbPath)
         }
     }
@@ -197,45 +209,52 @@ final class ClipboardStore {
     /// Fast path: no rebuild needed — open store synchronously, just like the old code.
     private func openSynchronously(dbPath: String) {
         do {
-            let rustStore = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
-            let repository = ClipboardRepository(store: rustStore)
-            self.repository = repository
-            previewLoader = PreviewLoader(repository: repository)
-            lifecycle = .ready
+            let session = try StoreOpener.open(
+                path: dbPath,
+                plan: .ready,
+                repairStrategy: .rebuildImmediately
+            )
+            state = .ready(
+                session: session,
+                previewLoader: PreviewLoader(repository: session.repository)
+            )
             pruneIfNeeded()
             #if ENABLE_ICLOUD_SYNC
-                initializeSyncRuntime(with: rustStore)
+                initializeSyncRuntime(with: session.store)
             #endif
         } catch {
             let dbError = ClipboardError.databaseInitFailed(underlying: error)
             ErrorReporter.reportCritical(dbError)
-            lifecycle = .failed(dbError.localizedDescription)
+            state = .failed(dbError.localizedDescription)
         }
     }
 
     /// Slow path: rebuild index on a background thread.
     private func openWithRebuild(dbPath: String) {
-        bootstrapTask = Task.detached(priority: .userInitiated) {
-            let rustStore = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
-            try rustStore.rebuildIndex()
-            let repository = ClipboardRepository(store: rustStore)
-            return StoreRuntime(store: rustStore, repository: repository)
+        let task = Task.detached(priority: .userInitiated) {
+            try StoreOpener.open(
+                path: dbPath,
+                plan: .rebuildIndex,
+                repairStrategy: .rebuildImmediately
+            )
         }
+        state = .rebuildingIndex(task)
 
         Task {
             do {
-                let runtime = try await bootstrapTask!.value
-                self.repository = runtime.repository
-                self.previewLoader = PreviewLoader(repository: runtime.repository)
-                self.lifecycle = .ready
+                let session = try await task.value
+                self.state = .ready(
+                    session: session,
+                    previewLoader: PreviewLoader(repository: session.repository)
+                )
                 self.pruneIfNeeded()
                 #if ENABLE_ICLOUD_SYNC
-                    self.initializeSyncRuntime(with: runtime.store)
+                    self.initializeSyncRuntime(with: session.store)
                 #endif
             } catch {
                 let dbError = ClipboardError.databaseInitFailed(underlying: error)
                 ErrorReporter.reportCritical(dbError)
-                self.lifecycle = .failed(dbError.localizedDescription)
+                self.state = .failed(dbError.localizedDescription)
             }
         }
     }
@@ -245,7 +264,7 @@ final class ClipboardStore {
             guard let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
                 let error = ClipboardError.databaseInitFailed(underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to locate application support directory"]))
                 ErrorReporter.reportCritical(error)
-                lifecycle = .failed(error.localizedDescription)
+                state = .failed(error.localizedDescription)
                 return nil
             }
             let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
@@ -254,24 +273,21 @@ final class ClipboardStore {
         } catch {
             let dbError = ClipboardError.databaseInitFailed(underlying: error)
             ErrorReporter.reportCritical(dbError)
-            lifecycle = .failed(dbError.localizedDescription)
+            state = .failed(dbError.localizedDescription)
             return nil
         }
     }
 
     func awaitReady() async {
-        guard let task = bootstrapTask else { return }
+        guard case let .rebuildingIndex(task) = state else { return }
         _ = try? await task.value
     }
 
     #if ENABLE_APP_SHORTCUTS
-        func shortcutRepositoryAvailability() -> ClipKittyShortcutRepositoryAvailability {
-            switch lifecycle {
-            case .ready:
-                if let repository {
-                    return .ready(repository)
-                }
-                return .unavailable("ClipKitty's database is not ready yet.")
+        func shortcutStoreAvailability() -> ClipKittyShortcutStoreAvailability {
+            switch state {
+            case let .ready(session, _):
+                return .ready(session)
             case .initializing, .rebuildingIndex:
                 return .unavailable("ClipKitty is still preparing its database.")
             case let .failed(reason):
@@ -292,38 +308,38 @@ final class ClipboardStore {
     }
 
     func startSearch(query: String, filter: ItemQueryFilter, presentation: ListPresentationProfile) -> ClipboardSearchOperation {
-        guard let repository else {
+        guard case let .ready(session, _) = state else {
             return MissingRepositorySearchOperation()
         }
-        return repository.startSearch(query: query, filter: filter, presentation: presentation)
+        return session.repository.startSearch(query: query, filter: filter, presentation: presentation)
     }
 
     /// Fetch full ClipboardItem by ID
     func fetchItem(id: String) async -> ClipboardItem? {
-        guard let previewLoader else { return nil }
+        guard case let .ready(_, previewLoader) = state else { return nil }
         return await previewLoader.fetchItem(id: id)
     }
 
     func resolveMatchedExcerpts(requests: [MatchedExcerptRequest]) async -> [MatchedExcerptResolution] {
-        guard let repository else { return [] }
-        return await repository.resolveMatchedExcerpts(requests: requests)
+        guard case let .ready(session, _) = state else { return [] }
+        return await session.repository.resolveMatchedExcerpts(requests: requests)
     }
 
     func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload? {
-        guard let repository else { return nil }
-        return await repository.loadPreviewPayload(itemId: itemId, query: query)
+        guard case let .ready(session, _) = state else { return nil }
+        return await session.repository.loadPreviewPayload(itemId: itemId, query: query)
     }
 
     func formatExcerpt(content: String, presentation: ListPresentationProfile) -> String {
-        guard let repository else { return String(content.prefix(200)) }
-        return repository.store.formatExcerpt(content: content, presentation: presentation)
+        guard case let .ready(session, _) = state else { return String(content.prefix(200)) }
+        return session.store.formatExcerpt(content: content, presentation: presentation)
     }
 
     #if ENABLE_LINK_PREVIEWS
         /// Fetch link metadata using LinkPresentation and persist to database
         /// Returns the updated item if successful
         func fetchLinkMetadata(url: String, itemId: String) async -> ClipboardItem? {
-            guard let previewLoader else { return nil }
+            guard case let .ready(_, previewLoader) = state else { return nil }
             let item = await previewLoader.refreshLinkMetadata(url: url, itemId: itemId)
             if item != nil {
                 invalidateContent()
@@ -427,20 +443,26 @@ final class ClipboardStore {
         #if ENABLE_FILE_CLIPBOARD_ITEMS
             case let .files(urls, sourceApp, sourceAppBundleId):
                 saveFileItems(urls: urls, sourceApp: sourceApp, sourceAppBundleID: sourceAppBundleId)
+        #else
+            case .files:
+                break
         #endif
         }
     }
 
     private func saveTextItem(text: String, sourceApp: String?, sourceAppBundleId: String?) {
-        guard let repository else { return }
+        guard case let .ready(session, _) = state else { return }
 
         Task {
-            let result = await repository.saveText(text: text, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleId)
+            let result = await session.repository.saveText(
+                text: text,
+                sourceApp: sourceApp,
+                sourceAppBundleId: sourceAppBundleId
+            )
 
             switch result {
             case let .success(itemId):
                 self.invalidateContent()
-
                 #if ENABLE_LINK_PREVIEWS
                     if !itemId.isEmpty, URL(string: text) != nil, text.hasPrefix("http") {
                         guard AppSettings.shared.generateLinkPreviews else { return }
@@ -455,8 +477,9 @@ final class ClipboardStore {
     }
 
     private func generateAndUpdateImageDescription(itemId: String, imageData: Data) async {
-        guard let repository else { return }
-        let result = await ImageDescriptionUpdater(repository: repository).update(itemId: itemId, imageData: imageData)
+        guard case let .ready(session, _) = state else { return }
+        let result = await ImageDescriptionUpdater(repository: session.repository)
+            .update(itemId: itemId, imageData: imageData)
 
         switch result {
         case .success(false):
@@ -472,14 +495,31 @@ final class ClipboardStore {
     /// Save text that was edited in the preview pane.
     /// Update a text item's content in-place.
     func updateTextItem(itemId: String, text: String) async -> Result<Void, ClipboardError> {
-        guard let repository else {
+        await performContentMutation(
+            operation: "updateTextItem",
+            unavailableMessage: "Repository not initialized"
+        ) { repository in
+            await repository.updateTextItem(itemId: itemId, text: text)
+        }
+    }
+
+    private func performContentMutation(
+        operation: String,
+        unavailableMessage: String = "Database not available",
+        _ mutation: (ClipboardRepository) async -> Result<Void, ClipboardError>
+    ) async -> Result<Void, ClipboardError> {
+        guard case let .ready(session, _) = state else {
             return .failure(.databaseOperationFailed(
-                operation: "updateTextItem",
-                underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Repository not initialized"])
+                operation: operation,
+                underlying: NSError(
+                    domain: "ClipKitty",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: unavailableMessage]
+                )
             ))
         }
 
-        let result = await repository.updateTextItem(itemId: itemId, text: text)
+        let result = await mutation(session.repository)
         if case .success = result {
             invalidateContent()
         }
@@ -497,7 +537,7 @@ final class ClipboardStore {
         let maxPixels = Int(AppSettings.shared.maxImageMegapixels * 1_000_000)
         let quality = AppSettings.shared.imageCompressionQuality
 
-        guard let repository else { return }
+        guard case let .ready(session, _) = state else { return }
         Task {
             guard let processedImage = await ImageIngestService.process(
                 rawImageData: rawImageData,
@@ -517,7 +557,7 @@ final class ClipboardStore {
             }
 
             // Save to database
-            let result = await repository.saveImage(
+            let result = await session.repository.saveImage(
                 imageData: processedImage.compressedData,
                 thumbnail: processedImage.thumbnailData,
                 sourceApp: sourceApp,
@@ -529,7 +569,6 @@ final class ClipboardStore {
             case let .success(itemId):
                 self.invalidateContent()
                 guard !itemId.isEmpty else { return }
-
                 // Generate image description in background
                 Task {
                     await self.generateAndUpdateImageDescription(itemId: itemId, imageData: processedImage.compressedData)
@@ -852,7 +891,7 @@ final class ClipboardStore {
             let sourceApp = sourceApp ?? workspace.frontmostApplication?.localizedName
             let sourceAppBundleID = sourceAppBundleID ?? workspace.frontmostApplication?.bundleIdentifier
 
-            guard let repository else { return }
+            guard case let .ready(session, _) = state else { return }
             Task {
                 // Collect file metadata (CPU-bound, safe to run on any thread)
                 var files: [NewFileInput] = []
@@ -907,7 +946,7 @@ final class ClipboardStore {
 
                 guard !files.isEmpty else { return }
 
-                let result = await repository.saveFiles(
+                let result = await session.repository.saveFiles(
                     files: files,
                     sourceApp: sourceApp,
                     sourceAppBundleId: sourceAppBundleID
@@ -1066,8 +1105,8 @@ final class ClipboardStore {
     #endif
 
     private func updateItemTimestamp(id: String) async {
-        guard let repository else { return }
-        let result = await repository.updateTimestamp(itemId: id)
+        guard case let .ready(session, _) = state else { return }
+        let result = await session.repository.updateTimestamp(itemId: id)
 
         // Log any errors but don't show toast (timestamp update is non-critical)
         if case let .failure(error) = result {
@@ -1078,51 +1117,27 @@ final class ClipboardStore {
     }
 
     func deleteItem(itemId: String) async -> Result<Void, ClipboardError> {
-        guard let repository else {
-            return .failure(.databaseOperationFailed(
-                operation: "deleteItem",
-                underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Database not available"])
-            ))
+        await performContentMutation(operation: "deleteItem") { repository in
+            await repository.delete(itemId: itemId)
         }
-        let result = await repository.delete(itemId: itemId)
-        if case .success = result {
-            invalidateContent()
-        }
-        return result
     }
 
     func addTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError> {
-        guard let repository else {
-            return .failure(.databaseOperationFailed(
-                operation: "addTag",
-                underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Database not available"])
-            ))
+        await performContentMutation(operation: "addTag") { repository in
+            await repository.addTag(itemId: itemId, tag: tag)
         }
-        let result = await repository.addTag(itemId: itemId, tag: tag)
-        if case .success = result {
-            invalidateContent()
-        }
-        return result
     }
 
     func removeTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError> {
-        guard let repository else {
-            return .failure(.databaseOperationFailed(
-                operation: "removeTag",
-                underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Database not available"])
-            ))
+        await performContentMutation(operation: "removeTag") { repository in
+            await repository.removeTag(itemId: itemId, tag: tag)
         }
-        let result = await repository.removeTag(itemId: itemId, tag: tag)
-        if case .success = result {
-            invalidateContent()
-        }
-        return result
     }
 
     func clear() {
-        guard let repository else { return }
+        guard case let .ready(session, _) = state else { return }
         Task {
-            let result = await repository.clear()
+            let result = await session.repository.clear()
             if case let .failure(error) = result {
                 ErrorReporter.report(error, showToast: true)
             } else {
@@ -1132,17 +1147,9 @@ final class ClipboardStore {
     }
 
     func clearAll() async -> Result<Void, ClipboardError> {
-        guard let repository else {
-            return .failure(.databaseOperationFailed(
-                operation: "clear",
-                underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Database not available"])
-            ))
+        await performContentMutation(operation: "clear") { repository in
+            await repository.clear()
         }
-        let result = await repository.clear()
-        if case .success = result {
-            invalidateContent()
-        }
-        return result
     }
 
     // MARK: - Pruning
@@ -1155,14 +1162,16 @@ final class ClipboardStore {
     /// cached size so observing views update.
     func pruneToLimit() async {
         let maxSizeGB = AppSettings.shared.maxDatabaseSizeGB
-        guard maxSizeGB > 0, let repository else { return }
+        guard maxSizeGB > 0,
+              case let .ready(session, _) = state
+        else { return }
 
-        if case let .failure(error) = await repository.pruneToSize(
+        if case let .failure(error) = await session.repository.pruneToSize(
             maxBytes: Utilities.bytes(fromGB: maxSizeGB)
         ) {
             ErrorReporter.report(error, showToast: false)
         }
-        if case let .success(size) = await repository.databaseSize() {
+        if case let .success(size) = await session.repository.databaseSize() {
             databaseSizeBytes = size
         }
     }
