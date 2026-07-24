@@ -1,4 +1,4 @@
-import ClipKittyShared
+import ClipKittyCore
 import SwiftUI
 
 // MARK: - Shared background modifier

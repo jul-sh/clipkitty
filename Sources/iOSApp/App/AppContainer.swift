@@ -1,7 +1,8 @@
-import ClipKittyAppleServices
+import ClipKittyContentServices
+import ClipKittyCore
 import ClipKittyRust
-import ClipKittyShared
 import ClipKittyShortcuts
+import ClipKittyStore
 import Foundation
 import os
 

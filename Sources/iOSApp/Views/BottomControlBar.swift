@@ -1,5 +1,7 @@
+import ClipKittyBrowser
+import ClipKittyCore
 import ClipKittyRust
-import ClipKittyShared
+import ClipKittyStore
 import PhotosUI
 import SwiftUI
 

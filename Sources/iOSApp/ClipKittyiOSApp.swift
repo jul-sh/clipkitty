@@ -1,7 +1,8 @@
-import ClipKittyAppleServices
+import ClipKittyBrowser
+import ClipKittyCore
 import ClipKittyRust
-import ClipKittyShared
 import ClipKittyShortcuts
+import ClipKittyStore
 import SwiftUI
 
 // MARK: - App Launch State
@@ -204,7 +205,10 @@ final class AppState {
         return result
     }
 
-    private func scheduleImageDescriptionUpdate(after result: Result<String, ClipboardError>, imageData: Data) {
+    private func scheduleImageDescriptionUpdate(
+        after result: Result<String, ClipboardError>,
+        imageData: Data
+    ) {
         guard case let .success(itemId) = result, !itemId.isEmpty else { return }
 
         Task { [weak self] in

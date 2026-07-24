@@ -8,10 +8,13 @@
 // This target is intentionally minimal: it exists only to be built,
 // never shipped.
 
-import ClipKittyAppleServices
+import ClipKittyBrowser
+import ClipKittyCloudSync
+import ClipKittyContentServices
+import ClipKittyCore
 import ClipKittyRust
-import ClipKittyShared
 import ClipKittyShortcuts
+import ClipKittyStore
 import SwiftUI
 
 @main

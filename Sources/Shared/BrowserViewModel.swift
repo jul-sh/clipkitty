@@ -1,3 +1,4 @@
+import ClipKittyCore
 import ClipKittyRust
 import Foundation
 import Observation

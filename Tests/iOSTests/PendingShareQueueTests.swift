@@ -1,5 +1,5 @@
+import ClipKittyCore
 @testable import ClipKittyiOS
-import ClipKittyShared
 import XCTest
 
 final class PendingShareQueueTests: TemporaryDirectoryTestCase {

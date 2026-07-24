@@ -1,4 +1,6 @@
+import ClipKittyCore
 import ClipKittyRust
+import ClipKittyStore
 import Foundation
 
 public enum BrowserSearchOutcome {

@@ -1,3 +1,4 @@
+import ClipKittyCore
 import SwiftUI
 
 /// "App Typeface" + "Preview Spacing" settings, mirroring the macOS

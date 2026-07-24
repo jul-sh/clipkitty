@@ -1,8 +1,9 @@
 import AppKit
-import ClipKittyAppleServices
+import ClipKittyContentServices
+import ClipKittyCore
 import ClipKittyMacPlatform
 import ClipKittyRust
-import ClipKittyShared
+import ClipKittyStore
 import Foundation
 import ImageIO
 import Observation
@@ -10,6 +11,9 @@ import os
 import UniformTypeIdentifiers
 #if ENABLE_APP_SHORTCUTS
     import ClipKittyShortcuts
+#endif
+#if ENABLE_ICLOUD_SYNC
+    import ClipKittyCloudSync
 #endif
 
 // MARK: - Logging

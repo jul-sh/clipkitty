@@ -117,24 +117,22 @@ enum MacBuildVariant: CaseIterable {
         capabilities.map(\.compileCondition).sorted().joined(separator: " ")
     }
 
-    /// Flags for ClipKittyAppleServices (cross-platform: sync + link previews).
-    /// Link previews are always enabled here because the iOS app unconditionally
-    /// uses LinkPreviewView; the hardened macOS app simply doesn't call it.
-    var appleServicesCompilationConditions: String {
-        var flags = capabilities.intersection([.iCloudSync])
-        flags.insert(.linkPreviews)
-        return flags.map(\.compileCondition).sorted().joined(separator: " ")
+    /// Flags for browser and content-service modules.
+    var contentCompilationConditions: String {
+        capabilities.intersection([.linkPreviews])
+            .map(\.compileCondition).sorted().joined(separator: " ")
+    }
+
+    /// Flags for the CloudKit module. Targets without this capability do not
+    /// depend on the module at all; this condition keeps its source exhaustive.
+    var cloudSyncCompilationConditions: String {
+        capabilities.intersection([.iCloudSync])
+            .map(\.compileCondition).sorted().joined(separator: " ")
     }
 
     /// Flags for ClipKittyMacPlatform (file clipboard + synthetic paste)
     var macPlatformCompilationConditions: String {
         capabilities.intersection([.syntheticPaste, .fileClipboardItems])
-            .map(\.compileCondition).sorted().joined(separator: " ")
-    }
-
-    /// Flags for ClipKittyShared (cross-platform: link previews)
-    var sharedCompilationConditions: String {
-        capabilities.intersection([.linkPreviews])
             .map(\.compileCondition).sorted().joined(separator: " ")
     }
 
@@ -170,18 +168,13 @@ enum MacBuildVariant: CaseIterable {
         switch self {
         case .sparkle:
             return [
-                "PRODUCT_NAME": "ClipKitty",
                 "SPARKLE_FEED_URL": "https://jul-sh.github.io/clipkitty/appcast.xml",
                 "SPARKLE_PUBLIC_KEY": "9VqfSPPY2Gr8QTYDLa99yJXAFWnHw5aybSbKaYDyCq0=",
                 "SPARKLE_AUTO_CHECK": "YES",
                 "SPARKLE_AUTO_UPDATE": "YES",
                 "SPARKLE_INSTALLER_SERVICE": "YES",
             ]
-        case .hardened:
-            return [
-                "PRODUCT_NAME": "ClipKitty",
-            ]
-        case .debug, .release, .appStore:
+        case .debug, .release, .appStore, .hardened:
             return [:]
         }
     }
@@ -254,6 +247,7 @@ enum MacBuildVariant: CaseIterable {
             "CK_BUNDLE_IDENTIFIER": .string(bundleIdentifier),
             "CK_BUILD_CHANNEL": .string(buildChannel),
             "CK_DISPLAY_NAME": .string(displayName),
+            "PRODUCT_NAME": "ClipKitty",
             "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(swiftCompilationConditions(macAppCompilationConditions)),
         ]
 
@@ -265,8 +259,8 @@ enum MacBuildVariant: CaseIterable {
         }
     }
 
-    func appleServicesConfiguration() -> Configuration {
-        let conditions = appleServicesCompilationConditions
+    func contentConfiguration() -> Configuration {
+        let conditions = contentCompilationConditions
         let settings: SettingsDictionary = conditions.isEmpty ? [:] : [
             "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(swiftCompilationConditions(conditions)),
         ]
@@ -278,8 +272,8 @@ enum MacBuildVariant: CaseIterable {
         }
     }
 
-    func sharedConfiguration() -> Configuration {
-        let conditions = sharedCompilationConditions
+    func cloudSyncConfiguration() -> Configuration {
+        let conditions = cloudSyncCompilationConditions
         let settings: SettingsDictionary = conditions.isEmpty ? [:] : [
             "SWIFT_ACTIVE_COMPILATION_CONDITIONS": .string(swiftCompilationConditions(conditions)),
         ]
@@ -531,11 +525,13 @@ private let macAppResources: ResourceFileElements = [
 /// Shared dependencies for all macOS app targets (no Sparkle).
 private let macAppCoreDependencies: [TargetDependency] = [
     .target(name: "ClipKittyRust"),
-    .target(name: "ClipKittyShared"),
-    .target(name: "ClipKittyAppleServices"),
+    .target(name: "ClipKittyCore"),
+    .target(name: "ClipKittyStore"),
+    .target(name: "ClipKittyBrowser"),
+    .target(name: "ClipKittyContentServices"),
     .target(name: "ClipKittyMacPlatform"),
-    .target(name: "ClipKittyShortcuts"),
     .sdk(name: "SystemConfiguration", type: .framework),
+    .package(product: "KeyboardShortcuts"),
     .external(name: "STTextKitPlus"),
 ]
 
@@ -553,17 +549,14 @@ func macAppResources(for variant: MacBuildVariant) -> ResourceFileElements {
 }
 
 func macAppDependencies(for variant: MacBuildVariant) -> [TargetDependency] {
-    if case .hardened = variant {
-        return [
-            .target(name: "ClipKittyRust"),
-            .target(name: "ClipKittyShared"),
-            .target(name: "ClipKittyAppleServices"),
-            .target(name: "ClipKittyMacPlatform"),
-            .sdk(name: "SystemConfiguration", type: .framework),
-            .external(name: "STTextKitPlus"),
-        ]
+    var dependencies = macAppCoreDependencies
+    if variant.capabilities.contains(.iCloudSync) {
+        dependencies.append(.target(name: "ClipKittyCloudSync"))
     }
-    return macAppCoreDependencies + variant.additionalTargetDependencies
+    if variant.capabilities.contains(.appleShortcuts) {
+        dependencies.append(.target(name: "ClipKittyShortcuts"))
+    }
+    return dependencies + variant.additionalTargetDependencies
 }
 
 /// Creates macOS app targets, one per distinct `macAppTargetName`.
@@ -597,19 +590,33 @@ func makeMacAppTargets() -> [Target] {
             baseSettings[key] = value
         }
 
+        // Keep the target's static product reference stable for generated
+        // schemes. Configuration-level settings below select the active
+        // ClipKitty.app or a uniquely named inactive placeholder.
+        baseSettings["PRODUCT_NAME"] = .string(group.name)
+
         // Every target must define ALL project-level configurations so Xcode
         // can resolve build settings for any configuration name. For variants
-        // outside this group, emit a placeholder configuration with empty
-        // settings (inherits project defaults).
+        // outside this group, emit an inactive configuration that inherits the
+        // project defaults but cannot collide with the active app product.
         let configurations = MacBuildVariant.allCases.map { variant -> Configuration in
             if group.variants.contains(where: { $0 == variant }) {
                 return variant.macAppConfiguration()
             }
+            // Aggregate workspace builds may plan every app target under one
+            // configuration. Give inactive variants distinct product identities
+            // while keeping them in BUILT_PRODUCTS_DIR, where their module and
+            // Swift-package resource dependencies are produced. Active variants
+            // still emit ClipKitty.app; ClipKittyTests explicitly hosts against
+            // that development product below.
+            let inactiveSettings: SettingsDictionary = [
+                "PRODUCT_NAME": .string("\(group.name)-Inactive"),
+            ]
             switch variant {
             case .debug:
-                return .debug(name: variant.configurationName, settings: [:])
+                return .debug(name: variant.configurationName, settings: inactiveSettings)
             case .release, .sparkle, .appStore, .hardened:
-                return .release(name: variant.configurationName, settings: [:])
+                return .release(name: variant.configurationName, settings: inactiveSettings)
             }
         }
 
@@ -617,6 +624,7 @@ func makeMacAppTargets() -> [Target] {
             name: group.name,
             destinations: .macOS,
             product: .app,
+            productName: group.name,
             bundleId: "com.eviljuliette.clipkitty",
             deploymentTargets: .macOS("14.0"),
             infoPlist: .extendingDefault(with: infoPlist),
@@ -635,10 +643,61 @@ func makeMacAppTargets() -> [Target] {
 
 let configurations: [Configuration] = MacBuildVariant.allCases.map { $0.projectConfiguration() }
 
+// MARK: - Feature Module Source Ownership
+
+/// Keep these lists explicit: every cross-platform source has one compile-time
+/// owner, making accidental target overlap visible during review.
+private let coreSources: SourceFilesList = [
+    "Sources/Shared/DatabasePath.swift",
+    "Sources/Shared/ErrorHandling.swift",
+    "Sources/Shared/FontPreferences.swift",
+    "Sources/Shared/NotificationTypes.swift",
+    "Sources/Shared/PendingShareQueue.swift",
+    "Sources/Shared/StorageBar.swift",
+    "Sources/Shared/StorageLimitScale.swift",
+    "Sources/Shared/Utilities.swift",
+]
+
+private let storeSources: SourceFilesList = [
+    "Sources/Shared/ClipboardRepository.swift",
+    "Sources/Shared/StoreSession.swift",
+]
+
+private let browserSources: SourceFilesList = [
+    "Sources/Shared/BrowserFilterCatalog.swift",
+    "Sources/Shared/BrowserSession.swift",
+    "Sources/Shared/BrowserStoreClient.swift",
+    "Sources/Shared/BrowserViewModel.swift",
+    "Sources/Shared/HighlightHelpers.swift",
+]
+
+private let contentServiceSources: SourceFilesList = [
+    "Sources/AppleServices/ImageDescriptionGenerator.swift",
+    "Sources/AppleServices/ImageDescriptionUpdater.swift",
+    "Sources/AppleServices/ImageIngestService.swift",
+    "Sources/AppleServices/LinkMetadataFetcher.swift",
+    "Sources/AppleServices/LinkPreviewSupport.swift",
+    "Sources/AppleServices/PreviewLoader.swift",
+    "Sources/Shared/LinkMetadataPayload+Extraction.swift",
+]
+
+private let cloudSyncSources: SourceFilesList = [
+    "Sources/AppleServices/SyncEngine.swift",
+]
+
 // MARK: - Project
 
 let project = Project(
     name: "ClipKitty",
+    // KeyboardShortcuts uses Swift 6 package features that Tuist 4's generated-
+    // project integration does not preserve. Native SwiftPM keeps the package's
+    // actor-isolation and deployment settings intact.
+    packages: [
+        .remote(
+            url: "https://github.com/sindresorhus/KeyboardShortcuts.git",
+            requirement: .exact("3.0.1")
+        ),
+    ],
     settings: .settings(
         base: [
             "MARKETING_VERSION": "1.13.0",
@@ -692,44 +751,103 @@ let project = Project(
             )
         ),
 
-        // MARK: ClipKittyShared — Cross-platform Swift library (no AppKit)
+        // MARK: ClipKittyCore — Cross-platform support and value types
 
         .target(
-            name: "ClipKittyShared",
+            name: "ClipKittyCore",
             destinations: [.mac, .iPhone],
             product: .staticLibrary,
-            bundleId: "com.eviljuliette.clipkitty.shared",
+            bundleId: "com.eviljuliette.clipkitty.core",
             deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
-            sources: ["Sources/Shared/**"],
-            dependencies: [
-                .target(name: "ClipKittyRust"),
-            ],
+            sources: coreSources,
             settings: .settings(
                 base: [
                     "SKIP_INSTALL": "YES",
-                ],
-                configurations: MacBuildVariant.allCases.map { $0.sharedConfiguration() }
+                ]
             )
         ),
 
-        // MARK: ClipKittyAppleServices — Cross-Apple services (no AppKit)
+        // MARK: ClipKittyStore — Persistence and semantic ingestion boundary
 
         .target(
-            name: "ClipKittyAppleServices",
+            name: "ClipKittyStore",
             destinations: [.mac, .iPhone],
             product: .staticLibrary,
-            bundleId: "com.eviljuliette.clipkitty.appleservices",
+            bundleId: "com.eviljuliette.clipkitty.store",
             deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
-            sources: ["Sources/AppleServices/**"],
+            sources: storeSources,
             dependencies: [
                 .target(name: "ClipKittyRust"),
-                .target(name: "ClipKittyShared"),
+                .target(name: "ClipKittyCore"),
+            ],
+            settings: .settings(
+                base: [
+                    "SKIP_INSTALL": "YES",
+                ]
+            )
+        ),
+
+        // MARK: ClipKittyBrowser — Browser state, workflows, and store client
+
+        .target(
+            name: "ClipKittyBrowser",
+            destinations: [.mac, .iPhone],
+            product: .staticLibrary,
+            bundleId: "com.eviljuliette.clipkitty.browser",
+            deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
+            sources: browserSources,
+            dependencies: [
+                .target(name: "ClipKittyRust"),
+                .target(name: "ClipKittyCore"),
+                .target(name: "ClipKittyStore"),
             ],
             settings: .settings(
                 base: [
                     "SKIP_INSTALL": "YES",
                 ],
-                configurations: MacBuildVariant.allCases.map { $0.appleServicesConfiguration() }
+                configurations: MacBuildVariant.allCases.map { $0.contentConfiguration() }
+            )
+        ),
+
+        // MARK: ClipKittyContentServices — Image and link content services
+
+        .target(
+            name: "ClipKittyContentServices",
+            destinations: [.mac, .iPhone],
+            product: .staticLibrary,
+            bundleId: "com.eviljuliette.clipkitty.content-services",
+            deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
+            sources: contentServiceSources,
+            dependencies: [
+                .target(name: "ClipKittyRust"),
+                .target(name: "ClipKittyCore"),
+                .target(name: "ClipKittyStore"),
+            ],
+            settings: .settings(
+                base: [
+                    "SKIP_INSTALL": "YES",
+                ],
+                configurations: MacBuildVariant.allCases.map { $0.contentConfiguration() }
+            )
+        ),
+
+        // MARK: ClipKittyCloudSync — CloudKit transport and sync coordinator
+
+        .target(
+            name: "ClipKittyCloudSync",
+            destinations: [.mac, .iPhone],
+            product: .staticLibrary,
+            bundleId: "com.eviljuliette.clipkitty.cloud-sync",
+            deploymentTargets: .multiplatform(iOS: "26.0", macOS: "14.0"),
+            sources: cloudSyncSources,
+            dependencies: [
+                .target(name: "ClipKittyRust"),
+            ],
+            settings: .settings(
+                base: [
+                    "SKIP_INSTALL": "YES",
+                ],
+                configurations: MacBuildVariant.allCases.map { $0.cloudSyncConfiguration() }
             )
         ),
 
@@ -743,7 +861,7 @@ let project = Project(
             deploymentTargets: .macOS("14.0"),
             sources: ["Sources/MacPlatform/**"],
             dependencies: [
-                .target(name: "ClipKittyShared"),
+                .target(name: "ClipKittyCore"),
             ],
             settings: .settings(
                 base: [
@@ -764,8 +882,9 @@ let project = Project(
             sources: ["Sources/Shortcuts/**"],
             dependencies: [
                 .target(name: "ClipKittyRust"),
-                .target(name: "ClipKittyShared"),
-                .target(name: "ClipKittyAppleServices"),
+                .target(name: "ClipKittyCore"),
+                .target(name: "ClipKittyStore"),
+                .target(name: "ClipKittyContentServices"),
             ],
             settings: .settings(
                 base: [
@@ -794,17 +913,29 @@ let project = Project(
             product: .unitTests,
             bundleId: "com.eviljuliette.clipkitty.tests",
             deploymentTargets: .macOS("14.0"),
-            sources: ["Tests/UnitTests/**"],
+            sources: [
+                "Tests/UnitTests/**",
+                "Tests/TestSupport/**",
+                "Tests/ShortcutContractTests/**",
+            ],
             dependencies: [
                 .target(name: "ClipKitty"),
                 .target(name: "ClipKittyRust"),
-                .target(name: "ClipKittyShared"),
-                .target(name: "ClipKittyAppleServices"),
+                .target(name: "ClipKittyCore"),
+                .target(name: "ClipKittyStore"),
+                .target(name: "ClipKittyBrowser"),
+                .target(name: "ClipKittyContentServices"),
+                .target(name: "ClipKittyCloudSync"),
                 .target(name: "ClipKittyMacPlatform"),
                 .target(name: "ClipKittyShortcuts"),
+                .package(product: "KeyboardShortcuts"),
             ],
             settings: .settings(
                 base: [
+                    // Tuist cannot infer a configuration-independent host when
+                    // the app target uses unique names for inactive variants.
+                    "TEST_HOST": "$(BUILT_PRODUCTS_DIR)/ClipKitty.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ClipKitty",
+                    "BUNDLE_LOADER": "$(TEST_HOST)",
                     "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr"]),
                     "LIBRARY_SEARCH_PATHS": .array(["$(inherited)", "$(PROJECT_DIR)/Sources/ClipKittyRust"]),
                 ]
@@ -876,8 +1007,11 @@ let project = Project(
             ],
             dependencies: [
                 .target(name: "ClipKittyRust"),
-                .target(name: "ClipKittyShared"),
-                .target(name: "ClipKittyAppleServices"),
+                .target(name: "ClipKittyCore"),
+                .target(name: "ClipKittyStore"),
+                .target(name: "ClipKittyBrowser"),
+                .target(name: "ClipKittyContentServices"),
+                .target(name: "ClipKittyCloudSync"),
                 .target(name: "ClipKittyShortcuts"),
                 .target(name: "ClipKittyShare"),
             ],
@@ -926,20 +1060,10 @@ let project = Project(
             ]),
             sources: ["Sources/ShareExtension/**"],
             dependencies: [
-                .target(name: "ClipKittyRust"),
-                .target(name: "ClipKittyShared"),
+                .target(name: "ClipKittyCore"),
             ],
             settings: .settings(
                 base: [
-                    "OTHER_LDFLAGS": .array(["$(inherited)", "-lpurr"]),
-                    "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]": .array([
-                        "$(inherited)",
-                        "$(PROJECT_DIR)/Sources/ClipKittyRust/ios-device",
-                    ]),
-                    "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]": .array([
-                        "$(inherited)",
-                        "$(PROJECT_DIR)/Sources/ClipKittyRust/ios-simulator",
-                    ]),
                     "DEVELOPMENT_TEAM": "ANBBV7LQ2P",
                 ],
                 configurations: IOSBuildVariant.allCases.map { $0.shareExtensionConfiguration() }
@@ -954,12 +1078,19 @@ let project = Project(
             product: .unitTests,
             bundleId: "com.eviljuliette.clipkitty.tests.ios",
             deploymentTargets: .iOS("26.0"),
-            sources: ["Tests/iOSTests/**"],
+            sources: [
+                "Tests/iOSTests/**",
+                "Tests/TestSupport/**",
+                "Tests/ShortcutContractTests/**",
+            ],
             dependencies: [
                 .target(name: "ClipKittyiOS"),
                 .target(name: "ClipKittyRust"),
-                .target(name: "ClipKittyShared"),
-                .target(name: "ClipKittyAppleServices"),
+                .target(name: "ClipKittyCore"),
+                .target(name: "ClipKittyStore"),
+                .target(name: "ClipKittyBrowser"),
+                .target(name: "ClipKittyContentServices"),
+                .target(name: "ClipKittyCloudSync"),
                 .target(name: "ClipKittyShortcuts"),
             ],
             settings: .settings(
@@ -991,8 +1122,11 @@ let project = Project(
             sources: ["Sources/iOSSmokeTest/**"],
             dependencies: [
                 .target(name: "ClipKittyRust"),
-                .target(name: "ClipKittyShared"),
-                .target(name: "ClipKittyAppleServices"),
+                .target(name: "ClipKittyCore"),
+                .target(name: "ClipKittyStore"),
+                .target(name: "ClipKittyBrowser"),
+                .target(name: "ClipKittyContentServices"),
+                .target(name: "ClipKittyCloudSync"),
                 .target(name: "ClipKittyShortcuts"),
             ],
             settings: .settings(

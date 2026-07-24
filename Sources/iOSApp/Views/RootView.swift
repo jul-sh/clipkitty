@@ -1,8 +1,8 @@
-import ClipKittyShared
+import ClipKittyCore
 import SwiftUI
 
 #if ENABLE_ICLOUD_SYNC
-    import ClipKittyAppleServices
+    import ClipKittyCloudSync
 #endif
 
 struct RootView: View {
