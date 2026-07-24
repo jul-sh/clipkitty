@@ -19,10 +19,6 @@ debug = false
 # (e.g. a malicious snapshot seeding a counter near u64::MAX) surfaces in testing.
 overflow-checks = true
 
-[profile.release.package."*"]
-opt-level = 3
-codegen-units = 1
-
 [profile.bench]
 opt-level = 3
 lto = "thin"

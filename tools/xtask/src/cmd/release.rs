@@ -27,17 +27,17 @@ use crate::cli::{
 use crate::cmd::build;
 use crate::cmd::secrets;
 use crate::cmd::sign;
-use crate::model::{AscAuthField, MacVariant, SetupAction, SideEffectLevel};
+use crate::filesystem::{copy_directory, remove_if_exists};
+use crate::model::{AscAuthField, MacVariant, SetupAction};
 use crate::output::Reporter;
-use crate::process::Runner;
+use crate::process::{command_exists, Runner};
 use crate::repo::RepoRoot;
-use crate::version;
+use crate::version::{self, ResolvedVersion};
 
 const ASC_BUILD_PROCESSING_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const ASC_BUILD_PROCESSING_POLL_INTERVAL: Duration = Duration::from_secs(15);
 
 pub fn run(cmd: &ReleaseCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
-    let _ = SideEffectLevel::Credentialed;
     let repo = RepoRoot::discover(reporter)?;
     match cmd {
         ReleaseCmd::MacosAppstore(args) => macos_appstore(&repo, args, dry_run, reporter),
@@ -78,9 +78,11 @@ fn macos_appstore(
     sign::sign_app(
         repo,
         &sign::SignAppRequest {
-            variant: MacVariant::AppStore,
-            version: Some(args.version.clone()),
-            build_number: Some(args.build_number.clone()),
+            target: sign::SignableMacVariant::AppStore,
+            build_version: ResolvedVersion {
+                version: args.version.clone(),
+                build_number: args.build_number.clone(),
+            },
         },
         false,
         reporter,
@@ -106,7 +108,7 @@ fn macos_appstore(
         .arg(pkg.as_std_path())
         .run()?;
 
-    publish(repo, "macos", &args.version, &[], reporter)
+    publish(repo, ReleaseTarget::MacOs, &args.version, &[], reporter)
 }
 
 struct AppStoreSigningSession<'a> {
@@ -212,36 +214,43 @@ fn ios_appstore(
     build::archive_ios(
         repo,
         &build::ArchiveIosRequest {
-            version: args.version.clone(),
-            build_number: args.build_number.clone(),
+            build_version: ResolvedVersion {
+                version: args.version.clone(),
+                build_number: args.build_number.clone(),
+            },
             archive_path: None,
         },
         false,
         reporter,
     )?;
 
-    publish(repo, "ios", &args.version, &[IPAD_PLATFORM], reporter)
+    publish(
+        repo,
+        ReleaseTarget::Ios,
+        &args.version,
+        &[IPAD_SCREENSHOTS],
+        reporter,
+    )
 }
 
 fn publish(
     repo: &RepoRoot,
-    platform: &str,
+    target: ReleaseTarget,
     version: &str,
-    extra_screenshot_platforms: &[PublishPlatform],
+    extra_screenshot_targets: &[ScreenshotTarget],
     reporter: &Reporter,
 ) -> Result<()> {
-    let platform = publish_platform(platform)?;
-    if !tool_exists(reporter, "asc")? {
+    if !command_exists("asc") {
         return Err(anyhow!(
             "asc CLI not found. Enter the Nix dev shell (nix develop) or install .#asc"
         ));
     }
 
-    let artifact = repo.join(platform.pkg_name);
+    let artifact = repo.join(target.artifact_file_name());
     if !artifact.as_std_path().is_file() {
         return Err(anyhow!(
             "{artifact} not found. Build the {} release artifact first.",
-            platform.label
+            target.label()
         ));
     }
 
@@ -294,11 +303,11 @@ fn publish(
 
     // Bail out early before any heavy work (binary upload) if a prior version
     // is locked in review. We'll surface this as a friendly skip below.
-    match check_no_blocking_version(repo, platform, version, &asc_env, reporter) {
+    match check_no_blocking_version(repo, target, version, &asc_env, reporter) {
         Ok(()) => {}
         Err(err) => {
             if let Some(locked) = err.downcast_ref::<VersionLockedError>() {
-                reporter.info(&format!("Skipping {} publish: {locked}", platform.label));
+                reporter.info(&format!("Skipping {} publish: {locked}", target.label()));
                 if !altool_key_existed {
                     let _ = fs::remove_file(altool_key_path.as_std_path());
                 }
@@ -312,35 +321,38 @@ fn publish(
     // missing required per-locale text. ASC will otherwise refuse to "Add for
     // Review" with errors like "Czech - What's New in This Version - This
     // field is required" — long after we've uploaded the binary.
-    validate_metadata_locales(repo, platform)?;
+    validate_metadata_locales(repo, target)?;
 
     let publish_result = (|| -> Result<()> {
         reporter.info("\n=== Uploading binary ===");
         upload_binary(
             repo,
-            platform,
+            target,
             &asc_key_id,
             &asc_issuer_id,
             &altool_key_path,
             reporter,
         )?;
         reporter.info("\n=== Uploading metadata ===");
-        let version_id = ensure_editable_version(repo, platform, version, &asc_env, reporter)?;
-        attach_latest_valid_build(repo, platform, version, &version_id, &asc_env, reporter)?;
-        import_metadata(repo, platform, &version_id, &asc_env, reporter)?;
+        let version_id = ensure_editable_version(repo, target, version, &asc_env, reporter)?;
+        attach_latest_valid_build(repo, target, version, &version_id, &asc_env, reporter)?;
+        import_metadata(repo, target, &version_id, &asc_env, reporter)?;
         reporter.info(&format!(
             "\n=== Uploading {} screenshots ===",
-            platform.label
+            target.screenshots().label
         ));
-        upload_screenshots(repo, platform, &version_id, &asc_env, reporter)?;
-        if !platform.preview_device_types.is_empty() {
-            reporter.info(&format!(
-                "\n=== Uploading {} app preview videos ===",
-                platform.label
-            ));
-            upload_app_previews(repo, platform, &version_id, &asc_env, reporter)?;
+        upload_screenshots(repo, target.screenshots(), &version_id, &asc_env, reporter)?;
+        match target {
+            ReleaseTarget::MacOs => {
+                reporter.info(&format!(
+                    "\n=== Uploading {} app preview videos ===",
+                    MAC_APP_PREVIEWS.label
+                ));
+                upload_app_previews(repo, MAC_APP_PREVIEWS, &version_id, &asc_env, reporter)?;
+            }
+            ReleaseTarget::Ios => {}
         }
-        for extra in extra_screenshot_platforms {
+        for extra in extra_screenshot_targets {
             reporter.info(&format!("\n=== Uploading {} screenshots ===", extra.label));
             upload_screenshots(repo, *extra, &version_id, &asc_env, reporter)?;
         }
@@ -361,71 +373,95 @@ fn publish(
 const RELEASE_TYPE: &str = "AFTER_APPROVAL";
 
 #[derive(Debug, Clone, Copy)]
-struct PublishPlatform {
-    label: &'static str,
-    app_id: &'static str,
-    altool_type: &'static str,
-    asc_platform: &'static str,
-    pkg_name: &'static str,
-    metadata_dir_name: &'static str,
-    marketing_dir_name: &'static str,
-    screenshot_device_types: &'static [&'static str],
-    preview_device_types: &'static [&'static str],
-    /// Which files each locale's marketing dir must contain, in upload
-    /// order; must match the platform's capture specs in marketing.rs.
-    expected_screenshot_files: &'static [&'static str],
+enum ReleaseTarget {
+    MacOs,
+    Ios,
 }
 
-impl PublishPlatform {
-    /// Whether the upload artifact is an `.ipa` (iOS) rather than a `.pkg`
-    /// (macOS). Drives the altool upload mode (`--upload-app` vs
-    /// `--upload-package`).
-    fn uses_ipa(&self) -> bool {
-        self.pkg_name.ends_with(".ipa")
+impl ReleaseTarget {
+    fn label(self) -> &'static str {
+        match self {
+            Self::MacOs => "macOS",
+            Self::Ios => "iOS",
+        }
+    }
+
+    fn app_id(self) -> &'static str {
+        match self {
+            Self::MacOs | Self::Ios => "6759137247",
+        }
+    }
+
+    fn asc_platform(self) -> &'static str {
+        match self {
+            Self::MacOs => "MAC_OS",
+            Self::Ios => "IOS",
+        }
+    }
+
+    fn artifact_file_name(self) -> &'static str {
+        match self {
+            Self::MacOs => "ClipKitty.pkg",
+            Self::Ios => "ClipKittyiOS.ipa",
+        }
+    }
+
+    fn metadata_dir_name(self) -> &'static str {
+        match self {
+            Self::MacOs | Self::Ios => "metadata",
+        }
+    }
+
+    fn screenshots(self) -> ScreenshotTarget {
+        match self {
+            Self::MacOs => MAC_SCREENSHOTS,
+            Self::Ios => IOS_SCREENSHOTS,
+        }
     }
 }
 
-const MACOS_PLATFORM: PublishPlatform = PublishPlatform {
+#[derive(Debug, Clone, Copy)]
+struct ScreenshotTarget {
+    label: &'static str,
+    marketing_dir_name: &'static str,
+    device_types: &'static [&'static str],
+    /// Which files each locale's marketing dir must contain, in upload
+    /// order; must match the platform's capture specs in marketing.rs.
+    expected_files: &'static [&'static str],
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AppPreviewTarget {
+    label: &'static str,
+    marketing_dir_name: &'static str,
+    device_types: &'static [&'static str],
+}
+
+const MAC_SCREENSHOTS: ScreenshotTarget = ScreenshotTarget {
     label: "macOS",
-    app_id: "6759137247",
-    altool_type: "osx",
-    asc_platform: "MAC_OS",
-    pkg_name: "ClipKitty.pkg",
-    metadata_dir_name: "metadata",
     marketing_dir_name: "marketing",
-    screenshot_device_types: &["APP_DESKTOP"],
-    preview_device_types: &["DESKTOP"],
-    expected_screenshot_files: MAC_SCREENSHOT_FILES,
+    device_types: &["APP_DESKTOP"],
+    expected_files: MAC_SCREENSHOT_FILES,
 };
 
-const IOS_PLATFORM: PublishPlatform = PublishPlatform {
+const IOS_SCREENSHOTS: ScreenshotTarget = ScreenshotTarget {
     label: "iOS",
-    app_id: "6759137247",
-    altool_type: "ios",
-    asc_platform: "IOS",
-    pkg_name: "ClipKittyiOS.ipa",
-    metadata_dir_name: "metadata",
     marketing_dir_name: "marketing-ios",
-    screenshot_device_types: &["IPHONE_61"],
-    preview_device_types: &[],
-    expected_screenshot_files: IOS_SCREENSHOT_FILES,
+    device_types: &["IPHONE_61"],
+    expected_files: IOS_SCREENSHOT_FILES,
 };
 
-/// Shares `IOS_PLATFORM`'s app_id, IPA, and ASC version row. Only the
-/// screenshot tree and device-type enum differ, so this is never used
-/// for binary or metadata upload; it's passed as an extra screenshot
-/// platform to `publish`.
-const IPAD_PLATFORM: PublishPlatform = PublishPlatform {
+const IPAD_SCREENSHOTS: ScreenshotTarget = ScreenshotTarget {
     label: "iPad",
-    app_id: "6759137247",
-    altool_type: "ios",
-    asc_platform: "IOS",
-    pkg_name: "ClipKittyiOS.ipa",
-    metadata_dir_name: "metadata",
     marketing_dir_name: "marketing-ipad",
-    screenshot_device_types: &["IPAD_PRO_3GEN_129"],
-    preview_device_types: &[],
-    expected_screenshot_files: IOS_SCREENSHOT_FILES,
+    device_types: &["IPAD_PRO_3GEN_129"],
+    expected_files: IOS_SCREENSHOT_FILES,
+};
+
+const MAC_APP_PREVIEWS: AppPreviewTarget = AppPreviewTarget {
+    label: "macOS",
+    marketing_dir_name: "marketing",
+    device_types: &["DESKTOP"],
 };
 
 const LOCALE_MAP: &[(&str, &str)] = &[
@@ -441,8 +477,7 @@ const LOCALE_MAP: &[(&str, &str)] = &[
     ("zh-Hant", "zh-Hant"),
 ];
 
-const MAC_SCREENSHOT_FILES: &[&str] =
-    &["screenshot_1.png", "screenshot_2.png", "screenshot_3.png"];
+const MAC_SCREENSHOT_FILES: &[&str] = &["screenshot_1.png", "screenshot_2.png", "screenshot_3.png"];
 
 /// The iOS/iPad capture adds the share-sheet shot.
 const IOS_SCREENSHOT_FILES: &[&str] = &[
@@ -452,40 +487,35 @@ const IOS_SCREENSHOT_FILES: &[&str] = &[
     "screenshot_4.png",
 ];
 
-fn publish_platform(name: &str) -> Result<PublishPlatform> {
-    match name {
-        "macos" => Ok(MACOS_PLATFORM),
-        "ios" => Ok(IOS_PLATFORM),
-        _ => Err(anyhow!("unknown publish platform `{name}`")),
-    }
-}
-
 fn upload_binary(
     repo: &RepoRoot,
-    platform: PublishPlatform,
+    target: ReleaseTarget,
     asc_key_id: &str,
     asc_issuer_id: &str,
     asc_private_key_path: &Utf8Path,
     reporter: &Reporter,
 ) -> Result<()> {
-    if platform.uses_ipa() {
-        upload_ios_archive_with_xcodebuild(
-            repo,
-            asc_key_id,
-            asc_issuer_id,
-            asc_private_key_path,
-            reporter,
-        )?;
-        reporter.info("Binary uploaded.");
-        return Ok(());
+    match target {
+        ReleaseTarget::Ios => {
+            upload_ios_archive_with_xcodebuild(
+                repo,
+                asc_key_id,
+                asc_issuer_id,
+                asc_private_key_path,
+                reporter,
+            )?;
+            reporter.info("Binary uploaded.");
+            return Ok(());
+        }
+        ReleaseTarget::MacOs => {}
     }
 
-    let artifact = repo.join(platform.pkg_name);
+    let artifact = repo.join(target.artifact_file_name());
     let output = Runner::new(reporter, "xcrun")
         .args(["altool", "--upload-package"])
         .arg(artifact.as_std_path())
         .arg("--type")
-        .arg(platform.altool_type)
+        .arg("osx")
         .arg("--apiKey")
         .arg(asc_key_id)
         .arg("--apiIssuer")
@@ -494,7 +524,6 @@ fn upload_binary(
         // inspects for the executable, so a 90207 surfaces a concrete reason
         // instead of the opaque "does not contain a bundle executable".
         .arg("--verbose")
-        .capture_stdout()
         .capture_stderr()
         .output_status()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -624,7 +653,7 @@ enum BlockerClass {
 /// turns into a friendly skip.
 fn check_no_blocking_version(
     repo: &RepoRoot,
-    platform: PublishPlatform,
+    platform: ReleaseTarget,
     requested_version: &str,
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
@@ -635,9 +664,9 @@ fn check_no_blocking_version(
             "versions",
             "list",
             "--app",
-            platform.app_id,
+            platform.app_id(),
             "--platform",
-            platform.asc_platform,
+            platform.asc_platform(),
             "--limit",
             "5",
         ],
@@ -661,7 +690,7 @@ fn check_no_blocking_version(
             BlockerClass::Rejected => {
                 reporter.info(&format!(
                     "Found {} version {version} in state {} (rejected); clearing it to publish {requested_version}...",
-                    platform.label,
+                    platform.label(),
                     state.unwrap_or("?"),
                 ));
                 recover_rejected_version(repo, platform, asc_env, reporter)?;
@@ -673,7 +702,7 @@ fn check_no_blocking_version(
                 return Err(VersionLockedError {
                     version: version.to_string(),
                     state: state.unwrap_or("?").to_string(),
-                    platform_label: platform.label,
+                    platform_label: platform.label(),
                     requested_version: requested_version.to_string(),
                 }
                 .into());
@@ -692,7 +721,7 @@ fn check_no_blocking_version(
 /// that isn't already in a terminal state.
 fn recover_rejected_version(
     repo: &RepoRoot,
-    platform: PublishPlatform,
+    platform: ReleaseTarget,
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
 ) -> Result<()> {
@@ -702,9 +731,9 @@ fn recover_rejected_version(
             "review",
             "submissions-list",
             "--app",
-            platform.app_id,
+            platform.app_id(),
             "--platform",
-            platform.asc_platform,
+            platform.asc_platform(),
         ],
         asc_env,
         reporter,
@@ -730,7 +759,7 @@ fn recover_rejected_version(
             .ok_or_else(|| anyhow!("review submission entry missing id"))?;
         reporter.info(&format!(
             "Canceling {} review submission {id} (state {state})...",
-            platform.label
+            platform.label()
         ));
         asc_command(
             repo,
@@ -745,7 +774,7 @@ fn recover_rejected_version(
     if !canceled_any {
         reporter.info(&format!(
             "No open {} review submission to cancel; version should already be editable.",
-            platform.label
+            platform.label()
         ));
         return Ok(());
     }
@@ -762,9 +791,9 @@ fn recover_rejected_version(
                 "versions",
                 "list",
                 "--app",
-                platform.app_id,
+                platform.app_id(),
                 "--platform",
-                platform.asc_platform,
+                platform.asc_platform(),
                 "--limit",
                 "5",
             ],
@@ -783,7 +812,7 @@ fn recover_rejected_version(
         if !still_blocked {
             reporter.info(&format!(
                 "{} version is editable again after cancellation.",
-                platform.label
+                platform.label()
             ));
             return Ok(());
         }
@@ -791,7 +820,7 @@ fn recover_rejected_version(
             return Err(anyhow!(
                 "{} version still blocked 180s after canceling its review submission; \
                  ASC may need longer to process the cancellation. Re-run the publish.",
-                platform.label
+                platform.label()
             ));
         }
         thread::sleep(Duration::from_secs(10));
@@ -823,15 +852,12 @@ impl std::error::Error for VersionLockedError {}
 /// Required per-locale fields for an App Store version. ASC blocks "Add for
 /// Review" with an error like "<Locale> - <Field> - This field is required"
 /// if any of these is missing for any locale present in the App Info.
-const REQUIRED_LOCALE_FILES: &[&str] =
-    &["description.txt", "release_notes.txt", "subtitle.txt"];
+const REQUIRED_LOCALE_FILES: &[&str] = &["description.txt", "release_notes.txt", "subtitle.txt"];
 
-fn validate_metadata_locales(repo: &RepoRoot, platform: PublishPlatform) -> Result<()> {
-    let metadata_dir = repo.join(format!("distribution/{}", platform.metadata_dir_name));
+fn validate_metadata_locales(repo: &RepoRoot, platform: ReleaseTarget) -> Result<()> {
+    let metadata_dir = repo.join(format!("distribution/{}", platform.metadata_dir_name()));
     if !metadata_dir.as_std_path().is_dir() {
-        return Err(anyhow!(
-            "metadata directory missing: {metadata_dir}"
-        ));
+        return Err(anyhow!("metadata directory missing: {metadata_dir}"));
     }
     let mut missing: Vec<String> = Vec::new();
     for entry in fs::read_dir(metadata_dir.as_std_path())
@@ -859,7 +885,7 @@ fn validate_metadata_locales(repo: &RepoRoot, platform: PublishPlatform) -> Resu
              Add the missing files under distribution/{} before publishing — \
              ASC will refuse to submit the version otherwise.",
             missing.join(", "),
-            platform.metadata_dir_name,
+            platform.metadata_dir_name(),
         ));
     }
     Ok(())
@@ -891,7 +917,7 @@ fn looks_like_locale_dir(name: &str) -> bool {
 /// which silently blocks the release.
 fn attach_latest_valid_build(
     repo: &RepoRoot,
-    platform: PublishPlatform,
+    platform: ReleaseTarget,
     version: &str,
     version_id: &str,
     asc_env: &[(&str, &str)],
@@ -914,9 +940,9 @@ fn attach_latest_valid_build(
                 "builds",
                 "list",
                 "--app",
-                platform.app_id,
+                platform.app_id(),
                 "--platform",
-                platform.asc_platform,
+                platform.asc_platform(),
                 "--version",
                 version,
                 "--limit",
@@ -932,7 +958,7 @@ fn attach_latest_valid_build(
                 b.get("attributes")
                     .and_then(|a| a.get("platform"))
                     .and_then(Value::as_str)
-                    .is_none_or(|p| p.eq_ignore_ascii_case(platform.asc_platform))
+                    .is_none_or(|p| p.eq_ignore_ascii_case(platform.asc_platform()))
             })
             .collect();
         candidates.sort_by(|a, b| {
@@ -970,14 +996,14 @@ fn attach_latest_valid_build(
         if Instant::now() >= deadline {
             return Err(anyhow!(
                 "no VALID {} build found within {} minutes (latest seen: {})",
-                platform.label,
+                platform.label(),
                 ASC_BUILD_PROCESSING_TIMEOUT.as_secs() / 60,
                 last_seen_state.as_deref().unwrap_or("not listed yet")
             ));
         }
         reporter.info(&format!(
             "Waiting for {} build to finish processing (last seen: {})...",
-            platform.label,
+            platform.label(),
             last_seen_state.as_deref().unwrap_or("not listed yet")
         ));
         thread::sleep(ASC_BUILD_PROCESSING_POLL_INTERVAL);
@@ -985,7 +1011,7 @@ fn attach_latest_valid_build(
 
     reporter.info(&format!(
         "Attaching latest VALID {} build {build_id} to version {version_id}...",
-        platform.label
+        platform.label()
     ));
     asc_command(
         repo,
@@ -1017,7 +1043,7 @@ struct ReusableVersion {
 /// per app+platform, so we return the first match.
 fn find_reusable_rejected_version(
     repo: &RepoRoot,
-    platform: PublishPlatform,
+    platform: ReleaseTarget,
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
 ) -> Result<Option<ReusableVersion>> {
@@ -1027,9 +1053,9 @@ fn find_reusable_rejected_version(
             "versions",
             "list",
             "--app",
-            platform.app_id,
+            platform.app_id(),
             "--platform",
-            platform.asc_platform,
+            platform.asc_platform(),
             "--limit",
             "5",
         ],
@@ -1062,7 +1088,7 @@ fn find_reusable_rejected_version(
 
 fn ensure_editable_version(
     repo: &RepoRoot,
-    platform: PublishPlatform,
+    platform: ReleaseTarget,
     version: &str,
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
@@ -1079,9 +1105,9 @@ fn ensure_editable_version(
             "versions",
             "list",
             "--app",
-            platform.app_id,
+            platform.app_id(),
             "--platform",
-            platform.asc_platform,
+            platform.asc_platform(),
             "--state",
             "PREPARE_FOR_SUBMISSION",
         ],
@@ -1152,9 +1178,9 @@ fn ensure_editable_version(
             "versions",
             "create",
             "--app",
-            platform.app_id,
+            platform.app_id(),
             "--platform",
-            platform.asc_platform,
+            platform.asc_platform(),
             "--version",
             version,
             "--release-type",
@@ -1211,25 +1237,25 @@ fn update_app_store_version(
 
 fn import_metadata(
     repo: &RepoRoot,
-    platform: PublishPlatform,
+    platform: ReleaseTarget,
     version_id: &str,
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
 ) -> Result<()> {
-    let metadata_dir = repo.join(format!("distribution/{}", platform.metadata_dir_name));
+    let metadata_dir = repo.join(format!("distribution/{}", platform.metadata_dir_name()));
     let import_dir = tempdir().context("creating temporary metadata import dir")?;
     let import_root = Utf8PathBuf::from_path_buf(import_dir.path().to_path_buf())
         .map_err(|p| anyhow!("non-UTF-8 tempdir path: {p:?}"))?;
     let import_metadata = import_root.join("metadata");
     let screenshots_dir = import_root.join("screenshots");
-    copy_dir_recursive(&metadata_dir, &import_metadata)?;
+    copy_directory(&metadata_dir, &import_metadata)?;
     fs::create_dir_all(screenshots_dir.as_std_path())?;
 
     let args = vec![
         "migrate",
         "import",
         "--app",
-        platform.app_id,
+        platform.app_id(),
         "--version-id",
         version_id,
         "--fastlane-dir",
@@ -1274,42 +1300,19 @@ fn is_transient_asc_error(err: &anyhow::Error) -> bool {
 
 fn upload_screenshots(
     repo: &RepoRoot,
-    platform: PublishPlatform,
+    target: ScreenshotTarget,
     version_id: &str,
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
 ) -> Result<()> {
-    let localizations = asc_json(
-        repo,
-        &[
-            "localizations",
-            "list",
-            "--version",
-            version_id,
-            "--paginate",
-        ],
-        asc_env,
-        reporter,
-    )?;
-    let mut locale_to_id = BTreeMap::new();
-    for localization in localizations {
-        if let (Some(id), Some(locale)) = (
-            localization.get("id").and_then(Value::as_str),
-            localization
-                .get("attributes")
-                .and_then(|attrs| attrs.get("locale"))
-                .and_then(Value::as_str),
-        ) {
-            locale_to_id.insert(locale.to_string(), id.to_string());
-        }
-    }
+    let locale_to_id = version_locale_ids(repo, version_id, asc_env, reporter)?;
 
     let mut uploaded_count = 0usize;
-    let marketing_dir = repo.join(platform.marketing_dir_name);
+    let marketing_dir = repo.join(target.marketing_dir_name);
     if !marketing_dir.as_std_path().is_dir() {
         return Err(anyhow!(
             "marketing directory not found: {marketing_dir}; generate or download {} screenshots before publishing",
-            platform.label
+            target.label
         ));
     }
 
@@ -1317,14 +1320,14 @@ fn upload_screenshots(
         let Some(localization_id) = locale_to_id.get(*asc_locale) else {
             return Err(anyhow!(
                 "no ASC localization for {asc_locale}; cannot upload {} screenshots",
-                platform.label
+                target.label
             ));
         };
 
         let locale_dir = marketing_dir.join(source_locale);
-        let pngs = expected_screenshot_paths(&locale_dir, *asc_locale, &platform)?;
+        let pngs = expected_screenshot_paths(&locale_dir, asc_locale, target)?;
 
-        for device_type in platform.screenshot_device_types {
+        for device_type in target.device_types {
             // Up to 3 attempts: ASC's flaky 401s can leave the set with the
             // wrong number of screenshots (partial uploads, duplicates from
             // retried 401-then-success calls). Retry the whole replace+upload
@@ -1337,7 +1340,7 @@ fn upload_screenshots(
                     clear_existing_screenshots_for_device(
                         repo,
                         localization_id,
-                        *asc_locale,
+                        asc_locale,
                         device_type,
                         asc_env,
                         reporter,
@@ -1346,11 +1349,6 @@ fn upload_screenshots(
                         "Replacing with {expected} {device_type} screenshots for {asc_locale} (attempt {attempt})...",
                     ));
                     for (index, png) in pngs.iter().enumerate() {
-                        let upload_mode = if index == 0 {
-                            ScreenshotUploadMode::ReplaceTargetSet
-                        } else {
-                            ScreenshotUploadMode::AppendAfterReplace
-                        };
                         let mut args = vec![
                             "screenshots",
                             "upload",
@@ -1361,9 +1359,8 @@ fn upload_screenshots(
                             "--path",
                             png.as_str(),
                         ];
-                        match upload_mode {
-                            ScreenshotUploadMode::ReplaceTargetSet => args.push("--replace"),
-                            ScreenshotUploadMode::AppendAfterReplace => {}
+                        if index == 0 {
+                            args.push("--replace");
                         }
                         asc_command(repo, &args, asc_env, reporter)?;
                     }
@@ -1396,8 +1393,9 @@ fn upload_screenshots(
                 }
             }
             if !succeeded {
-                return Err(last_error
-                    .unwrap_or_else(|| anyhow!("screenshot upload failed without error")));
+                return Err(
+                    last_error.unwrap_or_else(|| anyhow!("screenshot upload failed without error"))
+                );
             }
             uploaded_count += expected;
         }
@@ -1499,9 +1497,7 @@ fn screenshot_display_type_matches(actual: Option<&str>, expected: &str) -> bool
 }
 
 fn normalize_screenshot_display_type(display_type: &str) -> &str {
-    display_type
-        .strip_prefix("APP_")
-        .unwrap_or(display_type)
+    display_type.strip_prefix("APP_").unwrap_or(display_type)
 }
 
 fn screenshot_state(screenshot: &Value) -> Option<&str> {
@@ -1550,17 +1546,17 @@ fn clear_existing_screenshots_for_device(
 fn expected_screenshot_paths(
     locale_dir: &Utf8Path,
     asc_locale: &str,
-    platform: &PublishPlatform,
+    target: ScreenshotTarget,
 ) -> Result<Vec<Utf8PathBuf>> {
-    let platform_label = platform.label;
+    let platform_label = target.label;
     if !locale_dir.as_std_path().is_dir() {
         return Err(anyhow!(
             "missing {platform_label} screenshot directory for {asc_locale}: {locale_dir}"
         ));
     }
 
-    let mut paths = Vec::with_capacity(platform.expected_screenshot_files.len());
-    for filename in platform.expected_screenshot_files {
+    let mut paths = Vec::with_capacity(target.expected_files.len());
+    for filename in target.expected_files {
         let path = locale_dir.join(filename);
         if !path.as_std_path().is_file() {
             return Err(anyhow!(
@@ -1572,24 +1568,19 @@ fn expected_screenshot_paths(
     Ok(paths)
 }
 
-enum ScreenshotUploadMode {
-    ReplaceTargetSet,
-    AppendAfterReplace,
-}
-
 fn upload_app_previews(
     repo: &RepoRoot,
-    platform: PublishPlatform,
+    target: AppPreviewTarget,
     version_id: &str,
     asc_env: &[(&str, &str)],
     reporter: &Reporter,
 ) -> Result<()> {
     let locale_to_id = version_locale_ids(repo, version_id, asc_env, reporter)?;
-    let marketing_dir = repo.join(platform.marketing_dir_name);
+    let marketing_dir = repo.join(target.marketing_dir_name);
     if !marketing_dir.as_std_path().is_dir() {
         return Err(anyhow!(
             "marketing directory not found: {marketing_dir}; run `make intro-video` before publishing {} app previews",
-            platform.label
+            target.label
         ));
     }
 
@@ -1598,7 +1589,7 @@ fn upload_app_previews(
         let Some(localization_id) = locale_to_id.get(*asc_locale) else {
             return Err(anyhow!(
                 "no ASC localization for {asc_locale}; cannot upload {} app preview video",
-                platform.label
+                target.label
             ));
         };
 
@@ -1609,11 +1600,11 @@ fn upload_app_previews(
             ));
         }
 
-        for preview_type in platform.preview_device_types {
+        for preview_type in target.device_types {
             clear_existing_app_previews_for_device(
                 repo,
                 localization_id,
-                *asc_locale,
+                asc_locale,
                 preview_type,
                 asc_env,
                 reporter,
@@ -2190,7 +2181,7 @@ fn asc_command_output(
     for (key, value) in asc_env {
         runner = runner.env(*key, *value);
     }
-    let output = runner.capture_stdout().capture_stderr().output_status()?;
+    let output = runner.capture_stderr().output_status()?;
     Ok(output)
 }
 
@@ -2211,57 +2202,6 @@ fn parse_asc_data_from_value(value: Value) -> Result<Value> {
     } else {
         Ok(value)
     }
-}
-
-fn tool_exists(reporter: &Reporter, name: &str) -> Result<bool> {
-    let output = Runner::new(reporter, "which")
-        .arg(name)
-        .capture_stdout()
-        .capture_stderr()
-        .output_status()?;
-    Ok(output.status.success())
-}
-
-fn copy_dir_recursive(src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
-    if !src.as_std_path().is_dir() {
-        return Err(anyhow!("source directory not found: {src}"));
-    }
-    fs::create_dir_all(dst.as_std_path()).with_context(|| format!("creating {dst}"))?;
-    for entry in fs::read_dir(src.as_std_path()).with_context(|| format!("reading {src}"))? {
-        let entry = entry?;
-        let path = Utf8PathBuf::from_path_buf(entry.path())
-            .map_err(|p| anyhow!("non-UTF-8 path: {p:?}"))?;
-        let target = dst.join(path.file_name().unwrap());
-        let file_type = entry.file_type()?;
-        if file_type.is_symlink() {
-            // Preserve symlinks verbatim. Framework bundles depend on their
-            // Versions/Current and top-level aliases (Resources, Headers, the
-            // binary) being symlinks; following them here would both break the
-            // bundle layout and trip fs::copy on symlink-to-directory targets.
-            let link_target = fs::read_link(path.as_std_path())
-                .with_context(|| format!("reading symlink {path}"))?;
-            std::os::unix::fs::symlink(&link_target, target.as_std_path())
-                .with_context(|| format!("recreating symlink {target}"))?;
-        } else if file_type.is_dir() {
-            copy_dir_recursive(&path, &target)?;
-        } else {
-            fs::copy(path.as_std_path(), target.as_std_path())
-                .with_context(|| format!("copying {path} to {target}"))?;
-        }
-    }
-    Ok(())
-}
-
-fn remove_if_exists(path: &Utf8Path) -> Result<()> {
-    if !path.as_std_path().exists() {
-        return Ok(());
-    }
-    if path.as_std_path().is_dir() {
-        fs::remove_dir_all(path.as_std_path()).with_context(|| format!("removing {path}"))?;
-    } else {
-        fs::remove_file(path.as_std_path()).with_context(|| format!("removing {path}"))?;
-    }
-    Ok(())
 }
 
 fn dir_size_megabytes(path: &Utf8Path) -> Result<u64> {
@@ -2304,9 +2244,8 @@ fn dmg(repo: &RepoRoot, args: &DmgArgs, dry_run: bool, reporter: &Reporter) -> R
     sign::sign_app(
         repo,
         &sign::SignAppRequest {
-            variant: MacVariant::SparkleRelease,
-            version: Some(resolved.version),
-            build_number: Some(resolved.build_number),
+            target: sign::SignableMacVariant::SparkleRelease,
+            build_version: resolved,
         },
         false,
         reporter,
@@ -2341,7 +2280,7 @@ fn build_dmg(
         .cwd(repo.as_path())
         .run()?;
 
-    copy_dir_recursive(app, &staging_dir.join(app.file_name().unwrap()))?;
+    copy_directory(app, &staging_dir.join(app.file_name().unwrap()))?;
     fs::create_dir_all(background_dir.as_std_path())
         .with_context(|| format!("creating {background_dir}"))?;
     fs::copy(
@@ -2351,7 +2290,7 @@ fn build_dmg(
     .with_context(|| format!("copying background into {background_dir}"))?;
     remove_if_exists(output)?;
 
-    if tool_exists(reporter, "create-dmg")? {
+    if command_exists("create-dmg") {
         reporter.info("Building DMG with create-dmg...");
         Runner::new(reporter, "create-dmg")
             .args(["--volname", "ClipKitty", "--background"])
@@ -2674,7 +2613,7 @@ mod tests {
         app_preview_state, appcast_build_number, collect_ids, is_preview_upload_in_progress_error,
         looks_like_locale_dir, media_ids_with_attribute, render_appcast_xml,
         screenshot_display_type_matches, AppPreviewState, AppcastRelease, AppcastState,
-        IOS_PLATFORM,
+        ReleaseTarget,
     };
     use serde_json::json;
 
@@ -2834,9 +2773,18 @@ mod tests {
     }
 
     #[test]
-    fn ios_screenshots_upload_to_iphone_61_slot() {
-        assert_eq!(IOS_PLATFORM.marketing_dir_name, "marketing-ios");
-        assert_eq!(IOS_PLATFORM.screenshot_device_types, &["IPHONE_61"]);
+    fn release_targets_bind_platform_specific_configuration() {
+        let ios_screenshots = ReleaseTarget::Ios.screenshots();
+        assert_eq!(ReleaseTarget::Ios.asc_platform(), "IOS");
+        assert_eq!(ReleaseTarget::Ios.artifact_file_name(), "ClipKittyiOS.ipa");
+        assert_eq!(ios_screenshots.marketing_dir_name, "marketing-ios");
+        assert_eq!(ios_screenshots.device_types, &["IPHONE_61"]);
+
+        let mac_screenshots = ReleaseTarget::MacOs.screenshots();
+        assert_eq!(ReleaseTarget::MacOs.asc_platform(), "MAC_OS");
+        assert_eq!(ReleaseTarget::MacOs.artifact_file_name(), "ClipKitty.pkg");
+        assert_eq!(mac_screenshots.marketing_dir_name, "marketing");
+        assert_eq!(mac_screenshots.device_types, &["APP_DESKTOP"]);
     }
 
     #[test]

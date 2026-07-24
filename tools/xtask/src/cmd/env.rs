@@ -15,7 +15,6 @@ use tempfile::tempdir;
 
 use crate::cli::{EnvCmd, InstallArgs, InstallTarget, InternalCmd};
 use crate::cmd::check;
-use crate::model::SideEffectLevel;
 use crate::output::Reporter;
 use crate::process::Runner;
 use crate::repo::RepoRoot;
@@ -29,7 +28,6 @@ pub fn run(cmd: &EnvCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
 pub fn run_internal(cmd: &InternalCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
     match cmd {
         InternalCmd::PreCommit(_) => {
-            let _ = SideEffectLevel::LocalMutation;
             let repo = RepoRoot::discover(reporter)?;
             run_pre_commit_command(&repo, dry_run, reporter)
         }
@@ -39,14 +37,10 @@ pub fn run_internal(cmd: &InternalCmd, dry_run: bool, reporter: &Reporter) -> Re
 fn install(args: &InstallArgs, dry_run: bool, reporter: &Reporter) -> Result<()> {
     match args.target {
         InstallTarget::Hooks => {
-            let _ = SideEffectLevel::LocalMutation;
             let repo = RepoRoot::discover(reporter)?;
             install_hooks(&repo, dry_run, reporter)
         }
-        InstallTarget::SparkleCli => {
-            let _ = SideEffectLevel::Networked;
-            install_sparkle_cli(dry_run, reporter)
-        }
+        InstallTarget::SparkleCli => install_sparkle_cli(dry_run, reporter),
     }
 }
 
@@ -188,7 +182,6 @@ pub(crate) fn run_pre_commit_command(
             .arg(path.as_std_path())
             .args(["--config", ".swiftlint.yml"])
             .cwd(repo.as_path())
-            .capture_stdout()
             .capture_stderr()
             .output_status()?;
         let combined = format!(

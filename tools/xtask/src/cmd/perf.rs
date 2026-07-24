@@ -20,7 +20,8 @@ use tempfile::TempDir;
 
 use crate::cli::PerfArgs;
 use crate::cmd::build;
-use crate::model::{MacVariant, SideEffectLevel};
+use crate::filesystem::{copy_directory, remove_if_exists};
+use crate::model::MacVariant;
 use crate::output::Reporter;
 use crate::process::Runner;
 use crate::repo::RepoRoot;
@@ -41,7 +42,6 @@ const DEFAULT_TYPING_DELAY_MS: u64 = 100;
 const DEFAULT_IGNORE_FIRST_SECONDS: f64 = 3.0;
 
 pub fn run(args: &PerfArgs, dry_run: bool, reporter: &Reporter) -> Result<()> {
-    let _ = SideEffectLevel::LocalMutation;
     let repo = RepoRoot::discover(reporter)?;
     run_perf(&repo, args, dry_run, reporter)
 }
@@ -74,8 +74,7 @@ fn run_perf(repo: &RepoRoot, args: &PerfArgs, dry_run: bool, reporter: &Reporter
         repo,
         &build::BuildAppRequest {
             variant: MacVariant::Release,
-            version: None,
-            build_number: None,
+            build_version: None,
         },
         false,
         reporter,
@@ -276,7 +275,9 @@ fn setup_perf_database(repo: &RepoRoot, reporter: &Reporter) -> Result<()> {
             .file_name()
             .is_some_and(|name| name.starts_with("tantivy_index_"))
         {
-            copy_dir_recursive(&path, &app_support.join(path.file_name().unwrap()))?;
+            let destination = app_support.join(path.file_name().unwrap());
+            remove_if_exists(&destination)?;
+            copy_directory(&path, &destination)?;
         }
     }
 
@@ -347,7 +348,6 @@ end tell
     let output = Runner::new(reporter, "osascript")
         .arg("-")
         .stdin_bytes(script)
-        .capture_stdout()
         .capture_stderr()
         .output_status()?;
     if !output.status.success() {
@@ -374,39 +374,6 @@ fn millis_to_seconds(value_ms: u64) -> String {
 
 fn locked_cargo() -> bool {
     env::var("LOCKED").is_ok_and(|value| value == "1")
-}
-
-fn remove_if_exists(path: &Utf8Path) -> Result<()> {
-    if !path.as_std_path().exists() {
-        return Ok(());
-    }
-    if path.as_std_path().is_dir() {
-        fs::remove_dir_all(path.as_std_path()).with_context(|| format!("removing {path}"))?;
-    } else {
-        fs::remove_file(path.as_std_path()).with_context(|| format!("removing {path}"))?;
-    }
-    Ok(())
-}
-
-fn copy_dir_recursive(src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
-    if dst.as_std_path().exists() {
-        fs::remove_dir_all(dst.as_std_path()).with_context(|| format!("removing {dst}"))?;
-    }
-    fs::create_dir_all(dst.as_std_path()).with_context(|| format!("creating {dst}"))?;
-    for entry in fs::read_dir(src.as_std_path()).with_context(|| format!("reading {src}"))? {
-        let entry = entry?;
-        let child = Utf8PathBuf::from_path_buf(entry.path())
-            .map_err(|p| anyhow!("non-UTF-8 path: {p:?}"))?;
-        let dest = dst.join(child.file_name().unwrap());
-        let file_type = entry.file_type()?;
-        if file_type.is_dir() {
-            copy_dir_recursive(&child, &dest)?;
-        } else if file_type.is_file() {
-            fs::copy(child.as_std_path(), dest.as_std_path())
-                .with_context(|| format!("copying {child} to {dest}"))?;
-        }
-    }
-    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -471,12 +438,11 @@ fn analyze_trace(
     let mut all_durations = Vec::new();
     let mut all_main_thread_gaps = Vec::new();
     for path in &xml_paths {
-        let (file_hangs, file_stutters, file_durations, file_gaps) =
-            parse_time_profile(path, hang_threshold_ms, stutter_threshold_ms)?;
-        hangs.extend(file_hangs);
-        stutters.extend(file_stutters);
-        all_durations.extend(file_durations);
-        all_main_thread_gaps.extend(file_gaps);
+        let parsed = parse_time_profile(path, hang_threshold_ms, stutter_threshold_ms)?;
+        hangs.extend(parsed.hangs);
+        stutters.extend(parsed.stutters);
+        all_durations.extend(parsed.durations);
+        all_main_thread_gaps.extend(parsed.main_thread_gaps);
     }
 
     let all_timestamps = all_main_thread_gaps
@@ -627,11 +593,21 @@ struct MainThreadGap {
     is_idle: bool,
 }
 
+struct ParsedTimeProfile {
+    hangs: Vec<HangEvent>,
+    stutters: Vec<HangEvent>,
+    durations: Vec<f64>,
+    main_thread_gaps: Vec<MainThreadGap>,
+}
+
+type BacktraceFrame = (Option<String>, Option<String>);
+type BacktraceLookup = BTreeMap<String, Vec<BacktraceFrame>>;
+
 fn parse_time_profile(
     xml_path: &Utf8Path,
     hang_threshold_ms: f64,
     stutter_threshold_ms: f64,
-) -> Result<(Vec<HangEvent>, Vec<HangEvent>, Vec<f64>, Vec<MainThreadGap>)> {
+) -> Result<ParsedTimeProfile> {
     let xml = fs::read_to_string(xml_path.as_std_path())
         .with_context(|| format!("reading {xml_path}"))?;
     let doc = Document::parse(&xml).with_context(|| format!("parsing {xml_path}"))?;
@@ -639,8 +615,7 @@ fn parse_time_profile(
     let mut value_lookup = BTreeMap::new();
     let mut thread_lookup = BTreeMap::new();
     let mut frame_lookup = BTreeMap::new();
-    let mut backtrace_lookup: BTreeMap<String, Vec<(Option<String>, Option<String>)>> =
-        BTreeMap::new();
+    let mut backtrace_lookup = BacktraceLookup::new();
 
     for node in doc.descendants().filter(|node| node.is_element()) {
         if let Some(id) = node.attribute("id") {
@@ -755,7 +730,12 @@ fn parse_time_profile(
         }
     }
 
-    Ok((hangs, stutters, all_durations, gaps))
+    Ok(ParsedTimeProfile {
+        hangs,
+        stutters,
+        durations: all_durations,
+        main_thread_gaps: gaps,
+    })
 }
 
 fn find_numeric_value(
@@ -794,7 +774,7 @@ fn is_main_thread(
 
 fn resolve_backtrace(
     backtrace_node: roxmltree::Node<'_, '_>,
-    backtrace_lookup: &BTreeMap<String, Vec<(Option<String>, Option<String>)>>,
+    backtrace_lookup: &BacktraceLookup,
     frame_lookup: &BTreeMap<String, String>,
 ) -> (String, Option<String>) {
     let frames = if let Some(reference) = backtrace_node.attribute("ref") {
