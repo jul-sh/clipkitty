@@ -12,8 +12,6 @@
 #     expose a `swiftPackagePin identity` lookup for downstream derivations.
 #   * Provide the host-Xcode preflight shell snippet that every Apple-facing
 #     derivation must run first.
-#   * Provide a `stageAppTree` helper that materializes a writable copy of
-#     `appSource` together with the Nix-generated Rust overlay.
 #
 # The public interface is the attribute set returned at the bottom. Any field
 # not listed there is considered private to this file.
@@ -31,23 +29,15 @@ let
   #   * Rust `target/` directories (both at the root and per-crate)
   #   * the `result` symlink from previous `nix build` invocations
   #   * editor / macOS metadata files
-  #   * generated SwiftPM resolution files (`Package.resolved`) — the
+  #   * generated SwiftPM resolution files (`Package.resolved` and
+  #     `.package.resolved`) — the
   #     canonical Swift pinset lives below in `swiftPackagePins`
-  #   * `distribution/` — explicitly out of scope for this workstream
   #   * everything under `Sources/ClipKittyRust*` that we know is regenerated
   #     by the Rust overlay, so cached outputs never sneak into the sandbox
-  filterCommon = { extraExcludeBaseNames ? [ ] }: path: type:
+  filterCommon = path: type:
     let
       base = baseNameOf path;
       rel = lib.removePrefix (toString repoRoot + "/") (toString path);
-      # `distribution/` was historically carved out of the Nix build, but
-      # `distribution/SparkleUpdater` is a local SwiftPM package that the
-      # Tuist manifest depends on via `.package(path:)`, so it must be
-      # part of the app source tree. The rest of `distribution/` (DMG
-      # building, notarisation scripts, marketing automation) is still
-      # out of scope but lives here as inert files — the build never
-      # touches them.
-      isDist = false;
       # Generated Rust overlay artifacts that live under Sources/ClipKittyRust*
       # — we never want to pick up stale copies of these from a dirty checkout.
       isGeneratedRustOverlay =
@@ -62,6 +52,7 @@ let
       base == ".git"
       || base == ".DS_Store"
       || base == "Package.resolved"
+      || base == ".package.resolved"
       || base == ".swiftpm"
       || base == ".make"
       || base == "DerivedData"
@@ -78,15 +69,13 @@ let
       # Tuist writes its SwiftPM cache here; it's derived state.
       || rel == "Tuist/.build"
       || lib.hasPrefix "Tuist/.build/" rel
-      || isDist
       || isGeneratedRustOverlay
-      || builtins.elem base extraExcludeBaseNames
     );
 
   appSource = lib.cleanSourceWith {
     name = "clipkitty-src";
     src = lib.cleanSource repoRoot;
-    filter = filterCommon { };
+    filter = filterCommon;
   };
 
   # Rust-only source slice. Narrower filter = fewer rebuilds when Swift-only
@@ -114,8 +103,6 @@ let
           || rel == "deny.toml";
         allowTree =
           lib.hasPrefix "purr" rel
-          || lib.hasPrefix "purr-sync" rel
-          || lib.hasPrefix "rust-core" rel
           || lib.hasPrefix "distribution/demo-data" rel
           || lib.hasPrefix "distribution/rust-data-gen" rel
           || lib.hasPrefix "tools/xtask" rel
@@ -128,6 +115,7 @@ let
       && !(
         base == ".git"
         || base == "Package.resolved"
+        || base == ".package.resolved"
         || base == "target"
         || base == ".DS_Store"
         || lib.hasPrefix "bazel-" base
@@ -139,7 +127,9 @@ let
   #
   # `name` is SwiftPM's case-sensitive display name. `subpath` is the checkout
   # directory name under `.build/checkouts/`. `sha256` is the Nix hash of the
-  # stripped fetchgit tree for this revision.
+  # fetchgit tree for this revision. Native Xcode packages additionally retain
+  # `.git` so a complete local repository cache can be staged without network
+  # access; their hash therefore deliberately includes the normalized Git data.
   swiftPackagePins = {
     "grdb.swift" = {
       identity = "grdb.swift";
@@ -150,14 +140,25 @@ let
       version = "7.9.0";
       sha256 = "sha256-bqiHRby5+WHyPv45JENaveVzGRycSZiL2BEc6zCaO6g=";
     };
+    "keyboardshortcuts" = {
+      identity = "keyboardshortcuts";
+      name = "KeyboardShortcuts";
+      subpath = "KeyboardShortcuts";
+      url = "https://github.com/sindresorhus/KeyboardShortcuts.git";
+      rev = "49c3fc04ea827f816df67843bfcc57286b47ff06";
+      version = "3.0.1";
+      sha256 = "sha256-w/l6cBk0kBe/Rh/qZhnUmLECTWCtnUCyEARW4RgwurI=";
+      keepGit = true;
+      xcodeRepositorySubpath = "KeyboardShortcuts-238420bc";
+    };
     "sparkle" = {
       identity = "sparkle";
       name = "Sparkle";
       subpath = "Sparkle";
       url = "https://github.com/sparkle-project/Sparkle.git";
-      rev = "066e75a8b3e99962685d6a90cdd5293ebffd9261";
-      version = "2.9.1";
-      sha256 = "sha256-ltZehumY8/Y+HA3Abbuk6pH73OsVEtV9qEgokuiALzw=";
+      rev = "b6496a74a087257ef5e6da1c5b29a447a60f5bd7";
+      version = "2.9.4";
+      sha256 = "sha256-ByLghNUKILzeRZjNO1DlVDSJ11bNc5tZBnB6t5E0Ybg=";
     };
     "sttextkitplus" = {
       identity = "sttextkitplus";
@@ -178,6 +179,24 @@ let
         ${lib.concatStringsSep ", " (lib.attrNames swiftPackagePins)}
       Add it to `swiftPackagePins` in nix/lib.nix.
     '';
+
+  # Fail during flake evaluation when a Swift manifest drifts from the Nix
+  # source of truth. This catches the exact class of mismatch that otherwise
+  # turns an offline build into an unexpected network resolution.
+  swiftManifestPinsValidated =
+    let
+      sparkleManifest = builtins.readFile ../distribution/SparkleUpdater/Package.swift;
+      projectManifest = builtins.readFile ../Project.swift;
+      sparklePin = swiftPackagePins.sparkle;
+      keyboardShortcutsPin = swiftPackagePins.keyboardshortcuts;
+    in
+    if !(lib.hasInfix sparklePin.url sparkleManifest)
+      || !(lib.hasInfix "exact: \"${sparklePin.version}\"" sparkleManifest)
+    then throw "SparkleUpdater/Package.swift must match the canonical Sparkle pin in nix/lib.nix"
+    else if !(lib.hasInfix keyboardShortcutsPin.url projectManifest)
+      || !(lib.hasInfix "requirement: .exact(\"${keyboardShortcutsPin.version}\")" projectManifest)
+    then throw "Project.swift must match the canonical KeyboardShortcuts pin in nix/lib.nix"
+    else true;
 
   # Host Xcode preflight. The Apple build is inherently impure on the path
   # to a real Xcode install — Tuist, xcodebuild, and UniFFI's iOS
@@ -225,34 +244,10 @@ let
     export DEVELOPER_DIR
   '';
 
-  # Stage `appSource` into a writable directory, drop in the Rust Xcode
-  # overlay at the exact paths Project.swift expects, and leave the tree
-  # ready for Tuist generation. Callers pass the Rust overlay derivation
-  # (built by nix/rust.nix) as `rustOverlay`.
-  #
-  # The staging is rsync-based so we can later add overlays incrementally
-  # (e.g. swift package sources, tuist cache) without re-implementing the
-  # copy logic in every consumer derivation.
-  stageAppTreeScript = { rustOverlay }: ''
-    STAGE_DIR="$PWD/clipkitty-stage"
-    mkdir -p "$STAGE_DIR"
-
-    # Copy the (source-filtered) app tree into the staging directory. We
-    # use `cp -R` rather than a symlink so subsequent writes (Tuist
-    # generation output, overlay files) don't leak back into the Nix store.
-    cp -R ${appSource}/. "$STAGE_DIR/"
-    chmod -R u+w "$STAGE_DIR"
-
-    # Overlay the Rust bridge artifacts into the exact layout Project.swift
-    # expects. The overlay derivation already groups files by their final
-    # subdirectory, so we can just copy the top level.
-    cp -R ${rustOverlay}/. "$STAGE_DIR/"
-    chmod -R u+w "$STAGE_DIR/Sources/ClipKittyRust" "$STAGE_DIR/Sources/ClipKittyRustWrapper"
-  '';
 in
+assert swiftManifestPinsValidated;
 {
   inherit appSource rustSource;
   inherit swiftPackagePins swiftPackagePin;
   inherit xcodePreflightScript resolveDeveloperDirScript;
-  inherit stageAppTreeScript;
 }

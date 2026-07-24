@@ -56,15 +56,16 @@ let
     {
       inherit (pin) name subpath;
       inherit (pin) identity url rev version;
+      xcodeRepositorySubpath = pin.xcodeRepositorySubpath or null;
       path = pkgs.fetchgit {
         url = pin.url;
         rev = pin.rev;
         sha256 = pin.sha256;
-        # SwiftPM checks out repos with their .git directory stripped;
-        # match that so the store path stays deterministic.
+        # SwiftPM checkouts are normally stripped. Native Xcode packages keep
+        # normalized Git metadata so we can build Xcode's mirror cache locally.
         fetchSubmodules = false;
         deepClone = false;
-        leaveDotGit = false;
+        leaveDotGit = pin.keepGit or false;
       };
     };
 
@@ -82,7 +83,9 @@ let
     "sparkle"
   ];
 
-
+  # Project.swift integrates this package through Xcode's native package
+  # support. Keep it separate from Tuist/Package.swift dependencies so the
+  # package retains its upstream Swift 6 build settings.
   # --- Workspace-state.json generation ---------------------------------------
   #
   # SwiftPM keeps its resolution state in `.build/workspace-state.json` and
@@ -155,6 +158,7 @@ let
 
   tuistFetchedPackages = map fetchSwiftPackage tuistPackageIdentities;
   sparkleFetchedPackages = map fetchSwiftPackage sparkleUpdaterPackageIdentities;
+  xcodeFetchedPackages = [ (fetchSwiftPackage "keyboardshortcuts") ];
 
   tuistWorkspaceState = mkWorkspaceState {
     remotes = tuistFetchedPackages;
@@ -172,6 +176,24 @@ let
     remotes = sparkleFetchedPackages;
     locals = [ ];
   };
+
+  # Tuist copies this lock into the generated workspace before invoking
+  # xcodebuild. The origin hash is Xcode's hash for Project.swift's one exact
+  # KeyboardShortcuts 3.0.1 requirement; pin changes must update it alongside
+  # the revision and version below.
+  xcodePackageResolved = pkgs.writeText ".package.resolved" (builtins.toJSON {
+    originHash = "5da8aea243ab7d65ebfeffe15fc46957f4eab2e97ede72ca0e988bac528bbbd0";
+    pins = map (pkg: {
+      identity = pkg.identity;
+      kind = "remoteSourceControl";
+      location = pkg.url;
+      state = {
+        revision = pkg.rev;
+        version = pkg.version;
+      };
+    }) xcodeFetchedPackages;
+    version = 3;
+  });
 
   # Shell snippet that materializes a pre-resolved SwiftPM .build tree
   # inside a target directory. The workspace-state.json dropped here
@@ -197,6 +219,36 @@ let
       ${lib.concatStringsSep "\n" (map copyOne packages)}
       cp ${workspaceState} "''$${targetDirVar}/.build/workspace-state.json"
       chmod u+w "''$${targetDirVar}/.build/workspace-state.json"
+    '';
+
+  # Native Xcode package integration uses a different cache layout from
+  # `swift package`: a checkout, a mirror repository, and workspace state all
+  # live below `-clonedSourcePackagesDirPath`. The retained normalized `.git`
+  # directory lets us construct the mirror locally, so xcodebuild never needs
+  # to contact GitHub during a Nix build.
+  stageXcodePackagesScript =
+    { targetDirVar, packages, workspaceState }:
+    let
+      copyOne = pkg: ''
+        cp -R ${pkg.path}/. "''$${targetDirVar}/checkouts/${pkg.subpath}"
+        chmod -R u+w "''$${targetDirVar}/checkouts/${pkg.subpath}"
+        git clone --mirror \
+          "''$${targetDirVar}/checkouts/${pkg.subpath}" \
+          "''$${targetDirVar}/repositories/${pkg.xcodeRepositorySubpath}"
+        git -C "''$${targetDirVar}/repositories/${pkg.xcodeRepositorySubpath}" \
+          config remote.origin.url ${lib.escapeShellArg pkg.url}
+        git -C "''$${targetDirVar}/repositories/${pkg.xcodeRepositorySubpath}" \
+          config remote.origin.tagOpt --no-tags
+      '';
+    in
+    ''
+      mkdir -p \
+        "''$${targetDirVar}/artifacts" \
+        "''$${targetDirVar}/checkouts" \
+        "''$${targetDirVar}/repositories"
+      ${lib.concatStringsSep "\n" (map copyOne packages)}
+      cp ${workspaceState} "''$${targetDirVar}/workspace-state.json"
+      chmod u+w "''$${targetDirVar}/workspace-state.json"
     '';
 
   # Rewrite the `__CLIPKITTY_LOCAL_PACKAGE_ROOT__` placeholder in every
@@ -230,8 +282,7 @@ let
 
   stagedSource = runCommand "clipkitty-staged"
     {
-      # Staging has no external build tools; it's just `cp`s.
-      nativeBuildInputs = [ ];
+      nativeBuildInputs = [ pkgs.gitMinimal ];
     } ''
     mkdir -p $out
     cp -R ${clipkittyLib.appSource}/. $out/
@@ -267,6 +318,21 @@ let
         workspaceState = sparkleWorkspaceState;
       }}
     fi
+
+    # Project.swift intentionally uses Xcode's native SwiftPM integration for
+    # KeyboardShortcuts. Stage both sides of Xcode's package cache plus the
+    # exact lockfile consumed by Tuist's package-resolution pass.
+    XCODE_PACKAGES_DIR="$out/Tuist/.build/xcode/ClipKitty"
+    ${stageXcodePackagesScript {
+      targetDirVar = "XCODE_PACKAGES_DIR";
+      packages = xcodeFetchedPackages;
+      workspaceState = mkWorkspaceState {
+        remotes = xcodeFetchedPackages;
+        locals = [ ];
+      };
+    }}
+    cp ${xcodePackageResolved} "$out/.package.resolved"
+    chmod u+w "$out/.package.resolved"
   '';
 
   # --- Tuist-generated workspace --------------------------------------------
@@ -313,6 +379,12 @@ let
       export XDG_STATE_HOME="$HOME/.local/state"
       export XDG_CACHE_HOME="$HOME/.cache"
       mkdir -p "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
+
+      # Do not override CFFIXED_USER_HOME here. Xcode manages downloaded
+      # components such as the Metal toolchain in Core Foundation's real user
+      # home and mounts them while tools like Icon Composer run. Pointing that
+      # mount into $TMPDIR leaves a read-only filesystem beneath the Nix build
+      # root, which makes the otherwise-successful derivation fail at cleanup.
 
       # Tell Project.swift to skip its Rust pre-build action — the Rust
       # overlay is already in place in the staged tree.
@@ -387,22 +459,6 @@ let
         --height 512 \
         --scale 2
 
-      # SwiftPM's manifest compiler unconditionally calls
-      # `sandbox_apply(3)` to sandbox the compiled Package.swift
-      # manifest and any macro-plugin subprocesses. On Darwin inside a
-      # Nix build, macOS sandboxes don't nest — sandbox_apply returns
-      # EPERM and SwiftPM reports "sandbox-exec: sandbox_apply:
-      # Operation not permitted".
-      #
-      # The `--disable-sandbox` CLI flag only disables SwiftPM's
-      # sandbox for *build subprocesses*, not for manifest compilation.
-      # The two private IDE* env vars below are the documented fix (same
-      # ones Homebrew exports for the identical error); they short-
-      # circuit SwiftPM's sandbox_apply call path in both the manifest
-      # compiler and macro plugin host.
-      export IDEPackageSupportDisableManifestSandbox=1
-      export IDEPackageSupportDisablePluginExecutionSandbox=1
-
       # Rewrite the local-package placeholder in every staged
       # workspace-state.json with the absolute path of the current build
       # directory. Without this, SwiftPM rejects the state file and falls
@@ -428,10 +484,6 @@ let
       #      boundary obvious. With the pre-staged checkouts and
       #      workspace-state.json this is purely a local graph walk.
       #
-      # `tuist generate` still runs the manifest compile itself (for
-      # its own Tuist.swift discovery), so we wrap its swift toolchain
-      # invocation via SWIFT_EXEC_MANIFEST_FLAGS — Tuist passes
-      # whatever's in that env var straight through to swiftc.
       /usr/bin/xcrun swift package \
         --package-path Tuist \
         --disable-sandbox \
@@ -444,32 +496,13 @@ let
           resolve
       fi
 
-      # `tuist generate --no-open` emits the Xcode workspace/projects.
-      # Tuist also compiles Tuist/Package.swift through SwiftPM, so we
-      # need the same sandbox escape here. TUIST_GENERATE_SPM_DISABLE_SANDBOX
-      # is not a thing — so we pre-resolved above and rely on Tuist's
-      # up-to-date cache to skip the re-resolve. The manifest compile
-      # that Tuist still performs for its own discovery must also
-      # bypass the sandbox; we pass the flag via Tuist's generic
-      # SPM extra-args env var if the Tuist version supports it, and
-      # otherwise fall back to a wrapper script on PATH.
-      SPM_SHIM_DIR=$TMPDIR/spm-shim
-      mkdir -p "$SPM_SHIM_DIR"
-      cat > "$SPM_SHIM_DIR/swift" <<SHIM
-      #!/bin/sh
-      # Transparent wrapper: forward everything to the real swift, but
-      # inject --disable-sandbox into 'swift package ...' invocations
-      # so Tuist's internal SPM calls skip sandbox_apply(3) too.
-      if [ "\$1" = "package" ]; then
-        shift
-        exec /usr/bin/xcrun swift package --disable-sandbox "\$@"
-      fi
-      exec /usr/bin/xcrun swift "\$@"
-      SHIM
-      chmod +x "$SPM_SHIM_DIR/swift"
-      export PATH="$SPM_SHIM_DIR:$PATH"
-
+      # Nix owns package resolution and the lockfile in this derivation, so
+      # Tuist only needs to materialize the workspace graph.
       tuist generate --no-open --path .
+
+      RESOLVED_DIR="$BUILD_ROOT/ClipKitty.xcworkspace/xcshareddata/swiftpm"
+      mkdir -p "$RESOLVED_DIR"
+      cp "$BUILD_ROOT/.package.resolved" "$RESOLVED_DIR/Package.resolved"
       runHook postBuild
     '';
 
@@ -566,6 +599,7 @@ let
 
         export HOME=$TMPDIR/xcode-home
         mkdir -p "$HOME"
+        export CFFIXED_USER_HOME="$HOME"
 
         # CoreSimulator reads `$HOME/Library/Developer/CoreSimulator/Devices`
         # to enumerate installed simulators. If the directory doesn't exist
@@ -584,6 +618,11 @@ let
 
         /usr/bin/xcodebuild \
           -workspace ClipKitty.xcworkspace \
+          -clonedSourcePackagesDirPath "$PWD/Tuist/.build/xcode/ClipKitty" \
+          -disableAutomaticPackageResolution \
+          -onlyUsePackageVersionsFromResolvedFile \
+          -skipPackageUpdates \
+          -IDEPackageSupportDisableManifestSandbox=1 \
           -scheme ${lib.escapeShellArg scheme} \
           -configuration ${lib.escapeShellArg configuration} \
           -sdk ${lib.escapeShellArg sdk} \

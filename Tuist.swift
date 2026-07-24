@@ -1,8 +1,15 @@
+import Foundation
 import ProjectDescription
 
+let repositoryRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+let usesPreResolvedXcodePackages = FileManager.default.fileExists(
+    atPath: repositoryRoot.appending(path: ".package.resolved").path
+)
+
 let config = Config(
-    project: .tuist(
-        compatibleXcodeVersions: .all,
-        swiftVersion: "6.2"
+    compatibleXcodeVersions: .all,
+    swiftVersion: "6.2",
+    generationOptions: .options(
+        disablePackageVersionLocking: usesPreResolvedXcodePackages
     )
 )

@@ -2,6 +2,7 @@
 # Generated SwiftPM resolution; Swift package pins live in nix/lib.nix.
 # (Trailing inline comments are NOT supported by gitignore, so keep them on their own lines.)
 /Package.resolved
+/.package.resolved
 Tuist/Package.resolved
 .build/
 .make/
