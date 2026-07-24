@@ -1,6 +1,7 @@
-import ClipKittyAppleServices
+import ClipKittyBrowser
+import ClipKittyContentServices
+import ClipKittyCore
 import ClipKittyRust
-import ClipKittyShared
 import SwiftUI
 import UIKit
 
@@ -32,39 +33,37 @@ struct PreviewScreen: View {
     }()
 
     var body: some View {
-        Group {
-            if let selectedItemState = viewModel.selectedItemState {
-                contentView(for: selectedItemState)
-            } else {
-                ProgressView(String(localized: "Loading..."))
+        selectionContent
+            .navigationTitle(navigationTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar(.hidden, for: .bottomBar)
+            .safeAreaInset(edge: .bottom) {
+                actionBar
             }
-        }
-        .navigationTitle(navigationTitle)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .bottomBar)
-        .safeAreaInset(edge: .bottom) {
-            actionBar
-        }
-        .alert(String(localized: "Delete Item"), isPresented: $showDeleteConfirmation) {
-            Button(String(localized: "Delete"), role: .destructive) {
-                viewModel.deleteItem(itemId: itemId)
-                haptics.fire(.destructive)
-                appState.showToast(.deleted)
-                dismiss()
+            .alert(String(localized: "Delete Item"), isPresented: $showDeleteConfirmation) {
+                Button(String(localized: "Delete"), role: .destructive) {
+                    viewModel.deleteItem(itemId: itemId)
+                    haptics.fire(.destructive)
+                    dismiss()
+                }
+                Button(String(localized: "Cancel"), role: .cancel) {}
+            } message: {
+                Text("Are you sure you want to delete this item? This cannot be undone.", comment: "Delete confirmation message")
             }
-            Button(String(localized: "Cancel"), role: .cancel) {}
-        } message: {
-            Text("Are you sure you want to delete this item? This cannot be undone.", comment: "Delete confirmation message")
-        }
-        .onAppear {
-            viewModel.select(itemId: itemId, origin: .click)
-        }
+            .onAppear {
+                viewModel.select(itemId: itemId, origin: .click)
+            }
     }
 
     // MARK: - Navigation Title
 
     private var navigationTitle: String {
-        guard let item = viewModel.selectedItemState?.item else { return String(localized: "Detail") }
+        guard case let .selected(selectedItemState) = viewModel.selection,
+              selectedItemState.item.itemMetadata.itemId == itemId
+        else {
+            return String(localized: "Detail")
+        }
+        let item = selectedItemState.item
         switch item.content {
         case .text: return String(localized: "Text")
         case .link: return String(localized: "Link")
@@ -74,33 +73,42 @@ struct PreviewScreen: View {
         }
     }
 
-    // MARK: - Preview Decoration
-
-    private func previewDecoration(for content: SelectedItemState) -> PreviewDecoration? {
-        switch content.previewState {
-        case .plain, .loadingDecoration(previous: nil):
-            return nil
-        case let .loadingDecoration(previous: .some(decoration)), let .highlighted(decoration):
-            return decoration
-        }
-    }
-
-    private var isDirty: Bool {
-        if case let .dirty(dirtyId, _) = viewModel.editSession, dirtyId == itemId {
-            return true
-        }
-        return false
-    }
-
     // MARK: - Content
+
+    @ViewBuilder
+    private var selectionContent: some View {
+        switch viewModel.selection {
+        case let .selected(selectedItemState)
+            where selectedItemState.item.itemMetadata.itemId == itemId:
+            contentView(for: selectedItemState)
+        case let .loading(loadingItemId, _, phase) where loadingItemId == itemId:
+            ZStack {
+                Color.clear
+                switch phase {
+                case .waitingForSpinner:
+                    EmptyView()
+                case .showingSpinner:
+                    ProgressView(String(localized: "Loading..."))
+                }
+            }
+        case let .failed(failedItemId, _) where failedItemId == itemId:
+            ContentUnavailableView(
+                String(localized: "Unable to load preview"),
+                systemImage: "exclamationmark.triangle"
+            )
+        case .none, .loading, .selected, .failed:
+            Color.clear
+        }
+    }
 
     private func contentView(for selectedItemState: SelectedItemState) -> some View {
         ZStack {
             contentSection(for: selectedItemState)
-            if case .loadingDecoration = selectedItemState.previewState,
-               viewModel.previewSpinnerVisible
-            {
+            switch selectedItemState.previewState {
+            case .loadingDecoration(_, .showingSpinner):
                 ProgressView()
+            case .plain, .loadingDecoration(_, .waitingForSpinner), .highlighted:
+                EmptyView()
             }
         }
         .overlay(alignment: .topLeading) {
@@ -110,8 +118,10 @@ struct PreviewScreen: View {
                         .frame(width: 1, height: 1)
                         .allowsHitTesting(false)
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(previewHighlightDebugLabel(
-                            for: selectedItemState
+                        .accessibilityLabel(PreviewDebugLabelFormatter.label(
+                            text: selectedItemState.item.content.textContent,
+                            itemId: selectedItemState.item.itemMetadata.itemId,
+                            previewState: selectedItemState.previewState
                         ))
                         .accessibilityIdentifier("PreviewHighlightDebug")
                 }
@@ -119,49 +129,13 @@ struct PreviewScreen: View {
         }
     }
 
-    #if ENABLE_TEST_FIXTURES
-        private func previewHighlightDebugLabel(for content: SelectedItemState) -> String {
-            let text = content.item.content.textContent
-            let itemId = content.item.itemMetadata.itemId
-            let state: String
-            let fragments: [String]
-
-            switch content.previewState {
-            case .plain:
-                state = "plain"
-                fragments = []
-            case .loadingDecoration(previous: nil):
-                state = "loading-decoration"
-                fragments = []
-            case let .loadingDecoration(previous: .some(decoration)):
-                state = "loading-decoration-stale"
-                fragments = HighlightAttributedStringBuilder.fragments(in: text, highlights: decoration.highlights)
-            case let .highlighted(decoration):
-                state = "highlighted"
-                fragments = HighlightAttributedStringBuilder.fragments(in: text, highlights: decoration.highlights)
-            }
-
-            let joinedFragments = fragments.isEmpty ? "none" : fragments.joined(separator: "|")
-            return "item=\(itemId);state=\(state);highlights=\(joinedFragments)"
-        }
-    #endif
-
     @ViewBuilder
     private func contentSection(for selectedItemState: SelectedItemState) -> some View {
         let item = selectedItemState.item
         switch item.content {
-        case let .text(value):
-            let previewText: String = {
-                switch viewModel.editSession {
-                case let .dirty(dirtyId, draft) where dirtyId == item.itemMetadata.itemId:
-                    return draft
-                case let .suspendedDirty(dirtyId, draft) where dirtyId == item.itemMetadata.itemId:
-                    return draft
-                case .inactive, .focused, .dirty, .suspendedDirty:
-                    return value
-                }
-            }()
-            let decoration = isDirty ? nil : previewDecoration(for: selectedItemState)
+        case .text:
+            let previewText = viewModel.effectiveContent(for: item).textContent
+            let decoration = selectedItemState.displayDecoration(for: viewModel.editSession)
             TextPreviewView(
                 itemId: item.itemMetadata.itemId,
                 text: previewText,
@@ -179,14 +153,18 @@ struct PreviewScreen: View {
                 fontPreference: settings.fontPreference,
                 previewStyle: settings.previewFontPreference,
                 onTextChange: { newText in
-                    viewModel.onTextEdit(newText, for: item.itemMetadata.itemId, originalText: value)
+                    viewModel.onTextEdit(
+                        newText,
+                        for: item.itemMetadata.itemId,
+                        originalContent: item.content
+                    )
                 },
                 onEditingStateChange: { editing in
                     viewModel.onEditingStateChange(editing, for: item.itemMetadata.itemId)
                 }
             )
         case let .color(value):
-            let decoration = isDirty ? nil : previewDecoration(for: selectedItemState)
+            let decoration = selectedItemState.displayDecoration(for: viewModel.editSession)
             VStack(spacing: 0) {
                 // Color swatch at top
                 RoundedRectangle(cornerRadius: 16)
@@ -207,7 +185,7 @@ struct PreviewScreen: View {
                 )
             }
         case let .link(url, metadataState):
-            let decoration = previewDecoration(for: selectedItemState)
+            let decoration = selectedItemState.previewState.decoration
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     linkContent(url: url, metadataState: metadataState, highlights: decoration?.highlights ?? [])
@@ -219,7 +197,7 @@ struct PreviewScreen: View {
                 .padding(.top, 8)
             }
         case let .image(data, description, _):
-            let decoration = previewDecoration(for: selectedItemState)
+            let decoration = selectedItemState.previewState.decoration
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     imageContent(data: data, description: description, highlights: decoration?.highlights ?? [])
@@ -368,7 +346,8 @@ struct PreviewScreen: View {
     @ViewBuilder
     private var actionBar: some View {
         if let item = viewModel.selectedItemState?.item {
-            if isDirty {
+            switch viewModel.editSession {
+            case let .dirty(dirtyId, _) where dirtyId == item.itemMetadata.itemId:
                 // Dirty state: show Save and Cancel only
                 GlassEffectContainer(spacing: 20) {
                     HStack(spacing: 20) {
@@ -386,7 +365,6 @@ struct PreviewScreen: View {
 
                         Button {
                             viewModel.commitCurrentEdit()
-                            appState.showToast(.saved)
                         } label: {
                             Text(String(localized: "Save"))
                                 .font(.body.weight(.semibold))
@@ -400,7 +378,7 @@ struct PreviewScreen: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.bottom, 8)
-            } else {
+            case .inactive, .focused, .dirty, .suspendedDirty:
                 // Normal state: standard action bar
                 GlassEffectContainer(spacing: 20) {
                     HStack(spacing: 20) {

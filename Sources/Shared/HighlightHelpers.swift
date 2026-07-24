@@ -56,11 +56,6 @@ public enum HighlightRangeConverter {
         }
         return stringStart ..< stringEnd
     }
-
-    /// Convert a UTF-16 highlight range to an `NSRange`.
-    public static func nsRange(for highlight: Utf16HighlightRange) -> NSRange {
-        highlight.nsRange
-    }
 }
 
 // MARK: - AttributedString Builder
@@ -69,19 +64,12 @@ public enum HighlightAttributedStringBuilder {
     /// Build an `AttributedString` with highlight styling applied.
     public static func attributedText(
         _ text: String,
-        highlights: [Utf16HighlightRange]
+        highlights: [Utf16HighlightRange],
+        sourceUtf16Offset: Int = 0
     ) -> AttributedString {
         var attributed = AttributedString(text)
-        apply(highlights: highlights, to: &attributed, utf16Offset: 0)
+        apply(highlights: highlights, to: &attributed, utf16Offset: sourceUtf16Offset)
         return attributed
-    }
-
-    /// Build an `AttributedString` for a card excerpt with highlight styling.
-    public static func attributedSnippet(
-        _ text: String,
-        highlights: [Utf16HighlightRange]
-    ) -> AttributedString {
-        attributedText(text, highlights: highlights)
     }
 
     /// Extract the highlighted text fragments from the source text.

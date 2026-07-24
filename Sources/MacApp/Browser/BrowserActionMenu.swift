@@ -1,5 +1,5 @@
+import ClipKittyBrowser
 import ClipKittyRust
-import ClipKittyShared
 import SwiftUI
 
 @MainActor
@@ -17,7 +17,7 @@ enum BrowserActionItem: Equatable {
         } else {
             items.append(.bookmark)
         }
-        if case .autoPaste = AppSettings.shared.pasteMode {
+        if case .autoPaste = AppRuntimeState.shared.pasteMode {
             items.append(.copyOnly)
         }
         items.append(.defaultAction)
@@ -28,7 +28,7 @@ enum BrowserActionItem: Equatable {
     var label: String {
         switch self {
         case .defaultAction:
-            return AppSettings.shared.pasteMode.buttonLabel
+            return AppRuntimeState.shared.pasteMode.buttonLabel
         case .copyOnly:
             return String(localized: "Copy")
         case .bookmark:
@@ -43,7 +43,7 @@ enum BrowserActionItem: Equatable {
     var identifier: String {
         switch self {
         case .defaultAction:
-            return AppSettings.shared.pasteMode.buttonLabel
+            return AppRuntimeState.shared.pasteMode.buttonLabel
         case .copyOnly:
             return "Copy"
         case .bookmark:
@@ -58,7 +58,7 @@ enum BrowserActionItem: Equatable {
     var systemImageName: String {
         switch self {
         case .defaultAction:
-            switch AppSettings.shared.pasteMode {
+            switch AppRuntimeState.shared.pasteMode {
             case .autoPaste:
                 return "doc.on.clipboard"
             case .copyOnly, .noPermission:
@@ -73,18 +73,6 @@ enum BrowserActionItem: Equatable {
         case .delete:
             return "trash"
         }
-    }
-
-    var isDestructive: Bool {
-        if case .delete = self {
-            return true
-        }
-        return false
-    }
-
-    static func showsDivider(before index: Int, in items: [BrowserActionItem]) -> Bool {
-        guard items.indices.contains(index), index > 0 else { return false }
-        return items[index].isDestructive
     }
 
     /// Map to the shared semantic action type for BrowserViewModel.
@@ -110,18 +98,15 @@ struct BrowserActionMenu: View {
     var body: some View {
         VStack(spacing: 2) {
             ForEach(Array(items.enumerated()), id: \.offset) { index, action in
-                if BrowserActionItem.showsDivider(before: index, in: items) {
+                if index > 0, case .delete = action {
                     Divider()
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
                 }
 
                 ActionOptionRow(
-                    label: action.label,
-                    actionID: action.identifier,
-                    systemImageName: action.systemImageName,
+                    item: action,
                     isHighlighted: isHighlighted(index: index),
-                    isDestructive: action.isDestructive,
                     onHover: { isHovered in
                         if isHovered {
                             highlight = .index(index)

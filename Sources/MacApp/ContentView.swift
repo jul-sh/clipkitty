@@ -1,5 +1,6 @@
+import ClipKittyBrowser
+import ClipKittyCore
 import ClipKittyRust
-import ClipKittyShared
 import SwiftUI
 
 struct ContentView: View {
@@ -15,7 +16,7 @@ struct ContentView: View {
 
     // `Files` support is a compile-time capability of this target; the shared
     // filter catalog receives it as data because the flag is not defined for
-    // `ClipKittyShared`.
+    // `ClipKittyBrowser`.
     #if ENABLE_FILE_CLIPBOARD_ITEMS
         private static let includesFileItems = true
     #else

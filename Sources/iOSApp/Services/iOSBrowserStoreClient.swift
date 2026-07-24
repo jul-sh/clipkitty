@@ -1,6 +1,8 @@
-import ClipKittyAppleServices
+import ClipKittyBrowser
+import ClipKittyContentServices
+import ClipKittyCore
 import ClipKittyRust
-import ClipKittyShared
+import ClipKittyStore
 import Foundation
 
 @MainActor
