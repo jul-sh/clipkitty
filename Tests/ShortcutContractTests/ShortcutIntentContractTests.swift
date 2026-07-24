@@ -2,24 +2,8 @@ import AppIntents
 @testable import ClipKittyShortcuts
 import XCTest
 
-final class ClipKittyShortcutIntentTests: XCTestCase {
-    private var tempDir: URL!
-
-    override func setUp() {
-        super.setUp()
-        tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("clipkitty-shortcut-intents-\(UUID().uuidString)")
-        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-    }
-
-    override func tearDown() {
-        if let tempDir {
-            try? FileManager.default.removeItem(at: tempDir)
-        }
-        tempDir = nil
-        super.tearDown()
-    }
-
+@MainActor
+final class ShortcutIntentContractTests: ShortcutIntentTestCase {
     func testSaveTextIntentPersistsProvidedText() async throws {
         let service = makeService()
         let intent = SaveTextToClipKittyIntent()
@@ -45,6 +29,17 @@ final class ClipKittyShortcutIntentTests: XCTestCase {
                 try await intent.perform()
             }
         }
+    }
+
+    func testSavingTheSameTextTwiceReportsDuplicate() async throws {
+        let service = makeService()
+        let first = try await service.saveText("dedupe me")
+        guard case .inserted = first else {
+            return XCTFail("Expected first save to insert, got \(first)")
+        }
+
+        let second = try await service.saveText("dedupe me")
+        XCTAssertEqual(second, .duplicate)
     }
 
     func testSaveClipboardIntentPersistsReadableTextClipboard() async throws {
@@ -105,44 +100,6 @@ final class ClipKittyShortcutIntentTests: XCTestCase {
         }
 
         XCTAssertEqual(result.value, ["newer intent clip"])
-    }
-
-    private func makeService(
-        pasteboardRead: ShortcutPasteboardRead = .empty
-    ) -> ClipKittyShortcutService {
-        ClipKittyShortcutService(
-            databasePath: dbPath(),
-            pasteboardClient: ShortcutPasteboardClient(
-                read: { pasteboardRead }
-            )
-        )
-    }
-
-    private func withShortcutService<T>(
-        _ service: ClipKittyShortcutService,
-        operation: () async throws -> T
-    ) async rethrows -> T {
-        try await ClipKittyShortcutRuntime.$serviceFactory.withValue({ service }) {
-            try await operation()
-        }
-    }
-
-    private func assertThrowsShortcutError<T>(
-        _ expectedError: ClipKittyShortcutError,
-        operation: () async throws -> T
-    ) async {
-        do {
-            _ = try await operation()
-            XCTFail("Expected \(expectedError) to throw")
-        } catch let error as ClipKittyShortcutError {
-            XCTAssertEqual(error, expectedError)
-        } catch {
-            XCTFail("Unexpected error: \(error)")
-        }
-    }
-
-    private func dbPath() -> String {
-        tempDir.appendingPathComponent("clipboard.sqlite").path
     }
 }
 

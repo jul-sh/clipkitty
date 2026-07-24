@@ -1,6 +1,62 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Indexing…" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Indizierung…" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Indexing…" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Indexando…" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Indexation…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "インデックス作成中…" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "색인 생성 중…" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Indexando…" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Индексация…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在索引…" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在索引…" } }
+      }
+    },
+    "Catching up with iCloud" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "iCloud wird synchronisiert" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Catching up with iCloud" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Sincronizando con iCloud" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Synchronisation avec iCloud" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "iCloudと同期中" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "iCloud와 동기화 중" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Sincronizando com o iCloud" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Синхронизация с iCloud" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在与 iCloud 同步" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在與 iCloud 同步" } }
+      }
+    },
+    "Allow Shortcuts to Read History" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Kurzbefehlen das Lesen des Verlaufs erlauben" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Allow Shortcuts to Read History" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Permitir que Atajos lea el historial" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Autoriser Raccourcis à lire l’historique" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ショートカットによる履歴の読み取りを許可" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "단축어가 기록을 읽도록 허용" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Permitir que Atalhos leia o histórico" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Разрешить «Командам» читать историю" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "允许快捷指令读取历史记录" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "允許捷徑讀取記錄" } }
+      }
+    },
+    "When off, Shortcuts and automations cannot read or search your clipboard history; saving new clips from Shortcuts still works. Turn this off if you do not want automations to access your history." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Wenn diese Option deaktiviert ist, können Kurzbefehle und Automationen Ihren Zwischenablageverlauf weder lesen noch durchsuchen. Neue Clips können weiterhin über Kurzbefehle gespeichert werden. Deaktivieren Sie diese Option, wenn Automationen nicht auf Ihren Verlauf zugreifen sollen." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "When off, Shortcuts and automations cannot read or search your clipboard history; saving new clips from Shortcuts still works. Turn this off if you do not want automations to access your history." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cuando está desactivado, Atajos y las automatizaciones no pueden leer ni buscar en el historial del portapapeles; guardar nuevos recortes desde Atajos sigue funcionando. Desactívalo si no quieres que las automatizaciones accedan a tu historial." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Lorsque cette option est désactivée, Raccourcis et les automatisations ne peuvent ni lire ni rechercher dans l’historique du presse-papiers ; l’enregistrement de nouveaux extraits depuis Raccourcis reste possible. Désactivez cette option si vous ne souhaitez pas que les automatisations accèdent à votre historique." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "オフにすると、ショートカットやオートメーションからクリップボードの履歴を読み取ったり検索したりできなくなります。ショートカットから新しいクリップを保存することは引き続き可能です。オートメーションに履歴へのアクセスを許可しない場合はオフにしてください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "끄면 단축어와 자동화가 클립보드 기록을 읽거나 검색할 수 없습니다. 단축어에서 새 클립을 저장하는 기능은 계속 사용할 수 있습니다. 자동화가 기록에 접근하지 못하게 하려면 이 옵션을 끄십시오." } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Quando desativado, Atalhos e automações não podem ler nem pesquisar o histórico da área de transferência; ainda é possível salvar novos clipes pelo Atalhos. Desative esta opção se não quiser que automações acessem seu histórico." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Если выключено, «Команды» и автоматизации не смогут читать или искать в истории буфера обмена; сохранение новых фрагментов из «Команд» продолжит работать. Выключите этот параметр, если не хотите, чтобы автоматизации получали доступ к истории." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "关闭后，快捷指令和自动化无法读取或搜索剪贴板历史记录；仍可通过快捷指令保存新剪贴内容。如果不希望自动化访问您的历史记录，请关闭此选项。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "關閉後，捷徑和自動化無法讀取或搜尋剪貼簿記錄；仍可透過捷徑儲存新的剪輯內容。如果不希望自動化存取您的記錄，請關閉此選項。" } }
+      }
+    },
     "Advanced" : {
       "localizations" : {
         "de" : {

@@ -115,7 +115,7 @@ final class MockPasteboardTests: XCTestCase {
         let pasteboard = MockPasteboard()
         pasteboard.setString("test", forType: .string)
         pasteboard.setData(Data([1, 2, 3]), forType: .tiff)
-        pasteboard.declareTypes([.string, .fileURL], owner: nil)
+        _ = pasteboard.declareTypes([.string, .fileURL], owner: nil)
 
         pasteboard.reset()
 

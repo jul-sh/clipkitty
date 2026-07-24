@@ -1,38 +1,38 @@
+@testable import ClipKittyBrowser
 import ClipKittyRust
-@testable import ClipKittyShared
 import XCTest
 
 /// Tests for the cross-platform highlight helpers used by both iOS and macOS.
 final class HighlightHelpersTests: XCTestCase {
     // MARK: - UTF-16 Range Conversion
 
-    func testStringRangeForASCII() {
+    func testStringRangeForASCII() throws {
         let text = "Hello World"
         let range = HighlightRangeConverter.stringRange(utf16Start: 6, utf16End: 11, in: text)
         XCTAssertNotNil(range)
-        XCTAssertEqual(String(text[range!]), "World")
+        XCTAssertEqual(try String(text[XCTUnwrap(range)]), "World")
     }
 
-    func testStringRangeForEmoji() {
+    func testStringRangeForEmoji() throws {
         // 👋 is U+1F44B, encoded as 2 UTF-16 code units (surrogate pair)
         let text = "👋Hello"
         // 👋 occupies UTF-16 positions 0-1, "H" is at position 2
         let range = HighlightRangeConverter.stringRange(utf16Start: 0, utf16End: 2, in: text)
         XCTAssertNotNil(range)
-        XCTAssertEqual(String(text[range!]), "👋")
+        XCTAssertEqual(try String(text[XCTUnwrap(range)]), "👋")
 
         let helloRange = HighlightRangeConverter.stringRange(utf16Start: 2, utf16End: 7, in: text)
         XCTAssertNotNil(helloRange)
-        XCTAssertEqual(String(text[helloRange!]), "Hello")
+        XCTAssertEqual(try String(text[XCTUnwrap(helloRange)]), "Hello")
     }
 
-    func testStringRangeForCombiningCharacter() {
+    func testStringRangeForCombiningCharacter() throws {
         // é can be composed as e + combining acute accent (2 UTF-16 code units for 1 character)
         let text = "e\u{0301}llo" // é decomposed + llo
         // e is position 0, combining accent is position 1, l is position 2
         let range = HighlightRangeConverter.stringRange(utf16Start: 0, utf16End: 2, in: text)
         XCTAssertNotNil(range)
-        XCTAssertEqual(String(text[range!]), "e\u{0301}")
+        XCTAssertEqual(try String(text[XCTUnwrap(range)]), "e\u{0301}")
     }
 
     func testStringRangeOutOfBoundsReturnsNil() {

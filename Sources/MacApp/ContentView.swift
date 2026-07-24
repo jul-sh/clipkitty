@@ -1,5 +1,6 @@
+import ClipKittyBrowser
+import ClipKittyCore
 import ClipKittyRust
-import ClipKittyShared
 import SwiftUI
 
 struct ContentView: View {
@@ -7,7 +8,7 @@ struct ContentView: View {
     let onSelect: (String, ClipboardContent) -> Void
     let onCopyOnly: (String, ClipboardContent) -> Void
     let onDismiss: () -> Void
-    let showSnackbarNotification: (NotificationKind, (() -> Void)?) -> Void
+    let showSnackbarNotification: (NotificationRequest) -> Void
     let dismissSnackbarNotification: () -> Void
     var initialSearchQuery: String = ""
 
@@ -15,7 +16,7 @@ struct ContentView: View {
 
     // `Files` support is a compile-time capability of this target; the shared
     // filter catalog receives it as data because the flag is not defined for
-    // `ClipKittyShared`.
+    // `ClipKittyBrowser`.
     #if ENABLE_FILE_CLIPBOARD_ITEMS
         private static let includesFileItems = true
     #else
@@ -27,7 +28,7 @@ struct ContentView: View {
         onSelect: @escaping (String, ClipboardContent) -> Void,
         onCopyOnly: @escaping (String, ClipboardContent) -> Void,
         onDismiss: @escaping () -> Void,
-        showSnackbarNotification: @escaping (NotificationKind, (() -> Void)?) -> Void,
+        showSnackbarNotification: @escaping (NotificationRequest) -> Void,
         dismissSnackbarNotification: @escaping () -> Void,
         initialSearchQuery: String = ""
     ) {

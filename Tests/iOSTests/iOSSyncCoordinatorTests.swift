@@ -1,8 +1,8 @@
 #if ENABLE_ICLOUD_SYNC
 
-    import ClipKittyAppleServices
-    import ClipKittyRust
+    import ClipKittyCloudSync
     @testable import ClipKittyiOS
+    import ClipKittyRust
     import SwiftUI
     import UIKit
     import XCTest

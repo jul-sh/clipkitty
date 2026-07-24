@@ -1,4 +1,4 @@
-import ClipKittyShared
+import ClipKittyCore
 import XCTest
 
 final class StorageLimitScaleTests: XCTestCase {

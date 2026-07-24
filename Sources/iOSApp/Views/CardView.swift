@@ -1,5 +1,6 @@
+import ClipKittyBrowser
+import ClipKittyCore
 import ClipKittyRust
-import ClipKittyShared
 import SwiftUI
 import UIKit
 
@@ -65,8 +66,6 @@ struct CardView: View {
         .accessibilityAddTraits(.isButton)
         .onTapGesture {
             viewModel.copyOnlyItem(itemId: metadata.itemId)
-            haptics.fire(.copy)
-            appState.showToast(.copied)
         }
         .contextMenu { contextMenuActions }
         .onDrag {
@@ -252,8 +251,6 @@ struct CardView: View {
     private var contextMenuActions: some View {
         Button {
             viewModel.copyOnlyItem(itemId: metadata.itemId)
-            haptics.fire(.copy)
-            appState.showToast(.copied)
         } label: {
             Label(String(localized: "Copy"), systemImage: "doc.on.doc")
         }
@@ -455,7 +452,7 @@ private struct CardLinkPreview: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let imageData = previewImageData {
+            if let imageData = loadedPayload?.imageData {
                 DecodedImageView(
                     namespace: "card-link",
                     itemId: itemId,
@@ -470,7 +467,7 @@ private struct CardLinkPreview: View {
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
 
-            if let title = previewTitle, !title.isEmpty {
+            if let title = loadedPayload?.title, !title.isEmpty {
                 Text(title)
                     .font(sansFont(15, .semibold))
                     .foregroundStyle(.primary)
@@ -502,24 +499,6 @@ private struct CardLinkPreview: View {
             if case let .link(_, state) = item.content {
                 metadataState = state
             }
-        }
-    }
-
-    private var previewTitle: String? {
-        switch loadedPayload {
-        case let .titleOnly(title, _), let .titleAndImage(title, _, _):
-            return title
-        case .imageOnly, .none:
-            return nil
-        }
-    }
-
-    private var previewImageData: Data? {
-        switch loadedPayload {
-        case let .imageOnly(imageData, _), let .titleAndImage(_, imageData, _):
-            return imageData
-        case .titleOnly, .none:
-            return nil
         }
     }
 

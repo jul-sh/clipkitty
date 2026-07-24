@@ -1,6 +1,7 @@
-import ClipKittyAppleServices
+import ClipKittyContentServices
+import ClipKittyCore
 import ClipKittyRust
-import ClipKittyShared
+import ClipKittyStore
 import Foundation
 
 protocol ClipKittyShortcutServicing: Sendable {

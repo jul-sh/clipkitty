@@ -1,8 +1,8 @@
 import AppKit
-import ClipKittyAppleServices
+import ClipKittyBrowser
+import ClipKittyContentServices
 import ClipKittyMacPlatform
 import ClipKittyRust
-import ClipKittyShared
 import SwiftUI
 
 struct BrowserPreviewPane: View {
@@ -11,6 +11,7 @@ struct BrowserPreviewPane: View {
     let focusTarget: FocusState<BrowserView.FocusTarget?>.Binding
 
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var runtimeState = AppRuntimeState.shared
     #if ENABLE_TEST_FIXTURES
         private let isUITestPreviewDebugEnabled = CommandLine.arguments.contains("--use-simulated-db")
     #endif
@@ -36,19 +37,23 @@ struct BrowserPreviewPane: View {
             VStack(spacing: 0) {
                 ZStack {
                     previewContent(for: content)
-                    if case .loadingDecoration = content.previewState,
-                       viewModel.previewSpinnerVisible
-                    {
+                    switch content.previewState {
+                    case .loadingDecoration(_, .showingSpinner):
                         ProgressView()
+                    case .plain, .loadingDecoration(_, .waitingForSpinner), .highlighted:
+                        EmptyView()
                     }
                 }
                 Divider()
                 metadataFooter(for: content.item)
             }
-        case .loading:
+        case let .loading(_, _, phase):
             ZStack {
                 Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
-                if viewModel.previewSpinnerVisible {
+                switch phase {
+                case .waitingForSpinner:
+                    EmptyView()
+                case .showingSpinner:
                     ProgressView()
                 }
             }
@@ -115,87 +120,37 @@ struct BrowserPreviewPane: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func previewDecoration(for content: SelectedItemState) -> PreviewDecoration? {
-        switch content.previewState {
-        case .plain, .loadingDecoration(previous: nil):
-            return nil
-        case let .loadingDecoration(previous: .some(decoration)), let .highlighted(decoration):
-            return decoration
-        }
-    }
-
     @ViewBuilder
     private func previewContent(for content: SelectedItemState) -> some View {
         let item = content.item
         switch item.content {
         case .text, .color:
-            let previewText: String = {
-                switch viewModel.editSession {
-                case let .dirty(dirtyId, draft) where dirtyId == item.itemMetadata.itemId:
-                    return draft
-                case let .suspendedDirty(dirtyId, draft) where dirtyId == item.itemMetadata.itemId:
-                    return draft
-                case .inactive, .focused, .dirty, .suspendedDirty:
-                    return item.content.textContent
-                }
-            }()
-            let decoration = previewDecoration(for: content)
+            let previewText = viewModel.effectiveContent(for: item).textContent
+            let decoration = content.displayDecoration(for: viewModel.editSession)
             let _ = { TextPreviewView.textCache[item.itemMetadata.itemId] = previewText }()
             TextPreviewView(
                 itemId: item.itemMetadata.itemId,
                 fontName: settings.previewFontName,
-                fontSize: settings.previewFontSize(settings.scaled(15)),
+                fontSize: settings.previewFontSize(runtimeState.scaled(15)),
                 highlights: decoration?.highlights ?? [],
                 initialScrollHighlightIndex: decoration?.initialScrollHighlightIndex,
                 scrollBehavior: {
                     switch content.previewState {
                     case .plain:
                         return .autoScroll
-                    case let .loadingDecoration(previous):
+                    case let .loadingDecoration(previous, .waitingForSpinner),
+                         let .loadingDecoration(previous, .showingSpinner):
                         return previous == nil ? .autoScroll : .manual
                     case .highlighted:
-                        return content.origin.isUserInitiated ? .trackHighlight : .autoScroll
+                        switch content.origin {
+                        case .automatic:
+                            return .autoScroll
+                        case .click, .keyboard:
+                            return .trackHighlight
+                        }
                     }
                 }(),
-                interaction: {
-                    switch viewModel.editSession {
-                    case let .dirty(dirtyId, _) where dirtyId != item.itemMetadata.itemId,
-                         let .suspendedDirty(dirtyId, _) where dirtyId != item.itemMetadata.itemId:
-                        return .readOnly
-                    case .inactive, .focused, .dirty, .suspendedDirty:
-                        break
-                    }
-                    return .editable(actions: TextPreviewEditingActions(
-                        onTextChange: { newText in
-                            viewModel.onTextEdit(newText, for: item.itemMetadata.itemId, originalText: item.content.textContent)
-                        },
-                        onEditingStateChange: { editing in
-                            viewModel.onEditingStateChange(editing, for: item.itemMetadata.itemId)
-                        },
-                        onCmdReturn: {
-                            viewModel.confirmSelection()
-                        },
-                        onCmdK: {
-                            switch viewModel.editSession {
-                            case .inactive, .suspendedDirty:
-                                break
-                            case .focused, .dirty:
-                                return
-                            }
-                            viewModel.openActionsOverlay(highlight: .index(0))
-                        },
-                        onSave: {
-                            viewModel.commitCurrentEdit()
-                            focusSearchField()
-                        },
-                        onEscape: {
-                            if case let .dirty(dirtyId, _) = viewModel.editSession, dirtyId == item.itemMetadata.itemId {
-                                viewModel.discardCurrentEdit()
-                            }
-                            focusSearchField()
-                        }
-                    ))
-                }()
+                interaction: textPreviewInteraction(for: item)
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topLeading) {
@@ -205,7 +160,7 @@ struct BrowserPreviewPane: View {
                             .frame(width: 1, height: 1)
                             .allowsHitTesting(false)
                             .accessibilityElement(children: .ignore)
-                            .accessibilityLabel(previewHighlightDebugLabel(
+                            .accessibilityLabel(PreviewDebugLabelFormatter.label(
                                 text: previewText,
                                 itemId: item.itemMetadata.itemId,
                                 previewState: content.previewState
@@ -215,7 +170,7 @@ struct BrowserPreviewPane: View {
                 #endif
             }
         case let .image(data, description, _):
-            let highlights = previewDecoration(for: content)?.highlights ?? []
+            let highlights = content.previewState.decoration?.highlights ?? []
             ImagePreviewView(
                 itemId: item.itemMetadata.itemId,
                 data: data,
@@ -223,7 +178,7 @@ struct BrowserPreviewPane: View {
                 highlights: highlights
             )
         case let .link(url, metadataState):
-            let highlights = previewDecoration(for: content)?.highlights ?? []
+            let highlights = content.previewState.decoration?.highlights ?? []
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 16) {
                     #if ENABLE_LINK_PREVIEWS
@@ -258,42 +213,55 @@ struct BrowserPreviewPane: View {
         }
     }
 
-    private func previewIdentity(itemId: String) -> String {
-        // Only tie the view identity to the item itself. If we include matchData properties,
-        // SwiftUI will completely destroy and recreate the heavy NSTextView and TextKit 2
-        // hierarchy on every keystroke. This bypasses the optimized highlight diffing logic
-        // in `updateNSView` and causes 100% CPU hangs during rapid typing.
-        return itemId
-    }
+    private func textPreviewInteraction(for item: ClipboardItem) -> TextPreviewInteraction {
+        guard case .text = item.content else { return .readOnly }
 
-    #if ENABLE_TEST_FIXTURES
-        private func previewHighlightDebugLabel(
-            text: String,
-            itemId: String,
-            previewState: SelectedPreviewState
-        ) -> String {
-            let state: String
-            let fragments: [String]
-
-            switch previewState {
-            case .plain:
-                state = "plain"
-                fragments = []
-            case .loadingDecoration(previous: nil):
-                state = "loading-decoration"
-                fragments = []
-            case let .loadingDecoration(previous: .some(decoration)):
-                state = "loading-decoration-stale"
-                fragments = HighlightStyler.fragments(in: text, highlights: decoration.highlights)
-            case let .highlighted(decoration):
-                state = "highlighted"
-                fragments = HighlightStyler.fragments(in: text, highlights: decoration.highlights)
-            }
-
-            let joinedFragments = fragments.isEmpty ? "none" : fragments.joined(separator: "|")
-            return "item=\(itemId);state=\(state);highlights=\(joinedFragments)"
+        switch viewModel.editSession {
+        case let .dirty(dirtyId, _) where dirtyId != item.itemMetadata.itemId:
+            return .readOnly
+        case let .suspendedDirty(dirtyId, _) where dirtyId != item.itemMetadata.itemId:
+            return .readOnly
+        case .inactive, .focused, .dirty, .suspendedDirty:
+            break
         }
-    #endif
+
+        return .editable(actions: TextPreviewEditingActions(
+            onTextChange: { newText in
+                viewModel.onTextEdit(
+                    newText,
+                    for: item.itemMetadata.itemId,
+                    originalContent: item.content
+                )
+            },
+            onEditingStateChange: { editing in
+                viewModel.onEditingStateChange(editing, for: item.itemMetadata.itemId)
+            },
+            onCmdReturn: {
+                viewModel.confirmSelection()
+            },
+            onCmdK: {
+                switch viewModel.editSession {
+                case .inactive, .suspendedDirty:
+                    break
+                case .focused, .dirty:
+                    return
+                }
+                viewModel.openActionsOverlay(highlight: .index(0))
+            },
+            onSave: {
+                viewModel.commitCurrentEdit()
+                focusSearchField()
+            },
+            onEscape: {
+                if case let .dirty(dirtyId, _) = viewModel.editSession,
+                   dirtyId == item.itemMetadata.itemId
+                {
+                    viewModel.discardCurrentEdit()
+                }
+                focusSearchField()
+            }
+        ))
+    }
 
     private func metadataFooter(for item: ClipboardItem) -> some View {
         return HStack(spacing: 12) {
@@ -333,7 +301,7 @@ struct BrowserPreviewPane: View {
                 Button {
                     viewModel.confirmSelection()
                 } label: {
-                    Text("⌘↩ \(AppSettings.shared.pasteMode.editConfirmLabel)")
+                    Text("⌘↩ \(AppRuntimeState.shared.pasteMode.editConfirmLabel)")
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .subtleHover()
@@ -348,7 +316,7 @@ struct BrowserPreviewPane: View {
                 Button {
                     viewModel.confirmSelection()
                 } label: {
-                    Text("⌘↩ \(AppSettings.shared.pasteMode.buttonLabel)")
+                    Text("⌘↩ \(AppRuntimeState.shared.pasteMode.buttonLabel)")
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .subtleHover()
@@ -398,7 +366,7 @@ struct BrowserPreviewPane: View {
                 Button {
                     viewModel.confirmSelection()
                 } label: {
-                    Text("⏎ \(AppSettings.shared.pasteMode.buttonLabel)")
+                    Text("⏎ \(AppRuntimeState.shared.pasteMode.buttonLabel)")
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .subtleHover()

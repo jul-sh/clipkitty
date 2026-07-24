@@ -1,5 +1,5 @@
+import ClipKittyBrowser
 import ClipKittyRust
-import ClipKittyShared
 import SwiftUI
 
 struct BrowserResultsList: View {
@@ -134,7 +134,7 @@ struct BrowserResultsList: View {
                 // it to the center would yank the list under their cursor,
                 // so we leave the viewport alone. Keyboard nav and programmatic
                 // selection changes still scroll so the new selection is visible.
-                guard viewModel.selection.origin?.requiresScrollIntoView ?? true else {
+                if case .some(.click) = viewModel.selection.origin {
                     return
                 }
 
@@ -195,6 +195,7 @@ private struct PendingFilterChip: View {
     }
 
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var runtimeState = AppRuntimeState.shared
     let title: String
     let selection: Selection
     let onActivate: () -> Void
@@ -203,10 +204,10 @@ private struct PendingFilterChip: View {
         Button(action: onActivate) {
             HStack(spacing: 5) {
                 Text(String(localized: "filter:"))
-                    .font(settings.appFont(size: settings.scaled(11)))
+                    .font(settings.appFont(size: runtimeState.scaled(11)))
                     .foregroundStyle(prefixColor)
                 Text(title)
-                    .font(settings.appFont(size: settings.scaled(12), weight: .semibold))
+                    .font(settings.appFont(size: runtimeState.scaled(12), weight: .semibold))
                     .foregroundStyle(titleColor)
                 switch selection {
                 case .unselected:
@@ -214,13 +215,13 @@ private struct PendingFilterChip: View {
                     // search field, so surface the Tab-key glyph here; this is
                     // the state the user sees while typing.
                     Image(systemName: "arrow.right.to.line")
-                        .font(.system(size: settings.scaled(10), weight: .semibold))
+                        .font(.system(size: runtimeState.scaled(10), weight: .semibold))
                         .foregroundStyle(hintColor)
                         .accessibilityLabel(Text(String(localized: "Press Tab to apply")))
                 case .selected, .accentSelected:
                     // Once the chip owns the keyboard, Return applies it.
                     Text(verbatim: "⏎")
-                        .font(settings.appFont(size: settings.scaled(10)))
+                        .font(settings.appFont(size: runtimeState.scaled(10)))
                         .foregroundStyle(hintColor)
                 }
             }

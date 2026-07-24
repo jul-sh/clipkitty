@@ -1,4 +1,5 @@
-@testable import ClipKittyShared
+@testable import ClipKittyBrowser
+import ClipKittyCore
 import ClipKittyRust
 import Foundation
 

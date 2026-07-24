@@ -78,6 +78,15 @@ final class iOSSettingsStoreTests: XCTestCase {
         XCTAssertTrue(reloaded.autoAddFromClipboard)
     }
 
+    func testChangingOneSettingDoesNotOverwriteAnotherKey() {
+        let store = iOSSettingsStore(defaults: defaults)
+        defaults.set(false, forKey: "iOSGenerateLinkPreviews")
+
+        store.hapticsEnabled = false
+
+        XCTAssertFalse(defaults.bool(forKey: "iOSGenerateLinkPreviews"))
+    }
+
     func testToggleBackAndForth() {
         let store = iOSSettingsStore(defaults: defaults)
 

@@ -1,5 +1,5 @@
+import ClipKittyBrowser
 import ClipKittyRust
-import ClipKittyShared
 
 extension DisplayRow {
     /// The excerpt text and search-highlight ranges the feed renders for this

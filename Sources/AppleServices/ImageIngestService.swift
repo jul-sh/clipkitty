@@ -1,8 +1,7 @@
 import CoreGraphics
 import Foundation
-import ImageIO
 
-public struct ProcessedImageIngest {
+public struct ProcessedImageIngest: Sendable {
     public let compressedData: Data
     public let thumbnailData: Data?
     public let isAnimated: Bool
@@ -24,34 +23,32 @@ public enum ImageIngestService {
         heicCompressor: @escaping @Sendable (Data, CGFloat, Int) -> Data?,
         animatedHeicCompressor: @escaping @Sendable (Data, CGFloat, Int) -> (Data, Bool)?
     ) async -> ProcessedImageIngest? {
-        await withCheckedContinuation { continuation in
-            Task.detached(priority: .userInitiated) {
-                let thumbnail = thumbnailGenerator(rawImageData)
+        await Task.detached(priority: .userInitiated) {
+            let thumbnail = thumbnailGenerator(rawImageData)
 
-                if isAnimated {
-                    guard let (compressedData, isActuallyAnimated) = animatedHeicCompressor(rawImageData, quality, maxPixels) else {
-                        continuation.resume(returning: nil)
-                        return
-                    }
-                    continuation.resume(returning: ProcessedImageIngest(
-                        compressedData: compressedData,
-                        thumbnailData: thumbnail,
-                        isAnimated: isActuallyAnimated
-                    ))
-                    return
+            if isAnimated {
+                guard let (compressedData, isActuallyAnimated) = animatedHeicCompressor(
+                    rawImageData,
+                    quality,
+                    maxPixels
+                ) else {
+                    return nil
                 }
-
-                guard let compressedData = heicCompressor(rawImageData, quality, maxPixels) else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-
-                continuation.resume(returning: ProcessedImageIngest(
+                return ProcessedImageIngest(
                     compressedData: compressedData,
                     thumbnailData: thumbnail,
-                    isAnimated: false
-                ))
+                    isAnimated: isActuallyAnimated
+                )
             }
-        }
+
+            guard let compressedData = heicCompressor(rawImageData, quality, maxPixels) else {
+                return nil
+            }
+            return ProcessedImageIngest(
+                compressedData: compressedData,
+                thumbnailData: thumbnail,
+                isAnimated: false
+            )
+        }.value
     }
 }

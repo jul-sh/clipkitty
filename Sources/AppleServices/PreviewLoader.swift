@@ -1,5 +1,6 @@
+import ClipKittyCore
 import ClipKittyRust
-import ClipKittyShared
+import ClipKittyStore
 import Foundation
 
 @MainActor

@@ -1,61 +1,15 @@
-import AppKit
-import ClipKittyMacPlatform
-import ClipKittyShared
-@preconcurrency import CoreGraphics
+import ClipKittyCore
 import Foundation
+import KeyboardShortcuts
 #if ENABLE_SPARKLE_UPDATES
     import SparkleUpdater
-#endif
-
-enum PasteMode {
-    case noPermission
-    case copyOnly
-    case autoPaste
-
-    var buttonLabel: String {
-        switch self {
-        case .noPermission, .copyOnly:
-            return String(localized: "Copy")
-        case .autoPaste:
-            return String(localized: "Paste")
-        }
-    }
-
-    var editConfirmLabel: String {
-        switch self {
-        case .noPermission, .copyOnly:
-            return String(localized: "Save & Copy")
-        case .autoPaste:
-            return String(localized: "Save & Paste")
-        }
-    }
-}
-
-#if ENABLE_SPARKLE_UPDATES
-    /// State of update checking. Held only in memory (drives the live Updates
-    /// status row); never persisted, so no Codable conformance is needed.
-    enum UpdateCheckState: Equatable {
-        case idle
-        case checking
-        case downloading
-        case installing
-        case available
-        case checkFailed(errorMessage: String)
-    }
 #endif
 
 @MainActor
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
-    /// Shared permission monitor for reactive UI updates
-    let accessibilityPermissionMonitor = AccessibilityPermissionMonitor()
-
-    @Published var hotKey: HotKey {
-        didSet { save() }
-    }
-
-    @Published var deleteHotKey: HotKey {
+    @Published var deleteItemShortcutSetting: DeleteItemShortcutSetting {
         didSet { save() }
     }
 
@@ -64,60 +18,14 @@ final class AppSettings: ObservableObject {
     }
 
     #if ENABLE_SYNTHETIC_PASTE
-        /// Check if the app can post synthetic keyboard events (e.g. Cmd+V for direct paste)
-        /// Uses the permission monitor for reactive updates.
-        var hasPostEventPermission: Bool {
-            // Marketing screenshots and the intro video need the preview pane
-            // to show "Paste" without depending on TCC.db state. The launcher
-            // sets --force-paste-mode for those runs only; other UI tests
-            // still exercise the real permission-denied path. This is a test
-            // hook and must not fake permission in shipping builds, so the flag
-            // is only honored when test fixtures are compiled in.
-            #if ENABLE_TEST_FIXTURES
-                if CommandLine.arguments.contains("--force-paste-mode") {
-                    return true
-                }
-            #endif
-            return accessibilityPermissionMonitor.isGranted
-        }
-
-        /// Request permission to post synthetic keyboard events.
-        /// Opens System Settings if not yet granted.
-        /// Returns true if permissions are already granted.
-        @discardableResult
-        func requestPostEventPermission() -> Bool {
-            return accessibilityPermissionMonitor.requestPermission()
-        }
-
         /// User's selection for paste behavior: true = paste to active app, false = copy to clipboard
         /// This persists the user's *intent* regardless of permission state.
         @Published var autoPasteEnabled: Bool {
             didSet { save() }
         }
-
-        /// The effective paste mode based on user preference AND permission state.
-        /// - Returns `.autoPaste` only when user has enabled it AND permission is granted
-        /// - Returns `.copyOnly` when user explicitly chose copy-only mode
-        /// - Returns `.noPermission` when user wants autoPaste but permission is not granted
-        var pasteMode: PasteMode {
-            // `--force-paste-mode` is a fixture-only screenshot/test hook; never
-            // honor it in shipping builds (see hasPostEventPermission).
-            #if ENABLE_TEST_FIXTURES
-                if CommandLine.arguments.contains("--force-paste-mode") { return .autoPaste }
-            #endif
-            guard autoPasteEnabled else { return .copyOnly }
-            guard hasPostEventPermission else { return .noPermission }
-            return .autoPaste
-        }
-    #else
-        var pasteMode: PasteMode {
-            .copyOnly
-        }
     #endif
 
     #if ENABLE_SPARKLE_UPDATES
-        @Published var updateCheckState: UpdateCheckState = .idle
-
         @Published var autoInstallUpdates: Bool {
             didSet { save() }
         }
@@ -161,29 +69,6 @@ final class AppSettings: ObservableObject {
         }
     #endif
 
-    /// Whether the launch-at-login prompt has been dismissed (one-shot)
-    @Published var launchAtLoginPromptDismissed: Bool {
-        didSet { save() }
-    }
-
-    /// When the last info snackbar was dismissed (cooldown before showing nudges)
-    @Published var lastInfoDismissDate: Date? {
-        didSet { save() }
-    }
-
-    /// When the user last interacted with a nudge snackbar (cooldown before next nudge)
-    @Published var lastNudgeInteractionDate: Date? {
-        didSet { save() }
-    }
-
-    /// Whether the user has completed the first-launch onboarding
-    @Published var hasCompletedOnboarding: Bool {
-        didSet { save() }
-    }
-
-    /// The date the app was first launched (for time-gating the launch-at-login prompt)
-    let firstLaunchDate: Date
-
     #if ENABLE_ICLOUD_SYNC
         /// Whether iCloud sync is enabled
         @Published var syncEnabled: Bool {
@@ -191,19 +76,14 @@ final class AppSettings: ObservableObject {
         }
     #endif
 
-    /// Scale factor for browser text and panel dimensions, derived from system accessibility text size.
-    /// Minimum is 1.0 (system default), maximum is capped at 1.5.
-    @Published var textScale: CGFloat
-
     /// Bundle IDs of apps whose clipboard content should be ignored
     @Published var ignoredAppBundleIds: Set<String> {
         didSet { save() }
     }
 
     private let defaults = UserDefaults.standard
-    private let hotKeyKey = "hotKey"
-    private let deleteHotKeyKey = "deleteHotKey"
     private let maxDbSizeKey = "maxDatabaseSizeGB"
+    private let deleteItemShortcutKey = "deleteSelectedItemShortcut"
     private let launchAtLoginKey = "launchAtLogin"
     private let fontPreferenceKey = "fontPreference"
     private let previewFontPreferenceKey = "previewFontPreference"
@@ -215,15 +95,9 @@ final class AppSettings: ObservableObject {
     #if ENABLE_LINK_PREVIEWS
         private let generateLinkPreviewsKey = "generateLinkPreviews"
     #endif
-    private let launchAtLoginPromptDismissedKey = "launchAtLoginPromptDismissed"
-    private let hasCompletedOnboardingKey = "hasCompletedOnboarding"
-    private let firstLaunchDateKey = "firstLaunchDate"
-    private let lastInfoDismissDateKey = "lastInfoDismissDate"
-    private let lastNudgeInteractionDateKey = "lastNudgeInteractionDate"
     #if ENABLE_ICLOUD_SYNC
         private let syncEnabledKey = "syncEnabled"
     #endif
-    private var textScaleObserver: Any?
     private let ignoredAppBundleIdsKey = "ignoredAppBundleIds"
     #if ENABLE_SPARKLE_UPDATES
         private let autoInstallUpdatesKey = "autoInstallUpdates"
@@ -235,20 +109,12 @@ final class AppSettings: ObservableObject {
 
     private init() {
         // Initialize all stored properties first
-        if let data = defaults.data(forKey: hotKeyKey),
-           let decoded = try? JSONDecoder().decode(HotKey.self, from: data)
+        if let data = defaults.data(forKey: deleteItemShortcutKey),
+           let decoded = try? JSONDecoder().decode(DeleteItemShortcutSetting.self, from: data)
         {
-            hotKey = decoded
+            deleteItemShortcutSetting = decoded
         } else {
-            hotKey = .default
-        }
-
-        if let data = defaults.data(forKey: deleteHotKeyKey),
-           let decoded = try? JSONDecoder().decode(HotKey.self, from: data)
-        {
-            deleteHotKey = decoded
-        } else {
-            deleteHotKey = .deleteDefault
+            deleteItemShortcutSetting = .enabled(.defaultDeleteSelectedItem)
         }
 
         if let stored = defaults.object(forKey: maxDbSizeKey) as? NSNumber {
@@ -271,18 +137,6 @@ final class AppSettings: ObservableObject {
             updateChannel = storedUpdateChannel.flatMap(UpdateChannel.init(rawValue:)) ?? .stable
         #endif
 
-        launchAtLoginPromptDismissed = defaults.bool(forKey: launchAtLoginPromptDismissedKey)
-        lastInfoDismissDate = defaults.object(forKey: lastInfoDismissDateKey) as? Date
-        lastNudgeInteractionDate = defaults.object(forKey: lastNudgeInteractionDateKey) as? Date
-        hasCompletedOnboarding = defaults.bool(forKey: hasCompletedOnboardingKey)
-
-        if let stored = defaults.object(forKey: firstLaunchDateKey) as? Date {
-            firstLaunchDate = stored
-        } else {
-            firstLaunchDate = Date()
-            defaults.set(firstLaunchDate, forKey: firstLaunchDateKey)
-        }
-
         // Sync - default to disabled (user opts in via Settings)
         #if ENABLE_ICLOUD_SYNC
             syncEnabled = defaults.object(forKey: syncEnabledKey) as? Bool ?? false
@@ -294,9 +148,6 @@ final class AppSettings: ObservableObject {
         #if ENABLE_LINK_PREVIEWS
             generateLinkPreviews = defaults.object(forKey: generateLinkPreviewsKey) as? Bool ?? true
         #endif
-
-        // Text scale from system accessibility setting
-        textScale = Self.systemTextScale()
 
         // Load ignored app bundle IDs
         if let storedIds = defaults.stringArray(forKey: ignoredAppBundleIdsKey) {
@@ -314,47 +165,13 @@ final class AppSettings: ObservableObject {
 
         // Mark initialization complete - save() calls are now allowed
         isInitializing = false
-
-        // Observe system text size changes (Accessibility > Display > Text Size)
-        textScaleObserver = NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("NSPreferredContentSizeCategoryDidChangeNotification"),
-            object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.textScale = Self.systemTextScale()
-            }
-        }
-    }
-
-    /// Maps system accessibility text size to a scale factor (1.0–1.5)
-    private static func systemTextScale() -> CGFloat {
-        let category = UserDefaults.standard.string(forKey: "UIPreferredContentSizeCategoryName")
-            ?? "UICTContentSizeCategoryL"
-        // Scale proportionally to iOS body font sizes (baseline: L = 17pt, cap: a11y L = 33pt)
-        let scale: CGFloat = switch category {
-        case "UICTContentSizeCategoryXS", "UICTContentSizeCategoryS",
-             "UICTContentSizeCategoryM", "UICTContentSizeCategoryL":
-            1.0
-        case "UICTContentSizeCategoryXL":
-            1.12 // 19/17
-        case "UICTContentSizeCategoryXXL":
-            1.24 // 21/17
-        case "UICTContentSizeCategoryXXXL":
-            1.35 // 23/17
-        default:
-            1.5 // a11y M and above
-        }
-        return min(scale, 1.5)
     }
 
     private func save() {
         // Prevent save during init (didSet fires before init completes)
         guard !isInitializing else { return }
-        if let data = try? JSONEncoder().encode(hotKey) {
-            defaults.set(data, forKey: hotKeyKey)
-        }
-        if let data = try? JSONEncoder().encode(deleteHotKey) {
-            defaults.set(data, forKey: deleteHotKeyKey)
+        if let data = try? JSONEncoder().encode(deleteItemShortcutSetting) {
+            defaults.set(data, forKey: deleteItemShortcutKey)
         }
         defaults.set(maxDatabaseSizeGB, forKey: maxDbSizeKey)
         defaults.set(launchAtLoginEnabled, forKey: launchAtLoginKey)
@@ -363,10 +180,6 @@ final class AppSettings: ObservableObject {
         #if ENABLE_SYNTHETIC_PASTE
             defaults.set(autoPasteEnabled, forKey: autoPasteKey)
         #endif
-        defaults.set(launchAtLoginPromptDismissed, forKey: launchAtLoginPromptDismissedKey)
-        defaults.set(lastInfoDismissDate, forKey: lastInfoDismissDateKey)
-        defaults.set(lastNudgeInteractionDate, forKey: lastNudgeInteractionDateKey)
-        defaults.set(hasCompletedOnboarding, forKey: hasCompletedOnboardingKey)
         #if ENABLE_ICLOUD_SYNC
             defaults.set(syncEnabled, forKey: syncEnabledKey)
         #endif
@@ -375,7 +188,6 @@ final class AppSettings: ObservableObject {
         #if ENABLE_LINK_PREVIEWS
             defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey)
         #endif
-        // textScale is derived from system accessibility setting, not persisted
         defaults.set(Array(ignoredAppBundleIds).sorted(), forKey: ignoredAppBundleIdsKey)
         #if ENABLE_SPARKLE_UPDATES
             defaults.set(autoInstallUpdates, forKey: autoInstallUpdatesKey)
@@ -396,10 +208,5 @@ final class AppSettings: ObservableObject {
     func isAppIgnored(bundleId: String?) -> Bool {
         guard let bundleId else { return false }
         return ignoredAppBundleIds.contains(bundleId)
-    }
-
-    /// Returns the given size multiplied by the current text scale factor.
-    func scaled(_ size: CGFloat) -> CGFloat {
-        size * textScale
     }
 }

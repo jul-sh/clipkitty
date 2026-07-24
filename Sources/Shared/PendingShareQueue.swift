@@ -67,12 +67,16 @@ public enum PendingShareQueue {
         let origin: Origin?
     }
 
-    /// A dequeued item with its associated binary data already loaded.
+    /// A dequeued item whose payload contains exactly the data its variant needs.
+    public enum DequeuedPayload {
+        case text(String)
+        case url(String)
+        case image(data: Data, thumbnail: Data?)
+    }
+
     public struct DequeuedItem {
-        public let item: PendingItem
         public let origin: Origin
-        public let imageData: Data?
-        public let thumbnailData: Data?
+        public let payload: DequeuedPayload
     }
 
     // MARK: - Enqueue (extensions)
@@ -134,21 +138,28 @@ public enum PendingShareQueue {
                 continue
             }
 
-            let imageData: Data?
-            let thumbnailData: Data?
-            if case .image = manifest.item {
-                imageData = try? Data(contentsOf: itemDir.appendingPathComponent(imageFilename))
-                thumbnailData = try? Data(contentsOf: itemDir.appendingPathComponent(thumbnailFilename))
-            } else {
-                imageData = nil
-                thumbnailData = nil
+            let payload: DequeuedPayload
+            switch manifest.item {
+            case let .text(text):
+                payload = .text(text)
+            case let .url(url):
+                payload = .url(url)
+            case .image:
+                guard let imageData = try? Data(
+                    contentsOf: itemDir.appendingPathComponent(imageFilename)
+                ) else {
+                    try? fm.removeItem(at: itemDir)
+                    continue
+                }
+                let thumbnail = try? Data(
+                    contentsOf: itemDir.appendingPathComponent(thumbnailFilename)
+                )
+                payload = .image(data: imageData, thumbnail: thumbnail)
             }
 
             results.append(DequeuedItem(
-                item: manifest.item,
                 origin: manifest.origin ?? .shareSheet,
-                imageData: imageData,
-                thumbnailData: thumbnailData
+                payload: payload
             ))
             try? fm.removeItem(at: itemDir)
         }

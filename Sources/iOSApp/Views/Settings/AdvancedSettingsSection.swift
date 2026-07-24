@@ -1,4 +1,4 @@
-import ClipKittyShared
+import ClipKittyCore
 import SwiftUI
 
 struct AdvancedSettingsSection: View {
@@ -24,7 +24,7 @@ private struct AdvancedSettingsScreen: View {
         case loading
         case ready(usedBytes: Int64, committedLimitGB: Double)
         case confirmingShrink(usedBytes: Int64, previousLimitGB: Double)
-        case pruning(usedBytes: Int64, committedLimitGB: Double)
+        case pruning
         case loadFailed(message: String)
     }
 
@@ -49,7 +49,7 @@ private struct AdvancedSettingsScreen: View {
         Form {
             Section(String(localized: "Storage Limit")) {
                 switch storageState {
-                case .loading:
+                case .loading, .pruning:
                     HStack {
                         Spacer()
                         ProgressView()
@@ -58,17 +58,7 @@ private struct AdvancedSettingsScreen: View {
                 case let .ready(usedBytes, _),
                      let .confirmingShrink(usedBytes, _):
                     storageControls(usedBytes: usedBytes, limitGB: $settings.maxDatabaseSizeGB)
-                case .pruning:
-                    HStack {
-                        Spacer()
-                        ProgressView()
-                        Spacer()
-                    }
-                case .loadFailed:
-                    EmptyView()
-                }
-
-                if case let .loadFailed(message) = storageState {
+                case let .loadFailed(message):
                     VStack(alignment: .leading, spacing: 6) {
                         Text(message)
                             .font(.caption)
@@ -209,12 +199,9 @@ private struct AdvancedSettingsScreen: View {
     }
 
     private func startPruning() {
-        guard case let .confirmingShrink(usedBytes, _) = storageState else { return }
+        guard case .confirmingShrink = storageState else { return }
         let committedLimitGB = container.settings.maxDatabaseSizeGB
-        storageState = .pruning(
-            usedBytes: usedBytes,
-            committedLimitGB: committedLimitGB
-        )
+        storageState = .pruning
         Task {
             await container.pruneToStorageLimit()
             appState.refreshFeed()

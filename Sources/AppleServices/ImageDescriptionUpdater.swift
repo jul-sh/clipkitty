@@ -1,4 +1,5 @@
-import ClipKittyShared
+import ClipKittyCore
+import ClipKittyStore
 import Foundation
 
 public struct ImageDescriptionUpdater {

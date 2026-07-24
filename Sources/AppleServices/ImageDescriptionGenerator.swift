@@ -6,7 +6,7 @@ public enum ImageDescriptionGenerator {
     private enum VisionProcessingResult {
         case success(labels: [String], recognizedText: String?)
         case cancelled
-        case failed(Error)
+        case failed
     }
 
     public struct Configuration {
@@ -86,7 +86,7 @@ public enum ImageDescriptionGenerator {
                 return .success(labels: Array(labels), recognizedText: text)
 
             } catch {
-                return .failed(error)
+                return .failed
             }
         }.value
 

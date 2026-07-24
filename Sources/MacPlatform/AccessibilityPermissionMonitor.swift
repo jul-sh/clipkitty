@@ -9,9 +9,6 @@ public final class AccessibilityPermissionMonitor {
     /// Current permission state
     public private(set) var isGranted: Bool
 
-    /// Whether the monitor is actively polling
-    public private(set) var isMonitoring: Bool = false
-
     private var pollingTask: Task<Void, Never>?
 
     /// Polling interval when waiting for permission
@@ -24,15 +21,13 @@ public final class AccessibilityPermissionMonitor {
     /// Start monitoring for permission changes.
     /// Polling continues until permission is granted or `stop()` is called.
     public func start() {
-        guard !isMonitoring else { return }
+        guard pollingTask == nil else { return }
 
         // Check current state first
         isGranted = AXIsProcessTrusted()
 
         // If already granted, no need to poll
         guard !isGranted else { return }
-
-        isMonitoring = true
 
         pollingTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
@@ -59,7 +54,6 @@ public final class AccessibilityPermissionMonitor {
     public func stop() {
         pollingTask?.cancel()
         pollingTask = nil
-        isMonitoring = false
     }
 
     /// Request accessibility permission.

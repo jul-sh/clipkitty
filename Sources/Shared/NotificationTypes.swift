@@ -78,6 +78,33 @@ public enum NotificationKind: Equatable {
     }
 }
 
+/// A transient notification request crossing from domain behavior into a
+/// platform renderer. Action data is structurally present only for actionable
+/// notifications; renderers project the closure-free ``kind`` value when they
+/// need scheduling or presentation metadata.
+public enum NotificationRequest {
+    case passive(message: String, iconSystemName: String)
+    case actionable(
+        message: String,
+        iconSystemName: String,
+        actionTitle: String,
+        action: @MainActor () -> Void
+    )
+
+    public var kind: NotificationKind {
+        switch self {
+        case let .passive(message, iconSystemName):
+            return .passive(message: message, iconSystemName: iconSystemName)
+        case let .actionable(message, iconSystemName, actionTitle, _):
+            return .actionable(
+                message: message,
+                iconSystemName: iconSystemName,
+                actionTitle: actionTitle
+            )
+        }
+    }
+}
+
 public enum SnackbarItem: Equatable {
     case nudge(NudgeKind)
     case info(InfoKind)

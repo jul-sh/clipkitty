@@ -1,7 +1,8 @@
 import AppKit
+import ClipKittyBrowser
 import ClipKittyMacPlatform
 import ClipKittyRust
-import ClipKittyShared
+import KeyboardShortcuts
 import Observation
 import SwiftUI
 
@@ -11,6 +12,7 @@ struct BrowserView: View {
     let isPanelVisible: () -> Bool
 
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var runtimeState = AppRuntimeState.shared
     @State private var commandKeyEventMonitor: Any?
     @FocusState private var focusTarget: FocusTarget?
 
@@ -27,7 +29,7 @@ struct BrowserView: View {
                     set: { viewModel.updateSearchText($0) }
                 ),
                 appliedFilter: viewModel.appliedFilterDescriptor,
-                searchSpinnerVisible: viewModel.searchSpinnerVisible,
+                contentState: viewModel.contentState,
                 // Row-only shortcuts (Cmd+K, delete item) must not fire while
                 // the pending filter chip is the keyboard target.
                 selectedItemAvailable: {
@@ -76,7 +78,7 @@ struct BrowserView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
             Color.clear
-                .browserGlassBackground()
+                .clipKittyWindowGlassBackground()
                 .ignoresSafeArea(.all)
         )
         .overlay(alignment: .bottom) {
@@ -110,7 +112,7 @@ struct BrowserView: View {
                     displayVersion: displayVersion,
                     focusSearchField: focusSearchField
                 )
-                .frame(width: settings.scaled(324))
+                .frame(width: runtimeState.scaled(324))
 
                 Divider()
 
@@ -211,22 +213,24 @@ struct BrowserView: View {
             // Configurable delete-item shortcut (default ⌘-). Suppressed while
             // the pending filter chip is the keyboard target — row-only
             // shortcuts must not fire at the chip.
-            let deleteHotKey = AppSettings.shared.deleteHotKey
-            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if modifiers == deleteHotKey.modifierMask,
-               UInt32(event.keyCode) == deleteHotKey.keyCode,
-               !event.isARepeat
-            {
-                if viewModel.selectedItem != nil, case .results = viewModel.keyboardTarget {
+            switch AppSettings.shared.deleteItemShortcutSetting {
+            case let .enabled(shortcut):
+                if KeyboardShortcuts.Shortcut(event: event) == shortcut,
+                   !event.isARepeat,
+                   viewModel.selectedItem != nil,
+                   case .results = viewModel.keyboardTarget
+                {
                     viewModel.deleteSelectedItem()
                     return nil
                 }
+            case .disabled:
+                break
             }
 
             // While a delete is pending, Cmd+Z intentionally undoes the item
             // delete instead of text undo; otherwise the event passes through
             // unchanged so the field editor keeps its text undo.
-            if modifiers == .command,
+            if backspaceModifiers == .command,
                event.charactersIgnoringModifiers == "z",
                case .deleting(.pending) = viewModel.mutationState
             {
@@ -300,24 +304,4 @@ private struct BannerBackgroundModifier: ViewModifier {
 var systemWindowCornerRadius: CGFloat? {
     let v = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
     return (26 ... 27).contains(v) ? 26 : nil
-}
-
-private extension View {
-    @ViewBuilder
-    func browserGlassBackground() -> some View {
-        let radius = systemWindowCornerRadius
-        if #available(macOS 26.0, *) {
-            if let radius {
-                glassEffect(.regular.interactive(), in: .rect(cornerRadius: radius, style: .continuous))
-            } else {
-                glassEffect(.regular.interactive(), in: .rect)
-            }
-        } else {
-            if let radius {
-                background(.regularMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
-            } else {
-                background(.regularMaterial)
-            }
-        }
-    }
 }

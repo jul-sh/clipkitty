@@ -1,36 +1,9 @@
 import AppKit
+import ClipKittyCore
 import CoreText
 import Foundation
 
-public enum AppFontPreference: String, CaseIterable, Identifiable {
-    case iosevkaCharon
-    case system
-
-    public var id: String {
-        rawValue
-    }
-}
-
-public enum PreviewFontPreference: String, CaseIterable, Identifiable {
-    case coding
-    case proportional
-
-    public var id: String {
-        rawValue
-    }
-}
-
 public enum FontManager {
-    /// Preferred custom fonts with system fallbacks.
-    /// Use PostScript names so registered fonts resolve reliably.
-    public static var sansSerif: String {
-        sansSerifName(for: .iosevkaCharon)
-    }
-
-    public static var mono: String {
-        monoName(for: .iosevkaCharon)
-    }
-
     public static func sansSerifName(for preference: AppFontPreference) -> String {
         switch preference {
         case .iosevkaCharon:

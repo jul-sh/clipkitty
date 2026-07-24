@@ -1,7 +1,6 @@
 import ClipKittyRust
 import Foundation
 import UIKit
-import UniformTypeIdentifiers
 
 // MARK: - Clipboard Reading Result
 
@@ -23,7 +22,9 @@ final class iOSClipboardService {
 
     /// The current pasteboard generation. Reading `changeCount` never triggers
     /// the system paste-consent alert, unlike reading the pasteboard contents.
-    var pasteboardChangeCount: Int { UIPasteboard.general.changeCount }
+    var pasteboardChangeCount: Int {
+        UIPasteboard.general.changeCount
+    }
 
     func copy(content: ClipboardContent) {
         let pasteboard = UIPasteboard.general

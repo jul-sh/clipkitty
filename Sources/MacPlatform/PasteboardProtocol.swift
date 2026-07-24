@@ -20,7 +20,7 @@ public protocol PasteboardProtocol: AnyObject {
 
 // MARK: - NSPasteboard Conformance
 
-extension NSPasteboard: @retroactive PasteboardProtocol {
+extension NSPasteboard: PasteboardProtocol {
     public func types() -> [NSPasteboard.PasteboardType]? {
         return types
     }
@@ -49,7 +49,7 @@ public protocol WorkspaceProtocol {
 
 // MARK: - NSWorkspace Conformance
 
-extension NSWorkspace: @retroactive WorkspaceProtocol {}
+extension NSWorkspace: WorkspaceProtocol {}
 
 // MARK: - File Manager Protocol
 
@@ -65,13 +65,4 @@ public protocol FileManagerProtocol {
     func removeItem(at url: URL) throws
 }
 
-extension FileManager: @retroactive FileManagerProtocol {}
-
-// MARK: - Bundle Protocol
-
-public protocol BundleInfoProtocol {
-    var bundleIdentifier: String? { get }
-    var bundlePath: String { get }
-}
-
-extension Bundle: @retroactive BundleInfoProtocol {}
+extension FileManager: FileManagerProtocol {}

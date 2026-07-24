@@ -1,5 +1,5 @@
+@testable import ClipKittyBrowser
 import ClipKittyRust
-@testable import ClipKittyShared
 import XCTest
 
 /// Integration tests for iOS-specific BrowserViewModel flows.
@@ -106,7 +106,7 @@ final class iOSBrowserIntegrationTests: XCTestCase {
         await flushMainActor()
 
         // Start editing
-        viewModel.onTextEdit(longText, for: "1", originalText: "Short original")
+        viewModel.onTextEdit(longText, for: "1", originalContent: item.content)
         viewModel.commitCurrentEdit()
         await flushMainActor()
 

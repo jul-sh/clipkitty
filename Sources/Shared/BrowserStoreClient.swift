@@ -1,4 +1,6 @@
+import ClipKittyCore
 import ClipKittyRust
+import ClipKittyStore
 import Foundation
 
 public enum BrowserSearchOutcome {
@@ -13,6 +15,39 @@ public protocol BrowserSearchOperation: AnyObject {
     func awaitOutcome() async -> BrowserSearchOutcome
 }
 
+/// Adapts the repository's cancellable search operation to the browser's
+/// request-aware result model. Both platform clients use the same adapter so
+/// cancellation and result mapping cannot drift.
+public final class RepositoryBrowserSearchOperation: BrowserSearchOperation {
+    public let request: SearchRequest
+    private let operation: ClipboardSearchOperation
+
+    public init(request: SearchRequest, operation: ClipboardSearchOperation) {
+        self.request = request
+        self.operation = operation
+    }
+
+    public func cancel() {
+        operation.cancel()
+    }
+
+    public func awaitOutcome() async -> BrowserSearchOutcome {
+        switch await operation.awaitOutcome() {
+        case let .success(result):
+            return .success(BrowserSearchResponse(
+                request: request,
+                items: result.matches,
+                firstPreviewPayload: result.firstPreviewPayload,
+                totalCount: Int(result.totalCount)
+            ))
+        case .cancelled:
+            return .cancelled
+        case let .failure(error):
+            return .failure(error)
+        }
+    }
+}
+
 @MainActor
 public protocol BrowserStoreClient: AnyObject {
     var listPresentationProfile: ListPresentationProfile { get }
@@ -21,7 +56,7 @@ public protocol BrowserStoreClient: AnyObject {
     func resolveMatchedExcerpts(requests: [MatchedExcerptRequest]) async -> [MatchedExcerptResolution]
     func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload?
     #if ENABLE_LINK_PREVIEWS
-    func fetchLinkMetadata(url: String, itemId: String) async -> ClipboardItem?
+        func fetchLinkMetadata(url: String, itemId: String) async -> ClipboardItem?
     #endif
     func addTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError>
     func removeTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError>

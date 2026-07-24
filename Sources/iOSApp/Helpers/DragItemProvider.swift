@@ -29,23 +29,15 @@ enum DragItemProvider {
         // Register every type we might drop as. The drop target picks the best
         // match. Load handlers only fire for the chosen type, so there's no
         // wasted work.
-        register(provider, type: .plainText, itemId: itemId, fetch: fetch) { item in
-            switch item.content {
-            case let .text(value): return value.data(using: .utf8)
-            case let .color(value): return value.data(using: .utf8)
-            case let .link(url, _): return url.data(using: .utf8)
-            case let .image(_, description, _): return description.data(using: .utf8)
-            case .file: return nil
-            }
-        }
-
-        register(provider, type: .utf8PlainText, itemId: itemId, fetch: fetch) { item in
-            switch item.content {
-            case let .text(value): return value.data(using: .utf8)
-            case let .color(value): return value.data(using: .utf8)
-            case let .link(url, _): return url.data(using: .utf8)
-            case let .image(_, description, _): return description.data(using: .utf8)
-            case .file: return nil
+        for type in [UTType.plainText, .utf8PlainText] {
+            register(provider, type: type, itemId: itemId, fetch: fetch) { item in
+                switch item.content {
+                case let .text(value): return value.data(using: .utf8)
+                case let .color(value): return value.data(using: .utf8)
+                case let .link(url, _): return url.data(using: .utf8)
+                case let .image(_, description, _): return description.data(using: .utf8)
+                case .file: return nil
+                }
             }
         }
 

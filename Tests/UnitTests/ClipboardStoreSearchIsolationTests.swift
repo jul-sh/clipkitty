@@ -1,7 +1,6 @@
 @testable import ClipKitty
 @testable import ClipKittyMacPlatform
 import ClipKittyRust
-import ClipKittyShared
 import Foundation
 import XCTest
 

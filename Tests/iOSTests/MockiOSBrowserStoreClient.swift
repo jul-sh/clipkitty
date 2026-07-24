@@ -1,5 +1,6 @@
+@testable import ClipKittyBrowser
+import ClipKittyCore
 import ClipKittyRust
-@testable import ClipKittyShared
 import Foundation
 
 @MainActor

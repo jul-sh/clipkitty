@@ -788,10 +788,7 @@ async fn video_fast_scene_ranks_image_first_without_filter() {
         for item in VIDEO_ITEMS {
             backdate(item.content, item.offset);
         }
-        backdate(
-            &format!("Image: {FAST_IMAGE_KEYWORDS}"),
-            FAST_IMAGE_OFFSET,
-        );
+        backdate(&format!("Image: {FAST_IMAGE_KEYWORDS}"), FAST_IMAGE_OFFSET);
     }
     store.rebuild_index().unwrap();
 

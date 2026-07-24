@@ -1,5 +1,5 @@
+import ClipKittyCore
 import ClipKittyMacPlatform
-import ClipKittyShared
 import Foundation
 
 // MARK: - Decision type
@@ -11,8 +11,9 @@ enum SnackbarDecision: Equatable {
 
 // MARK: - Environment protocol
 
+@MainActor
 protocol SnackbarEnvironment {
-    // Info conditions
+    /// Info conditions
     var isRebuildingIndex: Bool { get }
 
     // Cooldowns
@@ -31,6 +32,7 @@ protocol SnackbarEnvironment {
 
 // MARK: - Pure decision function
 
+@MainActor
 func evaluateSnackbar(_ env: SnackbarEnvironment) -> SnackbarDecision {
     // 1. Info conditions take priority
     if env.isRebuildingIndex {
@@ -61,6 +63,7 @@ func evaluateSnackbar(_ env: SnackbarEnvironment) -> SnackbarDecision {
 
 // MARK: - Nudge evaluation helpers
 
+@MainActor
 private func evaluateLaunchAtLoginNudge(_ env: SnackbarEnvironment) -> Bool {
     if env.isLaunchAtLoginSystemEnabled { return false }
     if env.isLaunchAtLoginDismissed { return false }
@@ -79,16 +82,46 @@ struct LiveSnackbarEnvironment: SnackbarEnvironment {
         self.store = store
     }
 
-    var isRebuildingIndex: Bool { store?.lifecycle == .rebuildingIndex }
+    var isRebuildingIndex: Bool {
+        store?.lifecycle == .rebuildingIndex
+    }
 
-    var lastInfoDismissDate: Date? { AppSettings.shared.lastInfoDismissDate }
-    var lastNudgeInteractionDate: Date? { AppSettings.shared.lastNudgeInteractionDate }
-    var cooldownAfterInfo: TimeInterval { 10 * 60 }
-    var cooldownAfterNudgeInteraction: TimeInterval { 7 * 24 * 60 * 60 }
-    var now: Date { Date() }
+    var lastInfoDismissDate: Date? {
+        AppLifecycleState.shared.lastInfoDismissDate
+    }
 
-    var isLaunchAtLoginSystemEnabled: Bool { LaunchAtLogin.shared.isEnabled }
-    var isLaunchAtLoginDismissed: Bool { AppSettings.shared.launchAtLoginPromptDismissed }
-    var firstLaunchDate: Date { AppSettings.shared.firstLaunchDate }
-    var minimumUseDuration: TimeInterval { 3 * 24 * 60 * 60 }
+    var lastNudgeInteractionDate: Date? {
+        AppLifecycleState.shared.lastNudgeInteractionDate
+    }
+
+    var cooldownAfterInfo: TimeInterval {
+        10 * 60
+    }
+
+    var cooldownAfterNudgeInteraction: TimeInterval {
+        7 * 24 * 60 * 60
+    }
+
+    var now: Date {
+        Date()
+    }
+
+    var isLaunchAtLoginSystemEnabled: Bool {
+        switch LaunchAtLogin.shared.state.registrationStatus {
+        case .enabled: true
+        case .disabled: false
+        }
+    }
+
+    var isLaunchAtLoginDismissed: Bool {
+        AppLifecycleState.shared.launchAtLoginPromptDismissed
+    }
+
+    var firstLaunchDate: Date {
+        AppLifecycleState.shared.firstLaunchDate
+    }
+
+    var minimumUseDuration: TimeInterval {
+        3 * 24 * 60 * 60
+    }
 }

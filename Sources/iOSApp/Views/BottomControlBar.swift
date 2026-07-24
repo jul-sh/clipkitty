@@ -1,5 +1,7 @@
+import ClipKittyBrowser
+import ClipKittyCore
 import ClipKittyRust
-import ClipKittyShared
+import ClipKittyStore
 import PhotosUI
 import SwiftUI
 
@@ -14,19 +16,14 @@ struct BottomControlBar: View {
     @Environment(iOSSettingsStore.self) private var settings
 
     @State private var selectedPhoto: PhotosPickerItem?
-    @State private var createFlow: CreateFlow = .none
-    @State private var isFilterExpanded = false
+    @State private var presentation: BarPresentation = .idle
 
-    private enum CreateFlow: Equatable {
-        case none
-        case menuExpanded
+    private enum BarPresentation {
+        case idle
+        case addMenu
+        case filterMenu
         case composingText
         case importingPhoto
-        case importingPasteboard
-    }
-
-    private var isAddExpanded: Bool {
-        createFlow == .menuExpanded
     }
 
     @FocusState private var isSearchFocused: Bool
@@ -35,17 +32,19 @@ struct BottomControlBar: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             // Dismiss overlay when expanded menus are open
-            if isAddExpanded || isFilterExpanded {
+            switch presentation {
+            case .addMenu, .filterMenu:
                 Color.clear
                     .contentShape(Rectangle())
                     .ignoresSafeArea()
                     .onTapGesture {
                         withAnimation(.bouncy) {
-                            createFlow = .none
-                            isFilterExpanded = false
+                            presentation = .idle
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .idle, .composingText, .importingPhoto:
+                EmptyView()
             }
 
             GlassEffectContainer(spacing: 20) {
@@ -82,15 +81,29 @@ struct BottomControlBar: View {
         }
         .photosPicker(
             isPresented: Binding(
-                get: { createFlow == .importingPhoto },
-                set: { if !$0 { createFlow = .none } }
+                get: {
+                    if case .importingPhoto = presentation { return true }
+                    return false
+                },
+                set: { presented in
+                    if !presented, case .importingPhoto = presentation {
+                        presentation = .idle
+                    }
+                }
             ),
             selection: $selectedPhoto,
             matching: .images
         )
         .sheet(isPresented: Binding(
-            get: { createFlow == .composingText },
-            set: { if !$0 { createFlow = .none } }
+            get: {
+                if case .composingText = presentation { return true }
+                return false
+            },
+            set: { presented in
+                if !presented, case .composingText = presentation {
+                    presentation = .idle
+                }
+            }
         )) {
             TextComposerView()
         }
@@ -105,9 +118,8 @@ struct BottomControlBar: View {
         // sheet/menu covers it.
         .onChange(of: isSearchActive) { _, active in
             guard active else { return }
-            createFlow = .none
             withAnimation(.bouncy) {
-                isFilterExpanded = false
+                presentation = .idle
             }
         }
     }
@@ -117,8 +129,7 @@ struct BottomControlBar: View {
     private var searchButton: some View {
         Button {
             withAnimation(.bouncy) {
-                createFlow = .none
-                isFilterExpanded = false
+                presentation = .idle
                 isSearchActive = true
             }
             isSearchFocused = true
@@ -164,7 +175,8 @@ struct BottomControlBar: View {
 
     private var filterCluster: some View {
         VStack(spacing: 8) {
-            if isFilterExpanded {
+            switch presentation {
+            case .filterMenu:
                 VStack(spacing: 12) {
                     ForEach(sortedFilterOptions, id: \.kind) { option in
                         let isActive = option.kind == viewModel.activeFilterKind
@@ -172,7 +184,7 @@ struct BottomControlBar: View {
                             viewModel.applyFilter(option.kind)
                             haptics.fire(.selection)
                             withAnimation(.bouncy) {
-                                isFilterExpanded = false
+                                presentation = .idle
                             }
                         } label: {
                             HStack(spacing: 8) {
@@ -195,11 +207,10 @@ struct BottomControlBar: View {
                     }
                 }
                 .glassEffectID("filter", in: barNamespace)
-            } else {
+            case .idle, .addMenu, .composingText, .importingPhoto:
                 Button {
                     withAnimation(.bouncy) {
-                        createFlow = .none
-                        isFilterExpanded = true
+                        presentation = .filterMenu
                     }
                 } label: {
                     HStack(spacing: 6) {
@@ -227,10 +238,10 @@ struct BottomControlBar: View {
 
     private var addCluster: some View {
         VStack(spacing: 12) {
-            if isAddExpanded {
+            switch presentation {
+            case .addMenu:
                 Button {
-                    withAnimation(.bouncy) { createFlow = .none }
-                    createFlow = .importingPhoto
+                    withAnimation(.bouncy) { presentation = .importingPhoto }
                 } label: {
                     Image(systemName: "photo.badge.plus")
                         .font(.body.weight(.medium))
@@ -242,8 +253,7 @@ struct BottomControlBar: View {
                 .glassEffectID("add_photo", in: barNamespace)
 
                 Button {
-                    withAnimation(.bouncy) { createFlow = .none }
-                    createFlow = .composingText
+                    withAnimation(.bouncy) { presentation = .composingText }
                 } label: {
                     Image(systemName: "square.and.pencil")
                         .font(.body.weight(.medium))
@@ -259,7 +269,7 @@ struct BottomControlBar: View {
                 // "add from clipboard" button would only ever duplicate that.
                 if !settings.autoAddFromClipboard {
                     Button {
-                        withAnimation(.bouncy) { createFlow = .none }
+                        withAnimation(.bouncy) { presentation = .idle }
                         Task { await pasteClipboard() }
                     } label: {
                         Image(systemName: "doc.on.clipboard")
@@ -271,25 +281,40 @@ struct BottomControlBar: View {
                     .glassEffect(.regular.interactive(), in: .circle)
                     .glassEffectID("add_paste", in: barNamespace)
                 }
+            case .idle, .filterMenu, .composingText, .importingPhoto:
+                EmptyView()
             }
 
             Button {
                 withAnimation(.bouncy) {
-                    isFilterExpanded = false
-                    createFlow = isAddExpanded ? .none : .menuExpanded
+                    switch presentation {
+                    case .addMenu:
+                        presentation = .idle
+                    case .idle, .filterMenu, .composingText, .importingPhoto:
+                        presentation = .addMenu
+                    }
                 }
             } label: {
-                Image(systemName: isAddExpanded ? "xmark" : "plus")
-                    .font(.body.weight(.medium))
-                    .contentTransition(.symbolEffect(.replace))
-                    .frame(width: 52, height: 52)
-                    .contentShape(Circle())
+                switch presentation {
+                case .addMenu:
+                    addButtonImage(systemName: "xmark")
+                case .idle, .filterMenu, .composingText, .importingPhoto:
+                    addButtonImage(systemName: "plus")
+                }
             }
             .buttonStyle(.plain)
             .glassEffect(.regular.interactive(), in: .circle)
             .glassEffectID("trailing", in: barNamespace)
             .accessibilityLabel(String(localized: "Add new item"))
         }
+    }
+
+    private func addButtonImage(systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.body.weight(.medium))
+            .contentTransition(.symbolEffect(.replace))
+            .frame(width: 52, height: 52)
+            .contentShape(Circle())
     }
 
     // MARK: - Dismiss search
@@ -360,52 +385,19 @@ struct BottomControlBar: View {
             return
         }
 
-        let result: Result<String, ClipboardError>
-
-        switch content {
-        case let .image(image):
-            guard let data = image.pngData() else {
-                appState.showToast(.addFailed(String(localized: "Could not read image data")))
-                return
-            }
-            let thumbnail = image.preparingThumbnail(of: CGSize(width: 200, height: 200))?.jpegData(
-                compressionQuality: 0.7
-            )
-            result = await appState.saveImage(
-                imageData: data,
-                thumbnail: thumbnail,
-                sourceApp: "Pasteboard",
-                sourceAppBundleId: nil,
-                isAnimated: false
-            )
-        case let .link(url):
-            result = await container.repository.saveText(
-                text: url.absoluteString,
-                sourceApp: "Pasteboard",
-                sourceAppBundleId: nil
-            )
-        case let .text(text):
-            result = await container.repository.saveText(
-                text: text,
-                sourceApp: "Pasteboard",
-                sourceAppBundleId: nil
-            )
-        }
-
-        switch result {
-        case .success:
-            haptics.fire(.success)
-            appState.showToast(.addSucceeded)
-            appState.refreshFeed()
-        case let .failure(error):
+        guard let result = await appState.savePasteboardContent(content) else {
             haptics.fire(.destructive)
-            appState.showToast(.addFailed(error.localizedDescription))
+            appState.showToast(.addFailed(String(localized: "Could not read image data")))
+            return
         }
+        handleAddResult(result)
     }
 
     // MARK: - Import photo
 
     private func importPhoto(from item: PhotosPickerItem) async {
+        defer { selectedPhoto = nil }
+
         guard let data = try? await item.loadTransferable(type: Data.self) else {
             appState.showToast(.addFailed(String(localized: "Could not load photo")))
             return
@@ -426,6 +418,10 @@ struct BottomControlBar: View {
             isAnimated: false
         )
 
+        handleAddResult(result)
+    }
+
+    private func handleAddResult(_ result: Result<String, ClipboardError>) {
         switch result {
         case .success:
             haptics.fire(.success)

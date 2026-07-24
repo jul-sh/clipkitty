@@ -1,40 +1,9 @@
+import ClipKittyCore
 import CoreText
 import SwiftUI
 import UIKit
 
-/// The UI typeface used across the app. Mirrors the macOS `AppFontPreference`
-/// (see `Sources/MacPlatform/FontManager.swift`) so the two platforms persist
-/// and reason about typeface choice identically.
-public enum AppFontPreference: String, CaseIterable, Identifiable {
-    case iosevkaCharon
-    case system
-
-    public var id: String {
-        rawValue
-    }
-}
-
-/// Character spacing for preview text. Mirrors the macOS `PreviewFontPreference`.
-public enum PreviewFontPreference: String, CaseIterable, Identifiable {
-    case coding
-    case proportional
-
-    public var id: String {
-        rawValue
-    }
-}
-
 enum FontManager {
-    /// Default sans-serif PostScript name (Iosevka Charon when registered).
-    static var sansSerif: String {
-        sansSerifName(for: .iosevkaCharon)
-    }
-
-    /// Default monospace PostScript name (Iosevka Charon Mono when registered).
-    static var mono: String {
-        monoName(for: .iosevkaCharon)
-    }
-
     /// Sans-serif font name for the given typeface preference, falling back to
     /// the system font when the custom face is unavailable or `.system` is chosen.
     static func sansSerifName(for preference: AppFontPreference) -> String {
@@ -87,21 +56,6 @@ enum FontManager {
             if !CTFontManagerRegisterFontsForURL(fontURL as CFURL, .process, &errorRef) {
                 _ = errorRef?.takeRetainedValue()
             }
-        }
-    }
-}
-
-/// Sizing metrics that keep the system font visually balanced against Iosevka
-/// Charon, mirroring `AppFontMetrics` on macOS.
-enum AppFontMetrics {
-    private static let systemScale: CGFloat = 0.94
-
-    static func size(_ size: CGFloat, for preference: AppFontPreference) -> CGFloat {
-        switch preference {
-        case .iosevkaCharon:
-            return size
-        case .system:
-            return size * systemScale
         }
     }
 }

@@ -6,10 +6,7 @@ import SwiftUI
 /// Auto-dismisses when permission is detected as granted.
 struct AccessibilityPermissionSheet: View {
     @Binding var isPresented: Bool
-    @ObservedObject private var settings = AppSettings.shared
-
-    /// Track whether permission was granted (for auto-dismiss)
-    @State private var hasPermission = false
+    @State private var permissionMonitor = AppRuntimeState.shared.accessibilityPermissionMonitor
 
     var body: some View {
         VStack(spacing: 0) {
@@ -87,30 +84,23 @@ struct AccessibilityPermissionSheet: View {
         .frame(width: 380, height: 360)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
-            // Ensure monitoring is running
-            hasPermission = settings.accessibilityPermissionMonitor.isGranted
-            settings.accessibilityPermissionMonitor.start()
+            permissionMonitor.start()
         }
-        .task {
-            // Poll permission state and auto-dismiss when granted
-            let monitor = settings.accessibilityPermissionMonitor
-            while !Task.isCancelled {
-                let granted = monitor.isGranted
-                if granted && !hasPermission {
-                    hasPermission = granted
-                    // Auto-dismiss after a brief delay
-                    try? await Task.sleep(for: .milliseconds(500))
-                    isPresented = false
-                    return
-                }
-                try? await Task.sleep(for: .milliseconds(100))
+        .onChange(of: permissionMonitor.isGranted) { _, isGranted in
+            guard isGranted else { return }
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(500))
+                isPresented = false
             }
+        }
+        .onDisappear {
+            permissionMonitor.stop()
         }
     }
 
     private func openSystemSettings() {
         // Request permission - this triggers the macOS permission dialog
-        settings.accessibilityPermissionMonitor.requestPermission()
+        permissionMonitor.requestPermission()
         // Also open System Settings so user can toggle if needed
         let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
         NSWorkspace.shared.open(url)

@@ -18,8 +18,6 @@ final class HapticsClient {
         case selection
         case success
         case destructive
-        case shortcutCompleted
-        case cardActionCommitted
     }
 
     func fire(_ event: Event) {
@@ -29,12 +27,10 @@ final class HapticsClient {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         case .selection:
             UISelectionFeedbackGenerator().selectionChanged()
-        case .success, .shortcutCompleted:
+        case .success:
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         case .destructive:
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
-        case .cardActionCommitted:
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         }
     }
 }
