@@ -279,34 +279,7 @@ final class AppState {
 
         guard let content = container.clipboardService.readCurrentClipboard() else { return }
 
-        let result: Result<String, ClipboardError>
-
-        switch content {
-        case let .image(image):
-            guard let data = image.pngData() else { return }
-            let thumbnail = image.preparingThumbnail(of: CGSize(width: 200, height: 200))?.jpegData(
-                compressionQuality: 0.7
-            )
-            result = await saveImage(
-                imageData: data,
-                thumbnail: thumbnail,
-                sourceApp: "Pasteboard",
-                sourceAppBundleId: nil,
-                isAnimated: false
-            )
-        case let .link(url):
-            result = await container.repository.saveText(
-                text: url.absoluteString,
-                sourceApp: "Pasteboard",
-                sourceAppBundleId: nil
-            )
-        case let .text(text):
-            result = await container.repository.saveText(
-                text: text,
-                sourceApp: "Pasteboard",
-                sourceAppBundleId: nil
-            )
-        }
+        guard let result = await savePasteboardContent(content) else { return }
 
         switch result {
         case .success:
@@ -314,6 +287,39 @@ final class AppState {
         case .failure:
             break
         }
+    }
+
+    func savePasteboardContent(
+        _ content: PasteboardContent
+    ) async -> Result<String, ClipboardError>? {
+        switch content {
+        case let .image(image):
+            guard let data = image.pngData() else { return nil }
+            let thumbnail = image.preparingThumbnail(
+                of: CGSize(width: 200, height: 200)
+            )?.jpegData(compressionQuality: 0.7)
+            return await saveImage(
+                imageData: data,
+                thumbnail: thumbnail,
+                sourceApp: "Pasteboard",
+                sourceAppBundleId: nil,
+                isAnimated: false
+            )
+        case let .link(url):
+            return await savePasteboardText(url.absoluteString)
+        case let .text(text):
+            return await savePasteboardText(text)
+        }
+    }
+
+    private func savePasteboardText(
+        _ text: String
+    ) async -> Result<String, ClipboardError> {
+        await container.repository.saveText(
+            text: text,
+            sourceApp: "Pasteboard",
+            sourceAppBundleId: nil
+        )
     }
 }
 
