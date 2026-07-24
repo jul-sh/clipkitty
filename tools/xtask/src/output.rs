@@ -1,12 +1,9 @@
 //! Structured output helpers.
 //!
-//! Subcommands should never hand-format their own diagnostics. They either go
-//! through `Reporter` for freeform text or emit serde-serialisable structs
-//! through `Reporter::json_line` when machine-readable output is useful.
+//! Subcommands route freeform diagnostics through `Reporter` so colour and
+//! verbose command tracing stay consistent.
 
 use std::io::{self, IsTerminal, Write};
-
-use serde::Serialize;
 
 pub struct Reporter {
     verbose: bool,
@@ -58,12 +55,5 @@ impl Reporter {
             format!("$ {line}")
         };
         println!("{styled}");
-    }
-
-    #[allow(dead_code)]
-    pub fn json_line<T: Serialize>(&self, value: &T) -> anyhow::Result<()> {
-        let line = serde_json::to_string(value)?;
-        println!("{line}");
-        Ok(())
     }
 }

@@ -22,10 +22,10 @@ use uuid::Uuid;
 use crate::cli::{MarketingCmd, ScreenshotPlatform};
 use crate::cmd::build;
 use crate::cmd::sign;
+use crate::filesystem::remove_if_exists;
 use crate::model::SetupAction;
-use crate::model::SideEffectLevel;
 use crate::output::Reporter;
-use crate::process::Runner;
+use crate::process::{command_exists, Runner};
 use crate::repo::RepoRoot;
 
 const SCREENSHOT_LOCALE_FILE: &str = "/tmp/clipkitty_screenshot_locale.txt";
@@ -46,15 +46,10 @@ const MAC_SCREENSHOT_CAPTURE_SPECS: [(usize, &str); 3] =
     [(1, "history"), (2, "search"), (3, "filter")];
 
 /// The iOS/iPad set adds the share-sheet flow.
-const IOS_SCREENSHOT_CAPTURE_SPECS: [(usize, &str); 4] = [
-    (1, "history"),
-    (2, "search"),
-    (3, "filter"),
-    (4, "share"),
-];
+const IOS_SCREENSHOT_CAPTURE_SPECS: [(usize, &str); 4] =
+    [(1, "history"), (2, "search"), (3, "filter"), (4, "share")];
 
 pub fn run(cmd: &MarketingCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
-    let _ = SideEffectLevel::LocalMutation;
     let repo = RepoRoot::discover(reporter)?;
     match cmd {
         MarketingCmd::Screenshots(args) => match args.platform {
@@ -394,7 +389,10 @@ fn run_screenshot_plan(
                     let progress = if copied == 0 {
                         format!("No {:?} screenshots", plan.platform)
                     } else {
-                        format!("Only copied {copied}/{expected} {:?} screenshots", plan.platform)
+                        format!(
+                            "Only copied {copied}/{expected} {:?} screenshots",
+                            plan.platform
+                        )
                     };
                     reporter.info(&format!(
                         "{progress} for {locale_code} on attempt {}; retrying ({attempt}/{max_attempts}).",
@@ -405,8 +403,7 @@ fn run_screenshot_plan(
                         reset_ios_simulators(reporter);
                     }
                     clear_screenshot_sources(plan.platform, locale)?;
-                    status =
-                        run_screenshot_xcodebuild(repo, plan, &runtime, &log_path, reporter)?;
+                    status = run_screenshot_xcodebuild(repo, plan, &runtime, &log_path, reporter)?;
                     copy_result = copy_screenshots(repo, plan, locale, reporter)?;
                 }
                 ScreenshotCopy::Incomplete { copied, expected } => {
@@ -472,11 +469,10 @@ fn prepare_ios_simulator(
 
     let list = Runner::new(reporter, "xcrun")
         .args(["simctl", "list", "devices", "available", "-j"])
-        .capture_stdout()
         .capture_stderr()
         .output()?;
-    let parsed: serde_json::Value = serde_json::from_slice(&list.stdout)
-        .context("parsing `simctl list devices -j` output")?;
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&list.stdout).context("parsing `simctl list devices -j` output")?;
     let udid = parsed["devices"]
         .as_object()
         .into_iter()
@@ -539,7 +535,6 @@ fn boot_ios_simulator(udid: &str, reporter: &Reporter) -> Result<()> {
     // `bootstatus -b` is idempotent and gives us the readiness guarantee.
     let _ = Runner::new(reporter, "xcrun")
         .args(["simctl", "boot", udid])
-        .capture_stdout()
         .capture_stderr()
         .status();
     let status = Runner::new(reporter, "xcrun")
@@ -564,7 +559,6 @@ fn boot_ios_simulator(udid: &str, reporter: &Reporter) -> Result<()> {
 fn reset_ios_simulators(reporter: &Reporter) {
     let result = Runner::new(reporter, "xcrun")
         .args(["simctl", "shutdown", "all"])
-        .capture_stdout()
         .capture_stderr()
         .status();
     match result {
@@ -572,10 +566,14 @@ fn reset_ios_simulators(reporter: &Reporter) {
             reporter.info("Shut down booted simulators before retrying.");
         }
         Ok(status) => {
-            reporter.info(&format!("`simctl shutdown all` exited with {status}; continuing."));
+            reporter.info(&format!(
+                "`simctl shutdown all` exited with {status}; continuing."
+            ));
         }
         Err(err) => {
-            reporter.info(&format!("`simctl shutdown all` failed to run: {err}; continuing."));
+            reporter.info(&format!(
+                "`simctl shutdown all` failed to run: {err}; continuing."
+            ));
         }
     }
 }
@@ -610,9 +608,8 @@ impl SimHangSampler {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let stop_flag = stop.clone();
         let handle = thread::spawn(move || {
-            let status_path = format!(
-                "/tmp/clipkitty_{device_stem}_hang_sampler_status_screenshot_test.log"
-            );
+            let status_path =
+                format!("/tmp/clipkitty_{device_stem}_hang_sampler_status_screenshot_test.log");
             let mut consecutive_high = 0u32;
             let mut captures = 0u32;
             let mut ticks = 0u32;
@@ -622,7 +619,7 @@ impl SimHangSampler {
             while !stop_flag.load(std::sync::atomic::Ordering::Relaxed) {
                 thread::sleep(Duration::from_secs(1));
                 ticks += 1;
-                if ticks % 10 != 0 {
+                if !ticks.is_multiple_of(10) {
                     continue;
                 }
                 let Some(pid) = Self::app_pid() else {
@@ -683,7 +680,9 @@ impl SimHangSampler {
                     // if the app's threads are all idle, the runner's stack
                     // shows which AX request "Timed out while evaluating UI
                     // query" is actually stuck on.
-                    if captures == Self::MAX_CAPTURES || timed_captures_done == Self::TIMED_CAPTURE_SECS.len() {
+                    if captures == Self::MAX_CAPTURES
+                        || timed_captures_done == Self::TIMED_CAPTURE_SECS.len()
+                    {
                         if let Some(runner_pid) = Self::runner_pid() {
                             let out = format!(
                                 "/tmp/clipkitty_{device_stem}_hang_sample_runner_screenshot_test.log"
@@ -752,8 +751,7 @@ impl SimHangSampler {
 
 impl Drop for SimHangSampler {
     fn drop(&mut self) {
-        self.stop
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
@@ -801,7 +799,6 @@ fn run_screenshot_xcodebuild(
         // pre-build action so it doesn't try to rebuild Rust inside the
         // sanitised (nix-free) xcodebuild environment.
         .env("CLIPKITTY_SKIP_RUST_PREBUILD", "1")
-        .capture_stdout()
         .capture_stderr();
     match plan.platform {
         // Ad-hoc signing needs no certificate but keeps entitlements —
@@ -914,7 +911,7 @@ fn intro_video(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()
     build::generate(repo, false, reporter)?;
     patch_demo_items(repo, false, reporter)?;
     let locale_file = Utf8PathBuf::from(SCREENSHOT_LOCALE_FILE);
-    let _cleanup = TempSelectionFiles::new(&[locale_file.clone()]);
+    let _cleanup = TempSelectionFiles::new(std::slice::from_ref(&locale_file));
 
     for locale in locales {
         let locale_code = locale.as_code();
@@ -1385,7 +1382,6 @@ fn record_preview_video(
         // pre-build action so it doesn't try to rebuild Rust inside the
         // sanitised (nix-free) xcodebuild environment.
         .env("CLIPKITTY_SKIP_RUST_PREBUILD", "1")
-        .capture_stdout()
         .capture_stderr();
     if env::var("SKIP_SIGNING").is_ok() {
         runner = runner.arg("CODE_SIGNING_ALLOWED=NO");
@@ -1435,7 +1431,7 @@ fn record_preview_video(
 
     let raw_video = find_video_attachment(&attachments_dir)?
         .ok_or_else(|| anyhow!("no screen recording video found in {attachments_dir}"))?;
-    if tool_exists("ffmpeg") && tool_exists("ffprobe") {
+    if command_exists("ffmpeg") && command_exists("ffprobe") {
         postprocess_video(
             &raw_video,
             output_path,
@@ -1731,28 +1727,6 @@ fn osascript_capture(reporter: &Reporter, script: &str) -> Result<String> {
         .arg(script)
         .output()?
         .stdout_string()
-}
-
-fn remove_if_exists(path: &Utf8Path) -> Result<()> {
-    if !path.as_std_path().exists() {
-        return Ok(());
-    }
-    if path.as_std_path().is_dir() {
-        fs::remove_dir_all(path.as_std_path()).with_context(|| format!("removing {path}"))?;
-    } else {
-        fs::remove_file(path.as_std_path()).with_context(|| format!("removing {path}"))?;
-    }
-    Ok(())
-}
-
-fn tool_exists(name: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(name)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
 }
 
 #[cfg(test)]

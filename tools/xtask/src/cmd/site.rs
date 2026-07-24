@@ -14,13 +14,11 @@ use camino::Utf8PathBuf;
 
 use crate::cli::{SiteCmd, SiteRenderTarget};
 use crate::icon::{render_app_icon, AppIconRenderTarget};
-use crate::model::SideEffectLevel;
 use crate::output::Reporter;
 use crate::process::Runner;
 use crate::repo::RepoRoot;
 
 pub fn run(cmd: &SiteCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
-    let _ = SideEffectLevel::LocalMutation;
     let repo = RepoRoot::discover(reporter)?;
     match cmd {
         SiteCmd::Render(args) => match args.target {

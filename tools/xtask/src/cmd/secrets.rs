@@ -9,12 +9,12 @@ use anyhow::{anyhow, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::cli::{AscAuthArgs, SecretsCmd};
-use crate::model::{AscAuthField, SideEffectLevel};
+use crate::model::AscAuthField;
 use crate::output::Reporter;
+use crate::process::command_exists;
 use crate::repo::RepoRoot;
 
 pub fn run(cmd: &SecretsCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
-    let _ = SideEffectLevel::Credentialed;
     let repo = RepoRoot::discover(reporter)?;
     match cmd {
         SecretsCmd::AscAuth(args) => asc_auth(&repo, args, dry_run, reporter),
@@ -34,7 +34,7 @@ fn secret_path(repo: &RepoRoot, name: &str) -> Utf8PathBuf {
 /// `keytap remember clipkitty` makes decrypts prompt-free, and without it
 /// every decrypt is its own passkey ceremony.
 pub(crate) fn read_secret(secret_path: &Utf8Path, _reporter: &Reporter) -> Result<Vec<u8>> {
-    if !tool_exists("keytap") {
+    if !command_exists("keytap") {
         return Err(anyhow!(
             "the keytap CLI is not available to decrypt {secret_path} (install keytap, then \
              set $KEYTAP_KEY_CLIPKITTY in CI or run `keytap remember clipkitty` on this machine)"
@@ -43,8 +43,8 @@ pub(crate) fn read_secret(secret_path: &Utf8Path, _reporter: &Reporter) -> Resul
     // stderr, never the Reporter: callers pipe this command's stdout as data
     // (`secrets-asc-auth | base64 -d`), so stdout must carry only the secret.
     eprintln!("Decrypting {secret_path} with keytap");
-    let file = File::open(secret_path.as_std_path())
-        .with_context(|| format!("opening {secret_path}"))?;
+    let file =
+        File::open(secret_path.as_std_path()).with_context(|| format!("opening {secret_path}"))?;
     let output = Command::new("keytap")
         .args(["decrypt", "clipkitty"])
         .stdin(Stdio::from(file))
@@ -97,14 +97,4 @@ pub(crate) fn resolve_asc_field(
     Err(anyhow!(
         "neither {primary}.age nor {fallback}.age was found in secrets/"
     ))
-}
-
-fn tool_exists(name: &str) -> bool {
-    Command::new("which")
-        .arg(name)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
 }

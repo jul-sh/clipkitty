@@ -1,7 +1,6 @@
 //! Read-only repository checks.
 //!
-//! Every command in this module is `SideEffectLevel::ReadOnly`: they never
-//! mutate the worktree, never touch credentials, and can always run on CI.
+//! These checks never mutate the worktree or touch credentials.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -10,13 +9,11 @@ use anyhow::{anyhow, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::Deserialize;
 
-use crate::model::SideEffectLevel;
 use crate::output::Reporter;
 use crate::process::Runner;
 use crate::repo::RepoRoot;
 
 pub fn run(dry_run: bool, reporter: &Reporter) -> Result<()> {
-    let _ = SideEffectLevel::ReadOnly;
     let repo = RepoRoot::discover(reporter)?;
     if dry_run {
         reporter.info(
@@ -238,7 +235,6 @@ fn git_path_tracked(reporter: &Reporter, repo: &RepoRoot, rel: &str) -> Result<b
         .args(["ls-files", "--error-unmatch"])
         .arg(rel)
         .cwd(repo.as_path())
-        .capture_stdout()
         .capture_stderr()
         .output_status()
         .with_context(|| format!("running git ls-files for {rel}"))?;
@@ -254,7 +250,6 @@ fn git_path_dirty(reporter: &Reporter, repo: &RepoRoot, rel: &str, staged: bool)
         .arg("--")
         .arg(rel)
         .cwd(repo.as_path())
-        .capture_stdout()
         .capture_stderr()
         .output_status()
         .with_context(|| {
@@ -268,20 +263,26 @@ fn git_path_dirty(reporter: &Reporter, repo: &RepoRoot, rel: &str, staged: bool)
 
 fn check_pinned_actions(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
     let workflows = repo.join(".github/workflows");
-    if !workflows.as_std_path().is_dir() {
-        reporter.info(&format!("No workflows directory found at {workflows}"));
+    let local_actions = repo.join(".github/actions");
+    let roots: Vec<_> = [&workflows, &local_actions]
+        .into_iter()
+        .filter(|path| path.as_std_path().is_dir())
+        .cloned()
+        .collect();
+    if roots.is_empty() {
+        reporter.info("No GitHub workflows or local actions found.");
         return Ok(());
     }
 
     if dry_run {
         reporter.info(&format!(
-            "[dry-run] would scan `{workflows}` for unpinned GitHub Action references"
+            "[dry-run] would scan `{workflows}` and `{local_actions}` for unpinned GitHub Action references"
         ));
         return Ok(());
     }
 
     let mut errors = 0usize;
-    let mut walker = vec![workflows.clone()];
+    let mut walker = roots;
     while let Some(dir) = walker.pop() {
         for entry in fs::read_dir(dir.as_std_path()).with_context(|| format!("reading {dir}"))? {
             let entry = entry?;

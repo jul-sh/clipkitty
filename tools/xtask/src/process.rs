@@ -12,6 +12,17 @@ use camino::Utf8Path;
 
 use crate::output::Reporter;
 
+/// Return whether an executable is available on `PATH` without writing to
+/// stdout or stderr. Secrets commands rely on this silence when stdout is data.
+pub(crate) fn command_exists(program: &str) -> bool {
+    Command::new("which")
+        .arg(program)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 /// Fluent builder for a single host-tool invocation.
 pub struct Runner<'a> {
     program: OsString,
@@ -22,7 +33,6 @@ pub struct Runner<'a> {
     reporter: &'a Reporter,
     stdin: Stdio,
     stdin_bytes: Option<Vec<u8>>,
-    capture_stdout: bool,
     capture_stderr: bool,
 }
 
@@ -37,7 +47,6 @@ impl<'a> Runner<'a> {
             reporter,
             stdin: Stdio::null(),
             stdin_bytes: None,
-            capture_stdout: false,
             capture_stderr: false,
         }
     }
@@ -63,15 +72,6 @@ impl<'a> Runner<'a> {
 
     pub fn env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
         self.env.push((key.into(), value.into()));
-        self
-    }
-
-    /// Remove an environment variable before invoking the child. Used to
-    /// strip nix-develop-injected compiler toolchain vars (CC, CXX, SDKROOT,
-    /// NIX_*, …) from subprocesses like `xcodebuild` that must pick up the
-    /// Xcode-bundled toolchain instead.
-    pub fn env_remove(mut self, key: impl Into<OsString>) -> Self {
-        self.env_remove.push(key.into());
         self
     }
 
@@ -126,11 +126,6 @@ impl<'a> Runner<'a> {
         self
     }
 
-    pub fn capture_stdout(mut self) -> Self {
-        self.capture_stdout = true;
-        self
-    }
-
     pub fn capture_stderr(mut self) -> Self {
         self.capture_stderr = true;
         self
@@ -164,27 +159,7 @@ impl<'a> Runner<'a> {
     /// inline with the parent process.
     pub fn run(self) -> Result<()> {
         let display = self.display();
-        self.reporter.trace_command(&display);
-        let status = if let Some(stdin_bytes) = &self.stdin_bytes {
-            let mut child = self
-                .build_command()
-                .stdin(self.stdin)
-                .spawn()
-                .with_context(|| format!("failed to launch `{display}`"))?;
-            if let Some(stdin) = child.stdin.as_mut() {
-                stdin
-                    .write_all(stdin_bytes)
-                    .with_context(|| format!("writing stdin to `{display}`"))?;
-            }
-            child
-                .wait()
-                .with_context(|| format!("waiting for `{display}`"))?
-        } else {
-            self.build_command()
-                .stdin(self.stdin)
-                .status()
-                .with_context(|| format!("failed to launch `{display}`"))?
-        };
+        let status = self.status()?;
         check_status(status, &display)
     }
 
@@ -216,8 +191,7 @@ impl<'a> Runner<'a> {
 
     /// Run the command and return its captured stdout. Stderr streams to the
     /// parent unless explicitly suppressed.
-    pub fn output(mut self) -> Result<CapturedOutput> {
-        self.capture_stdout = true;
+    pub fn output(self) -> Result<CapturedOutput> {
         let output = self.output_status()?;
         if !output.status.success() {
             return Err(anyhow!(
@@ -228,13 +202,11 @@ impl<'a> Runner<'a> {
         }
         Ok(CapturedOutput {
             stdout: output.stdout,
-            stderr: output.stderr,
         })
     }
 
     /// Run the command and capture stdout/stderr plus the exit status.
-    pub fn output_status(mut self) -> Result<CommandOutput> {
-        self.capture_stdout = true;
+    pub fn output_status(self) -> Result<CommandOutput> {
         let display = self.display();
         self.reporter.trace_command(&display);
         let mut cmd = self.build_command();
@@ -274,8 +246,6 @@ impl<'a> Runner<'a> {
 
 pub struct CapturedOutput {
     pub stdout: Vec<u8>,
-    #[allow(dead_code)]
-    pub stderr: Vec<u8>,
 }
 
 pub struct CommandOutput {
@@ -286,8 +256,8 @@ pub struct CommandOutput {
 }
 
 impl CapturedOutput {
-    pub fn stdout_string(&self) -> Result<String> {
-        String::from_utf8(self.stdout.clone())
+    pub fn stdout_string(self) -> Result<String> {
+        String::from_utf8(self.stdout)
             .map_err(|err| anyhow!("command stdout was not valid UTF-8: {err}"))
     }
 }
