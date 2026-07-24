@@ -855,23 +855,14 @@ final class ClipboardStore {
             guard let repository else { return }
             Task {
                 // Collect file metadata (CPU-bound, safe to run on any thread)
-                var paths: [String] = []
-                var filenames: [String] = []
-                var fileSizes: [UInt64] = []
-                var utis: [String] = []
-                var bookmarkDataList: [Data] = []
-                var previewSnapshots: [FilePreviewSnapshot] = []
+                var files: [NewFileInput] = []
                 var capturedPreview = false
 
                 for url in urls {
                     guard url.isFileURL else { continue }
 
-                    paths.append(url.path)
-                    filenames.append(url.lastPathComponent)
-
                     let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey, .totalFileSizeKey])
                     let reportedFileSize = resourceValues?.fileSize ?? resourceValues?.totalFileSize
-                    fileSizes.append(UInt64(reportedFileSize ?? 0))
 
                     let isDirectory = resourceValues?.isDirectory == true
                     let uti: String
@@ -880,12 +871,6 @@ final class ClipboardStore {
                     } else {
                         uti = UTType(filenameExtension: url.pathExtension)?.identifier ?? "public.item"
                     }
-                    utis.append(uti)
-
-                    // NOTE: Bookmark data is always empty in sandboxed mode (App Store build).
-                    // Security-scoped bookmarks require user-initiated file selection via NSOpenPanel.
-                    // For clipboard monitoring, we use direct file paths which are accessible while the app is running.
-                    bookmarkDataList.append(Data())
 
                     let snapshot: FilePreviewSnapshot
                     if capturedPreview {
@@ -906,18 +891,24 @@ final class ClipboardStore {
                             break
                         }
                     }
-                    previewSnapshots.append(snapshot)
+
+                    // NOTE: Bookmark data is always empty in sandboxed mode (App Store build).
+                    // Security-scoped bookmarks require user-initiated file selection via NSOpenPanel.
+                    // For clipboard monitoring, we use direct file paths which are accessible while the app is running.
+                    files.append(NewFileInput(
+                        path: url.path,
+                        filename: url.lastPathComponent,
+                        fileSize: UInt64(reportedFileSize ?? 0),
+                        uti: uti,
+                        bookmarkData: Data(),
+                        preview: snapshot
+                    ))
                 }
 
-                guard !paths.isEmpty else { return }
+                guard !files.isEmpty else { return }
 
                 let result = await repository.saveFiles(
-                    paths: paths,
-                    filenames: filenames,
-                    fileSizes: fileSizes,
-                    utis: utis,
-                    bookmarkDataList: bookmarkDataList,
-                    previewSnapshots: previewSnapshots,
+                    files: files,
                     sourceApp: sourceApp,
                     sourceAppBundleId: sourceAppBundleID
                 )

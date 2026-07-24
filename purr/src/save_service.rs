@@ -1,7 +1,7 @@
 use crate::database::Database;
 use crate::indexer::Indexer;
 use crate::interface::{
-    ClipKittyError, FilePreviewSnapshot, ItemTag, LinkMetadataPayload, LinkMetadataState,
+    ClipKittyError, ItemTag, LinkMetadataPayload, LinkMetadataState, NewFileInput,
 };
 use crate::models::StoredItem;
 use chrono::Utc;
@@ -83,96 +83,18 @@ pub(crate) fn save_text(
     dedupe_or_insert_and_index(db, indexer, item)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn save_file(
-    db: &Database,
-    indexer: &Indexer,
-    path: String,
-    filename: String,
-    file_size: u64,
-    uti: String,
-    bookmark_data: Vec<u8>,
-    preview: FilePreviewSnapshot,
-    source_app: Option<String>,
-    source_app_bundle_id: Option<String>,
-) -> Result<InsertOutcome, ClipKittyError> {
-    let item = StoredItem::new_file(
-        path,
-        filename,
-        file_size,
-        uti,
-        bookmark_data,
-        preview,
-        source_app,
-        source_app_bundle_id,
-    );
-    dedupe_or_insert_and_index(db, indexer, item)
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn save_files(
     db: &Database,
     indexer: &Indexer,
-    paths: Vec<String>,
-    filenames: Vec<String>,
-    file_sizes: Vec<u64>,
-    utis: Vec<String>,
-    bookmark_data_list: Vec<Vec<u8>>,
-    preview_snapshots: Vec<FilePreviewSnapshot>,
+    files: Vec<NewFileInput>,
     source_app: Option<String>,
     source_app_bundle_id: Option<String>,
 ) -> Result<InsertOutcome, ClipKittyError> {
-    validate_file_metadata_lengths(
-        paths.len(),
-        filenames.len(),
-        file_sizes.len(),
-        utis.len(),
-        bookmark_data_list.len(),
-        preview_snapshots.len(),
-    )?;
-    let item = StoredItem::new_files(
-        paths,
-        filenames,
-        file_sizes,
-        utis,
-        bookmark_data_list,
-        preview_snapshots,
-        source_app,
-        source_app_bundle_id,
-    );
-    dedupe_or_insert_and_index(db, indexer, item)
-}
-
-fn validate_file_metadata_lengths(
-    paths_len: usize,
-    filenames_len: usize,
-    file_sizes_len: usize,
-    utis_len: usize,
-    bookmark_data_list_len: usize,
-    preview_snapshots_len: usize,
-) -> Result<(), ClipKittyError> {
-    if paths_len == 0 {
+    if files.is_empty() {
         return Err(ClipKittyError::InvalidInput("No files provided".into()));
     }
-
-    let expected = paths_len;
-    let fields = [
-        ("filenames", filenames_len),
-        ("file_sizes", file_sizes_len),
-        ("utis", utis_len),
-        ("bookmark_data_list", bookmark_data_list_len),
-        ("preview_snapshots", preview_snapshots_len),
-    ];
-
-    for (field, actual) in fields {
-        if actual != expected {
-            return Err(ClipKittyError::InvalidInput(format!(
-                "file metadata length mismatch: paths has {expected} entries but {field} has {actual}"
-            )));
-        }
-    }
-
-    Ok(())
+    let item = StoredItem::new_files(files, source_app, source_app_bundle_id);
+    dedupe_or_insert_and_index(db, indexer, item)
 }
 
 pub(crate) fn save_image(
@@ -402,8 +324,7 @@ fn get_stored_item(db: &Database, item_id: i64) -> Result<Option<StoredItem>, Cl
 }
 
 fn index_text(item: &StoredItem) -> String {
-    item.file_index_text()
-        .unwrap_or_else(|| item.text_content().to_string())
+    item.searchable_text().into_owned()
 }
 
 fn non_empty(value: String) -> Option<String> {

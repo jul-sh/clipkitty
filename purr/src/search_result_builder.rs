@@ -1,4 +1,4 @@
-use crate::database::{Database, RowMetadata, SearchRowMetadata};
+use crate::database::{hydrate_item_metadata_tags, Database, RowMetadata, SearchRowMetadata};
 use crate::interface::{
     ClipKittyError, ContentTypeFilter, ItemMatch, ItemQueryFilter, ItemTag,
     ListPresentationProfile, MatchedExcerptRequest, RowPresentation, SearchResult,
@@ -229,8 +229,6 @@ impl<'a> SearchResultAssembler<'a> {
             .collect();
 
         let presentation = self.presentation();
-        #[cfg(test)]
-        crate::match_presentation::test_support::before_eager_matches();
         let mut results = Vec::with_capacity(metadata_map.len());
         let mut eager_index = 0usize;
         for candidate in candidates {
@@ -252,8 +250,6 @@ impl<'a> SearchResultAssembler<'a> {
             let item_match = if eager_index < EAGER_MATCH_DATA_COUNT
                 || (is_short && eager_index < EAGER_SHORT_MATCH_WINDOW)
             {
-                #[cfg(test)]
-                crate::match_presentation::test_support::on_eager_match(eager_index);
                 if self.token.is_cancelled() {
                     return Err(ClipKittyError::Cancelled);
                 }
@@ -325,7 +321,7 @@ impl<'a> SearchResultAssembler<'a> {
             .iter()
             .filter_map(|id| {
                 item_map.get(id).map(|item| ItemMatch {
-                    item_metadata: item.to_metadata_for_profile(self.presentation),
+                    item_metadata: item.to_metadata(),
                     presentation: RowPresentation::Matched {
                         excerpt: presentation.matched_excerpt_for_item(
                             &item.item_id,
@@ -340,32 +336,18 @@ impl<'a> SearchResultAssembler<'a> {
     }
 
     fn hydrate_item_match_tags(&self, matches: &mut [ItemMatch]) -> Result<(), ClipKittyError> {
-        let ids: Vec<String> = matches
-            .iter()
-            .map(|item| item.item_metadata.item_id.clone())
-            .collect();
-        let tags_by_id = self.db.get_tags_for_item_ids(&ids)?;
-        for item in matches {
-            item.item_metadata.tags = tags_by_id
-                .get(&item.item_metadata.item_id)
-                .cloned()
-                .unwrap_or_default();
-        }
+        hydrate_item_metadata_tags(
+            self.db,
+            matches.iter_mut().map(|item| &mut item.item_metadata),
+        )?;
         Ok(())
     }
 
     fn hydrate_item_metadata_tags(&self, items: &mut [RowMetadata]) -> Result<(), ClipKittyError> {
-        let ids: Vec<String> = items
-            .iter()
-            .map(|item| item.item_metadata.item_id.clone())
-            .collect();
-        let tags_by_id = self.db.get_tags_for_item_ids(&ids)?;
-        for item in items {
-            item.item_metadata.tags = tags_by_id
-                .get(&item.item_metadata.item_id)
-                .cloned()
-                .unwrap_or_default();
-        }
+        hydrate_item_metadata_tags(
+            self.db,
+            items.iter_mut().map(|item| &mut item.item_metadata),
+        )?;
         Ok(())
     }
 

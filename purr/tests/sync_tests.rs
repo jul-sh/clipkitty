@@ -18,7 +18,7 @@ use purr_sync::types::{
 };
 
 use purr::database::Database;
-use purr::interface::{FilePreviewSnapshot, ItemTag, ListPresentationProfile};
+use purr::interface::{FilePreviewSnapshot, ItemTag, ListPresentationProfile, NewFileInput};
 use purr::ClipboardStore;
 use purr::ClipboardStoreApi;
 use tempfile::TempDir;
@@ -2175,17 +2175,19 @@ mod write_path_audit_tests {
     }
 
     #[test]
-    fn save_file_emits_item_created_event() {
+    fn save_files_emits_item_created_event() {
         let (store, _dir) = test_store();
 
         let id = store
-            .save_file(
-                "/tmp/test.txt".to_string(),
-                "test.txt".to_string(),
-                1024,
-                "public.plain-text".to_string(),
-                vec![1, 2, 3],
-                FilePreviewSnapshot::not_captured(),
+            .save_files(
+                vec![NewFileInput {
+                    path: "/tmp/test.txt".to_string(),
+                    filename: "test.txt".to_string(),
+                    file_size: 1024,
+                    uti: "public.plain-text".to_string(),
+                    bookmark_data: vec![1, 2, 3],
+                    preview: FilePreviewSnapshot::not_captured(),
+                }],
                 None,
                 None,
             )

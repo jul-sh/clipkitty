@@ -12,8 +12,22 @@ final class MultiFileTests: XCTestCase {
         return try ClipKittyRust.ClipboardStore(dbPath: dbPath)
     }
 
-    private func notCapturedPreviews(count: Int) -> [FilePreviewSnapshot] {
-        Array(repeating: .unavailable(reason: .notCaptured), count: count)
+    private func file(
+        _ path: String,
+        _ filename: String,
+        _ fileSize: UInt64,
+        _ uti: String,
+        bookmarkData: Data = Data(),
+        preview: FilePreviewSnapshot = .unavailable(reason: .notCaptured)
+    ) -> NewFileInput {
+        NewFileInput(
+            path: path,
+            filename: filename,
+            fileSize: fileSize,
+            uti: uti,
+            bookmarkData: bookmarkData,
+            preview: preview
+        )
     }
 
     // MARK: - saveFiles roundtrip
@@ -22,12 +36,11 @@ final class MultiFileTests: XCTestCase {
         let store = try makeStore()
 
         let id = try store.saveFiles(
-            paths: ["/tmp/a.pdf", "/tmp/b.txt", "/tmp/c.png"],
-            filenames: ["a.pdf", "b.txt", "c.png"],
-            fileSizes: [1000, 2000, 3000],
-            utis: ["com.adobe.pdf", "public.plain-text", "public.png"],
-            bookmarkDataList: [Data([1, 2]), Data([3, 4]), Data([5, 6])],
-            previewSnapshots: notCapturedPreviews(count: 3),
+            files: [
+                file("/tmp/a.pdf", "a.pdf", 1000, "com.adobe.pdf", bookmarkData: Data([1, 2])),
+                file("/tmp/b.txt", "b.txt", 2000, "public.plain-text", bookmarkData: Data([3, 4])),
+                file("/tmp/c.png", "c.png", 3000, "public.png", bookmarkData: Data([5, 6])),
+            ],
             sourceApp: "Finder",
             sourceAppBundleId: "com.apple.finder"
         )
@@ -54,12 +67,9 @@ final class MultiFileTests: XCTestCase {
         let store = try makeStore()
 
         let id = try store.saveFiles(
-            paths: ["/tmp/solo.txt"],
-            filenames: ["solo.txt"],
-            fileSizes: [42],
-            utis: ["public.plain-text"],
-            bookmarkDataList: [Data([1, 2, 3])],
-            previewSnapshots: notCapturedPreviews(count: 1),
+            files: [
+                file("/tmp/solo.txt", "solo.txt", 42, "public.plain-text", bookmarkData: Data([1, 2, 3])),
+            ],
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -76,30 +86,34 @@ final class MultiFileTests: XCTestCase {
         XCTAssertEqual(files[0].filename, "solo.txt")
     }
 
+    func testSaveFilesRejectsEmptyCollection() throws {
+        let store = try makeStore()
+
+        XCTAssertThrowsError(try store.saveFiles(
+            files: [],
+            sourceApp: nil,
+            sourceAppBundleId: nil
+        ))
+    }
+
     // MARK: - Deduplication
 
     func testSaveFilesDedup() throws {
         let store = try makeStore()
 
+        let files = [
+            file("/tmp/a.txt", "a.txt", 100, "public.plain-text", bookmarkData: Data([1])),
+            file("/tmp/b.txt", "b.txt", 200, "public.plain-text", bookmarkData: Data([2])),
+        ]
         let id1 = try store.saveFiles(
-            paths: ["/tmp/a.txt", "/tmp/b.txt"],
-            filenames: ["a.txt", "b.txt"],
-            fileSizes: [100, 200],
-            utis: ["public.plain-text", "public.plain-text"],
-            bookmarkDataList: [Data([1]), Data([2])],
-            previewSnapshots: notCapturedPreviews(count: 2),
+            files: files,
             sourceApp: nil,
             sourceAppBundleId: nil
         )
         XCTAssertFalse(id1.isEmpty)
 
         let id2 = try store.saveFiles(
-            paths: ["/tmp/a.txt", "/tmp/b.txt"],
-            filenames: ["a.txt", "b.txt"],
-            fileSizes: [100, 200],
-            utis: ["public.plain-text", "public.plain-text"],
-            bookmarkDataList: [Data([1]), Data([2])],
-            previewSnapshots: notCapturedPreviews(count: 2),
+            files: files,
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -110,12 +124,10 @@ final class MultiFileTests: XCTestCase {
         let store = try makeStore()
 
         let id1 = try store.saveFiles(
-            paths: ["/tmp/a.txt", "/tmp/b.txt"],
-            filenames: ["a.txt", "b.txt"],
-            fileSizes: [100, 200],
-            utis: ["public.plain-text", "public.plain-text"],
-            bookmarkDataList: [Data([1]), Data([2])],
-            previewSnapshots: notCapturedPreviews(count: 2),
+            files: [
+                file("/tmp/a.txt", "a.txt", 100, "public.plain-text", bookmarkData: Data([1])),
+                file("/tmp/b.txt", "b.txt", 200, "public.plain-text", bookmarkData: Data([2])),
+            ],
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -123,12 +135,10 @@ final class MultiFileTests: XCTestCase {
 
         // Same files, reversed order
         let id2 = try store.saveFiles(
-            paths: ["/tmp/b.txt", "/tmp/a.txt"],
-            filenames: ["b.txt", "a.txt"],
-            fileSizes: [200, 100],
-            utis: ["public.plain-text", "public.plain-text"],
-            bookmarkDataList: [Data([2]), Data([1])],
-            previewSnapshots: notCapturedPreviews(count: 2),
+            files: [
+                file("/tmp/b.txt", "b.txt", 200, "public.plain-text", bookmarkData: Data([2])),
+                file("/tmp/a.txt", "a.txt", 100, "public.plain-text", bookmarkData: Data([1])),
+            ],
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -141,12 +151,10 @@ final class MultiFileTests: XCTestCase {
         let store = try makeStore()
 
         let id = try store.saveFiles(
-            paths: ["/tmp/a.txt", "/tmp/b.txt"],
-            filenames: ["a.txt", "b.txt"],
-            fileSizes: [100, 200],
-            utis: ["public.plain-text", "public.plain-text"],
-            bookmarkDataList: [Data([1]), Data([2])],
-            previewSnapshots: notCapturedPreviews(count: 2),
+            files: [
+                file("/tmp/a.txt", "a.txt", 100, "public.plain-text", bookmarkData: Data([1])),
+                file("/tmp/b.txt", "b.txt", 200, "public.plain-text", bookmarkData: Data([2])),
+            ],
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -159,12 +167,11 @@ final class MultiFileTests: XCTestCase {
         let store = try makeStore()
 
         let id = try store.saveFiles(
-            paths: ["/tmp/a.txt", "/tmp/b.txt", "/tmp/c.txt"],
-            filenames: ["a.txt", "b.txt", "c.txt"],
-            fileSizes: [100, 200, 300],
-            utis: ["public.plain-text", "public.plain-text", "public.plain-text"],
-            bookmarkDataList: [Data([1]), Data([2]), Data([3])],
-            previewSnapshots: notCapturedPreviews(count: 3),
+            files: [
+                file("/tmp/a.txt", "a.txt", 100, "public.plain-text", bookmarkData: Data([1])),
+                file("/tmp/b.txt", "b.txt", 200, "public.plain-text", bookmarkData: Data([2])),
+                file("/tmp/c.txt", "c.txt", 300, "public.plain-text", bookmarkData: Data([3])),
+            ],
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -178,13 +185,17 @@ final class MultiFileTests: XCTestCase {
     func testSearchFindsAdditionalFilenames() async throws {
         let store = try makeStore()
 
-        try store.saveFiles(
-            paths: ["/tmp/report.pdf", "/tmp/summary.docx"],
-            filenames: ["report.pdf", "summary.docx"],
-            fileSizes: [1000, 2000],
-            utis: ["com.adobe.pdf", "org.openxmlformats.wordprocessingml.document"],
-            bookmarkDataList: [Data([1]), Data([2])],
-            previewSnapshots: notCapturedPreviews(count: 2),
+        _ = try store.saveFiles(
+            files: [
+                file("/tmp/report.pdf", "report.pdf", 1000, "com.adobe.pdf", bookmarkData: Data([1])),
+                file(
+                    "/tmp/summary.docx",
+                    "summary.docx",
+                    2000,
+                    "org.openxmlformats.wordprocessingml.document",
+                    bookmarkData: Data([2])
+                ),
+            ],
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -203,13 +214,10 @@ final class MultiFileTests: XCTestCase {
     func testClipboardContentTextContentForFile() throws {
         let store = try makeStore()
 
-        let id = try store.saveFile(
-            path: "/tmp/test.pdf",
-            filename: "test.pdf",
-            fileSize: 100,
-            uti: "com.adobe.pdf",
-            bookmarkData: Data([1]),
-            preview: .unavailable(reason: .notCaptured),
+        let id = try store.saveFiles(
+            files: [
+                file("/tmp/test.pdf", "test.pdf", 100, "com.adobe.pdf", bookmarkData: Data([1])),
+            ],
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -227,12 +235,10 @@ final class MultiFileTests: XCTestCase {
         let bookmark2 = Data([0xCA, 0xFE, 0xBA, 0xBE])
 
         let id = try store.saveFiles(
-            paths: ["/tmp/a.txt", "/tmp/b.txt"],
-            filenames: ["a.txt", "b.txt"],
-            fileSizes: [100, 200],
-            utis: ["public.plain-text", "public.plain-text"],
-            bookmarkDataList: [bookmark1, bookmark2],
-            previewSnapshots: notCapturedPreviews(count: 2),
+            files: [
+                file("/tmp/a.txt", "a.txt", 100, "public.plain-text", bookmarkData: bookmark1),
+                file("/tmp/b.txt", "b.txt", 200, "public.plain-text", bookmarkData: bookmark2),
+            ],
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -253,15 +259,28 @@ final class MultiFileTests: XCTestCase {
         let imagePreview = Data([0xFF, 0xD8, 0xFF])
 
         let id = try store.saveFiles(
-            paths: ["/tmp/readme.md", "/tmp/screenshot.jpg", "/tmp/archive.zip"],
-            filenames: ["readme.md", "screenshot.jpg", "archive.zip"],
-            fileSizes: [64, 1024, 2048],
-            utis: ["net.daringfireball.markdown", "public.jpeg", "public.zip-archive"],
-            bookmarkDataList: [Data(), Data(), Data()],
-            previewSnapshots: [
-                .text(text: .truncated(sample: "hello")),
-                .image(previewData: imagePreview),
-                .unavailable(reason: .unsupportedType),
+            files: [
+                file(
+                    "/tmp/readme.md",
+                    "readme.md",
+                    64,
+                    "net.daringfireball.markdown",
+                    preview: .text(text: .truncated(sample: "hello"))
+                ),
+                file(
+                    "/tmp/screenshot.jpg",
+                    "screenshot.jpg",
+                    1024,
+                    "public.jpeg",
+                    preview: .image(previewData: imagePreview)
+                ),
+                file(
+                    "/tmp/archive.zip",
+                    "archive.zip",
+                    2048,
+                    "public.zip-archive",
+                    preview: .unavailable(reason: .unsupportedType)
+                ),
             ],
             sourceApp: nil,
             sourceAppBundleId: nil

@@ -1,10 +1,10 @@
 //! ClipboardStore - Thin UniFFI-facing facade over search/save services.
 
-use crate::database::Database;
+use crate::database::{hydrate_item_metadata_tags, Database};
 use crate::indexer::{IndexInspection, Indexer};
 use crate::interface::{
-    ClipKittyError, ClipboardItem, ClipboardStoreApi, FilePreviewSnapshot, ItemQueryFilter,
-    ItemTag, ListPresentationProfile, MatchedExcerptRequest, MatchedExcerptResolution,
+    ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag,
+    ListPresentationProfile, MatchedExcerptRequest, MatchedExcerptResolution, NewFileInput,
     PreviewPayload, SearchOutcome, SearchResult, StoreBootstrapPlan,
 };
 #[cfg(feature = "sync")]
@@ -198,9 +198,7 @@ impl ClipboardStore {
         let prepared: Vec<_> = items
             .par_iter()
             .map(|item| {
-                let text = item
-                    .file_index_text()
-                    .unwrap_or_else(|| item.text_content().to_string());
+                let text = item.searchable_text().into_owned();
                 (item.item_id.as_str(), text, item.timestamp_unix)
             })
             .collect();
@@ -418,13 +416,10 @@ impl ClipboardStoreApi for ClipboardStore {
             .into_iter()
             .map(|item| item.to_clipboard_item())
             .collect();
-        let tags_by_id = self.db.get_tags_for_item_ids(&item_ids)?;
-        for item in &mut items {
-            item.item_metadata.tags = tags_by_id
-                .get(&item.item_metadata.item_id)
-                .cloned()
-                .unwrap_or_default();
-        }
+        hydrate_item_metadata_tags(
+            &self.db,
+            items.iter_mut().map(|item| &mut item.item_metadata),
+        )?;
         Ok(items)
     }
 
@@ -445,52 +440,14 @@ impl ClipboardStoreApi for ClipboardStore {
 
     fn save_files(
         &self,
-        paths: Vec<String>,
-        filenames: Vec<String>,
-        file_sizes: Vec<u64>,
-        utis: Vec<String>,
-        bookmark_data_list: Vec<Vec<u8>>,
-        preview_snapshots: Vec<FilePreviewSnapshot>,
+        files: Vec<NewFileInput>,
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Result<String, ClipKittyError> {
         let outcome = save_service::save_files(
             &self.db,
             &self.indexer,
-            paths,
-            filenames,
-            file_sizes,
-            utis,
-            bookmark_data_list,
-            preview_snapshots,
-            source_app,
-            source_app_bundle_id,
-        )?;
-        #[cfg(feature = "sync")]
-        self.emit_for_insert(&outcome)?;
-        Ok(outcome.ffi_id())
-    }
-
-    fn save_file(
-        &self,
-        path: String,
-        filename: String,
-        file_size: u64,
-        uti: String,
-        bookmark_data: Vec<u8>,
-        preview: FilePreviewSnapshot,
-        source_app: Option<String>,
-        source_app_bundle_id: Option<String>,
-    ) -> Result<String, ClipKittyError> {
-        let outcome = save_service::save_file(
-            &self.db,
-            &self.indexer,
-            path,
-            filename,
-            file_size,
-            uti,
-            bookmark_data,
-            preview,
+            files,
             source_app,
             source_app_bundle_id,
         )?;
@@ -1404,9 +1361,7 @@ impl ClipboardStore {
                         .into_iter()
                         .next();
                     if let Some(item) = item {
-                        let text = item
-                            .file_index_text()
-                            .unwrap_or_else(|| item.text_content().to_string());
+                        let text = item.searchable_text();
                         self.indexer
                             .add_document(&item.item_id, &text, item.timestamp_unix)?;
                     } else {

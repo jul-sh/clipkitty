@@ -1,5 +1,5 @@
 use crate::candidate::{ScoringPhase, SearchMatchContext};
-use crate::database::{Database, SearchRowMetadata};
+use crate::database::{hydrate_item_metadata_tags, Database, SearchRowMetadata};
 use crate::interface::{
     BaselineExcerpt, ClipKittyError, ClipboardItem, ExcerptPlaceholder, ExcerptUnavailableReason,
     ListPresentationProfile, MatchedExcerpt, MatchedExcerptRequest, MatchedExcerptResolution,
@@ -12,66 +12,6 @@ use std::collections::{HashMap, VecDeque};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) mod test_support {
-    use once_cell::sync::Lazy;
-    use parking_lot::Mutex;
-    use std::sync::Arc;
-
-    #[derive(Default, Clone)]
-    pub(crate) struct SearchTestHooks {
-        pub(crate) before_eager_matches: Option<Arc<dyn Fn() + Send + Sync>>,
-        pub(crate) on_eager_match: Option<Arc<dyn Fn(usize) + Send + Sync>>,
-        pub(crate) on_analysis_cache_hit: Option<Arc<dyn Fn(String, String) + Send + Sync>>,
-        pub(crate) on_analysis_computed: Option<Arc<dyn Fn(String, String) + Send + Sync>>,
-    }
-
-    static HOOKS: Lazy<Mutex<SearchTestHooks>> =
-        Lazy::new(|| Mutex::new(SearchTestHooks::default()));
-
-    pub(crate) struct SearchTestHookGuard;
-
-    impl Drop for SearchTestHookGuard {
-        fn drop(&mut self) {
-            *HOOKS.lock() = SearchTestHooks::default();
-        }
-    }
-
-    pub(crate) fn install_search_hooks(hooks: SearchTestHooks) -> SearchTestHookGuard {
-        *HOOKS.lock() = hooks;
-        SearchTestHookGuard
-    }
-
-    pub(crate) fn before_eager_matches() {
-        let callback = HOOKS.lock().before_eager_matches.clone();
-        if let Some(callback) = callback {
-            callback();
-        }
-    }
-
-    pub(crate) fn on_eager_match(index: usize) {
-        let callback = HOOKS.lock().on_eager_match.clone();
-        if let Some(callback) = callback {
-            callback(index);
-        }
-    }
-
-    pub(crate) fn on_analysis_cache_hit(item_id: &str, query: &str) {
-        let callback = HOOKS.lock().on_analysis_cache_hit.clone();
-        if let Some(callback) = callback {
-            callback(item_id.to_string(), query.to_string());
-        }
-    }
-
-    pub(crate) fn on_analysis_computed(item_id: &str, query: &str) {
-        let callback = HOOKS.lock().on_analysis_computed.clone();
-        if let Some(callback) = callback {
-            callback(item_id.to_string(), query.to_string());
-        }
-    }
-}
 
 const MAX_CACHED_QUERIES: usize = 4;
 const MAX_CACHED_ITEMS_PER_QUERY: usize = 256;
@@ -707,17 +647,11 @@ impl<'a> MatchPresentation<'a> {
             .and_then(|context| {
                 let analysis = context.analysis().or_else(|| {
                     let analysis = search::analyze_content_for_query(context.content(), query)?;
-                    #[cfg(test)]
-                    test_support::on_analysis_computed(item_id, query);
                     let analysis = Arc::new(analysis);
                     self.cache
                         .set_match_context_analysis(query, item_id, Arc::clone(&analysis));
                     Some(analysis)
                 })?;
-                #[cfg(test)]
-                if context.analysis().is_some() {
-                    test_support::on_analysis_cache_hit(item_id, query);
-                }
                 context.preview_decoration(item.content.text_content(), &analysis)
             })
             .or_else(|| self.preview_decoration_for_item(item_id, &item, query));
@@ -744,14 +678,10 @@ impl<'a> MatchPresentation<'a> {
         query: &str,
     ) -> Option<Arc<HighlightAnalysis>> {
         if let Some(cached) = self.cache.get(query, item_id, content) {
-            #[cfg(test)]
-            test_support::on_analysis_cache_hit(item_id, query);
             return Some(cached);
         }
 
         let analysis = search::analyze_content_for_query(content, query)?;
-        #[cfg(test)]
-        test_support::on_analysis_computed(item_id, query);
         let analysis = Arc::new(analysis);
         self.cache
             .insert(query, item_id, content, Arc::clone(&analysis));
@@ -765,8 +695,6 @@ impl<'a> MatchPresentation<'a> {
     ) -> Option<(CachedMatchContext, Arc<HighlightAnalysis>)> {
         let context = self.cache.get_match_context(query, item_id)?;
         if let Some(analysis) = context.analysis() {
-            #[cfg(test)]
-            test_support::on_analysis_cache_hit(item_id, query);
             return Some((context, analysis));
         }
 
@@ -776,8 +704,6 @@ impl<'a> MatchPresentation<'a> {
                 search::analyze_content_word_match(context.content(), query)
             }
         }?;
-        #[cfg(test)]
-        test_support::on_analysis_computed(item_id, query);
         let analysis = Arc::new(analysis);
         self.cache
             .set_match_context_analysis(query, item_id, Arc::clone(&analysis));
@@ -794,10 +720,6 @@ fn hydrate_clipboard_item_tags(
     db: &Database,
     item: &mut ClipboardItem,
 ) -> Result<(), ClipKittyError> {
-    let tags_by_id = db.get_tags_for_item_ids(&[item.item_metadata.item_id.clone()])?;
-    item.item_metadata.tags = tags_by_id
-        .get(&item.item_metadata.item_id)
-        .cloned()
-        .unwrap_or_default();
+    hydrate_item_metadata_tags(db, std::iter::once(&mut item.item_metadata))?;
     Ok(())
 }

@@ -702,20 +702,15 @@ fn run_phase_two_head(
 
     let chunk_results: Vec<PhaseTwoRun> = head_candidates
         .par_chunks(CANCELLATION_CHECK_CHUNK_SIZE)
-        .enumerate()
-        .map(|(_chunk_index, chunk)| {
+        .map(|chunk| {
             let mut scored = Vec::with_capacity(chunk.len());
             #[cfg(feature = "perf-log")]
             let mut perf = PhaseTwoPerfTotals::default();
 
-            for (_offset, candidate) in chunk.iter().enumerate() {
+            for candidate in chunk {
                 if token.is_cancelled() {
                     break;
                 }
-                #[cfg(test)]
-                test_support::on_phase_two_candidate(
-                    _chunk_index * CANCELLATION_CHECK_CHUNK_SIZE + _offset,
-                );
                 let outcome = score_phase_two_candidate(&candidate.1, phase_two_query, now);
                 #[cfg(feature = "perf-log")]
                 perf.record(outcome.perf, outcome.bucket.is_some());
@@ -769,51 +764,6 @@ pub struct Indexer {
     chunk_index_field: Field,
     chunk_start_field: Field,
     chunk_end_field: Field,
-}
-
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) mod test_support {
-    use once_cell::sync::Lazy;
-    use parking_lot::Mutex;
-    use std::sync::Arc;
-
-    #[derive(Default, Clone)]
-    pub(crate) struct SearchTestHooks {
-        pub(crate) before_phase_two: Option<Arc<dyn Fn() + Send + Sync>>,
-        pub(crate) on_phase_two_candidate: Option<Arc<dyn Fn(usize) + Send + Sync>>,
-    }
-
-    static HOOKS: Lazy<Mutex<SearchTestHooks>> =
-        Lazy::new(|| Mutex::new(SearchTestHooks::default()));
-    pub(crate) static HOOK_TEST_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
-
-    pub(crate) struct SearchTestHookGuard;
-
-    impl Drop for SearchTestHookGuard {
-        fn drop(&mut self) {
-            *HOOKS.lock() = SearchTestHooks::default();
-        }
-    }
-
-    pub(crate) fn install_search_hooks(hooks: SearchTestHooks) -> SearchTestHookGuard {
-        *HOOKS.lock() = hooks;
-        SearchTestHookGuard
-    }
-
-    pub(crate) fn before_phase_two() {
-        let callback = HOOKS.lock().before_phase_two.clone();
-        if let Some(callback) = callback {
-            callback();
-        }
-    }
-
-    pub(crate) fn on_phase_two_candidate(index: usize) {
-        let callback = HOOKS.lock().on_phase_two_candidate.clone();
-        if let Some(callback) = callback {
-            callback(index);
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1163,8 +1113,6 @@ impl Indexer {
                 "search cancelled".into(),
             )));
         }
-        #[cfg(test)]
-        test_support::before_phase_two();
         let prefix_preference = prepare_prefix_preference(query);
         let phase_two_query = PhaseTwoQuery {
             query: &prepared_query,

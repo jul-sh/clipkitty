@@ -1,5 +1,5 @@
 use crate::database::Database;
-use crate::interface::FilePreviewSnapshot;
+use crate::interface::{FilePreviewSnapshot, NewFileInput};
 use crate::models::StoredItem;
 use crate::ClipboardStore;
 use anyhow::Result;
@@ -269,13 +269,17 @@ fn build_item(
         }
         FixtureSpec::File { .. } => {
             let (ext, uti) = FILE_EXTENSIONS[rng.random_range(0..FILE_EXTENSIONS.len())];
-            StoredItem::new_file(
-                format!("/Users/julsh/Projects/clipkitty/benchmark_fixture_{ordinal}.{ext}"),
-                format!("benchmark_fixture_{ordinal}.{ext}"),
-                32_768,
-                uti.to_string(),
-                vec![1, 2, 3, 4],
-                FilePreviewSnapshot::not_captured(),
+            StoredItem::new_files(
+                vec![NewFileInput {
+                    path: format!(
+                        "/Users/julsh/Projects/clipkitty/benchmark_fixture_{ordinal}.{ext}"
+                    ),
+                    filename: format!("benchmark_fixture_{ordinal}.{ext}"),
+                    file_size: 32_768,
+                    uti: uti.to_string(),
+                    bookmark_data: vec![1, 2, 3, 4],
+                    preview: FilePreviewSnapshot::not_captured(),
+                }],
                 Some(app_name.to_string()),
                 Some(bundle_id.to_string()),
             )

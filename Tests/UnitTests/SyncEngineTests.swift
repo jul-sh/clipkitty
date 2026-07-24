@@ -615,12 +615,14 @@ final class SyncEngineTests: XCTestCase {
 
         store.setSyncDeviceId(deviceId: deviceId)
         _ = try store.saveFiles(
-            paths: ["/tmp/large.dat"],
-            filenames: ["large.dat"],
-            fileSizes: [UInt64(largeBookmark.count)],
-            utis: ["public.data"],
-            bookmarkDataList: [largeBookmark],
-            previewSnapshots: [.unavailable(reason: .notCaptured)],
+            files: [NewFileInput(
+                path: "/tmp/large.dat",
+                filename: "large.dat",
+                fileSize: UInt64(largeBookmark.count),
+                uti: "public.data",
+                bookmarkData: largeBookmark,
+                preview: .unavailable(reason: .notCaptured)
+            )],
             sourceApp: nil,
             sourceAppBundleId: nil
         )
@@ -739,12 +741,14 @@ final class SyncEngineTests: XCTestCase {
 
         sourceStore.setSyncDeviceId(deviceId: deviceId)
         _ = try sourceStore.saveFiles(
-            paths: ["/tmp/resync.dat"],
-            filenames: ["resync.dat"],
-            fileSizes: [UInt64(largeBookmark.count)],
-            utis: ["public.data"],
-            bookmarkDataList: [largeBookmark],
-            previewSnapshots: [.unavailable(reason: .notCaptured)],
+            files: [NewFileInput(
+                path: "/tmp/resync.dat",
+                filename: "resync.dat",
+                fileSize: UInt64(largeBookmark.count),
+                uti: "public.data",
+                bookmarkData: largeBookmark,
+                preview: .unavailable(reason: .notCaptured)
+            )],
             sourceApp: nil,
             sourceAppBundleId: nil
         )

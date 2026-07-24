@@ -136,23 +136,13 @@ public final class ClipboardRepository: @unchecked Sendable {
     }
 
     public func saveFiles(
-        paths: [String],
-        filenames: [String],
-        fileSizes: [UInt64],
-        utis: [String],
-        bookmarkDataList: [Data],
-        previewSnapshots: [FilePreviewSnapshot],
+        files: [NewFileInput],
         sourceApp: String?,
         sourceAppBundleId: String?
     ) async -> Result<String, ClipboardError> {
         await runRepositoryOperation("saveFiles", on: store) { store in
             try store.saveFiles(
-                paths: paths,
-                filenames: filenames,
-                fileSizes: fileSizes,
-                utis: utis,
-                bookmarkDataList: bookmarkDataList,
-                previewSnapshots: previewSnapshots,
+                files: files,
                 sourceApp: sourceApp,
                 sourceAppBundleId: sourceAppBundleId
             )
