@@ -4,9 +4,7 @@ import Foundation
 public enum DetectedPasteboardContent {
     case text(text: String, sourceApp: String?, sourceAppBundleId: String?)
     case image(data: Data, isAnimated: Bool, sourceApp: String?, sourceAppBundleId: String?)
-    #if ENABLE_FILE_CLIPBOARD_ITEMS
-        case files(urls: [URL], sourceApp: String?, sourceAppBundleId: String?)
-    #endif
+    case files(urls: [URL], sourceApp: String?, sourceAppBundleId: String?)
 }
 
 @MainActor

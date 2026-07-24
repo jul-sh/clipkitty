@@ -31,7 +31,8 @@ pub const SCENE_MULTILINE: DemoItem = DemoItem {
 };
 
 pub const SCENE_SECURE_PRIVATE: DemoItem = DemoItem {
-    content: "\u{2022} Private by default\n\u{2022} No accounts, no telemetry\n\u{2022} Open Source",
+    content:
+        "\u{2022} Private by default\n\u{2022} No accounts, no telemetry\n\u{2022} Open Source",
     source_app: "Safari",
     bundle_id: "com.apple.Safari",
     offset: -500,

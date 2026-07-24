@@ -1,5 +1,5 @@
 import AppKit
-import ClipKittyShared
+import ClipKittyCore
 import SwiftUI
 
 @MainActor
@@ -206,12 +206,6 @@ final class SnackbarWindow {
         if notification?.anchoredToPanel == true {
             dismissNotification()
         }
-    }
-
-    func hideAll() {
-        dismissNudge()
-        dismissNotification()
-        dismissProgress()
     }
 
     // MARK: - Positioning
