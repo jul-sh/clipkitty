@@ -100,6 +100,149 @@ final class BrowserEditingTests: XCTestCase {
         XCTAssertEqual(viewModel.editSession, .dirty(itemId: "1", draft: "edited text"))
     }
 
+    func testSuccessfulEditRefreshesActiveSearch() async {
+        let client = MockBrowserStoreClient()
+        let request = SearchRequest(text: "needle", filter: .all)
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: request,
+            items: [makeMatch(id: "1", excerpt: "needle in original text")],
+            firstItem: makeItem(id: "1", text: "needle in original text"),
+            totalCount: 1
+        ))
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: request,
+            items: [],
+            firstPreviewPayload: nil,
+            totalCount: 0
+        ))
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+        viewModel.onAppear(initialSearchQuery: request.text)
+        let didLoadInitialSearch = await settle { viewModel.itemIds == ["1"] }
+        XCTAssertTrue(didLoadInitialSearch)
+
+        viewModel.onTextEdit(
+            "edited away",
+            for: "1",
+            originalContent: .text(value: "needle in original text")
+        )
+        viewModel.commitCurrentEdit()
+
+        let didRefreshSearch = await settle { viewModel.itemIds.isEmpty }
+        XCTAssertTrue(didRefreshSearch)
+        XCTAssertEqual(client.startedSearchRequests, [request, request])
+    }
+
+    func testInFlightSaveRejectsOtherMutationsAndStillRollsBack() async {
+        let client = MockBrowserStoreClient()
+        client.defersTextUpdates = true
+        let viewModel = await makeLoadedTextViewModel(
+            client: client,
+            onSelect: { _, _ in }
+        )
+        editText("edited text", in: viewModel)
+        viewModel.commitCurrentEdit()
+        let didStartSave = await settle { client.updatedTexts.count == 1 }
+        XCTAssertTrue(didStartSave)
+
+        viewModel.addTag(.bookmark, toItem: "1")
+        viewModel.clearAll()
+
+        guard case .saving = viewModel.mutationState else {
+            return XCTFail("Other mutations must not supersede an in-flight save")
+        }
+        XCTAssertEqual(viewModel.itemIds, ["1"])
+        XCTAssertFalse(viewModel.selectedItem?.itemMetadata.tags.contains(.bookmark) ?? true)
+
+        client.resumeTextUpdate(with: .failure(.databaseOperationFailed(
+            operation: "update text",
+            underlying: NSError(domain: "BrowserEditingTests", code: 2)
+        )))
+        let didRollBack = await settle {
+            if case .failed = viewModel.mutationState { return true }
+            return false
+        }
+        XCTAssertTrue(didRollBack)
+        XCTAssertEqual(viewModel.selectedItem?.content, .text(value: "original text"))
+        XCTAssertEqual(viewModel.editSession, .dirty(itemId: "1", draft: "edited text"))
+    }
+
+    func testFailedSaveRollsBackOptimisticItemAfterSameItemReselection() async {
+        let client = MockBrowserStoreClient()
+        client.defersTextUpdates = true
+        let viewModel = await makeLoadedTextViewModel(
+            client: client,
+            onSelect: { _, _ in }
+        )
+        editText("edited text", in: viewModel)
+        viewModel.commitCurrentEdit()
+        let didStartSave = await settle { client.updatedTexts.count == 1 }
+        XCTAssertTrue(didStartSave)
+
+        viewModel.select(itemId: "1", origin: .click)
+        XCTAssertEqual(viewModel.selectedItem?.content, .text(value: "edited text"))
+
+        client.resumeTextUpdate(with: .failure(.databaseOperationFailed(
+            operation: "update text",
+            underlying: NSError(domain: "BrowserEditingTests", code: 3)
+        )))
+        let didRollBack = await settle {
+            if case .failed = viewModel.mutationState { return true }
+            return false
+        }
+        XCTAssertTrue(didRollBack)
+        XCTAssertEqual(viewModel.selectedItem?.content, .text(value: "original text"))
+
+        viewModel.discardCurrentEdit()
+        guard let selectedItem = viewModel.selectedItem else {
+            return XCTFail("Expected the restored item to remain selected")
+        }
+        XCTAssertEqual(viewModel.effectiveContent(for: selectedItem), .text(value: "original text"))
+    }
+
+    func testSaveAndPasteDoesNotRunAfterSelectionMoves() async {
+        let client = MockBrowserStoreClient()
+        client.defersTextUpdates = true
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [
+                makeMatch(id: "1", excerpt: "first"),
+                makeMatch(id: "2", excerpt: "second"),
+            ],
+            firstItem: makeItem(id: "1", text: "original text"),
+            totalCount: 2
+        ))
+        var didSelect = false
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in didSelect = true },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        editText("edited text", in: viewModel)
+        viewModel.confirmSelection()
+        let didStartSave = await settle { client.updatedTexts.count == 1 }
+        XCTAssertTrue(didStartSave)
+
+        viewModel.moveSelection(by: 1)
+        XCTAssertEqual(viewModel.selectedItemId, "2")
+        XCTAssertEqual(viewModel.editSession, .suspendedDirty(itemId: "1", draft: "edited text"))
+
+        client.resumeTextUpdate(with: .success(()))
+        let didSettle = await settle {
+            if case .idle = viewModel.mutationState { return true }
+            return false
+        }
+        XCTAssertTrue(didSettle)
+        XCTAssertFalse(didSelect)
+    }
+
     func testSaveAndPastePersistsBeforeSelectingIncludingEmptyDraft() async {
         for draft in ["edited text", ""] {
             let client = MockBrowserStoreClient()
@@ -214,6 +357,61 @@ final class BrowserEditingTests: XCTestCase {
         XCTAssertTrue(didSettle)
         XCTAssertEqual(client.updatedTexts.first?.text, "edited text")
         XCTAssertFalse(didSelect)
+        XCTAssertEqual(viewModel.editSession, .inactive)
+    }
+
+    func testSuccessfulSaveRefreshesEmptyQueryAfterDisplayResetRace() async {
+        let client = MockBrowserStoreClient()
+        client.defersTextUpdates = true
+        let request = SearchRequest(text: "", filter: .all)
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: request,
+            items: [makeMatch(id: "1", excerpt: "original text")],
+            firstItem: makeItem(id: "1", text: "original text"),
+            totalCount: 1
+        ))
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: request,
+            items: [makeMatch(id: "1", excerpt: "original text")],
+            firstItem: makeItem(id: "1", text: "original text"),
+            totalCount: 1
+        ))
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: request,
+            items: [makeMatch(id: "1", excerpt: "edited text")],
+            firstItem: makeItem(id: "1", text: "edited text"),
+            totalCount: 1
+        ))
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+        viewModel.onAppear(initialSearchQuery: "")
+        let didLoadInitialItem = await settle {
+            viewModel.selectedItem?.content == .text(value: "original text")
+        }
+        XCTAssertTrue(didLoadInitialItem)
+
+        editText("edited text", in: viewModel)
+        viewModel.commitCurrentEdit()
+        let didStartSave = await settle { client.updatedTexts.count == 1 }
+        XCTAssertTrue(didStartSave)
+
+        viewModel.handleDisplayReset(initialSearchQuery: "")
+        let didOverlayInFlightSaveOntoStaleSearch = await settle {
+            client.startedSearchRequests.count == 2
+                && viewModel.selectedItem?.content == .text(value: "edited text")
+        }
+        XCTAssertTrue(didOverlayInFlightSaveOntoStaleSearch)
+
+        client.resumeTextUpdate(with: .success(()))
+        let didApplyPostSaveSearch = await settle {
+            client.startedSearchRequests.count == 3
+                && viewModel.selectedItem?.content == .text(value: "edited text")
+        }
+        XCTAssertTrue(didApplyPostSaveSearch)
         XCTAssertEqual(viewModel.editSession, .inactive)
     }
 

@@ -73,6 +73,17 @@ public final class BrowserViewModel {
         case performSelectionAction(action: @MainActor () -> Void)
     }
 
+    private enum TextSaveCompletion {
+        /// Persistence succeeded and the saved draft is still the active edit.
+        case readyForFollowUp
+        /// Persistence succeeded, but a newer edit or explicit discard won.
+        case persisted
+        /// The matching transaction failed and restored its optimistic state.
+        case failed
+        /// Another state already superseded this transaction.
+        case superseded
+    }
+
     private struct PreviewRequest: Equatable {
         let token = UUID()
         let itemId: String
@@ -91,7 +102,6 @@ public final class BrowserViewModel {
     private var pendingMatchedExcerptItemIds: Set<String> = []
     private var pendingFilterSurfaceTask: Task<Void, Never>?
     private var pendingDeleteTask: Task<Void, Never>?
-    private var pendingTagSettleTask: Task<Void, Never>?
     private var queryGeneration = 0
     private var selectionGeneration = 0
     private var hasAppliedInitialSearch = false
@@ -291,9 +301,9 @@ public final class BrowserViewModel {
     /// validates its transaction identity before changing observable state.
     private func resetMutationStateUnlessInFlight() {
         switch mutationState {
-        case .saving, .deleting(.committing):
+        case .saving, .deleting(.committing), .tagging, .clearing:
             break
-        case .idle, .deleting(.pending), .tagging, .clearing, .failed:
+        case .idle, .deleting(.pending), .failed:
             mutationState = .idle
         }
     }
@@ -547,28 +557,31 @@ public final class BrowserViewModel {
     }
 
     public func deleteItem(itemId: String) {
-        // Accumulate into existing pending delete batch
-        if case var .deleting(.pending(prev)) = mutationState {
+        switch mutationState {
+        case var .deleting(.pending(prev)):
+            guard !prev.deletedItemIds.contains(itemId) else { return }
             pendingDeleteTask?.cancel()
+            cancelPreviewWork()
             prev.deletedItemIds.append(itemId)
             mutationState = .deleting(.pending(prev))
             applyOptimisticDelete(itemId: itemId)
             showDeleteUndoNotification(count: prev.deletedItemIds.count)
             scheduleDeleteCommit()
             return
+        case .idle, .failed:
+            break
+        case .saving, .deleting(.committing), .tagging, .clearing:
+            return
         }
 
-        // If a previous delete is already committing, just clear state
-        if case .deleting(.committing) = mutationState {
-            mutationState = .idle
-        }
-
-        guard case .idle = mutationState else { return }
-
+        let contentSnapshot = displayedContent
+        let selectionSnapshot = selectionState
+        cancelPreviewWork()
         let transaction = DeleteTransaction(
             deletedItemIds: [itemId],
-            snapshot: contentState,
-            selectionSnapshot: selectionState
+            contentSnapshot: contentSnapshot,
+            selectionSnapshot: selectionSnapshot,
+            queryGeneration: queryGeneration
         )
         mutationState = .deleting(.pending(transaction))
 
@@ -594,16 +607,31 @@ public final class BrowserViewModel {
         pendingDeleteTask?.cancel()
         pendingDeleteTask = nil
         dismissSnackbarNotification()
-        restoreSnapshot(transaction.snapshot, selection: transaction.selectionSnapshot)
         mutationState = .idle
+        if queryGeneration == transaction.queryGeneration,
+           let contentSnapshot = transaction.contentSnapshot
+        {
+            contentState = .loaded(contentSnapshot)
+            rebuildDisplayedRows()
+            setDisplayedSelection(transaction.selectionSnapshot)
+            syncPreviewPayloadCacheToDisplayedState()
+            reconcileEditSessionWithSelection()
+        }
+        refreshCurrentRequestAfterMutation()
     }
 
     public func clearAll() {
+        switch mutationState {
+        case .idle, .failed:
+            break
+        case .saving, .deleting, .tagging, .clearing:
+            return
+        }
+
         editSession = .inactive
-        mutationState = .clearing(ClearTransaction(
-            snapshot: contentState,
-            selectionSnapshot: selectionState
-        ))
+        cancelPreviewWork()
+        let transaction = ClearTransaction()
+        mutationState = .clearing(transaction)
 
         let request = contentState.request
         setDisplayedSelection(.none)
@@ -624,11 +652,15 @@ public final class BrowserViewModel {
             guard let self else { return }
             let result = await self.client.clear()
             await MainActor.run {
+                guard case let .clearing(current) = self.mutationState,
+                      current.id == transaction.id
+                else { return }
                 switch result {
                 case .success:
                     self.mutationState = .idle
+                    self.refreshCurrentRequestAfterMutation()
                 case let .failure(error):
-                    self.restoreClearFailure(error: error)
+                    self.restoreClearFailure(transactionID: transaction.id, error: error)
                 }
             }
         }
@@ -752,11 +784,7 @@ public final class BrowserViewModel {
         }
 
         let currentItem = selectedItemState.item
-        let contentSnapshot = contentState
-        let selectionSnapshot = selectionState
-        let previewPayloadSnapshot = SnapshotValue(previewPayloadsByItemId[id])
-        let resolvedExcerptSnapshot = SnapshotValue(resolvedMatchedExcerptsByItemId[id])
-        let prefetchedItemSnapshot = SnapshotValue(prefetchCache[id])
+        cancelPreviewWork()
         let updatedContent = ClipboardContent.text(value: editedText)
         let updatedExcerpt = BaselineExcerpt(text: client.formatExcerpt(content: editedText))
         let updatedMetadata = ItemMetadata(
@@ -792,11 +820,6 @@ public final class BrowserViewModel {
             itemId: id,
             draft: editedText,
             itemSnapshot: currentItem,
-            contentSnapshot: contentSnapshot,
-            selectionSnapshot: selectionSnapshot,
-            previewPayloadSnapshot: previewPayloadSnapshot,
-            resolvedExcerptSnapshot: resolvedExcerptSnapshot,
-            prefetchedItemSnapshot: prefetchedItemSnapshot,
             queryGeneration: queryGeneration,
             selectionGeneration: selectionGeneration
         )
@@ -806,19 +829,26 @@ public final class BrowserViewModel {
             guard let self else { return }
             let result = await self.client.updateTextItem(itemId: id, text: editedText)
             await MainActor.run {
-                guard self.finishTextSave(transactionID: transaction.id, result: result) else {
+                switch self.finishTextSave(transactionID: transaction.id, result: result) {
+                case .readyForFollowUp:
+                    let actionContextStillCurrent = transaction.queryGeneration == self.queryGeneration
+                        && transaction.selectionGeneration == self.selectionGeneration
+                        && self.selectedItemId == transaction.itemId
+                    self.refreshCurrentRequestAfterMutation()
+                    switch followUp {
+                    case .showSavedNotification:
+                        self.showSnackbarNotification(.passive(
+                            message: String(localized: "Saved"),
+                            iconSystemName: "checkmark.circle.fill"
+                        ))
+                    case let .performSelectionAction(action):
+                        guard actionContextStillCurrent else { return }
+                        action()
+                    }
+                case .persisted:
+                    self.refreshCurrentRequestAfterMutation()
+                case .failed, .superseded:
                     return
-                }
-
-                switch followUp {
-                case .showSavedNotification:
-                    self.showSnackbarNotification(.passive(
-                        message: String(localized: "Saved"),
-                        iconSystemName: "checkmark.circle.fill"
-                    ))
-                case let .performSelectionAction(action):
-                    guard transaction.queryGeneration == self.queryGeneration else { return }
-                    action()
                 }
             }
         }
@@ -827,10 +857,10 @@ public final class BrowserViewModel {
     private func finishTextSave(
         transactionID: UUID,
         result: Result<Void, ClipboardError>
-    ) -> Bool {
+    ) -> TextSaveCompletion {
         guard case let .saving(transaction) = mutationState,
               transaction.id == transactionID
-        else { return false }
+        else { return .superseded }
 
         switch result {
         case .success:
@@ -838,39 +868,19 @@ public final class BrowserViewModel {
             switch editSession {
             case let .dirty(itemId, draft), let .suspendedDirty(itemId, draft):
                 guard itemId == transaction.itemId, draft == transaction.draft else {
-                    return false
+                    return .persisted
                 }
                 editSession = .inactive
-                return true
+                return .readyForFollowUp
             case .inactive, .focused:
                 // A different draft was authored while this save was in
                 // flight (or the edit was explicitly discarded). Keep the
                 // current user state and do not run a stale paste action.
-                return false
+                return .persisted
             }
 
         case let .failure(error):
-            if queryGeneration == transaction.queryGeneration {
-                let selection = selectionGeneration == transaction.selectionGeneration
-                    ? transaction.selectionSnapshot
-                    : nil
-                restoreSnapshot(transaction.contentSnapshot, selection: selection)
-                restoreCacheEntry(
-                    transaction.previewPayloadSnapshot,
-                    key: transaction.itemId,
-                    in: &previewPayloadsByItemId
-                )
-                restoreCacheEntry(
-                    transaction.resolvedExcerptSnapshot,
-                    key: transaction.itemId,
-                    in: &resolvedMatchedExcerptsByItemId
-                )
-                restoreCacheEntry(
-                    transaction.prefetchedItemSnapshot,
-                    key: transaction.itemId,
-                    in: &prefetchCache
-                )
-            }
+            restoreSelectedItemAfterTextSaveFailure(transaction)
 
             switch editSession {
             case let .dirty(itemId, draft)
@@ -886,21 +896,45 @@ public final class BrowserViewModel {
                     : .suspendedDirty(itemId: transaction.itemId, draft: transaction.draft)
             }
             mutationState = .failed(ActionFailure(message: error.localizedDescription))
-            return false
+            refreshCurrentRequestAfterMutation()
+            return .failed
         }
     }
 
-    private func restoreCacheEntry<Key: Hashable, Value>(
-        _ snapshot: SnapshotValue<Value>,
-        key: Key,
-        in cache: inout [Key: Value]
-    ) {
-        switch snapshot {
-        case .absent:
-            cache.removeValue(forKey: key)
-        case let .present(value):
-            cache[key] = value
+    private func refreshCurrentRequestAfterMutation(discardSelectedPayload: Bool = false) {
+        let selectionToReload = discardSelectedPayload
+            ? selectionState.itemId.flatMap { itemId in
+                selectionState.origin.map { (itemId, $0) }
+            }
+            : nil
+        cancelPreviewWork()
+        if let (itemId, origin) = selectionToReload {
+            setDisplayedSelection(.loading(
+                itemId: itemId,
+                origin: origin,
+                phase: .waitingForSpinner
+            ))
         }
+        let request = contentState.request
+        submitSearch(request: request, targetContentRevision: latestKnownContentRevision)
+    }
+
+    private func restoreSelectedItemAfterTextSaveFailure(_ transaction: TextSaveTransaction) {
+        guard case let .selected(currentSelection) = selectionState,
+              currentSelection.item.itemMetadata.itemId == transaction.itemId
+        else { return }
+
+        let restoredSelection = SelectedItemState(
+            item: transaction.itemSnapshot,
+            origin: currentSelection.origin,
+            previewState: currentSelection.previewState
+        )
+        setDisplayedSelection(.selected(restoredSelection))
+        previewPayloadsByItemId[transaction.itemId] = PreviewPayload(
+            item: transaction.itemSnapshot,
+            decoration: currentSelection.previewState.decoration
+        )
+        prefetchCache[transaction.itemId] = transaction.itemSnapshot
     }
 
     /// Semantic browser actions (platform-independent).
@@ -957,8 +991,6 @@ public final class BrowserViewModel {
         pendingFilterSurfaceTask = nil
         pendingDeleteTask?.cancel()
         pendingDeleteTask = nil
-        pendingTagSettleTask?.cancel()
-        pendingTagSettleTask = nil
         queryGeneration += 1
         cancelPreviewSpinner()
     }
@@ -1188,7 +1220,6 @@ public final class BrowserViewModel {
                 pendingFilterState = .suggested(suggestion, keyboardTarget: .suggestion)
             }
             reconcileEditSessionWithSelection()
-            finishTagMutationSettleIfNeeded()
             return
         }
 
@@ -1196,7 +1227,6 @@ public final class BrowserViewModel {
               let previousOrigin = previousSelection.origin
         else {
             select(itemId: newOrder[0], origin: .automatic)
-            finishTagMutationSettleIfNeeded()
             return
         }
 
@@ -1211,7 +1241,6 @@ public final class BrowserViewModel {
             ))
             loadSelectedItem(itemId: nextItemId, origin: .automatic)
             reconcileEditSessionWithSelection()
-            finishTagMutationSettleIfNeeded()
             return
         }
 
@@ -1222,7 +1251,6 @@ public final class BrowserViewModel {
             previousSelectedItemState: previousSelectedItemState
         )
         reconcileEditSessionWithSelection()
-        finishTagMutationSettleIfNeeded()
     }
 
     private func refreshSelection(
@@ -1424,9 +1452,13 @@ public final class BrowserViewModel {
 
             self.previewTask = nil
 
-            guard let item else {
+            guard let fetchedItem = item else {
                 self.cancelPreviewSpinner()
                 self.setDisplayedSelection(.failed(itemId: selectionRequest.itemId, origin: origin))
+                return
+            }
+            guard let item = self.itemApplyingPendingMutation(fetchedItem) else {
+                self.cancelPreviewSpinner()
                 return
             }
 
@@ -1475,11 +1507,14 @@ public final class BrowserViewModel {
             self.previewTask = nil
 
             self.cancelPreviewSpinner()
-            guard let payload else {
+            guard let fetchedPayload = payload else {
                 self.resolveSelectionWithoutPreviewDecoration(
                     itemId: selectionRequest.itemId,
                     origin: origin
                 )
+                return
+            }
+            guard let payload = self.previewPayloadApplyingPendingMutation(fetchedPayload) else {
                 return
             }
 
@@ -1614,10 +1649,11 @@ public final class BrowserViewModel {
             guard let self else { return }
             for itemId in idsToPrefetch {
                 guard !Task.isCancelled else { return }
-                guard let item = await self.client.fetchItem(id: itemId) else { continue }
+                guard let fetchedItem = await self.client.fetchItem(id: itemId) else { continue }
                 guard !Task.isCancelled,
                       self.activePreviewRequest == selectionRequest
                 else { return }
+                guard let item = self.itemApplyingPendingMutation(fetchedItem) else { continue }
                 if self.indexOfItem(itemId) != nil {
                     self.prefetchCache[itemId] = item
                 }
@@ -1784,27 +1820,15 @@ public final class BrowserViewModel {
                 }
             }
             await MainActor.run {
-                if let error = lastError {
-                    self.restoreDeleteFailure(error: error)
-                } else if case .deleting(.committing) = self.mutationState {
-                    self.mutationState = .idle
-                }
+                guard case .deleting(.committing) = self.mutationState else { return }
+                self.mutationState = lastError.map {
+                    .failed(ActionFailure(message: $0.localizedDescription))
+                } ?? .idle
+                self.refreshCurrentRequestAfterMutation(
+                    discardSelectedPayload: lastError != nil
+                )
             }
         }
-    }
-
-    private func restoreDeleteFailure(error: ClipboardError) {
-        let transaction: DeleteTransaction
-        switch mutationState {
-        case let .deleting(.pending(pendingTransaction)), let .deleting(.committing(pendingTransaction)):
-            transaction = pendingTransaction
-        default:
-            return
-        }
-        pendingDeleteTask?.cancel()
-        pendingDeleteTask = nil
-        restoreSnapshot(transaction.snapshot, selection: transaction.selectionSnapshot)
-        mutationState = .failed(ActionFailure(message: error.localizedDescription))
     }
 
     private func showDeleteUndoNotification(count: Int) {
@@ -1823,20 +1847,12 @@ public final class BrowserViewModel {
         )
     }
 
-    private func restoreClearFailure(error: ClipboardError) {
-        guard case let .clearing(transaction) = mutationState else { return }
-        restoreSnapshot(transaction.snapshot, selection: transaction.selectionSnapshot)
+    private func restoreClearFailure(transactionID: UUID, error: ClipboardError) {
+        guard case let .clearing(transaction) = mutationState,
+              transaction.id == transactionID
+        else { return }
         mutationState = .failed(ActionFailure(message: error.localizedDescription))
-    }
-
-    private func restoreSnapshot(_ snapshot: BrowserContentState, selection: SelectionState?) {
-        contentState = snapshot
-        rebuildDisplayedRows()
-        if let selection {
-            setDisplayedSelection(selection)
-        }
-        syncPreviewPayloadCacheToDisplayedState()
-        reconcileEditSessionWithSelection()
+        refreshCurrentRequestAfterMutation(discardSelectedPayload: true)
     }
 
     private func nextSelectionAfterDelete(deleting _: String) -> String? {
@@ -1860,17 +1876,98 @@ public final class BrowserViewModel {
 
     private func responseApplyingPendingMutations(_ response: BrowserSearchResponse) -> BrowserSearchResponse {
         switch mutationState {
+        case let .saving(transaction):
+            return responseApplyingTextSave(response, transaction: transaction)
         case let .deleting(.pending(transaction)), let .deleting(.committing(transaction)):
             return responseHidingDeletedItems(response, deletedItemIds: transaction.deletedItemIds)
-        case let .tagging(.pending(mutation)), let .tagging(.settling(mutation)):
+        case let .tagging(mutation):
             return responseApplyingTagMutation(
                 response,
                 itemId: mutation.itemId,
                 tag: mutation.tag,
                 shouldInclude: mutation.shouldInclude
             )
-        case .idle, .saving, .clearing, .failed:
+        case .clearing:
+            return BrowserSearchResponse(
+                request: response.request,
+                items: [],
+                firstPreviewPayload: nil,
+                totalCount: 0
+            )
+        case .idle, .failed:
             return response
+        }
+    }
+
+    private func responseApplyingTextSave(
+        _ response: BrowserSearchResponse,
+        transaction: TextSaveTransaction
+    ) -> BrowserSearchResponse {
+        let updatedItems = response.items.map { itemMatch in
+            guard itemMatch.itemMetadata.itemId == transaction.itemId else { return itemMatch }
+            return ItemMatch(
+                itemMetadata: itemMatch.itemMetadata,
+                presentation: .baseline(excerpt: BaselineExcerpt(
+                    text: client.formatExcerpt(content: transaction.draft)
+                ))
+            )
+        }
+        let updatedFirstPreviewPayload = response.firstPreviewPayload.map { payload in
+            guard payload.item.itemMetadata.itemId == transaction.itemId else { return payload }
+            return PreviewPayload(
+                item: ClipboardItem(
+                    itemMetadata: payload.item.itemMetadata,
+                    content: .text(value: transaction.draft)
+                ),
+                decoration: nil
+            )
+        }
+        return BrowserSearchResponse(
+            request: response.request,
+            items: updatedItems,
+            firstPreviewPayload: updatedFirstPreviewPayload,
+            totalCount: response.totalCount
+        )
+    }
+
+    private func previewPayloadApplyingPendingMutation(
+        _ payload: PreviewPayload
+    ) -> PreviewPayload? {
+        guard let item = itemApplyingPendingMutation(payload.item) else { return nil }
+        let decoration: PreviewDecoration?
+        if case let .saving(transaction) = mutationState,
+           transaction.itemId == item.itemMetadata.itemId
+        {
+            decoration = nil
+        } else {
+            decoration = payload.decoration
+        }
+        return PreviewPayload(item: item, decoration: decoration)
+    }
+
+    private func itemApplyingPendingMutation(_ item: ClipboardItem) -> ClipboardItem? {
+        let itemId = item.itemMetadata.itemId
+        switch mutationState {
+        case let .saving(transaction) where transaction.itemId == itemId:
+            return ClipboardItem(
+                itemMetadata: item.itemMetadata,
+                content: .text(value: transaction.draft)
+            )
+        case let .deleting(.pending(transaction)), let .deleting(.committing(transaction)):
+            return transaction.deletedItemIds.contains(itemId) ? nil : item
+        case let .tagging(transaction) where transaction.itemId == itemId:
+            return ClipboardItem(
+                itemMetadata: applyingTagMutation(
+                    to: item.itemMetadata,
+                    tag: transaction.tag,
+                    shouldInclude: transaction.shouldInclude
+                ),
+                content: item.content
+            )
+        case .clearing:
+            return nil
+        case .idle, .saving, .tagging, .failed:
+            return item
         }
     }
 
@@ -1893,16 +1990,20 @@ public final class BrowserViewModel {
     }
 
     private func mutateItemTag(itemId: String, tag: ItemTag, shouldInclude: Bool) {
-        pendingTagSettleTask?.cancel()
-        pendingTagSettleTask = nil
+        switch mutationState {
+        case .idle, .failed:
+            break
+        case .saving, .deleting, .tagging, .clearing:
+            return
+        }
+
+        cancelPreviewWork()
         let transaction = TagMutationTransaction(
             itemId: itemId,
             tag: tag,
-            shouldInclude: shouldInclude,
-            snapshot: contentState,
-            selectionSnapshot: selectionState
+            shouldInclude: shouldInclude
         )
-        mutationState = .tagging(.pending(transaction))
+        mutationState = .tagging(transaction)
         applyOptimisticTagMutation(itemId: itemId, tag: tag, shouldInclude: shouldInclude)
 
         Task { [weak self] in
@@ -1912,26 +2013,21 @@ public final class BrowserViewModel {
                 : await self.client.removeTag(itemId: itemId, tag: tag)
 
             await MainActor.run {
+                guard case let .tagging(current) = self.mutationState,
+                      current.id == transaction.id
+                else { return }
+                let discardSelectedPayload: Bool
                 switch result {
                 case .success:
-                    if case let .tagging(.pending(mutation)) = self.mutationState,
-                       mutation.itemId == itemId,
-                       mutation.tag == tag,
-                       mutation.shouldInclude == shouldInclude
-                    {
-                        self.mutationState = .tagging(.settling(mutation))
-                        self.scheduleTagMutationSettleFallback(
-                            itemId: mutation.itemId,
-                            tag: mutation.tag,
-                            shouldInclude: mutation.shouldInclude
-                        )
-                    }
+                    self.mutationState = .idle
+                    discardSelectedPayload = false
                 case let .failure(error):
-                    self.pendingTagSettleTask?.cancel()
-                    self.pendingTagSettleTask = nil
-                    self.restoreSnapshot(transaction.snapshot, selection: transaction.selectionSnapshot)
                     self.mutationState = .failed(ActionFailure(message: error.localizedDescription))
+                    discardSelectedPayload = true
                 }
+                self.refreshCurrentRequestAfterMutation(
+                    discardSelectedPayload: discardSelectedPayload
+                )
             }
         }
     }
@@ -1978,25 +2074,6 @@ public final class BrowserViewModel {
             prefetchCache[itemId] = ClipboardItem(itemMetadata: updatedMetadata, content: cachedItem.content)
         }
         reconcileEditSessionWithSelection()
-    }
-
-    private func scheduleTagMutationSettleFallback(itemId: String, tag: ItemTag, shouldInclude: Bool) {
-        pendingTagSettleTask?.cancel()
-        pendingTagSettleTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(300))
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard let self else { return }
-                if case let .tagging(.settling(mutation)) = self.mutationState,
-                   mutation.itemId == itemId,
-                   mutation.tag == tag,
-                   mutation.shouldInclude == shouldInclude
-                {
-                    self.mutationState = .idle
-                }
-                self.pendingTagSettleTask = nil
-            }
-        }
     }
 
     private func responseApplyingTagMutation(
@@ -2404,14 +2481,6 @@ public final class BrowserViewModel {
             editSession = .inactive
         default:
             break
-        }
-    }
-
-    private func finishTagMutationSettleIfNeeded() {
-        if case .tagging(.settling) = mutationState {
-            pendingTagSettleTask?.cancel()
-            pendingTagSettleTask = nil
-            mutationState = .idle
         }
     }
 }

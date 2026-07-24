@@ -314,38 +314,18 @@ public enum MutationState {
     case idle
     case saving(TextSaveTransaction)
     case deleting(DeleteMutation)
-    case tagging(TagMutation)
+    case tagging(TagMutationTransaction)
     case clearing(ClearTransaction)
     case failed(ActionFailure)
 }
 
-enum SnapshotValue<Value> {
-    case absent
-    case present(Value)
-
-    init(_ value: Value?) {
-        switch value {
-        case let .some(value):
-            self = .present(value)
-        case .none:
-            self = .absent
-        }
-    }
-}
-
-/// Everything required to identify, settle, or roll back one optimistic text
-/// save. The draft remains in ``PreviewEditSession`` while this transaction is
-/// in flight; this value owns persistence lifecycle and rollback data only.
+/// Everything required to identify and reconcile one optimistic text save.
+/// The draft remains in ``PreviewEditSession`` while persistence is in flight.
 public struct TextSaveTransaction {
     let id: UUID
     public let itemId: String
     let draft: String
     let itemSnapshot: ClipboardItem
-    let contentSnapshot: BrowserContentState
-    let selectionSnapshot: SelectionState
-    let previewPayloadSnapshot: SnapshotValue<PreviewPayload>
-    let resolvedExcerptSnapshot: SnapshotValue<MatchedExcerpt>
-    let prefetchedItemSnapshot: SnapshotValue<ClipboardItem>
     let queryGeneration: Int
     let selectionGeneration: Int
 }
@@ -357,44 +337,34 @@ public enum DeleteMutation {
 
 public struct DeleteTransaction {
     public var deletedItemIds: [String]
-    public let snapshot: BrowserContentState
+    public let contentSnapshot: LoadedBrowserContent?
     public let selectionSnapshot: SelectionState
-
-    public init(deletedItemIds: [String], snapshot: BrowserContentState, selectionSnapshot: SelectionState) {
-        self.deletedItemIds = deletedItemIds
-        self.snapshot = snapshot
-        self.selectionSnapshot = selectionSnapshot
-    }
-}
-
-public enum TagMutation {
-    case pending(TagMutationTransaction)
-    case settling(TagMutationTransaction)
+    let queryGeneration: Int
 }
 
 public struct TagMutationTransaction {
+    let id: UUID
     public let itemId: String
     public let tag: ItemTag
     public let shouldInclude: Bool
-    public let snapshot: BrowserContentState
-    public let selectionSnapshot: SelectionState
 
-    public init(itemId: String, tag: ItemTag, shouldInclude: Bool, snapshot: BrowserContentState, selectionSnapshot: SelectionState) {
+    init(
+        itemId: String,
+        tag: ItemTag,
+        shouldInclude: Bool
+    ) {
+        id = UUID()
         self.itemId = itemId
         self.tag = tag
         self.shouldInclude = shouldInclude
-        self.snapshot = snapshot
-        self.selectionSnapshot = selectionSnapshot
     }
 }
 
 public struct ClearTransaction {
-    public let snapshot: BrowserContentState
-    public let selectionSnapshot: SelectionState
+    let id: UUID
 
-    public init(snapshot: BrowserContentState, selectionSnapshot: SelectionState) {
-        self.snapshot = snapshot
-        self.selectionSnapshot = selectionSnapshot
+    init() {
+        id = UUID()
     }
 }
 

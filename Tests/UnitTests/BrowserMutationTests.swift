@@ -14,6 +14,12 @@ final class BrowserMutationTests: XCTestCase {
             firstPreviewPayload: nil,
             totalCount: 2
         ))
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstItem: makeItem(id: "1", text: "first"),
+            totalCount: 2
+        ))
         client.deleteResult = .failure(.databaseOperationFailed(
             operation: "deleteItem",
             underlying: NSError(domain: "ClipKitty", code: 1)
@@ -54,6 +60,12 @@ final class BrowserMutationTests: XCTestCase {
             firstPreviewPayload: nil,
             totalCount: 2
         ))
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstItem: makeItem(id: "1", text: "first"),
+            totalCount: 2
+        ))
         client.clearResult = .failure(.databaseOperationFailed(
             operation: "clear",
             underlying: NSError(domain: "ClipKitty", code: 2)
@@ -83,12 +95,211 @@ final class BrowserMutationTests: XCTestCase {
         }
     }
 
+    func testClearRemainsInFlightAcrossDisplayResetAndRefreshesAfterFailure() async {
+        let client = MockBrowserStoreClient()
+        client.defersClear = true
+        let request = SearchRequest(text: "", filter: .all)
+        let response = BrowserSearchResponse(
+            request: request,
+            items: [makeMatch(id: "1", excerpt: "one")],
+            firstItem: makeItem(id: "1", text: "one"),
+            totalCount: 1
+        )
+        client.enqueueSearchResponse(response)
+        client.enqueueSearchResponse(response)
+        client.enqueueSearchResponse(response)
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.clearAll()
+        let didStartClear = await settle { client.clearCallCount == 1 }
+        XCTAssertTrue(didStartClear)
+        viewModel.handleDisplayReset(initialSearchQuery: "")
+        await flushMainActor()
+        guard case .clearing = viewModel.mutationState else {
+            return XCTFail("Display reset must retain ownership of the clear write")
+        }
+        XCTAssertTrue(viewModel.itemIds.isEmpty)
+
+        client.resumeClear(with: .failure(.databaseOperationFailed(
+            operation: "clear",
+            underlying: NSError(domain: "BrowserMutationTests", code: 5)
+        )))
+        let didRefresh = await settle {
+            if case .failed = viewModel.mutationState {
+                return viewModel.itemIds == ["1"]
+            }
+            return false
+        }
+        XCTAssertTrue(didRefresh)
+    }
+
+    func testClearSuccessFencesOlderSearchAndReconcilesAuthoritativeEmptyState() async {
+        let client = MockBrowserStoreClient()
+        client.defersClear = true
+        let request = SearchRequest(text: "", filter: .all)
+        let staleResponse = BrowserSearchResponse(
+            request: request,
+            items: [makeMatch(id: "1", excerpt: "one")],
+            firstItem: makeItem(id: "1", text: "one"),
+            totalCount: 1
+        )
+        client.enqueueSearchResponse(staleResponse)
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+        viewModel.onAppear(initialSearchQuery: "")
+        let didLoad = await settle { viewModel.itemIds == ["1"] }
+        XCTAssertTrue(didLoad)
+
+        viewModel.updateSearchText("")
+        let didStartStaleSearch = await settle { client.startedSearchRequests.count == 2 }
+        XCTAssertTrue(didStartStaleSearch)
+        viewModel.clearAll()
+        let didStartClear = await settle { client.clearCallCount == 1 }
+        XCTAssertTrue(didStartClear)
+
+        client.resumeSearch(with: staleResponse)
+        await flushMainActor()
+        XCTAssertTrue(viewModel.itemIds.isEmpty)
+        guard case .clearing = viewModel.mutationState else {
+            return XCTFail("A stale search must remain masked while clear persists")
+        }
+
+        client.resumeClear(with: .success(()))
+        let didStartAuthoritativeSearch = await settle { client.startedSearchRequests.count == 3 }
+        XCTAssertTrue(didStartAuthoritativeSearch)
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: request,
+            items: [],
+            firstPreviewPayload: nil,
+            totalCount: 0
+        ))
+        let didReconcile = await settle {
+            if case .idle = viewModel.mutationState {
+                return viewModel.itemIds.isEmpty
+            }
+            return false
+        }
+        XCTAssertTrue(didReconcile)
+    }
+
+    func testTagRemainsInFlightAcrossDisplayResetAndRefreshesAfterFailure() async {
+        let client = MockBrowserStoreClient()
+        client.defersTagMutations = true
+        let request = SearchRequest(text: "", filter: .all)
+        let response = BrowserSearchResponse(
+            request: request,
+            items: [makeMatch(id: "1", excerpt: "one")],
+            firstItem: makeItem(id: "1", text: "one"),
+            totalCount: 1
+        )
+        client.enqueueSearchResponse(response)
+        client.enqueueSearchResponse(response)
+        client.enqueueSearchResponse(response)
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.addTag(.bookmark, toItem: "1")
+        let didStartTag = await settle { client.addTagRequests.count == 1 }
+        XCTAssertTrue(didStartTag)
+        viewModel.handleDisplayReset(initialSearchQuery: "")
+        await flushMainActor()
+        guard case .tagging = viewModel.mutationState else {
+            return XCTFail("Display reset must retain ownership of the tag write")
+        }
+        XCTAssertTrue(viewModel.contentState.items.first?.itemMetadata.tags.contains(.bookmark) == true)
+
+        client.resumeAddTag(with: .failure(.databaseOperationFailed(
+            operation: "add tag",
+            underlying: NSError(domain: "BrowserMutationTests", code: 6)
+        )))
+        let didRefresh = await settle {
+            if case .failed = viewModel.mutationState {
+                return viewModel.contentState.items.first?.itemMetadata.tags.contains(.bookmark) == false
+            }
+            return false
+        }
+        XCTAssertTrue(didRefresh)
+    }
+
+    func testTagSuccessFencesOlderSearchUntilAuthoritativeRefresh() async {
+        let client = MockBrowserStoreClient()
+        client.defersTagMutations = true
+        let request = SearchRequest(text: "", filter: .all)
+        let untaggedResponse = BrowserSearchResponse(
+            request: request,
+            items: [makeMatch(id: "1", excerpt: "one")],
+            firstItem: makeItem(id: "1", text: "one"),
+            totalCount: 1
+        )
+        client.enqueueSearchResponse(untaggedResponse)
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+        viewModel.onAppear(initialSearchQuery: "")
+        let didLoad = await settle { viewModel.itemIds == ["1"] }
+        XCTAssertTrue(didLoad)
+
+        viewModel.updateSearchText("")
+        let didStartStaleSearch = await settle { client.startedSearchRequests.count == 2 }
+        XCTAssertTrue(didStartStaleSearch)
+        viewModel.addTag(.bookmark, toItem: "1")
+        let didStartTag = await settle { client.addTagRequests.count == 1 }
+        XCTAssertTrue(didStartTag)
+
+        client.resumeSearch(with: untaggedResponse)
+        await flushMainActor()
+        XCTAssertTrue(viewModel.contentState.items.first?.itemMetadata.tags.contains(.bookmark) == true)
+
+        client.resumeAddTag(with: .success(()))
+        let didStartAuthoritativeSearch = await settle { client.startedSearchRequests.count == 3 }
+        XCTAssertTrue(didStartAuthoritativeSearch)
+        client.resumeSearch(with: BrowserSearchResponse(
+            request: request,
+            items: [makeMatch(id: "1", excerpt: "one", tags: [.bookmark])],
+            firstItem: makeItem(id: "1", text: "one", tags: [.bookmark]),
+            totalCount: 1
+        ))
+        let didReconcile = await settle {
+            if case .idle = viewModel.mutationState {
+                return viewModel.contentState.items.first?.itemMetadata.tags.contains(.bookmark) == true
+            }
+            return false
+        }
+        XCTAssertTrue(didReconcile)
+    }
+
     func testAddTagUpdatesPreviewOptimistically() async {
         let client = MockBrowserStoreClient()
         client.enqueueSearchResponse(BrowserSearchResponse(
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", excerpt: "one")],
             firstPreviewPayload: nil,
+            totalCount: 1
+        ))
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one", tags: [.bookmark])],
+            firstItem: makeItem(id: "1", text: "first", tags: [.bookmark]),
             totalCount: 1
         ))
 
@@ -120,6 +331,12 @@ final class BrowserMutationTests: XCTestCase {
             request: SearchRequest(text: "", filter: .all),
             items: [makeMatch(id: "1", excerpt: "one")],
             firstPreviewPayload: nil,
+            totalCount: 1
+        ))
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one")],
+            firstItem: makeItem(id: "1", text: "first"),
             totalCount: 1
         ))
 
@@ -514,6 +731,60 @@ final class BrowserMutationTests: XCTestCase {
             return XCTFail("Expected batch delete to be pending")
         }
         XCTAssertEqual(transaction.deletedItemIds, ["1", "2"])
+    }
+
+    func testMixedDeleteResultReconcilesWithAuthoritativeStoreState() async {
+        let client = MockBrowserStoreClient()
+        let request = SearchRequest(text: "", filter: .all)
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: request,
+            items: [
+                makeMatch(id: "1", excerpt: "one"),
+                makeMatch(id: "2", excerpt: "two"),
+                makeMatch(id: "3", excerpt: "three"),
+            ],
+            firstItem: makeItem(id: "1", text: "one"),
+            totalCount: 3
+        ))
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: request,
+            items: [
+                makeMatch(id: "2", excerpt: "two"),
+                makeMatch(id: "3", excerpt: "three"),
+            ],
+            firstItem: makeItem(id: "2", text: "two"),
+            totalCount: 2
+        ))
+        client.queuedDeleteResults = [
+            .success(()),
+            .failure(.databaseOperationFailed(
+                operation: "delete item",
+                underlying: NSError(domain: "BrowserMutationTests", code: 7)
+            )),
+        ]
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {},
+            deleteCommitDelay: 0.05
+        )
+        viewModel.onAppear(initialSearchQuery: "")
+        let didLoad = await settle { viewModel.itemIds == ["1", "2", "3"] }
+        XCTAssertTrue(didLoad)
+
+        viewModel.deleteItem(itemId: "1")
+        viewModel.deleteItem(itemId: "2")
+
+        let didReconcile = await settle(timeout: 2) {
+            if case .failed = viewModel.mutationState {
+                return viewModel.itemIds == ["2", "3"]
+            }
+            return false
+        }
+        XCTAssertTrue(didReconcile)
+        XCTAssertEqual(client.deletedItemIds, ["1", "2"])
+        XCTAssertEqual(viewModel.selectedItemId, "2")
     }
 
     func testDismissMutationFailureClearsState() async {

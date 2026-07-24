@@ -3,31 +3,14 @@ import ClipKittyCore
 import XCTest
 
 final class PendingShareQueueTests: TemporaryDirectoryTestCase {
-    func testEnqueueCarriesOrigin() throws {
+    func testTextRoundTrips() throws {
         try PendingShareQueue.enqueueText("from share sheet", in: temporaryDirectory)
 
-        let dequeued = PendingShareQueue.dequeueAll(in: temporaryDirectory)
-        XCTAssertEqual(dequeued.count, 1)
-        XCTAssertEqual(dequeued.first?.origin, .shareSheet)
-    }
-
-    func testLegacyManifestWithoutOriginDequeuesAsShareSheet() throws {
-        // Manifests written before `origin` existed were a bare PendingItem.
-        let itemDir = temporaryDirectory
-            .appendingPathComponent("ClipKitty", isDirectory: true)
-            .appendingPathComponent("pending", isDirectory: true)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: itemDir, withIntermediateDirectories: true)
-        let legacy = #"{"type":"text","text":"old format"}"#
-        try Data(legacy.utf8).write(to: itemDir.appendingPathComponent("manifest.json"))
-
         let dequeued = try XCTUnwrap(PendingShareQueue.dequeueAll(in: temporaryDirectory).first)
-        XCTAssertEqual(dequeued.origin, .shareSheet)
-        if case let .text(value) = dequeued.payload {
-            XCTAssertEqual(value, "old format")
-        } else {
-            XCTFail("Expected text item")
+        guard case let .text(text) = dequeued else {
+            return XCTFail("Expected text payload")
         }
+        XCTAssertEqual(text, "from share sheet")
     }
 
     func testImageRoundTripsThumbnailAndData() throws {
@@ -40,7 +23,7 @@ final class PendingShareQueueTests: TemporaryDirectoryTestCase {
         )
 
         let dequeued = try XCTUnwrap(PendingShareQueue.dequeueAll(in: temporaryDirectory).first)
-        guard case let .image(dequeuedData, dequeuedThumbnail) = dequeued.payload else {
+        guard case let .image(dequeuedData, dequeuedThumbnail) = dequeued else {
             return XCTFail("Expected image payload")
         }
         XCTAssertEqual(dequeuedThumbnail, thumbnail)
@@ -53,10 +36,34 @@ final class PendingShareQueueTests: TemporaryDirectoryTestCase {
             .appendingPathComponent("pending", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: itemDir, withIntermediateDirectories: true)
-        let manifest = #"{"item":{"type":"image"},"origin":"shareSheet"}"#
+        let manifest = #"{"type":"image"}"#
         try Data(manifest.utf8).write(to: itemDir.appendingPathComponent("manifest.json"))
 
         XCTAssertTrue(PendingShareQueue.dequeueAll(in: temporaryDirectory).isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: itemDir.path))
+    }
+
+    func testUnpublishedStagingDirectoryIsNeverConsumed() throws {
+        let pendingDirectory = temporaryDirectory
+            .appendingPathComponent("ClipKitty", isDirectory: true)
+            .appendingPathComponent("pending", isDirectory: true)
+        let itemID = UUID().uuidString
+        let stagingDirectory = pendingDirectory
+            .appendingPathComponent(".\(itemID).staging", isDirectory: true)
+        try FileManager.default.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
+        try Data(#"{"type":"text","text":"not published yet"}"#.utf8)
+            .write(to: stagingDirectory.appendingPathComponent("manifest.json"))
+
+        XCTAssertTrue(PendingShareQueue.dequeueAll(in: temporaryDirectory).isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stagingDirectory.path))
+
+        let publishedDirectory = pendingDirectory.appendingPathComponent(itemID, isDirectory: true)
+        try FileManager.default.moveItem(at: stagingDirectory, to: publishedDirectory)
+
+        let item = try XCTUnwrap(PendingShareQueue.dequeueAll(in: temporaryDirectory).first)
+        guard case let .text(text) = item else {
+            return XCTFail("Expected text payload")
+        }
+        XCTAssertEqual(text, "not published yet")
     }
 }

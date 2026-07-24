@@ -20,11 +20,17 @@ final class MockBrowserStoreClient: BrowserStoreClient {
     private var pendingSearchResponses: [BrowserSearchResponse] = []
     private var searchContinuations: [CheckedContinuation<BrowserSearchOutcome, Never>] = []
     var addTagResult: Result<Void, ClipboardError> = .success(())
+    var defersTagMutations = false
+    var addTagRequests: [(itemId: String, tag: ItemTag)] = []
     var removeTagResult: Result<Void, ClipboardError> = .success(())
     var deleteResult: Result<Void, ClipboardError> = .success(())
+    var queuedDeleteResults: [Result<Void, ClipboardError>] = []
     var deletedItemIds: [String] = []
     var clearResult: Result<Void, ClipboardError> = .success(())
+    var defersClear = false
+    var clearCallCount = 0
     var updateTextResult: Result<Void, ClipboardError> = .success(())
+    var defersTextUpdates = false
     var updatedTexts: [(itemId: String, text: String)] = []
     var startedSearchRequests: [SearchRequest] = []
     var resolveMatchedExcerptRequests: [MatchedExcerptRequestKey] = []
@@ -34,6 +40,12 @@ final class MockBrowserStoreClient: BrowserStoreClient {
     private var fetchContinuations: [String: [CheckedContinuation<ClipboardItem?, Never>]] = [:]
     private var matchedExcerptContinuations: [MatchedExcerptRequestKey: [CheckedContinuation<[MatchedExcerptResolution], Never>]] = [:]
     private var previewPayloadContinuations: [PreviewDecorationRequest: [CheckedContinuation<PreviewPayload?, Never>]] = [:]
+    private var updateTextContinuations: [CheckedContinuation<Result<Void, ClipboardError>, Never>] = []
+    private var queuedUpdateTextResults: [Result<Void, ClipboardError>] = []
+    private var addTagContinuations: [CheckedContinuation<Result<Void, ClipboardError>, Never>] = []
+    private var queuedAddTagResults: [Result<Void, ClipboardError>] = []
+    private var clearContinuations: [CheckedContinuation<Result<Void, ClipboardError>, Never>] = []
+    private var queuedClearResults: [Result<Void, ClipboardError>] = []
     // Results resumed before the view model parked the matching request.
     // Every resume either resolves a parked continuation or queues here — a
     // resume must never be silently dropped just because the test won the
@@ -130,8 +142,17 @@ final class MockBrowserStoreClient: BrowserStoreClient {
         nil
     }
 
-    func addTag(itemId _: String, tag _: ItemTag) async -> Result<Void, ClipboardError> {
-        addTagResult
+    func addTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError> {
+        addTagRequests.append((itemId, tag))
+        if !queuedAddTagResults.isEmpty {
+            return queuedAddTagResults.removeFirst()
+        }
+        if defersTagMutations {
+            return await withCheckedContinuation { continuation in
+                addTagContinuations.append(continuation)
+            }
+        }
+        return addTagResult
     }
 
     func removeTag(itemId _: String, tag _: ItemTag) async -> Result<Void, ClipboardError> {
@@ -140,16 +161,60 @@ final class MockBrowserStoreClient: BrowserStoreClient {
 
     func delete(itemId: String) async -> Result<Void, ClipboardError> {
         deletedItemIds.append(itemId)
+        if !queuedDeleteResults.isEmpty {
+            return queuedDeleteResults.removeFirst()
+        }
         return deleteResult
     }
 
     func clear() async -> Result<Void, ClipboardError> {
-        clearResult
+        clearCallCount += 1
+        if !queuedClearResults.isEmpty {
+            return queuedClearResults.removeFirst()
+        }
+        if defersClear {
+            return await withCheckedContinuation { continuation in
+                clearContinuations.append(continuation)
+            }
+        }
+        return clearResult
     }
 
     func updateTextItem(itemId: String, text: String) async -> Result<Void, ClipboardError> {
         updatedTexts.append((itemId: itemId, text: text))
+        if !queuedUpdateTextResults.isEmpty {
+            return queuedUpdateTextResults.removeFirst()
+        }
+        if defersTextUpdates {
+            return await withCheckedContinuation { continuation in
+                updateTextContinuations.append(continuation)
+            }
+        }
         return updateTextResult
+    }
+
+    func resumeTextUpdate(with result: Result<Void, ClipboardError>) {
+        guard !updateTextContinuations.isEmpty else {
+            queuedUpdateTextResults.append(result)
+            return
+        }
+        updateTextContinuations.removeFirst().resume(returning: result)
+    }
+
+    func resumeAddTag(with result: Result<Void, ClipboardError>) {
+        guard !addTagContinuations.isEmpty else {
+            queuedAddTagResults.append(result)
+            return
+        }
+        addTagContinuations.removeFirst().resume(returning: result)
+    }
+
+    func resumeClear(with result: Result<Void, ClipboardError>) {
+        guard !clearContinuations.isEmpty else {
+            queuedClearResults.append(result)
+            return
+        }
+        clearContinuations.removeFirst().resume(returning: result)
     }
 
     func resumeFetch(id: String, with item: ClipboardItem?) {

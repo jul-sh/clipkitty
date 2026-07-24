@@ -11,12 +11,7 @@ public enum PendingShareQueue {
 
     // MARK: - Item Model
 
-    /// Which surface captured the item.
-    public enum Origin: String, Codable {
-        case shareSheet
-    }
-
-    public enum PendingItem: Codable {
+    private enum Manifest: Codable {
         case text(String)
         case url(String)
         case image
@@ -25,7 +20,7 @@ public enum PendingShareQueue {
             case type, text, url
         }
 
-        public init(from decoder: Decoder) throws {
+        init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             let type = try container.decode(String.self, forKey: .type)
             switch type {
@@ -44,7 +39,7 @@ public enum PendingShareQueue {
             }
         }
 
-        public func encode(to encoder: Encoder) throws {
+        func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
             switch self {
             case let .text(text):
@@ -59,57 +54,41 @@ public enum PendingShareQueue {
         }
     }
 
-    /// On-disk manifest: the item plus where it came from. `origin` is
-    /// optional so manifests written before it existed still decode (they
-    /// could only have come from the share sheet).
-    private struct Manifest: Codable {
-        let item: PendingItem
-        let origin: Origin?
-    }
-
     /// A dequeued item whose payload contains exactly the data its variant needs.
-    public enum DequeuedPayload {
+    public enum DequeuedItem {
         case text(String)
         case url(String)
         case image(data: Data, thumbnail: Data?)
-    }
-
-    public struct DequeuedItem {
-        public let origin: Origin
-        public let payload: DequeuedPayload
     }
 
     // MARK: - Enqueue (extensions)
 
     public static func enqueueText(
         _ text: String,
-        origin: Origin = .shareSheet,
         in baseDirectory: URL? = nil
     ) throws {
-        try writeManifest(.text(text), origin: origin, in: baseDirectory)
+        try writeManifest(.text(text), in: baseDirectory)
     }
 
     public static func enqueueURL(
         _ url: String,
-        origin: Origin = .shareSheet,
         in baseDirectory: URL? = nil
     ) throws {
-        try writeManifest(.url(url), origin: origin, in: baseDirectory)
+        try writeManifest(.url(url), in: baseDirectory)
     }
 
     public static func enqueueImage(
         imageData: Data,
         thumbnail: Data?,
-        origin: Origin = .shareSheet,
         in baseDirectory: URL? = nil
     ) throws {
-        let dir = try createItemDirectory(in: baseDirectory)
-        let manifest = Manifest(item: .image, origin: origin)
-        let data = try JSONEncoder().encode(manifest)
-        try writeProtected(data, to: dir.appendingPathComponent(manifestFilename))
-        try writeProtected(imageData, to: dir.appendingPathComponent(imageFilename))
-        if let thumbnail {
-            try writeProtected(thumbnail, to: dir.appendingPathComponent(thumbnailFilename))
+        try publishItem(in: baseDirectory) { directory in
+            let data = try JSONEncoder().encode(Manifest.image)
+            try writeProtected(data, to: directory.appendingPathComponent(manifestFilename))
+            try writeProtected(imageData, to: directory.appendingPathComponent(imageFilename))
+            if let thumbnail {
+                try writeProtected(thumbnail, to: directory.appendingPathComponent(thumbnailFilename))
+            }
         }
     }
 
@@ -128,22 +107,25 @@ public enum PendingShareQueue {
 
         var results: [DequeuedItem] = []
 
-        for itemDir in entries {
+        // UUID-named directories are complete, atomically published items.
+        // Dot-prefixed staging directories belong to an active or interrupted
+        // writer and must never be consumed as corrupt input.
+        for itemDir in entries where UUID(uuidString: itemDir.lastPathComponent) != nil {
             let manifestURL = itemDir.appendingPathComponent(manifestFilename)
             guard let manifestData = try? Data(contentsOf: manifestURL),
-                  let manifest = decodeManifest(manifestData)
+                  let manifest = try? JSONDecoder().decode(Manifest.self, from: manifestData)
             else {
                 // Incomplete or corrupt entry; clean it up
                 try? fm.removeItem(at: itemDir)
                 continue
             }
 
-            let payload: DequeuedPayload
-            switch manifest.item {
+            let item: DequeuedItem
+            switch manifest {
             case let .text(text):
-                payload = .text(text)
+                item = .text(text)
             case let .url(url):
-                payload = .url(url)
+                item = .url(url)
             case .image:
                 guard let imageData = try? Data(
                     contentsOf: itemDir.appendingPathComponent(imageFilename)
@@ -154,13 +136,10 @@ public enum PendingShareQueue {
                 let thumbnail = try? Data(
                     contentsOf: itemDir.appendingPathComponent(thumbnailFilename)
                 )
-                payload = .image(data: imageData, thumbnail: thumbnail)
+                item = .image(data: imageData, thumbnail: thumbnail)
             }
 
-            results.append(DequeuedItem(
-                origin: manifest.origin ?? .shareSheet,
-                payload: payload
-            ))
+            results.append(item)
             try? fm.removeItem(at: itemDir)
         }
 
@@ -173,19 +152,6 @@ public enum PendingShareQueue {
     }
 
     // MARK: - Private
-
-    /// New manifests wrap the item (`{"item": ..., "origin": ...}`); pre-origin
-    /// manifests were a bare `PendingItem`, so fall back to that shape.
-    private static func decodeManifest(_ data: Data) -> Manifest? {
-        let decoder = JSONDecoder()
-        if let manifest = try? decoder.decode(Manifest.self, from: data) {
-            return manifest
-        }
-        if let item = try? decoder.decode(PendingItem.self, from: data) {
-            return Manifest(item: item, origin: nil)
-        }
-        return nil
-    }
 
     private static func pendingDirectory(in baseDirectory: URL?) -> URL? {
         let groupDir: URL
@@ -203,31 +169,49 @@ public enum PendingShareQueue {
             .appendingPathComponent(pendingDirName, isDirectory: true)
     }
 
-    private static func createItemDirectory(in baseDirectory: URL?) throws -> URL {
+    private static func publishItem(
+        in baseDirectory: URL?,
+        write: (URL) throws -> Void
+    ) throws {
         guard let baseDir = pendingDirectory(in: baseDirectory) else {
             throw CocoaError(.fileNoSuchFile, userInfo: [
                 NSLocalizedDescriptionKey: "App Group container unavailable",
             ])
         }
-        let itemDir = baseDir.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: itemDir, withIntermediateDirectories: true)
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: baseDir, withIntermediateDirectories: true)
+
+        let itemID = UUID().uuidString
+        let stagingDirectory = baseDir.appendingPathComponent(".\(itemID).staging", isDirectory: true)
+        let publishedDirectory = baseDir.appendingPathComponent(itemID, isDirectory: true)
+        try fileManager.createDirectory(at: stagingDirectory, withIntermediateDirectories: false)
         // Harden the queued item directory so its clip-bearing files are
         // unreadable while the device is locked. `.completeUnlessOpen` lets an
         // already-open handle keep working across a lock. Best-effort; iOS-only
         // because this file also compiles for macOS, which has no such API.
         #if os(iOS)
-            try? FileManager.default.setAttributes(
+            try? fileManager.setAttributes(
                 [.protectionKey: FileProtectionType.completeUnlessOpen],
-                ofItemAtPath: itemDir.path
+                ofItemAtPath: stagingDirectory.path
             )
         #endif
-        return itemDir
+
+        do {
+            try write(stagingDirectory)
+            // Publishing is one same-directory rename, so the reader can see
+            // either no item or the complete item, never a partial payload.
+            try fileManager.moveItem(at: stagingDirectory, to: publishedDirectory)
+        } catch {
+            try? fileManager.removeItem(at: stagingDirectory)
+            throw error
+        }
     }
 
-    private static func writeManifest(_ item: PendingItem, origin: Origin, in baseDirectory: URL?) throws {
-        let dir = try createItemDirectory(in: baseDirectory)
-        let data = try JSONEncoder().encode(Manifest(item: item, origin: origin))
-        try writeProtected(data, to: dir.appendingPathComponent(manifestFilename))
+    private static func writeManifest(_ manifest: Manifest, in baseDirectory: URL?) throws {
+        try publishItem(in: baseDirectory) { directory in
+            let data = try JSONEncoder().encode(manifest)
+            try writeProtected(data, to: directory.appendingPathComponent(manifestFilename))
+        }
     }
 
     /// Writes `data` with file-level data protection so the on-disk clip is

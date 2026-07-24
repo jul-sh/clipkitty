@@ -236,11 +236,11 @@ final class AppState {
         guard !pending.isEmpty else { return 0 }
 
         var saved = 0
-        for entry in pending {
+        for item in pending {
             let sourceApp = "Share Sheet"
 
             let result: Result<String, ClipboardError>
-            switch entry.payload {
+            switch item {
             case let .text(text):
                 result = await container.repository.saveText(
                     text: text,

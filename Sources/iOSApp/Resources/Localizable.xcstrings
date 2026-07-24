@@ -1017,67 +1017,67 @@
         }
       }
     },
-    "Are you sure you want to delete this item? This cannot be undone." : {
+    "Are you sure you want to delete this item?" : {
       "comment" : "Delete confirmation message",
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Möchten Sie dieses Element wirklich löschen? Dies kann nicht rückgängig gemacht werden."
+            "value" : "Möchten Sie dieses Element wirklich löschen?"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Are you sure you want to delete this item? This cannot be undone."
+            "value" : "Are you sure you want to delete this item?"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "¿Estás seguro de que quieres eliminar este elemento? Esta acción no se puede deshacer."
+            "value" : "¿Estás seguro de que quieres eliminar este elemento?"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Voulez-vous vraiment supprimer cet élément ? Cette action est irréversible."
+            "value" : "Voulez-vous vraiment supprimer cet élément ?"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "このアイテムを削除してもよろしいですか？この操作は取り消せません。"
+            "value" : "このアイテムを削除してもよろしいですか？"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "이 항목을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다."
+            "value" : "이 항목을 삭제하시겠습니까?"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tem certeza de que deseja excluir este item? Esta ação não pode ser desfeita."
+            "value" : "Tem certeza de que deseja excluir este item?"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Вы уверены, что хотите удалить этот элемент? Это действие нельзя отменить."
+            "value" : "Вы уверены, что хотите удалить этот элемент?"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "确定要删除此项目吗？此操作无法撤销。"
+            "value" : "确定要删除此项目吗？"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "確定要刪除此項目嗎？此操作無法復原。"
+            "value" : "確定要刪除此項目嗎？"
           }
         }
       }

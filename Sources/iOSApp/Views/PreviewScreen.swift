@@ -48,7 +48,7 @@ struct PreviewScreen: View {
                 }
                 Button(String(localized: "Cancel"), role: .cancel) {}
             } message: {
-                Text("Are you sure you want to delete this item? This cannot be undone.", comment: "Delete confirmation message")
+                Text("Are you sure you want to delete this item?", comment: "Delete confirmation message")
             }
             .onAppear {
                 viewModel.select(itemId: itemId, origin: .click)
