@@ -14,8 +14,13 @@ runs:
       uses: DeterminateSystems/nix-installer-action@b66b36319cc6fde4ea85edd583b088c65d6b8710 # main 2026-04-08
       with:
         source-tag: v3.17.3
-        flakehub: false
+        determinate: false
+        diagnostic-endpoint: ""
 
     - name: Set up Nix cache
       if: ${{ inputs.cache == 'true' }}
       uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
+      with:
+        use-flakehub: disabled
+        use-gha-cache: enabled
+        diagnostic-endpoint: ""

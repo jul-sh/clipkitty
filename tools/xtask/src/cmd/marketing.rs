@@ -368,61 +368,48 @@ fn run_screenshot_plan(
                 kind.tmp_prefix_stem()
             )),
         };
-        // Both platforms flake on CI: iOS/iPad simulator launches wedge, and
-        // macOS UI captures occasionally miss a transient element (e.g. the
-        // typed-filter chip not surfacing within its wait window). Retry a
-        // wedged capture on either — resetting simulators first on iOS.
-        let max_attempts = if plan.ios_device_kind().is_some() {
-            IOS_SCREENSHOT_MAX_ATTEMPTS
-        } else {
-            MACOS_SCREENSHOT_MAX_ATTEMPTS
-        };
         clear_screenshot_sources(plan.platform, locale)?;
         let mut status = run_screenshot_xcodebuild(repo, plan, &runtime, &log_path, reporter)?;
         let mut copy_result = copy_screenshots(repo, plan, locale, reporter)?;
-        let mut attempt = 1;
-        loop {
-            match copy_result {
-                ScreenshotCopy::Complete { .. } => break,
-                ScreenshotCopy::Incomplete { copied, expected } if attempt < max_attempts => {
-                    attempt += 1;
-                    let progress = if copied == 0 {
-                        format!("No {:?} screenshots", plan.platform)
-                    } else {
-                        format!(
-                            "Only copied {copied}/{expected} {:?} screenshots",
-                            plan.platform
-                        )
-                    };
-                    reporter.info(&format!(
-                        "{progress} for {locale_code} on attempt {}; retrying ({attempt}/{max_attempts}).",
-                        attempt - 1
-                    ));
-                    // Simulator resets only apply to iOS; macOS just re-runs.
-                    if plan.ios_device_kind().is_some() {
-                        reset_ios_simulators(reporter);
-                    }
-                    clear_screenshot_sources(plan.platform, locale)?;
-                    status = run_screenshot_xcodebuild(repo, plan, &runtime, &log_path, reporter)?;
-                    copy_result = copy_screenshots(repo, plan, locale, reporter)?;
-                }
-                ScreenshotCopy::Incomplete { copied, expected } => {
-                    let log_tail = fs::read_to_string(log_path.as_std_path())
-                        .unwrap_or_else(|err| format!("(failed to read {log_path}: {err})"));
-                    reporter.info(&format!(
-                        "--- xcodebuild log for {locale_code} (exit {status}) ---\n{log_tail}\n--- end log ---"
-                    ));
-                    return Err(anyhow!(
-                        "{:?} screenshot capture produced {copied}/{expected} screenshots for {locale_code}; inspect {log_path}",
-                        plan.platform
-                    ));
-                }
-            }
+        // A failed app test must never be hidden by a recapture. The one
+        // exception is a known CoreSimulator startup failure: no test has run
+        // and resetting the device service is the documented recovery.
+        if plan.ios_device_kind().is_some()
+            && !status.success()
+            && matches!(copy_result, ScreenshotCopy::Incomplete { .. })
+            && is_ios_simulator_startup_failure(&log_path)
+        {
+            reporter.info(&format!(
+                "CoreSimulator did not initialize for {locale_code}; resetting once before the final capture attempt."
+            ));
+            reset_ios_simulators(reporter);
+            clear_screenshot_sources(plan.platform, locale)?;
+            status = run_screenshot_xcodebuild(repo, plan, &runtime, &log_path, reporter)?;
+            copy_result = copy_screenshots(repo, plan, locale, reporter)?;
         }
-        if let ScreenshotCopy::Complete { .. } = copy_result {
-            if !status.success() {
+
+        match copy_result {
+            ScreenshotCopy::Complete { .. } if status.success() => {}
+            ScreenshotCopy::Complete { .. } => {
+                let log_tail = fs::read_to_string(log_path.as_std_path())
+                    .unwrap_or_else(|err| format!("(failed to read {log_path}: {err})"));
                 reporter.info(&format!(
-                    "Warning: xcodebuild exited with {status} for {locale_code}, but screenshots were captured"
+                    "--- xcodebuild log for {locale_code} (exit {status}) ---\n{log_tail}\n--- end log ---"
+                ));
+                return Err(anyhow!(
+                    "{:?} screenshot capture test exited with {status} for {locale_code}; inspect {log_path}",
+                    plan.platform
+                ));
+            }
+            ScreenshotCopy::Incomplete { copied, expected } => {
+                let log_tail = fs::read_to_string(log_path.as_std_path())
+                    .unwrap_or_else(|err| format!("(failed to read {log_path}: {err})"));
+                reporter.info(&format!(
+                    "--- xcodebuild log for {locale_code} (exit {status}) ---\n{log_tail}\n--- end log ---"
+                ));
+                return Err(anyhow!(
+                    "{:?} screenshot capture produced {copied}/{expected} screenshots for {locale_code}; inspect {log_path}",
+                    plan.platform
                 ));
             }
         }
@@ -444,14 +431,22 @@ fn screenshot_db_name(locale: MarketingLocale) -> String {
     }
 }
 
-/// Maximum number of times we run the screenshot xcodebuild for a single
-/// locale before giving up. CI runners intermittently wedge CoreSimulator
-/// (the app launch is denied with `RequestDenied` / "Cannot allocate
-/// memory" initializing the device set), which produces no screenshots even
-/// though the build itself is fine. Shutting the simulators down between
-/// attempts clears that state.
-const IOS_SCREENSHOT_MAX_ATTEMPTS: u32 = 3;
-const MACOS_SCREENSHOT_MAX_ATTEMPTS: u32 = 3;
+/// Returns whether the xcodebuild log proves that CoreSimulator failed before
+/// it could run the screenshot test. This deliberately excludes ordinary test
+/// failures: those should fail first-pass rather than be hidden by a retry.
+fn is_ios_simulator_startup_failure(log_path: &Utf8Path) -> bool {
+    let Ok(log) = fs::read_to_string(log_path.as_std_path()) else {
+        return false;
+    };
+
+    is_ios_simulator_startup_failure_log(&log)
+}
+
+fn is_ios_simulator_startup_failure_log(log: &str) -> bool {
+    log.contains("Unable to determine SimDeviceSet")
+        || log.contains("Failed to initialize simulator device set")
+        || (log.contains("CoreSimulator") && log.contains("RequestDenied"))
+}
 
 /// Build ClipKitty for testing, boot the target simulator, and install the
 /// app so the capture run starts from a known-good device. Returns the UDID
@@ -553,9 +548,8 @@ fn boot_ios_simulator(udid: &str, reporter: &Reporter) -> Result<()> {
     Ok(())
 }
 
-/// Shut down all booted simulators so the next `xcodebuild test` boots a
-/// fresh device. Best-effort: a failure here is logged, not propagated,
-/// because it only matters as a recovery step before a retry.
+/// Shut down all booted simulators before the one CoreSimulator startup
+/// recovery attempt. Best-effort: a failure here is logged, not propagated.
 fn reset_ios_simulators(reporter: &Reporter) {
     let result = Runner::new(reporter, "xcrun")
         .args(["simctl", "shutdown", "all"])
@@ -563,7 +557,7 @@ fn reset_ios_simulators(reporter: &Reporter) {
         .status();
     match result {
         Ok(status) if status.success() => {
-            reporter.info("Shut down booted simulators before retrying.");
+            reporter.info("Shut down booted simulators before the recovery attempt.");
         }
         Ok(status) => {
             reporter.info(&format!(
@@ -1732,9 +1726,9 @@ fn osascript_capture(reporter: &Reporter, script: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        copy_base_database_without_images, screenshot_source_prefix, CapturePlatform,
-        IosDeviceKind, LocaleAsset, ManifestItem, MarketingLocale, ScreenshotCopy,
-        MARKETING_LOCALES_ENV,
+        copy_base_database_without_images, is_ios_simulator_startup_failure_log,
+        screenshot_source_prefix, CapturePlatform, IosDeviceKind, LocaleAsset, ManifestItem,
+        MarketingLocale, ScreenshotCopy, MARKETING_LOCALES_ENV,
     };
     use camino::Utf8PathBuf;
     use rusqlite::{params, Connection};
@@ -1811,6 +1805,19 @@ mod tests {
             ScreenshotCopy::from_copied(expected, expected),
             ScreenshotCopy::Complete { count: expected }
         );
+    }
+
+    #[test]
+    fn simulator_recovery_excludes_app_test_failures() {
+        assert!(is_ios_simulator_startup_failure_log(
+            "Error Domain=com.apple.CoreSimulator.SimError Code=400 \\\"Unable to determine SimDeviceSet\\\""
+        ));
+        assert!(is_ios_simulator_startup_failure_log(
+            "CoreSimulator returned RequestDenied while booting the device"
+        ));
+        assert!(!is_ios_simulator_startup_failure_log(
+            "Test Case '-[ClipKittyiOSUITests testTakeMarketingScreenshots]' failed"
+        ));
     }
 
     #[test]

@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 final class ClipKittyUITests: XCTestCase {
@@ -316,7 +317,7 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     /// Helper to wait for selected index to equal expected value
-    private func waitForSelectedIndex(_ expected: Int, timeout: TimeInterval = 2) -> Bool {
+    private func waitForSelectedIndex(_ expected: Int, timeout: TimeInterval = 10) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if getSelectedIndex() == expected {
@@ -351,8 +352,8 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that first item is selected on initial open.
     /// There should always be an item selected when items exist.
     func testFirstItemSelectedOnOpen() {
-        // First item should be selected immediately after open
-        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected on open")
+        // Database loading and initial selection happen asynchronously on CI.
+        XCTAssertTrue(waitForSelectedIndex(0), "First item should be selected on open")
 
         // Verify we actually have items
         let buttons = app.outlines.firstMatch.buttons.allElementsBoundByIndex
@@ -1031,6 +1032,12 @@ final class ClipKittyUITests: XCTestCase {
         /// Cyrillic and CJK input must remain character-by-character: XCTest's
         /// synthetic keyboard intermittently rejects multi-character events
         /// for those scripts.
+        func requiresInputMethod(_ text: String) -> Bool {
+            text.unicodeScalars.contains { scalar in
+                scalar.value > 0x024F && !(0x1E00 ... 0x1EFF).contains(scalar.value)
+            }
+        }
+
         func typeSlowly(_ text: String, scene: String? = nil, delay: TimeInterval = 0.0055) {
             let startedEmpty = (searchField.value as? String)?.isEmpty ?? true
             if startedEmpty {
@@ -1041,7 +1048,17 @@ final class ClipKittyUITests: XCTestCase {
             latenciesMs.reserveCapacity(text.count)
             for (index, unit) in units.enumerated() {
                 let start = CFAbsoluteTimeGetCurrent()
-                searchField.typeText(unit)
+                if requiresInputMethod(unit) {
+                    let pasteboard = NSPasteboard.general
+                    let transientType = NSPasteboard.PasteboardType("org.nspasteboard.TransientType")
+                    pasteboard.clearContents()
+                    pasteboard.declareTypes([.string, transientType], owner: nil)
+                    XCTAssertTrue(pasteboard.setString(unit, forType: .string))
+                    XCTAssertTrue(pasteboard.setData(Data(), forType: transientType))
+                    searchField.typeKey("v", modifierFlags: .command)
+                } else {
+                    searchField.typeText(unit)
+                }
                 let elapsedMs = (CFAbsoluteTimeGetCurrent() - start) * 1000.0
                 let unitLength = max(unit.count, 1)
                 let perCharacterElapsedMs = elapsedMs / Double(unitLength)
@@ -1068,10 +1085,7 @@ final class ClipKittyUITests: XCTestCase {
             // where it is reliable. A scalar above Latin Extended Additional
             // indicates one of the Cyrillic/CJK marketing locales and uses the
             // proven character-at-a-time path instead.
-            let containsNonLatinScript = text.unicodeScalars.contains { scalar in
-                scalar.value > 0x024F && !(0x1E00 ... 0x1EFF).contains(scalar.value)
-            }
-            if containsNonLatinScript {
+            if requiresInputMethod(text) {
                 return text.map(String.init)
             }
 
@@ -1518,7 +1532,7 @@ final class ClipKittyUITests: XCTestCase {
     }
 
     /// Tests that pressing Escape discards the pending edit.
-    func testEscapeDiscardsEdit() throws {
+    func testEscapeDiscardsEdit() {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
@@ -1526,15 +1540,8 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected")
         Thread.sleep(forTimeInterval: ciTimeout)
 
-        let hasTextViews = waitForCondition(timeout: 5) {
-            self.app.textViews.allElementsBoundByIndex.count > 0
-        }
-        guard hasTextViews else {
-            XCTFail("No text views found")
-            return
-        }
-
-        let previewTextView = try XCTUnwrap(app.textViews.allElementsBoundByIndex.first)
+        let previewTextView = app.textViews["PreviewTextView"]
+        XCTAssertTrue(previewTextView.waitForExistence(timeout: 5), "Preview text view not found")
         let originalText = previewTextView.value as? String ?? ""
 
         // Click and edit
@@ -1554,10 +1561,14 @@ final class ClipKittyUITests: XCTestCase {
         let saveDisappeared = waitForCondition(timeout: 3) { !self.saveUIExists() }
         XCTAssertTrue(saveDisappeared, "Save button should disappear after discarding edit")
 
-        // Text should revert to original
-        let currentText = previewTextView.value as? String ?? ""
-        XCTAssertEqual(currentText, originalText,
-                       "Preview text should revert to original after Escape")
+        // The native text view applies the discarded value on a later run-loop
+        // turn, so poll its value rather than sampling it once.
+        XCTAssertTrue(
+            waitForCondition(timeout: 5) {
+                (previewTextView.value as? String ?? "") == originalText
+            },
+            "Preview text should revert to original after Escape"
+        )
     }
 
     /// Tests that Cmd+S saves the edit (replaces the original item).

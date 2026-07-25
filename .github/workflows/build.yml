@@ -701,21 +701,13 @@ jobs:
         # before the Swift build even starts — on run 28808214574 that build
         # phase alone took 42 minutes on a slow runner and the suite timed
         # out three minutes after its first test. Cold Rust (~20m) + Swift
-        # build (~15m) + full suite (~25m, more with per-test retries) needs
-        # the extra headroom.
+        # build (~15m) + full suite (~25m) needs the extra headroom.
         timeout-minutes: 75
         env:
           LOCKED: "1"
         run: |
           set -o pipefail
           set +e
-          # -retry-tests-on-failure: individual UI tests flake on loaded
-          # runners with shifting element-appearance timeouts (a different
-          # pair failed on runs 28776936157 and 28795788433 while every
-          # other job stayed green). Screenshot jobs already get 3 attempts
-          # from xtask; this job is the only UI suite with none. Retries
-          # keep assertions strict — only failures that reproduce twice
-          # more fail the job.
           xcodebuild test \
             -workspace ClipKitty.xcworkspace \
             -scheme ClipKittyUITests \
@@ -723,8 +715,6 @@ jobs:
             -destination-timeout 120 \
             -test-timeouts-enabled YES \
             -maximum-test-execution-time-allowance 600 \
-            -retry-tests-on-failure \
-            -test-iterations 3 \
             -derivedDataPath DerivedData \
             CODE_SIGNING_ALLOWED=NO \
             -skip-testing:ClipKittyUITests/ClipKittyUITests/testRecordIntroVideo \
@@ -744,6 +734,9 @@ jobs:
 
       - name: Upload Test Results
         if: always()
+        # Diagnostics must not turn an otherwise passing test suite red when
+        # the artifact service itself is temporarily unavailable.
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: TestResults

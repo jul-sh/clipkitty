@@ -242,7 +242,7 @@ private struct SettingsStorageView: View {
         let localRevision: Int
     }
 
-    private enum State: Equatable {
+    private enum StorageState: Equatable {
         case loading
         case ready(
             usedBytes: Int64,
@@ -266,7 +266,7 @@ private struct SettingsStorageView: View {
     private let cancelFailedPrune: () -> Void
     private let scale = StorageLimitScale()
 
-    @State private var state = State.loading
+    @State private var state = StorageState.loading
     @State private var localReloadRevision = 0
 
     init(

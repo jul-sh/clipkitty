@@ -210,6 +210,10 @@
 
           shellHook = ''
             export IN_NIX_SHELL=1
+            export CARGO_HOME="''${TMPDIR:-/tmp}/clipkitty-cargo-home"
+            mkdir -p "$CARGO_HOME"
+            cp ${rustOutputs.cargoConfigToml} "$CARGO_HOME/config.toml"
+            export CARGO_NET_OFFLINE=true
 
             # Install git hooks if not already installed
             if [ -d .git ] && [ ! -f .git/hooks/pre-commit ]; then

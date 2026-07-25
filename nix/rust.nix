@@ -378,6 +378,7 @@ let
   };
 in
 {
+  inherit cargoConfigToml;
   inherit purrHost purrSwiftBinds;
   inherit purrMacAarch64 purrMacX86_64 purrMacUniversal purrIosDevice purrIosSim;
   inherit purrBridge purrXcodeOverlay;
