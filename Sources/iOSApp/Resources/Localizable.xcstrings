@@ -1,872 +1,70 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Appearance" : {
+    "Indexing…" : {
       "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Erscheinungsbild"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Appearance"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Apariencia"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Apparence"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "外観"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "모양"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Aparência"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Внешний вид"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "外观"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "外觀"
-          }
-        }
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Indizierung…" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Indexing…" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Indexando…" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Indexation…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "インデックス作成中…" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "색인 생성 중…" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Indexando…" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Индексация…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在索引…" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在索引…" } }
       }
     },
-    "App Typeface" : {
+    "Catching up with iCloud" : {
       "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "App-Schrift"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "App Typeface"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Tipografía de la app"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Police de l’app"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "アプリのフォント"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "앱 글꼴"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Fonte do app"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Шрифт приложения"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "应用字体"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "應用程式字體"
-          }
-        }
-      }
-    },
-    "ClipKitty's dense, distinctive typeface." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Die dichte, unverwechselbare Schrift von ClipKitty."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ClipKitty's dense, distinctive typeface."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La tipografía densa y distintiva de ClipKitty."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "La police dense et caractéristique de ClipKitty."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ClipKitty の緻密で個性的なフォント。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ClipKitty의 조밀하고 독특한 글꼴."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "A fonte densa e distinta do ClipKitty."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Плотный, узнаваемый шрифт ClipKitty."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ClipKitty 紧凑而独特的字体。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ClipKitty 緊湊而獨特的字體。"
-          }
-        }
-      }
-    },
-    "Even-width characters; columns line up. Great for code." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Gleich breite Zeichen; Spalten richten sich aus. Ideal für Code."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Even-width characters; columns line up. Great for code."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Caracteres de igual ancho; las columnas se alinean. Ideal para código."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Caractères de largeur égale ; les colonnes s’alignent. Idéal pour le code."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "文字幅が均等で桁がそろう。コードに最適。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "글자 너비가 일정해 열이 맞춰집니다. 코드에 적합."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Caracteres de largura igual; as colunas se alinham. Ótima para código."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Одинаковая ширина символов; столбцы выравниваются. Отлично для кода."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "字符等宽，列对齐。适合代码。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "字元等寬，欄位對齊。適合程式碼。"
-          }
-        }
-      }
-    },
-    "Iosevka Charon" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Iosevka Charon"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Iosevka Charon"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Iosevka Charon"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Iosevka Charon"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Iosevka Charon"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Iosevka Charon"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Iosevka Charon"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Iosevka Charon"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Iosevka Charon"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Iosevka Charon"
-          }
-        }
-      }
-    },
-    "Clearing…" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wird gelöscht …"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Clearing…"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Borrando..."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Effacement…"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "消去中…"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "지우는 중..."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Limpando..."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Очистка…"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在清除…"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "正在清除…"
-          }
-        }
-      }
-    },
-    "Monospace" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Monospace"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Monospace"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Monoespaciada"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Monospace"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "等幅"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "고정폭"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Monoespaçada"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Моноширинный"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "等宽"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "等寬"
-          }
-        }
-      }
-    },
-    "Natural spacing; easier to read. Good for prose." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Natürliche Abstände; besser lesbar. Gut für Fließtext."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Natural spacing; easier to read. Good for prose."
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Espaciado natural; más fácil de leer. Buena para texto."
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Espacement naturel ; plus lisible. Idéale pour le texte."
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "自然な字間で読みやすい。文章に最適。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "자연스러운 간격으로 읽기 쉽습니다. 글에 적합."
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Espaçamento natural; mais fácil de ler. Boa para textos."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Естественные интервалы; легче читать. Хорошо для текста."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "间距自然，更易阅读。适合文章。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "間距自然，更易閱讀。適合文章。"
-          }
-        }
-      }
-    },
-    "Privacy" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Datenschutz"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Privacy"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Privacidad"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Confidentialité"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "プライバシー"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "개인정보 보호"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Privacidade"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Конфиденциальность"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "隐私"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "隱私權"
-          }
-        }
-      }
-    },
-    "Proportional" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Proportional"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Proportional"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Proporcional"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Proportionnelle"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "プロポーショナル"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "가변폭"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Proporcional"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Пропорциональный"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "比例"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "比例"
-          }
-        }
-      }
-    },
-    "System" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "System"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "System"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sistema"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Système"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "システム"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "시스템"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sistema"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Системный"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "系统"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "系統"
-          }
-        }
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "iCloud wird synchronisiert" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Catching up with iCloud" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Sincronizando con iCloud" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Synchronisation avec iCloud" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "iCloudと同期中" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "iCloud와 동기화 중" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Sincronizando com o iCloud" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Синхронизация с iCloud" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在与 iCloud 同步" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在與 iCloud 同步" } }
       }
     },
     "Capture Sensitive Clips" : {
       "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Capture Sensitive Clips"
-          }
-        }
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture Sensitive Clips" } }
       }
     },
-    "Downloads web content and may trigger tracking links." : {
+    "Allow Shortcuts to Read History" : {
       "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Downloads web content and may trigger tracking links."
-          }
-        }
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Kurzbefehlen das Lesen des Verlaufs erlauben" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Allow Shortcuts to Read History" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Permitir que Atajos lea el historial" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Autoriser Raccourcis à lire l’historique" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ショートカットによる履歴の読み取りを許可" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "단축어가 기록을 읽도록 허용" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Permitir que Atalhos leia o histórico" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Разрешить «Командам» читать историю" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "允许快捷指令读取历史记录" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "允許捷徑讀取記錄" } }
       }
     },
-    "Save clips that apps mark as sensitive, such as passwords and one-time codes." : {
+    "When off, Shortcuts and automations cannot read or search your clipboard history; saving new clips from Shortcuts still works. Turn this off if you do not want automations to access your history." : {
       "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Save clips that apps mark as sensitive, such as passwords and one-time codes."
-          }
-        }
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Wenn diese Option deaktiviert ist, können Kurzbefehle und Automationen Ihren Zwischenablageverlauf weder lesen noch durchsuchen. Neue Clips können weiterhin über Kurzbefehle gespeichert werden. Deaktivieren Sie diese Option, wenn Automationen nicht auf Ihren Verlauf zugreifen sollen." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "When off, Shortcuts and automations cannot read or search your clipboard history; saving new clips from Shortcuts still works. Turn this off if you do not want automations to access your history." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cuando está desactivado, Atajos y las automatizaciones no pueden leer ni buscar en el historial del portapapeles; guardar nuevos recortes desde Atajos sigue funcionando. Desactívalo si no quieres que las automatizaciones accedan a tu historial." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Lorsque cette option est désactivée, Raccourcis et les automatisations ne peuvent ni lire ni rechercher dans l’historique du presse-papiers ; l’enregistrement de nouveaux extraits depuis Raccourcis reste possible. Désactivez cette option si vous ne souhaitez pas que les automatisations accèdent à votre historique." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "オフにすると、ショートカットやオートメーションからクリップボードの履歴を読み取ったり検索したりできなくなります。ショートカットから新しいクリップを保存することは引き続き可能です。オートメーションに履歴へのアクセスを許可しない場合はオフにしてください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "끄면 단축어와 자동화가 클립보드 기록을 읽거나 검색할 수 없습니다. 단축어에서 새 클립을 저장하는 기능은 계속 사용할 수 있습니다. 자동화가 기록에 접근하지 못하게 하려면 이 옵션을 끄십시오." } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Quando desativado, Atalhos e automações não podem ler nem pesquisar o histórico da área de transferência; ainda é possível salvar novos clipes pelo Atalhos. Desative esta opção se não quiser que automações acessem seu histórico." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Если выключено, «Команды» и автоматизации не смогут читать или искать в истории буфера обмена; сохранение новых фрагментов из «Команд» продолжит работать. Выключите этот параметр, если не хотите, чтобы автоматизации получали доступ к истории." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "关闭后，快捷指令和自动化无法读取或搜索剪贴板历史记录；仍可通过快捷指令保存新剪贴内容。如果不希望自动化访问您的历史记录，请关闭此选项。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "關閉後，捷徑和自動化無法讀取或搜尋剪貼簿記錄；仍可透過捷徑儲存新的剪輯內容。如果不希望自動化存取您的記錄，請關閉此選項。" } }
       }
     },
-    "Unknown" : {
+    "When off, clips that an app marks as sensitive (such as passwords and one-time codes from a password manager) are not saved to history. Turn this on only if you want those clips captured too." : {
       "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Unknown"
-          }
-        }
-      }
-    },
-    "When off, Shortcuts can still save new clips but cannot read or search history." : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "When off, Shortcuts can still save new clips but cannot read or search history."
-          }
-        }
-      }
-    },
-    "Sync clipboard history across devices via iCloud" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Zwischenablageverlauf über iCloud geräteübergreifend synchronisieren"
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sync clipboard history across devices via iCloud"
-          }
-        },
-        "es" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sincronizar el historial del portapapeles entre dispositivos mediante iCloud"
-          }
-        },
-        "fr" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Synchroniser l'historique du presse-papiers entre les appareils via iCloud"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "クリップボード履歴をiCloud経由でデバイス間で同期"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "iCloud을 통해 기기 간 클립보드 기록 동기화"
-          }
-        },
-        "pt-BR" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Sincronizar histórico da área de transferência entre dispositivos via iCloud"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Синхронизировать историю буфера обмена между устройствами через iCloud"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "通过 iCloud 跨设备同步剪贴板历史记录"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "透過 iCloud 跨裝置同步剪貼簿歷史記錄"
-          }
-        }
-      }
-    },
-    "Checking" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Checking"
-          }
-        }
-      }
-    },
-    "Off" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Off"
-          }
-        }
-      }
-    },
-    "On" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "On"
-          }
-        }
-      }
-    },
-    "Temporarily unavailable" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Temporarily unavailable"
-          }
-        }
-      }
-    },
-    "Unavailable" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Unavailable"
-          }
-        }
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "When off, clips that an app marks as sensitive (such as passwords and one-time codes from a password manager) are not saved to history. Turn this on only if you want those clips captured too." } }
       }
     },
     "Advanced" : {
@@ -1829,67 +1027,67 @@
         }
       }
     },
-    "Are you sure you want to delete this item? This cannot be undone." : {
+    "Are you sure you want to delete this item?" : {
       "comment" : "Delete confirmation message",
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Möchten Sie dieses Element wirklich löschen? Dies kann nicht rückgängig gemacht werden."
+            "value" : "Möchten Sie dieses Element wirklich löschen?"
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Are you sure you want to delete this item? This cannot be undone."
+            "value" : "Are you sure you want to delete this item?"
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "¿Estás seguro de que quieres eliminar este elemento? Esta acción no se puede deshacer."
+            "value" : "¿Estás seguro de que quieres eliminar este elemento?"
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Voulez-vous vraiment supprimer cet élément ? Cette action est irréversible."
+            "value" : "Voulez-vous vraiment supprimer cet élément ?"
           }
         },
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "このアイテムを削除してもよろしいですか？この操作は取り消せません。"
+            "value" : "このアイテムを削除してもよろしいですか？"
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "이 항목을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다."
+            "value" : "이 항목을 삭제하시겠습니까?"
           }
         },
         "pt-BR" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Tem certeza de que deseja excluir este item? Esta ação não pode ser desfeita."
+            "value" : "Tem certeza de que deseja excluir este item?"
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Вы уверены, что хотите удалить этот элемент? Это действие нельзя отменить."
+            "value" : "Вы уверены, что хотите удалить этот элемент?"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "确定要删除此项目吗？此操作无法撤销。"
+            "value" : "确定要删除此项目吗？"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "確定要刪除此項目嗎？此操作無法復原。"
+            "value" : "確定要刪除此項目嗎？"
           }
         }
       }
@@ -10418,46 +9616,6 @@
             "value" : "關閉"
           }
         }
-      }
-    },
-    "Allow Shortcuts to Read History" : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Kurzbefehlen das Lesen des Verlaufs erlauben" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Allow Shortcuts to Read History" } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Permitir que Atajos lean el historial" } },
-        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Autoriser Raccourcis à lire l’historique" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ショートカットによる履歴の読み取りを許可" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "단축어가 기록을 읽도록 허용" } },
-        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Permitir que os Atalhos leiam o histórico" } },
-        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Разрешить быстрым командам читать историю" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "允许快捷指令读取历史记录" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "允許捷徑讀取歷史紀錄" } }
-      }
-      },
-    "Are you sure you want to delete this item?": {
-      "comment": "Delete confirmation message",
-      "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Are you sure you want to delete this item?" } }
-      }
-    },
-    "Catching up with iCloud" : {
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Catching up with iCloud" } }
-      }
-    },
-    "Indexing…" : {
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Indexing…" } }
-      }
-    },
-    "When off, Shortcuts and automations cannot read or search your clipboard history; saving new clips from Shortcuts still works." : {
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "When off, Shortcuts and automations cannot read or search your clipboard history; saving new clips from Shortcuts still works." } }
-      }
-    },
-    "When off, Shortcuts and automations cannot read or search your clipboard history; saving new clips from Shortcuts still works. Turn this off if you do not want automations to access your history." : {
-      "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "When off, Shortcuts and automations cannot read or search your clipboard history; saving new clips from Shortcuts still works. Turn this off if you do not want automations to access your history." } }
       }
     }
   },

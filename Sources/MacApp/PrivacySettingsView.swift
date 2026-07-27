@@ -1,5 +1,4 @@
 import AppKit
-import ClipKittyCore
 import SwiftUI
 
 /// Represents an app that can be ignored
@@ -35,23 +34,25 @@ struct PrivacySettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
-        SettingsPrivacySection(
-            captureSensitiveClips: Binding(
-                get: { !settings.ignoreConfidentialContent },
-                set: { settings.ignoreConfidentialContent = !$0 }
-            ),
-            linkPreviews: linkPreviewPreference,
-            additionalContent: {
-                SettingsToggleRow(
-                    title: String(localized: "Capture Temporary Clips"),
-                    description: String(
-                        localized: "Save transient content copied from other apps."
-                    ),
-                    isOn: Binding(
-                        get: { !settings.ignoreTransientContent },
-                        set: { settings.ignoreTransientContent = !$0 }
-                    )
-                )
+        Form {
+            Section(String(localized: "Content Filtering")) {
+                Toggle(isOn: $settings.ignoreConfidentialContent) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(String(localized: "Don't save passwords"))
+                        Text(String(localized: "Excludes passwords and sensitive data."))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Toggle(isOn: $settings.ignoreTransientContent) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(String(localized: "Don't save temporary data"))
+                        Text(String(localized: "Excludes transient content from other apps."))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(String(localized: "Excluded Apps"))
@@ -62,15 +63,25 @@ struct PrivacySettingsView: View {
                 }
                 .padding(.bottom, 4)
             }
-        )
-    }
 
-    private var linkPreviewPreference: SettingsLinkPreviewPreference {
-        #if ENABLE_LINK_PREVIEWS
-            return .available($settings.generateLinkPreviews)
-        #else
-            return .unavailable
-        #endif
+            #if ENABLE_LINK_PREVIEWS
+                Section(String(localized: "Network")) {
+                    Toggle(isOn: $settings.generateLinkPreviews) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(String(localized: "Show link previews"))
+                            Text(
+                                String(
+                                    localized: "Downloads web content. May trigger tracking links."
+                                )
+                            )
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            #endif
+        }
+        .formStyle(.grouped)
     }
 }
 
@@ -233,9 +244,6 @@ struct IgnoredAppsListView: View {
 }
 
 #Preview {
-    Form {
-        PrivacySettingsView()
-    }
-    .formStyle(.grouped)
-    .frame(width: 420, height: 400)
+    PrivacySettingsView()
+        .frame(width: 420, height: 400)
 }

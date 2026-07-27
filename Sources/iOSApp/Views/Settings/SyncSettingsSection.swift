@@ -1,7 +1,6 @@
 #if ENABLE_ICLOUD_SYNC
 
     import ClipKittyCloudSync
-    import ClipKittyCore
     import SwiftUI
 
     struct SyncSettingsSection: View {
@@ -21,13 +20,14 @@
         var body: some View {
             @Bindable var settings = settings
 
-            SettingsSyncSection(
-                syncEnabled: $settings.syncEnabled,
-                availability: syncAvailability,
-                onSyncEnabledChange: { enabled in
-                    syncCoordinator?.setSyncEnabled(enabled)
-                }
-            )
+            Section("iCloud Sync") {
+                Toggle("Sync via iCloud", isOn: $settings.syncEnabled)
+                    .onChange(of: settings.syncEnabled) { _, enabled in
+                        syncCoordinator?.setSyncEnabled(enabled)
+                    }
+
+                statusRow
+            }
             .onChange(of: syncCoordinator?.status) { _, newStatus in
                 if case let .synced(date) = newStatus {
                     lastSyncDate = date
@@ -35,30 +35,54 @@
             }
         }
 
-        private var syncAvailability: SettingsSyncPreferenceAvailability {
+        @ViewBuilder
+        private var statusRow: some View {
             switch displayStatus {
             case .idle:
-                return .available(status: .idle)
+                LabeledContent("Status", value: "Off")
             case .connecting:
-                return .available(status: .connecting)
+                HStack {
+                    Text("Status")
+                    Spacer()
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Connecting")
+                        .foregroundStyle(.secondary)
+                }
             case let .syncing(activity):
-                return .available(
-                    status: .syncing(activityDescription: activity.statusDescription)
-                )
+                HStack {
+                    Text("Status")
+                    Spacer()
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(activity.statusDescription)
+                        .foregroundStyle(.secondary)
+                }
             case let .synced(lastSync):
-                return .available(status: .synced(lastSync: lastSync))
+                LabeledContent("Status") {
+                    if -lastSync.timeIntervalSinceNow < 60 {
+                        Text("Synced just now")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Synced \(lastSync, style: .relative) ago")
+                            .foregroundStyle(.secondary)
+                    }
+                }
             case let .error(message):
-                return .available(status: .failed(message: message))
+                LabeledContent("Status") {
+                    Text(message)
+                        .foregroundStyle(.red)
+                        .font(.caption)
+                }
             case .temporarilyUnavailable:
-                return .available(status: .temporarilyUnavailable)
+                LabeledContent("Status", value: "Temporarily unavailable")
             case .unavailable:
-                return .available(
-                    status: .unavailable(
-                        message: String(
-                            localized: "Make sure you're signed into iCloud in Settings."
-                        )
-                    )
-                )
+                VStack(alignment: .leading, spacing: 4) {
+                    LabeledContent("Status", value: "Unavailable")
+                    Text("Make sure you're signed into iCloud in Settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
 

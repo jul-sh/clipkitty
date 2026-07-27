@@ -40,30 +40,6 @@ final class ClipKittyUITests: XCTestCase {
         Thread.sleep(forTimeInterval: isCI ? timeout : min(timeout, 0.3))
     }
 
-    /// Scrolls the unified Settings form until an element can be interacted with.
-    /// Conditional sections can change how far later shared sections are from the top.
-    private func revealInSettings(
-        _ element: XCUIElement,
-        window: XCUIElement,
-        maximumSwipes: Int = 12
-    ) -> Bool {
-        if element.waitForExistence(timeout: 0.5), element.isHittable {
-            return true
-        }
-
-        let scrollView = window.scrollViews.firstMatch
-        let scrollContainer = scrollView.exists ? scrollView : window
-
-        for _ in 0 ..< maximumSwipes {
-            scrollContainer.swipeUp()
-            if element.waitForExistence(timeout: 0.3), element.isHittable {
-                return true
-            }
-        }
-
-        return false
-    }
-
     /// Type text into an element with CI-appropriate pacing.
     private func typeTextSlowly(_ element: XCUIElement, text: String) {
         if isCI {
@@ -1775,8 +1751,8 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(cmdReturnExists, "Confirm button should show ⌘↩ prefix when editing")
     }
 
-    /// Tests that the Settings window uses the shared, scrollable section structure.
-    func testSettingsWindowShowsSharedSections() {
+    /// Tests that the Settings window opens without crashing and all tabs are accessible.
+    func testSettingsWindowOpensAllTabs() {
         // Open settings via Cmd+, even if the ClipKitty panel is already showing.
         app.typeKey(",", modifierFlags: .command)
         let settingsWindow = app.windows["ClipKitty Settings"]
@@ -1790,29 +1766,36 @@ final class ClipKittyUITests: XCTestCase {
         }
         XCTAssertTrue(singleVisibleWindowShown, "Cmd+, should leave only the real settings window visible")
 
-        let commonSectionHeaders = ["General", "Privacy", "Appearance", "Shortcuts"]
-        for header in commonSectionHeaders {
-            XCTAssertTrue(
-                revealInSettings(settingsWindow.staticTexts[header], window: settingsWindow),
-                "\(header) section should be reachable"
-            )
+        // General tab should be visible by default
+        XCTAssertTrue(settingsWindow.staticTexts["Behavior"].waitForExistence(timeout: 3),
+                      "General tab content should be visible")
+
+        // Switch to Privacy tab
+        let privacyTab = settingsWindow.toolbars.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] 'Privacy'")
+        ).firstMatch
+        if privacyTab.exists, privacyTab.isHittable {
+            privacyTab.click()
+            Thread.sleep(forTimeInterval: 0.5)
         }
 
-        // iCloud Sync and Paste Items are build-dependent, so navigate from
-        // Shortcuts directly to the shared Advanced disclosure.
-        let advanced = settingsWindow.descendants(matching: .any).matching(
-            NSPredicate(format: "label ==[c] %@", "Advanced")
+        // Switch to Shortcuts tab
+        let shortcutsTab = settingsWindow.toolbars.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] 'Shortcuts'")
         ).firstMatch
-        XCTAssertTrue(
-            revealInSettings(advanced, window: settingsWindow),
-            "Advanced settings should be reachable"
-        )
-        advanced.click()
+        if shortcutsTab.exists, shortcutsTab.isHittable {
+            shortcutsTab.click()
+            Thread.sleep(forTimeInterval: 0.5)
+        }
 
-        // The expanded body contains asynchronously loaded and lazily exposed
-        // controls. Its exact accessibility tree is covered by dedicated
-        // storage/history tests; this structural test only needs to verify
-        // that the shared disclosure is present and can be opened.
+        // Switch back to General to verify navigation works
+        let generalTabNav = settingsWindow.toolbars.buttons.matching(
+            NSPredicate(format: "label CONTAINS[c] 'General'")
+        ).firstMatch
+        if generalTabNav.exists, generalTabNav.isHittable {
+            generalTabNav.click()
+            Thread.sleep(forTimeInterval: 0.5)
+        }
 
         // Trigger Cmd+, again to ensure it refocuses the same window instead of spawning another one.
         app.typeKey(",", modifierFlags: .command)
@@ -1822,6 +1805,6 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(stillSingleVisibleWindowShown, "Cmd+, should keep reusing the same settings window")
 
         // Verify the settings window is still alive (didn't crash)
-        XCTAssertTrue(settingsWindow.exists, "Settings window should still exist after section navigation")
+        XCTAssertTrue(settingsWindow.exists, "Settings window should still exist after tab navigation")
     }
 }

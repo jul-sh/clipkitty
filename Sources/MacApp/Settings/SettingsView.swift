@@ -1,9 +1,13 @@
-import ClipKittyCore
-import ClipKittyMacPlatform
 import SwiftUI
 
+enum SettingsTab: String, CaseIterable {
+    case general = "General"
+    case privacy = "Privacy"
+    case shortcuts = "Shortcuts"
+}
+
 struct SettingsView: View {
-    @ObservedObject private var settings = AppSettings.shared
+    @State private var selectedTab: SettingsTab = .general
 
     let store: ClipboardStore
     #if ENABLE_SPARKLE_UPDATES
@@ -11,60 +15,39 @@ struct SettingsView: View {
     #endif
 
     var body: some View {
-        SettingsForm(
-            fontPreference: $settings.fontPreference,
-            previewFontPreference: $settings.previewFontPreference,
-            uiFont: { preference, size, weight in
-                AppFontSpecimen.uiFont(preference, size: size, weight: weight)
-            },
-            previewFont: { typeface, style, size, weight in
-                AppFontSpecimen.previewFont(
-                    typeface: typeface,
-                    style: style,
-                    size: size,
-                    weight: weight
-                )
-            },
-            generalSections: {
-                GeneralSettingsView()
-            },
-            privacySections: {
-                PrivacySettingsView()
-            },
-            syncSections: {
-                #if ENABLE_ICLOUD_SYNC
-                    SyncSettingsSection()
-                #else
-                    EmptyView()
-                #endif
-            },
-            platformSections: {
-                #if ENABLE_SYNTHETIC_PASTE
-                    Section(String(localized: "Paste Items")) {
-                        PasteItemsSettingView()
-                    }
-                #else
-                    EmptyView()
-                #endif
-            },
-            shortcutsSections: {
-                ShortcutsSettingsView()
-            },
-            advancedSections: {
-                advancedSettingsView
-            }
-        )
+        TabView(selection: $selectedTab) {
+            generalSettingsView
+                .tabItem {
+                    Label(String(localized: "General"), systemImage: "gearshape")
+                }
+                .tag(SettingsTab.general)
+                .accessibilityIdentifier("SettingsTab_General")
+
+            PrivacySettingsView()
+                .tabItem {
+                    Label(String(localized: "Privacy"), systemImage: "hand.raised")
+                }
+                .tag(SettingsTab.privacy)
+                .accessibilityIdentifier("SettingsTab_Privacy")
+
+            ShortcutsSettingsView()
+                .tabItem {
+                    Label(String(localized: "Shortcuts"), systemImage: "keyboard")
+                }
+                .tag(SettingsTab.shortcuts)
+                .accessibilityIdentifier("SettingsTab_Shortcuts")
+        }
         .frame(width: 560, height: 520)
     }
 
-    private var advancedSettingsView: MacAdvancedSettingsSection {
+    private var generalSettingsView: GeneralSettingsView {
         #if ENABLE_SPARKLE_UPDATES
-            MacAdvancedSettingsSection(
+            GeneralSettingsView(
                 store: store,
                 onInstallUpdate: onInstallUpdate
             )
         #else
-            MacAdvancedSettingsSection(
+            GeneralSettingsView(
                 store: store
             )
         #endif

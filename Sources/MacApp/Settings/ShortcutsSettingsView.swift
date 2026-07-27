@@ -31,35 +31,38 @@ struct ShortcutsSettingsView: View {
     }
 
     var body: some View {
-        Section(String(localized: "Shortcuts")) {
-            HStack {
-                KeyboardShortcuts.Recorder(
-                    String(localized: "Open ClipKitty"),
-                    name: .showClipboardHistory,
-                    onChange: { showHistoryShortcut = $0 }
-                )
-                .shortcutValidation(validateShowHistoryShortcut)
+        Form {
+            Section(String(localized: "Keyboard Shortcut")) {
+                HStack {
+                    KeyboardShortcuts.Recorder(
+                        String(localized: "Open ClipKitty"),
+                        name: .showClipboardHistory,
+                        onChange: { showHistoryShortcut = $0 }
+                    )
+                    .shortcutValidation(validateShowHistoryShortcut)
 
-                restoreButton {
-                    KeyboardShortcuts.reset(.showClipboardHistory)
-                    showHistoryShortcut = .defaultShowClipboardHistory
+                    restoreButton {
+                        KeyboardShortcuts.reset(.showClipboardHistory)
+                        showHistoryShortcut = .defaultShowClipboardHistory
+                    }
+                    .disabled(showHistoryShortcut == .defaultShowClipboardHistory)
                 }
-                .disabled(showHistoryShortcut == .defaultShowClipboardHistory)
-            }
 
-            HStack {
-                KeyboardShortcuts.Recorder(
-                    String(localized: "Delete Item"),
-                    shortcut: deleteItemShortcut
-                )
-                .shortcutValidation(validateDeleteItemShortcut)
+                HStack {
+                    KeyboardShortcuts.Recorder(
+                        String(localized: "Delete Item"),
+                        shortcut: deleteItemShortcut
+                    )
+                    .shortcutValidation(validateDeleteItemShortcut)
 
-                restoreButton {
-                    settings.deleteItemShortcutSetting = .enabled(.defaultDeleteSelectedItem)
+                    restoreButton {
+                        settings.deleteItemShortcutSetting = .enabled(.defaultDeleteSelectedItem)
+                    }
+                    .disabled(settings.deleteItemShortcutSetting == .enabled(.defaultDeleteSelectedItem))
                 }
-                .disabled(settings.deleteItemShortcutSetting == .enabled(.defaultDeleteSelectedItem))
             }
         }
+        .formStyle(.grouped)
     }
 
     private func validateShowHistoryShortcut(
