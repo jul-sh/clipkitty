@@ -1,6 +1,6 @@
 import AppKit
-import ClipKittyMacPlatform
 import ClipKittyCore
+import ClipKittyMacPlatform
 #if ENABLE_ICLOUD_SYNC
     import ClipKittyCloudSync
     import CloudKit
@@ -188,6 +188,9 @@ struct MacAdvancedSettingsSection: View {
     #endif
 
     @ObservedObject private var settings = AppSettings.shared
+    #if ENABLE_SPARKLE_UPDATES
+        @ObservedObject private var runtimeState = AppRuntimeState.shared
+    #endif
     #if ENABLE_BUILD_ATTESTATION_LINK
         @State private var attestationState = AttestationState.checking
     #endif
@@ -285,7 +288,7 @@ struct MacAdvancedSettingsSection: View {
                 isOn: $settings.autoInstallUpdates
             )
 
-            if !settings.autoInstallUpdates, settings.updateCheckState == .available {
+            if !settings.autoInstallUpdates, case .available = runtimeState.updateCheckState {
                 Button(String(localized: "Install Update")) {
                     onInstallUpdate?()
                 }
