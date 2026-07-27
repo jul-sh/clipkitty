@@ -1,17 +1,11 @@
-import ClipKittyMacPlatform
 import ClipKittyCore
+import ClipKittyMacPlatform
 import SwiftUI
-
-enum HotKeyEditState: Equatable {
-    case idle
-    case recording
-}
 
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
 
     let store: ClipboardStore
-    let onHotKeyChanged: (HotKey) -> Void
     #if ENABLE_SPARKLE_UPDATES
         var onInstallUpdate: (() -> Void)? = nil
     #endif
