@@ -328,6 +328,20 @@ final class ClipKittyUITests: XCTestCase {
         return getSelectedIndex() == expected
     }
 
+    /// Wait for the initial item to be usable. On newer macOS runners,
+    /// AppKit can omit the selected accessibility trait from outline buttons
+    /// even though it has already rendered that item's preview.
+    private func waitForInitialItemReady(timeout: TimeInterval = 5) -> Bool {
+        waitForCondition(timeout: timeout) {
+            guard !self.app.outlines.firstMatch.buttons.allElementsBoundByIndex.isEmpty else {
+                return false
+            }
+
+            return self.getSelectedIndex() == 0
+                || self.app.textViews["PreviewTextView"].exists
+        }
+    }
+
     private func clearSearchField(_ element: XCUIElement) {
         clickAndWait(element)
         element.typeKey("a", modifierFlags: .command)
@@ -1393,11 +1407,24 @@ final class ClipKittyUITests: XCTestCase {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
+        let previewTextView = app.textViews["PreviewTextView"]
+        XCTAssertTrue(
+            waitForInitialItemReady() && previewTextView.waitForExistence(timeout: 5),
+            "Initial clipboard item should be ready"
+        )
+        let initialPreviewText = previewTextView.value as? String
+
         // Navigate to second item
         clickAndWait(searchField)
         Thread.sleep(forTimeInterval: ciTimeout)
         app.typeKey(.downArrow, modifierFlags: [])
-        XCTAssertTrue(waitForSelectedIndex(1, timeout: 3), "Should select second item")
+        XCTAssertTrue(
+            waitForCondition(timeout: 5) {
+                self.getSelectedIndex() == 1
+                    || (previewTextView.value as? String) != initialPreviewText
+            },
+            "Down Arrow should select a different clipboard item"
+        )
 
         // Copy the second item via Return
         app.typeKey(.return, modifierFlags: [])
@@ -1459,8 +1486,8 @@ final class ClipKittyUITests: XCTestCase {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
-        // Ensure first item selected
-        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected")
+        XCTAssertTrue(waitForInitialItemReady(), "Initial clipboard item should be ready")
+        clickAndWait(searchField)
 
         // Copy the selected item via Return
         searchField.typeKey(.return, modifierFlags: [])
@@ -1632,8 +1659,7 @@ final class ClipKittyUITests: XCTestCase {
         let searchField = app.textFields["SearchField"]
         XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
 
-        // Ensure first item selected
-        XCTAssertTrue(waitForSelectedIndex(0, timeout: 3), "First item should be selected")
+        XCTAssertTrue(waitForInitialItemReady(), "Initial clipboard item should be ready")
         Thread.sleep(forTimeInterval: ciTimeout)
 
         let hasTextViews = waitForCondition(timeout: 5) {
@@ -1779,9 +1805,19 @@ final class ClipKittyUITests: XCTestCase {
         )
         advanced.click()
 
+        let storageLimit = settingsWindow.staticTexts["Storage Limit"]
+        XCTAssertTrue(
+            storageLimit.waitForExistence(timeout: 5),
+            "Advanced settings should expand before their contents are scrolled"
+        )
+
         for label in ["Storage Limit", "History", "About", "Version", "Build"] {
             XCTAssertTrue(
-                revealInSettings(settingsWindow.staticTexts[label], window: settingsWindow),
+                revealInSettings(
+                    settingsWindow.staticTexts[label],
+                    window: settingsWindow,
+                    maximumSwipes: 20
+                ),
                 "\(label) should be reachable in Advanced settings"
             )
         }
