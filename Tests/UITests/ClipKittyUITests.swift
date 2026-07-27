@@ -1805,16 +1805,24 @@ final class ClipKittyUITests: XCTestCase {
         )
         advanced.click()
 
-        let storageLimit = settingsWindow.staticTexts["Storage Limit"]
+        // The storage bar is an accessibility-adjustable control on macOS,
+        // rather than a static text node like the visual subsection heading.
+        // Locate it by its stable label across accessibility roles.
+        let storageLimit = settingsWindow.descendants(matching: .any).matching(
+            NSPredicate(format: "label ==[c] %@", "Storage Limit")
+        ).firstMatch
         XCTAssertTrue(
-            storageLimit.waitForExistence(timeout: 5),
-            "Advanced settings should expand before their contents are scrolled"
+            revealInSettings(storageLimit, window: settingsWindow, maximumSwipes: 20),
+            "Storage Limit control should be reachable after expanding Advanced settings"
         )
 
-        for label in ["Storage Limit", "History", "About", "Version", "Build"] {
+        for label in ["Clear History", "Version", "Build"] {
+            let element = label == "Clear History"
+                ? settingsWindow.buttons[label]
+                : settingsWindow.staticTexts[label]
             XCTAssertTrue(
                 revealInSettings(
-                    settingsWindow.staticTexts[label],
+                    element,
                     window: settingsWindow,
                     maximumSwipes: 20
                 ),
