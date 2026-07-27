@@ -187,7 +187,12 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
             XCTFail("no share menu title mapped for locale \(locale!)")
             return
         }
-        let shareItem = app.buttons[shareTitle]
+        // On newer iOS simulators, context-menu actions can be exposed as a
+        // menu item rather than a button. The localized action label is the
+        // stable contract across those accessibility roles.
+        let shareItem = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@", shareTitle)
+        ).firstMatch
         XCTAssertTrue(shareItem.waitForExistence(timeout: 5),
                       "context menu Share item ('\(shareTitle)') not found for locale \(locale!)")
         shareItem.tap()
