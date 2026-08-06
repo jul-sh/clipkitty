@@ -400,7 +400,7 @@ pub fn full_resync_from_snapshots(
 }
 
 /// Load the current aggregate for an item from the projection and snapshot.
-fn load_aggregate(sync: &SyncStore<'_>, item_id: &str) -> SyncResult<Option<ItemAggregate>> {
+fn load_aggregate(sync: &SyncStore, item_id: &str) -> SyncResult<Option<ItemAggregate>> {
     // First check projection for version info.
     let projection = sync.fetch_projection(item_id)?;
     if projection.is_none() {

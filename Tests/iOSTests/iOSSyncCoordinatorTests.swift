@@ -21,12 +21,28 @@
 
         var stubbedStatus: SyncEngine.SyncStatus = .idle
         var stubbedBackgroundSyncResult: SyncEngine.BackgroundSyncResult = .completed
-        var status: SyncEngine.SyncStatus { stubbedStatus }
+        var prepareForSuspendHandler: (() async -> Void)?
+        var status: SyncEngine.SyncStatus {
+            stubbedStatus
+        }
 
-        func start() { startCallCount += 1 }
-        func stop() { stopCallCount += 1 }
-        func prepareForSuspend() async { prepareForSuspendCallCount += 1 }
-        func handleRemoteNotification() { handleRemoteNotificationCallCount += 1 }
+        func start() {
+            startCallCount += 1
+        }
+
+        func stop() {
+            stopCallCount += 1
+        }
+
+        func prepareForSuspend() async {
+            prepareForSuspendCallCount += 1
+            await prepareForSuspendHandler?()
+        }
+
+        func handleRemoteNotification() {
+            handleRemoteNotificationCallCount += 1
+        }
+
         func runBackgroundSyncCycle() async -> SyncEngine.BackgroundSyncResult {
             runBackgroundSyncCycleCallCount += 1
             return stubbedBackgroundSyncResult
@@ -239,14 +255,14 @@
             XCTAssertEqual(createdEngines.count, engineCount, "Should not create a new engine")
         }
 
-        func testDisableFromEnabledStopsEngine() {
+        func testDisableFromEnabledStopsEngine() throws {
             let coordinator = iOSSyncCoordinator(
                 store: store,
                 enabled: true,
                 onContentChanged: {},
                 engineFactory: spyFactory()
             )
-            let engine = latestEngine!
+            let engine = try XCTUnwrap(latestEngine)
 
             coordinator.setSyncEnabled(false)
 
@@ -280,21 +296,21 @@
             XCTAssertTrue(createdEngines.isEmpty)
         }
 
-        func testReEnableCreatesNewEngine() {
+        func testReEnableReusesTheStoppedEngine() throws {
             let coordinator = iOSSyncCoordinator(
                 store: store,
                 enabled: true,
                 onContentChanged: {},
                 engineFactory: spyFactory()
             )
-            let firstEngine = latestEngine!
+            let firstEngine = try XCTUnwrap(latestEngine)
 
             coordinator.setSyncEnabled(false)
             coordinator.setSyncEnabled(true)
 
-            XCTAssertEqual(createdEngines.count, 2)
-            XCTAssertTrue(latestEngine !== firstEngine)
-            XCTAssertEqual(latestEngine?.startCallCount, 1)
+            XCTAssertEqual(createdEngines.count, 1)
+            XCTAssertTrue(latestEngine === firstEngine)
+            XCTAssertEqual(firstEngine.startCallCount, 1)
         }
 
         // MARK: - Scene phase handling
@@ -413,6 +429,92 @@
             XCTAssertTrue(createdEngines.isEmpty)
         }
 
+        func testPrepareForSuspensionJoinsAnEngineStoppedByTheSetting() async throws {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory()
+            )
+            let engine = try XCTUnwrap(latestEngine)
+            coordinator.setSyncEnabled(false)
+
+            await coordinator.prepareForSuspension()
+
+            XCTAssertEqual(engine.stopCallCount, 1)
+            XCTAssertEqual(engine.prepareForSuspendCallCount, 1)
+        }
+
+        func testSuspensionIsTerminalAndRepeatedPreparationIsIdempotent() async throws {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory(),
+                scheduleBackgroundSync: countBackgroundSchedule
+            )
+            let engine = try XCTUnwrap(latestEngine)
+
+            await coordinator.prepareForSuspension()
+            let scheduledAtSuspension = scheduleBackgroundSyncCallCount
+
+            coordinator.setSyncEnabled(false)
+            coordinator.setSyncEnabled(true)
+            coordinator.handleScenePhaseChange(.active)
+            coordinator.handleRemoteNotification()
+            let notificationResult = await coordinator.performRemoteNotificationSync()
+            await coordinator.prepareForSuspension()
+
+            XCTAssertEqual(notificationResult, .unavailable)
+            XCTAssertEqual(engine.prepareForSuspendCallCount, 1)
+            XCTAssertEqual(engine.startCallCount, 0)
+            XCTAssertEqual(engine.handleRemoteNotificationCallCount, 0)
+            XCTAssertEqual(engine.runBackgroundSyncCycleCallCount, 0)
+            XCTAssertEqual(scheduleBackgroundSyncCallCount, scheduledAtSuspension)
+            XCTAssertEqual(createdEngines.count, 1)
+        }
+
+        func testSuspendingStateRejectsLateWorkAndJoinsTheSameDrain() async throws {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory(),
+                scheduleBackgroundSync: countBackgroundSchedule
+            )
+            let engine = try XCTUnwrap(latestEngine)
+            var releasePreparation: CheckedContinuation<Void, Never>?
+            engine.prepareForSuspendHandler = {
+                await withCheckedContinuation { continuation in
+                    releasePreparation = continuation
+                }
+            }
+
+            let firstPreparation = Task { @MainActor in
+                await coordinator.prepareForSuspension()
+            }
+            await waitUntil { engine.prepareForSuspendCallCount == 1 }
+
+            coordinator.setSyncEnabled(false)
+            coordinator.handleScenePhaseChange(.active)
+            coordinator.handleRemoteNotification()
+            let notificationResult = await coordinator.performRemoteNotificationSync()
+            let secondPreparation = Task { @MainActor in
+                await coordinator.prepareForSuspension()
+            }
+
+            XCTAssertEqual(notificationResult, .unavailable)
+            XCTAssertEqual(engine.startCallCount, 0)
+            XCTAssertEqual(engine.handleRemoteNotificationCallCount, 0)
+            XCTAssertEqual(engine.runBackgroundSyncCycleCallCount, 0)
+            XCTAssertEqual(engine.prepareForSuspendCallCount, 1)
+
+            releasePreparation?.resume()
+            await firstPreparation.value
+            await secondPreparation.value
+            XCTAssertEqual(engine.prepareForSuspendCallCount, 1)
+        }
+
         // MARK: - Remote notification
 
         func testRemoteNotificationForwardsWhenEnabled() {
@@ -486,6 +588,25 @@
         }
 
         // MARK: - Background runner cancellation
+
+        func testForegroundStoreClaimRejectsHeadlessOpenUntilReleased() async {
+            var startCount = 0
+            let runner = iOSBackgroundSyncRunner {
+                startCount += 1
+                return .newData
+            }
+            let claimID = UUID()
+
+            runner.claimForegroundStore(claimID)
+            let rejected = await runner.performScheduledSync()
+            XCTAssertEqual(rejected, .failed)
+            XCTAssertEqual(startCount, 0)
+
+            runner.releaseForegroundStore(claimID)
+            let admitted = await runner.performScheduledSync()
+            XCTAssertEqual(admitted, .newData)
+            XCTAssertEqual(startCount, 1)
+        }
 
         func testCancelInFlightSyncKeepsLaterWakeJoinedUntilOperationFinishes() async {
             var startCount = 0

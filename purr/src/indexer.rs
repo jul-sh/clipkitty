@@ -836,11 +836,15 @@ impl Indexer {
     }
 
     fn from_parts(
-        index: Index,
+        mut index: Index,
         reader: IndexReader,
         schema: Schema,
         writer_memory_budget: usize,
     ) -> Self {
+        // Tantivy's dedicated docstore compressor is not joinable through the
+        // public IndexWriter API when its parent worker fails. Compress inline
+        // so terminal suspension never loses the only handle to file work.
+        index.settings_mut().docstore_compress_dedicated_thread = false;
         Self {
             item_id_field: schema.get_field("item_id").unwrap(),
             content_field: schema.get_field("content").unwrap(),
@@ -863,24 +867,31 @@ impl Indexer {
     ) -> IndexerResult<T> {
         let mut writer_slot = self.writer.lock();
         if writer_slot.is_none() {
-            *writer_slot = Some(self.index.writer(self.writer_memory_budget)?);
+            // `wait_merging_threads` stops at the first failed worker. A single
+            // worker makes that fail-fast join exhaustive instead of detaching
+            // sibling workers that may still be writing index files.
+            *writer_slot = Some(
+                self.index
+                    .writer_with_num_threads(1, self.writer_memory_budget)?,
+            );
         }
         operation(writer_slot.as_mut().expect("writer initialized above"))
     }
 
-    fn close_writer(&self, wait_for_merges: bool) -> IndexerResult<()> {
-        let writer = self.writer.lock().take();
+    fn close_writer(&self) -> IndexerResult<()> {
+        // Keep the slot locked until the old writer has released its directory
+        // lock and all merge work. Otherwise a concurrent mutation can observe
+        // `None` and try to open a replacement writer while this one is closing.
+        let mut writer_slot = self.writer.lock();
+        let writer = writer_slot.take();
         let Some(mut writer) = writer else {
             return Ok(());
         };
 
         let commit_result = writer.commit();
-        let close_result = if wait_for_merges {
-            writer.wait_merging_threads()
-        } else {
-            drop(writer);
-            Ok(())
-        };
+        // Drain even when commit failed. Returning early would drop the only
+        // handle capable of joining merge work scheduled by an earlier commit.
+        let close_result = writer.wait_merging_threads();
 
         commit_result?;
         close_result?;
@@ -1013,11 +1024,14 @@ impl Indexer {
     }
 
     pub fn commit(&self) -> IndexerResult<()> {
-        self.close_writer(false)
+        // A successful commit can schedule merge work. Consume the writer and
+        // wait here so a later suspension never has to discover detached
+        // Tantivy workers that are no longer reachable from `self.writer`.
+        self.close_writer()
     }
 
     pub fn prepare_for_suspend(&self) -> IndexerResult<()> {
-        self.close_writer(true)
+        self.close_writer()
     }
 
     pub fn delete_document(&self, id: &str) -> IndexerResult<()> {
@@ -1974,6 +1988,7 @@ mod tests {
     fn test_indexer_creation() {
         let indexer = Indexer::new_in_memory().unwrap();
         assert_eq!(indexer.num_docs(), 0);
+        assert!(!indexer.index.settings().docstore_compress_dedicated_thread);
     }
 
     #[test]

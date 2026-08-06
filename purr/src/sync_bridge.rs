@@ -14,11 +14,11 @@ use purr_sync::types::{
     LinkMetadataSnapshot, TypeSpecificData, FLAG_INDEX_DIRTY,
 };
 
+use crate::database::Database;
 use crate::interface::{ClipKittyError, ClipboardContent, LinkMetadataState};
 use crate::models::StoredItem;
 use crate::save_service::ResolvedLinkMetadata;
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
+use std::sync::Arc;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Snapshot builders — convert local types to sync transport types
@@ -271,14 +271,14 @@ pub(crate) trait SyncEmitter: Send + Sync {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 pub(crate) struct RealSyncEmitter {
-    pool: Pool<SqliteConnectionManager>,
+    database: Arc<Database>,
     device_id: parking_lot::Mutex<String>,
 }
 
 impl RealSyncEmitter {
-    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+    pub fn new(database: Arc<Database>) -> Self {
         Self {
-            pool,
+            database,
             device_id: parking_lot::Mutex::new("local".to_string()),
         }
     }
@@ -291,12 +291,12 @@ impl RealSyncEmitter {
         self.device_id.lock().clone()
     }
 
-    fn sync_store(&self) -> SyncStore<'_> {
-        SyncStore::new(&self.pool)
+    fn sync_store(&self) -> Result<SyncStore, ClipKittyError> {
+        Ok(SyncStore::new(&self.database.pool()?))
     }
 
     fn append_local_event_and_advance(&self, event: &ItemEvent) -> Result<(), ClipKittyError> {
-        let sync = self.sync_store();
+        let sync = self.sync_store()?;
         let current_aggregate = sync.fetch_snapshot(&event.item_id)?.map(|s| s.aggregate);
 
         match projector::apply_event(current_aggregate.as_ref(), &event.payload) {
@@ -327,7 +327,7 @@ impl RealSyncEmitter {
 
     fn persist_local_aggregate(
         &self,
-        sync: &SyncStore<'_>,
+        sync: &SyncStore,
         item_id: &str,
         aggregate: &ItemAggregate,
         event_id: &str,
@@ -368,7 +368,7 @@ impl RealSyncEmitter {
 
     fn materialized_projection_versions(
         &self,
-        sync: &SyncStore<'_>,
+        sync: &SyncStore,
         item_id: &str,
     ) -> Result<Option<purr_sync::types::VersionVector>, ClipKittyError> {
         let projection = sync.fetch_projection(item_id)?;
@@ -402,7 +402,7 @@ impl SyncEmitter for RealSyncEmitter {
     }
 
     fn emit_item_touched(&self, item_id: &str, timestamp_unix: i64) -> Result<(), ClipKittyError> {
-        let sync = self.sync_store();
+        let sync = self.sync_store()?;
         if let Some(versions) = self.materialized_projection_versions(&sync, item_id)? {
             let event = ItemEvent::new_local(
                 item_id.to_string(),
@@ -418,7 +418,7 @@ impl SyncEmitter for RealSyncEmitter {
     }
 
     fn emit_text_edited(&self, item_id: &str, new_text: &str) -> Result<(), ClipKittyError> {
-        let sync = self.sync_store();
+        let sync = self.sync_store()?;
         if let Some(versions) = self.materialized_projection_versions(&sync, item_id)? {
             let event = ItemEvent::new_local(
                 item_id.to_string(),
@@ -434,7 +434,7 @@ impl SyncEmitter for RealSyncEmitter {
     }
 
     fn emit_bookmark_set(&self, item_id: &str) -> Result<(), ClipKittyError> {
-        let sync = self.sync_store();
+        let sync = self.sync_store()?;
         if let Some(versions) = self.materialized_projection_versions(&sync, item_id)? {
             let event = ItemEvent::new_local(
                 item_id.to_string(),
@@ -449,7 +449,7 @@ impl SyncEmitter for RealSyncEmitter {
     }
 
     fn emit_bookmark_cleared(&self, item_id: &str) -> Result<(), ClipKittyError> {
-        let sync = self.sync_store();
+        let sync = self.sync_store()?;
         if let Some(versions) = self.materialized_projection_versions(&sync, item_id)? {
             let event = ItemEvent::new_local(
                 item_id.to_string(),
@@ -464,7 +464,7 @@ impl SyncEmitter for RealSyncEmitter {
     }
 
     fn emit_item_deleted(&self, item_id: &str) -> Result<(), ClipKittyError> {
-        let sync = self.sync_store();
+        let sync = self.sync_store()?;
         if let Some(versions) = self.materialized_projection_versions(&sync, item_id)? {
             let event = ItemEvent::new_local(
                 item_id.to_string(),
@@ -483,7 +483,7 @@ impl SyncEmitter for RealSyncEmitter {
         item_id: &str,
         metadata: LinkMetadataSnapshot,
     ) -> Result<(), ClipKittyError> {
-        let sync = self.sync_store();
+        let sync = self.sync_store()?;
         if let Some(versions) = self.materialized_projection_versions(&sync, item_id)? {
             let event = ItemEvent::new_local(
                 item_id.to_string(),
@@ -503,7 +503,7 @@ impl SyncEmitter for RealSyncEmitter {
         item_id: &str,
         description: &str,
     ) -> Result<(), ClipKittyError> {
-        let sync = self.sync_store();
+        let sync = self.sync_store()?;
         if let Some(versions) = self.materialized_projection_versions(&sync, item_id)? {
             let event = ItemEvent::new_local(
                 item_id.to_string(),
@@ -519,7 +519,7 @@ impl SyncEmitter for RealSyncEmitter {
     }
 
     fn set_index_dirty(&self) -> Result<(), ClipKittyError> {
-        let sync = self.sync_store();
+        let sync = self.sync_store()?;
         sync.set_dirty_flag(FLAG_INDEX_DIRTY, true)?;
         Ok(())
     }

@@ -52,7 +52,8 @@ final class AppContainer {
     /// nonisolated so a foreground resume can run it off the main actor and
     /// keep rendering the last known state while the database reconnects.
     nonisolated static func openStore(
-        databasePath customPath: String? = nil
+        databasePath customPath: String? = nil,
+        didConstructStore: @Sendable (ClipKittyRust.ClipboardStore) -> Void = { _ in }
     ) -> Result<StoreSession, BootstrapError> {
         // Migrate legacy Application Support database to App Group container
         // before resolving the path, so existing users keep their data.
@@ -92,7 +93,11 @@ final class AppContainer {
         #endif
 
         do {
-            return try .success(StoreOpener.open(path: dbPath, repairStrategy: repairStrategy))
+            return try .success(StoreOpener.open(
+                path: dbPath,
+                repairStrategy: repairStrategy,
+                didConstructStore: didConstructStore
+            ))
         } catch {
             return .failure(.databaseOpenFailed(error.localizedDescription))
         }

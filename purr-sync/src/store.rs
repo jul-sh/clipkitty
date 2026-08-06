@@ -15,13 +15,13 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
 
 /// Sync-specific persistence operations layered on top of a shared pool.
-pub struct SyncStore<'a> {
-    pool: &'a Pool<SqliteConnectionManager>,
+pub struct SyncStore {
+    pool: Pool<SqliteConnectionManager>,
 }
 
-impl<'a> SyncStore<'a> {
-    pub fn new(pool: &'a Pool<SqliteConnectionManager>) -> Self {
-        Self { pool }
+impl SyncStore {
+    pub fn new(pool: &Pool<SqliteConnectionManager>) -> Self {
+        Self { pool: pool.clone() }
     }
 
     fn get_conn(&self) -> SyncResult<r2d2::PooledConnection<SqliteConnectionManager>> {

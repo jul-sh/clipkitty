@@ -684,7 +684,7 @@ mod store_tests {
     #[test]
     fn append_and_fetch_local_event() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
 
         let event = ItemEvent::new_local(
             "item-1".to_string(),
@@ -705,7 +705,7 @@ mod store_tests {
     #[test]
     fn mark_uploaded_removes_from_pending() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
 
         let event = ItemEvent::new_local(
             "item-1".to_string(),
@@ -724,7 +724,7 @@ mod store_tests {
     #[test]
     fn dedup_prevents_double_apply() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
 
         assert!(!sync.is_event_applied("evt-1").unwrap());
         sync.mark_event_applied("evt-1").unwrap();
@@ -738,7 +738,7 @@ mod store_tests {
     #[test]
     fn projection_roundtrip() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
 
         let versions = VersionVector {
             content: 3,
@@ -758,7 +758,7 @@ mod store_tests {
     #[test]
     fn snapshot_upsert_and_fetch() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
 
         let agg = ItemAggregate::Live(LiveItemState {
             snapshot: text_snapshot("hello"),
@@ -783,7 +783,7 @@ mod store_tests {
     #[test]
     fn deferred_event_lifecycle() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
 
         let event = ItemEvent::new_local(
             "item-1".to_string(),
@@ -810,7 +810,7 @@ mod store_tests {
     #[test]
     fn dirty_flags() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
 
         assert!(!sync.get_dirty_flag(FLAG_INDEX_DIRTY).unwrap());
         sync.set_dirty_flag(FLAG_INDEX_DIRTY, true).unwrap();
@@ -822,7 +822,7 @@ mod store_tests {
     #[test]
     fn device_state_roundtrip() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
 
         sync.upsert_device_state("dev-1", Some(b"token-abc"))
             .unwrap();
@@ -839,7 +839,7 @@ mod store_tests {
     #[test]
     fn clear_sync_state_preserves_device() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
 
         // Setup state.
         sync.upsert_device_state("dev-1", Some(b"token")).unwrap();
@@ -881,7 +881,7 @@ mod replay_tests {
     use super::*;
 
     fn setup_item_in_db(db: &Database, global_id: &str) {
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         let agg = ItemAggregate::Live(LiveItemState {
             snapshot: text_snapshot("existing"),
             versions: default_versions(),
@@ -900,7 +900,7 @@ mod replay_tests {
     #[test]
     fn apply_remote_event_creates_item() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
 
         let event = ItemEvent::new_local(
             "item-1".to_string(),
@@ -910,7 +910,7 @@ mod replay_tests {
             },
         );
 
-        let result = replay::apply_remote_event(db.pool(), &event).unwrap();
+        let result = replay::apply_remote_event(&db.pool().unwrap(), &event).unwrap();
         assert!(matches!(result, ApplyResult::Applied(_)));
 
         // Verify projection was created.
@@ -935,10 +935,10 @@ mod replay_tests {
         );
 
         // Apply twice.
-        let result1 = replay::apply_remote_event(db.pool(), &event).unwrap();
+        let result1 = replay::apply_remote_event(&db.pool().unwrap(), &event).unwrap();
         assert!(matches!(result1, ApplyResult::Applied(_)));
 
-        let result2 = replay::apply_remote_event(db.pool(), &event).unwrap();
+        let result2 = replay::apply_remote_event(&db.pool().unwrap(), &event).unwrap();
         assert!(matches!(
             result2,
             ApplyResult::Ignored(IgnoreReason::AlreadyApplied)
@@ -948,7 +948,7 @@ mod replay_tests {
     #[test]
     fn remote_event_with_missing_item_is_deferred() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
 
         let event = ItemEvent::new_local(
             "nonexistent".to_string(),
@@ -959,7 +959,7 @@ mod replay_tests {
             },
         );
 
-        let result = replay::apply_remote_event(db.pool(), &event).unwrap();
+        let result = replay::apply_remote_event(&db.pool().unwrap(), &event).unwrap();
         assert!(matches!(result, ApplyResult::Deferred(_)));
 
         // Verify it was stored in deferred queue.
@@ -979,7 +979,7 @@ mod replay_tests {
                 base_content_version: 1,
             },
         );
-        replay::apply_remote_event(db.pool(), &edit_event).unwrap();
+        replay::apply_remote_event(&db.pool().unwrap(), &edit_event).unwrap();
 
         // Now send the ItemCreated.
         let create_event = ItemEvent::new_local(
@@ -991,14 +991,15 @@ mod replay_tests {
         );
 
         // Use batch apply to trigger deferred retry.
-        let result = replay::apply_remote_event_batch(db.pool(), &[create_event]).unwrap();
+        let result =
+            replay::apply_remote_event_batch(&db.pool().unwrap(), &[create_event]).unwrap();
 
         // The create should have applied, and the deferred edit should have been retried.
         assert!(result.events_applied >= 1);
         assert_eq!(result.events_deferred, 0);
 
         // Verify the projection has content_version bumped from the edit.
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         let proj = sync.fetch_projection("item-1").unwrap().unwrap();
         let versions = assert_projection_pending(&proj);
         assert_eq!(versions.content, 2); // 1 from create + 1 from edit
@@ -1007,7 +1008,7 @@ mod replay_tests {
     #[test]
     fn apply_remote_snapshot_updates_projection() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
 
         let versions = VersionVector {
             content: 5,
@@ -1022,7 +1023,7 @@ mod replay_tests {
         });
         let snapshot = ItemSnapshot::initial("item-1".to_string(), agg);
 
-        let applied = replay::apply_remote_snapshots(db.pool(), &[snapshot]).unwrap();
+        let applied = replay::apply_remote_snapshots(&db.pool().unwrap(), &[snapshot]).unwrap();
         assert_eq!(applied, 1);
 
         let proj = sync.fetch_projection("item-1").unwrap().unwrap();
@@ -1040,18 +1041,18 @@ mod replay_tests {
         });
         let snap_v2 =
             ItemSnapshot::compacted("item-1".to_string(), 1, "evt-2".to_string(), agg.clone());
-        replay::apply_remote_snapshots(db.pool(), &[snap_v2]).unwrap();
+        replay::apply_remote_snapshots(&db.pool().unwrap(), &[snap_v2]).unwrap();
 
         // Try to apply an older snapshot.
         let snap_v1 = ItemSnapshot::initial("item-1".to_string(), agg);
-        let applied = replay::apply_remote_snapshots(db.pool(), &[snap_v1]).unwrap();
+        let applied = replay::apply_remote_snapshots(&db.pool().unwrap(), &[snap_v1]).unwrap();
         assert_eq!(applied, 0);
     }
 
     #[test]
     fn full_resync_clears_and_rebuilds() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
 
         // Setup some existing state.
         setup_item_in_db(&db, "old-item");
@@ -1064,7 +1065,7 @@ mod replay_tests {
         });
         let snapshot = ItemSnapshot::initial("new-item".to_string(), agg);
 
-        let applied = replay::full_resync_from_snapshots(db.pool(), &[snapshot]).unwrap();
+        let applied = replay::full_resync_from_snapshots(&db.pool().unwrap(), &[snapshot]).unwrap();
         assert_eq!(applied, 1);
 
         // Old state should be gone.
@@ -1088,7 +1089,7 @@ mod replay_tests {
                 snapshot: text_snapshot("original"),
             },
         );
-        replay::apply_remote_event(db.pool(), &create_event).unwrap();
+        replay::apply_remote_event(&db.pool().unwrap(), &create_event).unwrap();
 
         // Now simulate advancing the content version.
         let edit1 = ItemEvent::new_local(
@@ -1099,7 +1100,7 @@ mod replay_tests {
                 base_content_version: 1,
             },
         );
-        replay::apply_remote_event(db.pool(), &edit1).unwrap();
+        replay::apply_remote_event(&db.pool().unwrap(), &edit1).unwrap();
 
         // Another edit from a different device on the original base — should fork.
         let edit2 = ItemEvent::new_local(
@@ -1111,7 +1112,7 @@ mod replay_tests {
             },
         );
 
-        let result = replay::apply_remote_event_batch(db.pool(), &[edit2]).unwrap();
+        let result = replay::apply_remote_event_batch(&db.pool().unwrap(), &[edit2]).unwrap();
         assert_eq!(result.events_forked, 1);
         assert_eq!(result.fork_plans.len(), 1);
         assert_eq!(
@@ -1129,7 +1130,7 @@ mod compaction_tests {
     use super::*;
 
     fn seed_item_with_events(db: &Database, global_id: &str, n_events: usize) {
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         let recorded_at_base = chrono::Utc::now().timestamp();
 
         // Create the item.
@@ -1177,7 +1178,7 @@ mod compaction_tests {
         let db = test_db();
         seed_item_with_events(&db, "item-1", 10);
 
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         assert!(!compactor::needs_compaction(&sync, "item-1").unwrap());
     }
 
@@ -1187,7 +1188,7 @@ mod compaction_tests {
         // 32+ events triggers compaction (1 create + 32 touches = 33 total).
         seed_item_with_events(&db, "item-1", COMPACTION_EVENT_THRESHOLD);
 
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         assert!(compactor::needs_compaction(&sync, "item-1").unwrap());
     }
 
@@ -1196,7 +1197,7 @@ mod compaction_tests {
         let db = test_db();
         seed_item_with_events(&db, "item-1", COMPACTION_EVENT_THRESHOLD);
 
-        let result = compactor::compact_item(db.pool(), "item-1").unwrap();
+        let result = compactor::compact_item(&db.pool().unwrap(), "item-1").unwrap();
         match result {
             CompactionOutcome::Compacted {
                 snapshot,
@@ -1210,7 +1211,7 @@ mod compaction_tests {
         }
 
         // After compaction, uncompacted count should be 0.
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         assert_eq!(sync.count_uncompacted_events("item-1").unwrap(), 0);
     }
 
@@ -1220,7 +1221,7 @@ mod compaction_tests {
         seed_item_with_events(&db, "item-1", COMPACTION_EVENT_THRESHOLD);
         seed_item_with_events(&db, "item-2", 5); // below threshold
 
-        let count = compactor::compact_all(db.pool()).unwrap();
+        let count = compactor::compact_all(&db.pool().unwrap()).unwrap();
         assert_eq!(count, 1); // only item-1 was eligible
     }
 
@@ -1228,7 +1229,7 @@ mod compaction_tests {
     fn compact_no_events_returns_no_events() {
         let db = test_db();
 
-        let result = compactor::compact_item(db.pool(), "nonexistent").unwrap();
+        let result = compactor::compact_item(&db.pool().unwrap(), "nonexistent").unwrap();
         assert_eq!(result, CompactionOutcome::NoEvents);
     }
 
@@ -1237,9 +1238,9 @@ mod compaction_tests {
         let db = test_db();
         seed_item_with_events(&db, "item-1", COMPACTION_EVENT_THRESHOLD);
 
-        compactor::compact_item(db.pool(), "item-1").unwrap();
+        compactor::compact_item(&db.pool().unwrap(), "item-1").unwrap();
 
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         let uncompacted = sync.fetch_uncompacted_events("item-1").unwrap();
         assert!(uncompacted.is_empty());
     }
@@ -1268,7 +1269,7 @@ mod write_path_tests {
 
         // Verify projection exists.
         let db = store_db(&dir);
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         let proj = sync.fetch_projection(&id).unwrap().unwrap();
         let versions = assert_projection_materialized(&proj);
         assert_eq!(versions.content, 1);
@@ -1316,7 +1317,7 @@ mod write_path_tests {
         assert_eq!(delete_events.len(), 1);
 
         let db = store_db(&dir);
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
 
         let projection = sync.fetch_projection(&id).unwrap().unwrap();
         assert_projection_tombstoned(&projection);
@@ -1386,7 +1387,7 @@ mod write_path_tests {
         }
 
         let db = store_db(&dir);
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         let projection = sync.fetch_projection(&id).unwrap().unwrap();
         let versions = assert_projection_materialized(&projection);
         assert_eq!(versions.content, 3);
@@ -1919,7 +1920,7 @@ mod compaction_audit_tests {
     #[test]
     fn compaction_triggered_by_payload_size() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         let gid = "payload-heavy-item";
 
         // Create item with snapshot.
@@ -1961,7 +1962,7 @@ mod compaction_audit_tests {
     #[test]
     fn compaction_triggered_by_age() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         let gid = "old-item";
 
         // Create item with snapshot.
@@ -2007,7 +2008,7 @@ mod compaction_audit_tests {
     #[test]
     fn compaction_triggered_by_tombstone_age() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         let gid = "tombstoned-item";
 
         // Create tombstoned snapshot (31+ days old).
@@ -2059,7 +2060,7 @@ mod compaction_audit_tests {
     #[test]
     fn purge_retained_events_removes_old_compacted() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         let gid = "purge-test";
 
         // Seed item and run compaction.
@@ -2099,7 +2100,7 @@ mod compaction_audit_tests {
             sync.append_local_event(&event).unwrap();
         }
 
-        compactor::compact_item(db.pool(), gid).unwrap();
+        compactor::compact_item(&db.pool().unwrap(), gid).unwrap();
 
         // Purge with a threshold far in the future so all compacted events are "old".
         let future_threshold = chrono::Utc::now().timestamp() + 100000;
@@ -2112,7 +2113,7 @@ mod compaction_audit_tests {
     #[test]
     fn purge_tombstone_snapshots_removes_old_tombstones() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
 
         // Create a very old tombstone.
         let old_delete_time =
@@ -2141,7 +2142,7 @@ mod compaction_audit_tests {
         let snap2 = ItemSnapshot::initial("recent-tombstone".to_string(), recent_agg);
         sync.upsert_snapshot(&snap2).unwrap();
 
-        let purged = compactor::purge_tombstone_snapshots(db.pool()).unwrap();
+        let purged = compactor::purge_tombstone_snapshots(&db.pool().unwrap()).unwrap();
         assert_eq!(purged, 1, "only the old tombstone should be purged");
 
         // Verify the recent one still exists.
@@ -2280,7 +2281,7 @@ mod write_path_audit_tests {
         assert_eq!(delete_events.len(), 2);
 
         let db = store_db(&dir);
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
 
         for event in delete_events {
             let projection = sync.fetch_projection(&event.item_id).unwrap().unwrap();
@@ -2358,7 +2359,7 @@ mod replay_audit_tests {
                 base_content_version: 1,
             },
         );
-        let result = replay::apply_remote_event(db.pool(), &edit_event).unwrap();
+        let result = replay::apply_remote_event(&db.pool().unwrap(), &edit_event).unwrap();
         assert!(
             matches!(result, ApplyResult::Deferred(_)),
             "edit before create should be deferred"
@@ -2374,7 +2375,7 @@ mod replay_audit_tests {
         );
 
         // Use batch apply which retries deferred events.
-        let batch = replay::apply_remote_event_batch(db.pool(), &[create_event]).unwrap();
+        let batch = replay::apply_remote_event_batch(&db.pool().unwrap(), &[create_event]).unwrap();
         // 2 applied: the create itself + the deferred edit resolved during retry.
         assert_eq!(
             batch.events_applied, 2,
@@ -2382,7 +2383,7 @@ mod replay_audit_tests {
         );
 
         // The deferred edit should have been retried and resolved.
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         let deferred_count = sync.count_deferred_events().unwrap();
         assert_eq!(
             deferred_count, 0,
@@ -2403,7 +2404,7 @@ mod replay_audit_tests {
                 snapshot: text_snapshot("batch test"),
             },
         );
-        replay::apply_remote_event(db.pool(), &create).unwrap();
+        replay::apply_remote_event(&db.pool().unwrap(), &create).unwrap();
 
         // Apply a matching edit (should apply).
         let edit = ItemEvent::new_local(
@@ -2424,7 +2425,8 @@ mod replay_audit_tests {
             },
         );
 
-        let batch = replay::apply_remote_event_batch(db.pool(), &[edit, dup_create]).unwrap();
+        let batch =
+            replay::apply_remote_event_batch(&db.pool().unwrap(), &[edit, dup_create]).unwrap();
         assert_eq!(batch.events_applied, 1);
         assert_eq!(batch.events_ignored, 1);
     }
@@ -2508,7 +2510,7 @@ mod replay_audit_tests {
             .unwrap()
             .is_empty());
 
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         let projection = sync.fetch_projection(&local_id).unwrap().unwrap();
         assert_projection_tombstoned(&projection);
         assert!(store.pending_snapshot_records().unwrap().is_empty());
@@ -2542,7 +2544,7 @@ mod replay_audit_tests {
             .unwrap()
             .is_empty());
 
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         let projection = sync.fetch_projection(&local_id).unwrap().unwrap();
         assert_projection_tombstoned(&projection);
     }
@@ -2669,7 +2671,7 @@ mod replay_audit_tests {
 
         let db = store_db(&dir);
         assert_eq!(db.fetch_all_items().unwrap().len(), 1);
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         assert_eq!(sync.count_index_queue_entries().unwrap(), 1);
         assert!(
             store
@@ -2760,7 +2762,7 @@ mod replay_audit_tests {
 
         let db = store_db(&dir);
         assert!(db.fetch_all_items().unwrap().is_empty());
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         assert_eq!(sync.count_index_queue_entries().unwrap(), 1);
 
         store.process_index_queue(1).unwrap();
@@ -2798,7 +2800,7 @@ mod replay_audit_tests {
             .unwrap();
 
         let db = store_db(&dir);
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         assert_eq!(sync.count_index_queue_entries().unwrap(), 2);
 
         let first_pass = store.process_index_queue(1).unwrap();
@@ -2842,7 +2844,7 @@ mod replay_audit_tests {
             .unwrap();
 
         let db = store_db(&dir);
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         sync.enqueue_index_delete("stale-index-repair").unwrap();
         sync.set_dirty_flag(FLAG_INDEX_DIRTY, false).unwrap();
 
@@ -2875,12 +2877,12 @@ mod replay_audit_tests {
     #[test]
     fn full_index_rebuild_queue_replacement_rolls_back_on_insert_failure() {
         let db = test_db();
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         sync.enqueue_index_delete("stale-index-repair").unwrap();
         sync.set_dirty_flag(FLAG_INDEX_DIRTY, true).unwrap();
 
         {
-            let conn = db.pool().get().unwrap();
+            let conn = db.pool().unwrap().get().unwrap();
             conn.execute_batch(
                 r#"
                 CREATE TRIGGER abort_full_rebuild_upsert
@@ -3009,7 +3011,7 @@ mod replay_audit_tests {
             .unwrap();
 
         let db = store_db(&dir);
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         store
             .mark_snapshot_uploaded(created.item_id.clone())
             .unwrap();
@@ -3017,7 +3019,7 @@ mod replay_audit_tests {
             .unwrap();
 
         let aged_recorded_at = chrono::Utc::now().timestamp() - (31 * 24 * 3600);
-        let conn = db.pool().get().unwrap();
+        let conn = db.pool().unwrap().get().unwrap();
         conn.execute(
             "UPDATE sync_events SET recorded_at = ?1 WHERE event_id = ?2",
             rusqlite::params![aged_recorded_at, created.event_id.clone()],
@@ -3128,7 +3130,7 @@ mod replay_audit_tests {
         assert_eq!(pending_events[0].item_id, forked_item.item_id);
         assert_eq!(pending_events[0].payload_type, "item_created");
 
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         let projection = sync
             .fetch_projection(&forked_item.item_id)
             .unwrap()
@@ -3195,7 +3197,7 @@ mod replay_audit_tests {
         let db = store_db(&dir);
         assert!(db.fetch_all_items().unwrap().is_empty());
 
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         let projection = sync
             .fetch_projection("remote-snapshot-delete-batch")
             .unwrap()
@@ -3258,7 +3260,7 @@ mod replay_audit_tests {
         let db = store_db(&dir);
         assert!(db.fetch_all_items().unwrap().is_empty());
 
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         let projection = sync
             .fetch_projection("remote-delete-batch")
             .unwrap()
@@ -3395,7 +3397,7 @@ mod replay_audit_tests {
         );
 
         let result = replay::full_resync(
-            db.pool(),
+            &db.pool().unwrap(),
             &[checkpoint],
             &[later_bookmark, covered_edit, created],
         )
@@ -3407,7 +3409,7 @@ mod replay_audit_tests {
         assert_eq!(result.tail_events_forked, 0);
         assert_eq!(result.tail_events_deferred, 0);
 
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         let snapshot = sync.fetch_snapshot(&item_id).unwrap().unwrap();
         match snapshot.aggregate {
             ItemAggregate::Live(live) => {
@@ -3434,10 +3436,10 @@ mod replay_audit_tests {
         edit_without_create.event_id = "evt-missing-create".to_string();
         edit_without_create.recorded_at = 1;
 
-        let result = replay::full_resync(db.pool(), &[], &[edit_without_create]).unwrap();
+        let result = replay::full_resync(&db.pool().unwrap(), &[], &[edit_without_create]).unwrap();
 
         assert_eq!(result.tail_events_deferred, 1);
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         assert!(sync.get_dirty_flag(FLAG_NEEDS_FULL_RESYNC).unwrap());
     }
 
@@ -3487,7 +3489,7 @@ mod forward_compat_tests {
                 snapshot: text_snapshot("forward compat test"),
             },
         );
-        replay::apply_remote_event(db.pool(), &create).unwrap();
+        replay::apply_remote_event(&db.pool().unwrap(), &create).unwrap();
 
         // Construct an event with a future schema version.
         let future_event = ItemEvent {
@@ -3502,7 +3504,7 @@ mod forward_compat_tests {
             },
         };
 
-        let result = replay::apply_remote_event(db.pool(), &future_event).unwrap();
+        let result = replay::apply_remote_event(&db.pool().unwrap(), &future_event).unwrap();
         match result {
             ApplyResult::Ignored(IgnoreReason::UnsupportedVersion {
                 event_version,
@@ -3515,7 +3517,7 @@ mod forward_compat_tests {
         }
 
         // Verify it's been marked as applied (won't be re-processed).
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         assert!(sync.is_event_applied(&future_event.event_id).unwrap());
     }
 
@@ -3542,7 +3544,7 @@ mod forward_compat_tests {
             event.payload
         );
 
-        let result = replay::apply_remote_event(db.pool(), &event).unwrap();
+        let result = replay::apply_remote_event(&db.pool().unwrap(), &event).unwrap();
         match result {
             ApplyResult::Ignored(IgnoreReason::UnknownPayload { raw_type }) => {
                 assert_eq!(raw_type, "new_payload_type_v2");
@@ -3551,7 +3553,7 @@ mod forward_compat_tests {
         }
 
         // Verify marked as applied.
-        let sync = SyncStore::new(db.pool());
+        let sync = SyncStore::new(&db.pool().unwrap());
         assert!(sync.is_event_applied(&event.event_id).unwrap());
     }
 

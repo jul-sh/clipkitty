@@ -54,8 +54,14 @@ public enum PendingShareQueue {
         }
     }
 
-    /// A dequeued item whose payload contains exactly the data its variant needs.
-    public enum DequeuedItem {
+    /// A pending item keeps its durable queue identity separate from the
+    /// payload variant so callers can acknowledge it only after persistence.
+    public struct PendingItem {
+        public let id: UUID
+        public let payload: Payload
+    }
+
+    public enum Payload {
         case text(String)
         case url(String)
         case image(data: Data, thumbnail: Data?)
@@ -94,8 +100,9 @@ public enum PendingShareQueue {
 
     // MARK: - Dequeue (main app)
 
-    /// Reads all pending items and removes them from disk. Safe to call from any thread.
-    public static func dequeueAll(in baseDirectory: URL? = nil) -> [DequeuedItem] {
+    /// Reads all durable pending items without removing them. Call
+    /// `acknowledge` only after the item has been persisted successfully.
+    public static func loadAll(in baseDirectory: URL? = nil) -> [PendingItem] {
         guard let baseDir = pendingDirectory(in: baseDirectory) else { return [] }
         let fm = FileManager.default
         guard fm.fileExists(atPath: baseDir.path) else { return [] }
@@ -105,50 +112,52 @@ public enum PendingShareQueue {
             includingPropertiesForKeys: nil
         ) else { return [] }
 
-        var results: [DequeuedItem] = []
+        var results: [PendingItem] = []
 
         // UUID-named directories are complete, atomically published items.
         // Dot-prefixed staging directories belong to an active or interrupted
         // writer and must never be consumed as corrupt input.
-        for itemDir in entries where UUID(uuidString: itemDir.lastPathComponent) != nil {
+        for itemDir in entries {
+            guard let itemID = UUID(uuidString: itemDir.lastPathComponent) else { continue }
             let manifestURL = itemDir.appendingPathComponent(manifestFilename)
             guard let manifestData = try? Data(contentsOf: manifestURL),
                   let manifest = try? JSONDecoder().decode(Manifest.self, from: manifestData)
             else {
-                // Incomplete or corrupt entry; clean it up
-                try? fm.removeItem(at: itemDir)
+                // Reads can fail transiently while protected files are locked.
+                // Only an explicit acknowledgement may remove a published item.
                 continue
             }
 
-            let item: DequeuedItem
+            let payload: Payload
             switch manifest {
             case let .text(text):
-                item = .text(text)
+                payload = .text(text)
             case let .url(url):
-                item = .url(url)
+                payload = .url(url)
             case .image:
                 guard let imageData = try? Data(
                     contentsOf: itemDir.appendingPathComponent(imageFilename)
                 ) else {
-                    try? fm.removeItem(at: itemDir)
                     continue
                 }
                 let thumbnail = try? Data(
                     contentsOf: itemDir.appendingPathComponent(thumbnailFilename)
                 )
-                item = .image(data: imageData, thumbnail: thumbnail)
+                payload = .image(data: imageData, thumbnail: thumbnail)
             }
 
-            results.append(item)
-            try? fm.removeItem(at: itemDir)
-        }
-
-        // Remove the pending directory itself if now empty
-        if (try? fm.contentsOfDirectory(at: baseDir, includingPropertiesForKeys: nil))?.isEmpty == true {
-            try? fm.removeItem(at: baseDir)
+            results.append(PendingItem(id: itemID, payload: payload))
         }
 
         return results
+    }
+
+    /// Removes one successfully persisted item from the durable queue.
+    public static func acknowledge(_ item: PendingItem, in baseDirectory: URL? = nil) {
+        guard let baseDir = pendingDirectory(in: baseDirectory) else { return }
+        let fm = FileManager.default
+        let itemDirectory = baseDir.appendingPathComponent(item.id.uuidString, isDirectory: true)
+        try? fm.removeItem(at: itemDirectory)
     }
 
     // MARK: - Private

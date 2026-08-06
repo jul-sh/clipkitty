@@ -836,6 +836,8 @@ pub enum ClipKittyError {
     IndexError(String),
     #[error("Store not initialized")]
     NotInitialized,
+    #[error("Store is suspended")]
+    StoreSuspended,
     #[error("Invalid input: {0}")]
     InvalidInput(String),
     #[error("Operation cancelled")]
@@ -965,6 +967,7 @@ impl From<crate::database::DatabaseError> for ClipKittyError {
     fn from(e: crate::database::DatabaseError) -> Self {
         match e {
             crate::database::DatabaseError::Interrupted => ClipKittyError::Cancelled,
+            crate::database::DatabaseError::Suspended => ClipKittyError::StoreSuspended,
             crate::database::DatabaseError::InconsistentData(message) => {
                 ClipKittyError::DataInconsistency(message)
             }

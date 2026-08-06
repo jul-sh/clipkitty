@@ -11,6 +11,7 @@ use crate::interface::{
 use crate::models::StoredItem;
 use crate::search::{generate_preview_for_profile, SNIPPET_CONTEXT_CHARS};
 use chrono::{DateTime, TimeZone, Utc};
+use parking_lot::RwLock;
 use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
@@ -23,6 +24,8 @@ pub enum DatabaseError {
     Sqlite(#[from] rusqlite::Error),
     #[error("Database not initialized")]
     NotInitialized,
+    #[error("Database is suspended")]
+    Suspended,
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Connection pool error: {0}")]
@@ -48,6 +51,7 @@ impl From<purr_sync::SyncError> for DatabaseError {
 
 const SEARCH_METADATA_PREFIX_CHARS: usize = SNIPPET_CONTEXT_CHARS * 4;
 const BROWSE_METADATA_PREFIX_CHARS: usize = SNIPPET_CONTEXT_CHARS * 8;
+const DATABASE_POOL_SIZE: u32 = 8;
 const GENERATED_ITEM_ID_SQL: &str = r#"lower(
     hex(randomblob(4)) || '-' ||
     hex(randomblob(2)) || '-4' ||
@@ -244,8 +248,13 @@ fn enforce_non_null_item_ids(conn: &rusqlite::Connection) -> DatabaseResult<()> 
 ///
 /// Uses r2d2 connection pool for concurrent read access.
 /// WAL mode enables readers to proceed without blocking each other.
+enum DatabaseLifecycle {
+    Open { pool: Pool<SqliteConnectionManager> },
+    Suspended,
+}
+
 pub struct Database {
-    pool: Pool<SqliteConnectionManager>,
+    lifecycle: RwLock<DatabaseLifecycle>,
 }
 
 impl Database {
@@ -262,12 +271,25 @@ impl Database {
                     PRAGMA secure_delete=ON;
                 ",
             )?;
+            #[cfg(target_os = "ios")]
+            conn.set_db_config(
+                rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+                true,
+            )?;
             Ok(())
         });
 
-        let pool = Pool::builder().max_size(8).build(manager)?;
+        let pool = Pool::builder()
+            .max_size(DATABASE_POOL_SIZE)
+            .min_idle(Some(DATABASE_POOL_SIZE))
+            .test_on_check_out(false)
+            .max_lifetime(None)
+            .idle_timeout(None)
+            .build(manager)?;
 
-        let db = Self { pool };
+        let db = Self {
+            lifecycle: RwLock::new(DatabaseLifecycle::Open { pool }),
+        };
         db.setup_schema()?;
         Ok(db)
     }
@@ -282,35 +304,54 @@ impl Database {
                     PRAGMA foreign_keys=ON;
                 ",
             )?;
+            #[cfg(target_os = "ios")]
+            conn.set_db_config(
+                rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+                true,
+            )?;
             Ok(())
         });
 
         // In-memory needs single connection to maintain state
-        let pool = Pool::builder().max_size(1).build(manager)?;
+        let pool = Pool::builder()
+            .max_size(1)
+            .min_idle(Some(1))
+            .test_on_check_out(false)
+            .max_lifetime(None)
+            .idle_timeout(None)
+            .build(manager)?;
 
-        let db = Self { pool };
+        let db = Self {
+            lifecycle: RwLock::new(DatabaseLifecycle::Open { pool }),
+        };
         db.setup_schema()?;
         Ok(db)
     }
 
     /// Get a connection from the pool
     pub(crate) fn get_conn(&self) -> DatabaseResult<PooledConnection<SqliteConnectionManager>> {
-        Ok(self.pool.get()?)
+        Ok(self.pool()?.get()?)
     }
 
-    /// Expose the connection pool for subsystems that manage their own SQL.
-    pub fn pool(&self) -> &Pool<SqliteConnectionManager> {
-        &self.pool
+    /// Clone the open pool for a bounded subsystem operation.
+    pub fn pool(&self) -> DatabaseResult<Pool<SqliteConnectionManager>> {
+        match &*self.lifecycle.read() {
+            DatabaseLifecycle::Open { pool } => Ok(pool.clone()),
+            DatabaseLifecycle::Suspended => Err(DatabaseError::Suspended),
+        }
     }
 
-    /// Best-effort checkpoint before iOS suspends the process.
-    ///
-    /// The app closes the store immediately after this; the checkpoint just
-    /// shortens any remaining WAL work while the connections are still alive.
-    pub fn checkpoint_for_suspend(&self) -> DatabaseResult<()> {
-        let conn = self.get_conn()?;
-        conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);")?;
-        Ok(())
+    /// Terminally destroy all SQLite connections after store admission drains.
+    pub fn close_for_suspend(&self) {
+        let pool = {
+            let mut lifecycle = self.lifecycle.write();
+            let prior = std::mem::replace(&mut *lifecycle, DatabaseLifecycle::Suspended);
+            match prior {
+                DatabaseLifecycle::Open { pool } => pool,
+                DatabaseLifecycle::Suspended => return,
+            }
+        };
+        drop(pool);
     }
 
     /// Set up the database schema (normalized: items + child tables)
@@ -1665,14 +1706,36 @@ impl Database {
     }
 }
 
-// `Database` is inherently thread-safe: its sole field is an r2d2 `Pool`, which
-// is already `Send + Sync`, so `Send`/`Sync` auto-derive. Manual `unsafe impl`s
-// would only mask a future field that is not thread-safe.
+// The lifecycle lock and r2d2 pool are both `Send + Sync`, so `Database`
+// auto-derives those guarantees without an unsafe implementation.
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn pool_is_eager_and_terminal_close_releases_it() {
+        let file = NamedTempFile::new().unwrap();
+        let db = Database::open(file.path()).unwrap();
+        let pool = db.pool().unwrap();
+        assert_eq!(pool.max_size(), DATABASE_POOL_SIZE);
+        assert_eq!(pool.min_idle(), Some(DATABASE_POOL_SIZE));
+        assert!(!pool.test_on_check_out());
+        assert_eq!(pool.state().connections, DATABASE_POOL_SIZE);
+        assert_eq!(pool.state().idle_connections, DATABASE_POOL_SIZE);
+        let conn = db.get_conn().unwrap();
+
+        #[cfg(target_os = "ios")]
+        assert!(conn
+            .db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE)
+            .unwrap());
+        drop(conn);
+        drop(pool);
+
+        db.close_for_suspend();
+        assert!(matches!(db.pool(), Err(DatabaseError::Suspended)));
+    }
 
     fn seed_base_item(
         db: &Database,

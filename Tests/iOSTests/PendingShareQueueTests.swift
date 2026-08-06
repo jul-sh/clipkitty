@@ -6,11 +6,15 @@ final class PendingShareQueueTests: TemporaryDirectoryTestCase {
     func testTextRoundTrips() throws {
         try PendingShareQueue.enqueueText("from share sheet", in: temporaryDirectory)
 
-        let dequeued = try XCTUnwrap(PendingShareQueue.dequeueAll(in: temporaryDirectory).first)
-        guard case let .text(text) = dequeued else {
+        let pending = try XCTUnwrap(PendingShareQueue.loadAll(in: temporaryDirectory).first)
+        guard case let .text(text) = pending.payload else {
             return XCTFail("Expected text payload")
         }
         XCTAssertEqual(text, "from share sheet")
+
+        XCTAssertEqual(PendingShareQueue.loadAll(in: temporaryDirectory).count, 1)
+        PendingShareQueue.acknowledge(pending, in: temporaryDirectory)
+        XCTAssertTrue(PendingShareQueue.loadAll(in: temporaryDirectory).isEmpty)
     }
 
     func testImageRoundTripsThumbnailAndData() throws {
@@ -22,15 +26,15 @@ final class PendingShareQueueTests: TemporaryDirectoryTestCase {
             in: temporaryDirectory
         )
 
-        let dequeued = try XCTUnwrap(PendingShareQueue.dequeueAll(in: temporaryDirectory).first)
-        guard case let .image(dequeuedData, dequeuedThumbnail) = dequeued else {
+        let pending = try XCTUnwrap(PendingShareQueue.loadAll(in: temporaryDirectory).first)
+        guard case let .image(dequeuedData, dequeuedThumbnail) = pending.payload else {
             return XCTFail("Expected image payload")
         }
         XCTAssertEqual(dequeuedThumbnail, thumbnail)
         XCTAssertEqual(dequeuedData, imageData)
     }
 
-    func testImageManifestWithoutImageDataIsDiscarded() throws {
+    func testImageManifestWithoutReadableImageDataRemainsQueued() throws {
         let itemDir = temporaryDirectory
             .appendingPathComponent("ClipKitty", isDirectory: true)
             .appendingPathComponent("pending", isDirectory: true)
@@ -39,8 +43,11 @@ final class PendingShareQueueTests: TemporaryDirectoryTestCase {
         let manifest = #"{"type":"image"}"#
         try Data(manifest.utf8).write(to: itemDir.appendingPathComponent("manifest.json"))
 
-        XCTAssertTrue(PendingShareQueue.dequeueAll(in: temporaryDirectory).isEmpty)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: itemDir.path))
+        XCTAssertTrue(PendingShareQueue.loadAll(in: temporaryDirectory).isEmpty)
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: itemDir.path),
+            "A transiently unreadable payload must remain queued for retry"
+        )
     }
 
     func testUnpublishedStagingDirectoryIsNeverConsumed() throws {
@@ -54,14 +61,14 @@ final class PendingShareQueueTests: TemporaryDirectoryTestCase {
         try Data(#"{"type":"text","text":"not published yet"}"#.utf8)
             .write(to: stagingDirectory.appendingPathComponent("manifest.json"))
 
-        XCTAssertTrue(PendingShareQueue.dequeueAll(in: temporaryDirectory).isEmpty)
+        XCTAssertTrue(PendingShareQueue.loadAll(in: temporaryDirectory).isEmpty)
         XCTAssertTrue(FileManager.default.fileExists(atPath: stagingDirectory.path))
 
         let publishedDirectory = pendingDirectory.appendingPathComponent(itemID, isDirectory: true)
         try FileManager.default.moveItem(at: stagingDirectory, to: publishedDirectory)
 
-        let item = try XCTUnwrap(PendingShareQueue.dequeueAll(in: temporaryDirectory).first)
-        guard case let .text(text) = item else {
+        let item = try XCTUnwrap(PendingShareQueue.loadAll(in: temporaryDirectory).first)
+        guard case let .text(text) = item.payload else {
             return XCTFail("Expected text payload")
         }
         XCTAssertEqual(text, "not published yet")

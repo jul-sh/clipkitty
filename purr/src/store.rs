@@ -11,21 +11,214 @@ use crate::interface::{
 use crate::sync_bridge::{snapshot_from_stored_item_with_bookmark, RealSyncEmitter, SyncEmitter};
 use crate::{match_presentation, save_service, search_service};
 use once_cell::sync::Lazy;
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Once};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
-/// Global fallback Tokio runtime for when async functions are called outside any runtime context.
-static FALLBACK_RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
+/// Process-owned runtime for store work that must not be abandoned with a caller executor.
+static STORE_RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .expect("Failed to create fallback tokio runtime")
+        .expect("Failed to create store tokio runtime")
 });
 
 static RAYON_INIT: Once = Once::new();
+
+enum StoreLifecycle {
+    Active {
+        operations: usize,
+        active_search: Option<CancellationToken>,
+    },
+    Sealed {
+        operations: usize,
+    },
+    Draining {
+        operations: usize,
+    },
+    Suspended,
+}
+
+enum SuspensionStart {
+    Leader,
+    AlreadySuspended,
+}
+
+struct StoreAdmission {
+    lifecycle: Mutex<StoreLifecycle>,
+    changed: Condvar,
+}
+
+impl StoreAdmission {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            lifecycle: Mutex::new(StoreLifecycle::Active {
+                operations: 0,
+                active_search: None,
+            }),
+            changed: Condvar::new(),
+        })
+    }
+
+    fn admit(self: &Arc<Self>) -> Result<StoreOperationPermit, ClipKittyError> {
+        let mut lifecycle = self.lifecycle.lock();
+        match &mut *lifecycle {
+            StoreLifecycle::Active { operations, .. } => {
+                *operations = operations.checked_add(1).ok_or_else(|| {
+                    ClipKittyError::DataInconsistency(
+                        "store operation count overflowed".to_string(),
+                    )
+                })?;
+                Ok(StoreOperationPermit {
+                    admission: Arc::clone(self),
+                })
+            }
+            StoreLifecycle::Sealed { .. }
+            | StoreLifecycle::Draining { .. }
+            | StoreLifecycle::Suspended => Err(ClipKittyError::StoreSuspended),
+        }
+    }
+
+    fn admit_search(
+        self: &Arc<Self>,
+        token: CancellationToken,
+    ) -> Result<StoreOperationPermit, ClipKittyError> {
+        let mut lifecycle = self.lifecycle.lock();
+        match &mut *lifecycle {
+            StoreLifecycle::Active {
+                operations,
+                active_search,
+            } => {
+                *operations = operations.checked_add(1).ok_or_else(|| {
+                    ClipKittyError::DataInconsistency(
+                        "store operation count overflowed".to_string(),
+                    )
+                })?;
+                if let Some(previous) = active_search.replace(token) {
+                    previous.cancel();
+                }
+                Ok(StoreOperationPermit {
+                    admission: Arc::clone(self),
+                })
+            }
+            StoreLifecycle::Sealed { .. }
+            | StoreLifecycle::Draining { .. }
+            | StoreLifecycle::Suspended => Err(ClipKittyError::StoreSuspended),
+        }
+    }
+
+    fn seal_for_suspension(&self) {
+        let mut lifecycle = self.lifecycle.lock();
+        let operations = match &mut *lifecycle {
+            StoreLifecycle::Active {
+                operations,
+                active_search,
+            } => {
+                if let Some(token) = active_search.take() {
+                    token.cancel();
+                }
+                Some(*operations)
+            }
+            StoreLifecycle::Sealed { .. }
+            | StoreLifecycle::Draining { .. }
+            | StoreLifecycle::Suspended => None,
+        };
+        if let Some(operations) = operations {
+            *lifecycle = StoreLifecycle::Sealed { operations };
+            self.changed.notify_all();
+        }
+    }
+
+    fn claim_suspension(&self) -> SuspensionStart {
+        let mut lifecycle = self.lifecycle.lock();
+        loop {
+            match &mut *lifecycle {
+                StoreLifecycle::Active {
+                    operations,
+                    active_search,
+                } => {
+                    let operations = *operations;
+                    if let Some(token) = active_search.take() {
+                        token.cancel();
+                    }
+                    *lifecycle = StoreLifecycle::Draining { operations };
+                    return SuspensionStart::Leader;
+                }
+                StoreLifecycle::Sealed { operations } => {
+                    let operations = *operations;
+                    *lifecycle = StoreLifecycle::Draining { operations };
+                    return SuspensionStart::Leader;
+                }
+                StoreLifecycle::Draining { .. } => self.changed.wait(&mut lifecycle),
+                StoreLifecycle::Suspended => return SuspensionStart::AlreadySuspended,
+            }
+        }
+    }
+
+    fn wait_for_operations(&self) {
+        let mut lifecycle = self.lifecycle.lock();
+        loop {
+            match &*lifecycle {
+                StoreLifecycle::Draining { operations: 0 } => return,
+                StoreLifecycle::Draining { .. } => self.changed.wait(&mut lifecycle),
+                StoreLifecycle::Active { .. }
+                | StoreLifecycle::Sealed { .. }
+                | StoreLifecycle::Suspended => {
+                    unreachable!("only the suspension leader can wait for store operations")
+                }
+            }
+        }
+    }
+
+    fn finish_suspension(&self) {
+        let mut lifecycle = self.lifecycle.lock();
+        match &*lifecycle {
+            StoreLifecycle::Draining { operations: 0 } => {
+                *lifecycle = StoreLifecycle::Suspended;
+                self.changed.notify_all();
+            }
+            StoreLifecycle::Active { .. }
+            | StoreLifecycle::Sealed { .. }
+            | StoreLifecycle::Draining { .. }
+            | StoreLifecycle::Suspended => {
+                unreachable!("store suspension can finish only after its operations drain")
+            }
+        }
+    }
+
+    fn release_operation(&self) {
+        let mut lifecycle = self.lifecycle.lock();
+        match &mut *lifecycle {
+            StoreLifecycle::Active { operations, .. } | StoreLifecycle::Draining { operations } => {
+                *operations = operations
+                    .checked_sub(1)
+                    .expect("store operation permit released exactly once");
+                self.changed.notify_all();
+            }
+            StoreLifecycle::Sealed { operations } => {
+                *operations = operations
+                    .checked_sub(1)
+                    .expect("store operation permit released exactly once");
+                self.changed.notify_all();
+            }
+            StoreLifecycle::Suspended => {
+                unreachable!("a suspended store cannot retain an operation permit")
+            }
+        }
+    }
+}
+
+struct StoreOperationPermit {
+    admission: Arc<StoreAdmission>,
+}
+
+impl Drop for StoreOperationPermit {
+    fn drop(&mut self) {
+        self.admission.release_operation();
+    }
+}
 
 fn init_rayon() {
     RAYON_INIT.call_once(|| {
@@ -47,15 +240,12 @@ fn init_rayon() {
 
 #[derive(uniffi::Object)]
 pub struct ClipboardStore {
+    admission: Arc<StoreAdmission>,
     db: Arc<Database>,
     indexer: Arc<Indexer>,
     analysis_cache: Arc<match_presentation::HighlightAnalysisCache>,
     #[cfg(feature = "sync")]
     sync_emitter: Arc<RealSyncEmitter>,
-    /// Token for the currently running search, if any. The store allows one in-flight
-    /// search: beginning a search cancels the previous one by calling cancel() on this
-    /// token, so each UI surface must funnel interactive searches through a single owner.
-    active_search_token: Arc<Mutex<Option<CancellationToken>>>,
 }
 
 struct SearchCompletionCell {
@@ -102,18 +292,18 @@ impl ClipboardStore {
     #[cfg(test)]
     pub(crate) fn new_in_memory() -> Result<Self, ClipKittyError> {
         init_rayon();
-        let database = Database::open_in_memory().map_err(ClipKittyError::from)?;
+        let database = Arc::new(Database::open_in_memory().map_err(ClipKittyError::from)?);
         let indexer = Indexer::new_in_memory()?;
         #[cfg(feature = "sync")]
-        let sync_emitter = Arc::new(RealSyncEmitter::new(database.pool().clone()));
+        let sync_emitter = Arc::new(RealSyncEmitter::new(Arc::clone(&database)));
 
         Ok(Self {
-            db: Arc::new(database),
+            admission: StoreAdmission::new(),
+            db: database,
             indexer: Arc::new(indexer),
             analysis_cache: Arc::new(match_presentation::HighlightAnalysisCache::default()),
             #[cfg(feature = "sync")]
             sync_emitter,
-            active_search_token: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -124,7 +314,10 @@ impl ClipboardStore {
     }
 
     fn runtime_handle(&self) -> tokio::runtime::Handle {
-        tokio::runtime::Handle::try_current().unwrap_or_else(|_| FALLBACK_RUNTIME.handle().clone())
+        // Search work must outlive the caller's executor so its admission
+        // permit cannot disappear while a spawn_blocking body still owns DB
+        // or index resources. The process runtime is drained by store suspension.
+        STORE_RUNTIME.handle().clone()
     }
 
     fn index_path_for_database(path: &Path) -> PathBuf {
@@ -156,20 +349,20 @@ impl ClipboardStore {
     }
 
     fn open_at_path(path: &Path) -> Result<Self, ClipKittyError> {
-        let db = Database::open(path).map_err(ClipKittyError::from)?;
+        let db = Arc::new(Database::open(path).map_err(ClipKittyError::from)?);
         let index_path = Self::index_path_for_database(path);
         Self::remove_stale_index_dirs(&index_path);
         let indexer = Indexer::new(&index_path)?;
         #[cfg(feature = "sync")]
-        let sync_emitter = Arc::new(RealSyncEmitter::new(db.pool().clone()));
+        let sync_emitter = Arc::new(RealSyncEmitter::new(Arc::clone(&db)));
 
         Ok(Self {
-            db: Arc::new(db),
+            admission: StoreAdmission::new(),
+            db,
             indexer: Arc::new(indexer),
             analysis_cache: Arc::new(match_presentation::HighlightAnalysisCache::default()),
             #[cfg(feature = "sync")]
             sync_emitter,
-            active_search_token: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -221,13 +414,13 @@ impl ClipboardStore {
             token: token.clone(),
             completion: completion.clone(),
         });
-        {
-            let mut active = self.active_search_token.lock();
-            if let Some(prev) = active.take() {
-                prev.cancel();
+        let permit = match self.admission.admit_search(token.clone()) {
+            Ok(permit) => permit,
+            Err(error) => {
+                completion.finish(Err(error));
+                return operation;
             }
-            *active = Some(token.clone());
-        }
+        };
 
         let db = Arc::clone(&self.db);
         let indexer = Arc::clone(&self.indexer);
@@ -236,6 +429,7 @@ impl ClipboardStore {
 
         let runtime_clone = runtime.clone();
         runtime.spawn(async move {
+            let _permit = permit;
             let result = search_service::execute_search(
                 search_service::SearchContext {
                     db,
@@ -271,13 +465,14 @@ impl ClipboardStore {
     }
 
     pub fn rebuild_index(&self) -> Result<(), ClipKittyError> {
+        let _permit = self.admission.admit()?;
         self.rebuild_index_contents()?;
         #[cfg(feature = "sync")]
         {
             use purr_sync::store::SyncStore;
             use purr_sync::types::FLAG_INDEX_DIRTY;
 
-            let sync = SyncStore::new(self.db.pool());
+            let sync = SyncStore::new(&self.db.pool()?);
             sync.clear_index_queue()?;
             sync.set_dirty_flag(FLAG_INDEX_DIRTY, false)?;
         }
@@ -285,11 +480,21 @@ impl ClipboardStore {
     }
 
     pub fn prepare_for_suspend(&self) {
-        if let Some(token) = self.active_search_token.lock().take() {
-            token.cancel();
+        self.begin_suspend();
+        match self.admission.claim_suspension() {
+            SuspensionStart::Leader => {}
+            SuspensionStart::AlreadySuspended => return,
         }
+        self.admission.wait_for_operations();
         let _ = self.indexer.prepare_for_suspend();
-        let _ = self.db.checkpoint_for_suspend();
+        self.db.close_for_suspend();
+        self.admission.finish_suspension();
+    }
+
+    /// Synchronously reject new work and cancel the active search. The slower
+    /// drain remains in `prepare_for_suspend`, which callers can run off-thread.
+    pub fn begin_suspend(&self) {
+        self.admission.seal_for_suspension();
     }
 
     pub fn start_search(
@@ -355,6 +560,9 @@ pub fn inspect_store_bootstrap(db_path: String) -> Result<StoreBootstrapPlan, Cl
 #[async_trait::async_trait]
 impl ClipboardStoreApi for ClipboardStore {
     fn database_size(&self) -> i64 {
+        let Ok(_permit) = self.admission.admit() else {
+            return 0;
+        };
         self.db.database_size().unwrap_or(0)
     }
 
@@ -364,6 +572,7 @@ impl ClipboardStoreApi for ClipboardStore {
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Result<String, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         let outcome = save_service::save_text(
             &self.db,
             &self.indexer,
@@ -397,9 +606,6 @@ impl ClipboardStoreApi for ClipboardStore {
         filter: ItemQueryFilter,
         presentation: ListPresentationProfile,
     ) -> Result<SearchResult, ClipKittyError> {
-        if filter == ItemQueryFilter::All {
-            return self.search(query, presentation).await;
-        }
         match self
             .begin_search_operation(query, filter, presentation)
             .await_result()
@@ -411,6 +617,7 @@ impl ClipboardStoreApi for ClipboardStore {
     }
 
     fn fetch_by_ids(&self, item_ids: Vec<String>) -> Result<Vec<ClipboardItem>, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         let stored_items = self.db.fetch_items_by_item_ids(&item_ids)?;
         let mut items: Vec<ClipboardItem> = stored_items
             .into_iter()
@@ -427,6 +634,7 @@ impl ClipboardStoreApi for ClipboardStore {
         &self,
         requests: Vec<MatchedExcerptRequest>,
     ) -> Result<Vec<MatchedExcerptResolution>, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         search_service::resolve_matched_excerpts(&self.db, &self.analysis_cache, requests)
     }
 
@@ -435,6 +643,7 @@ impl ClipboardStoreApi for ClipboardStore {
         item_id: String,
         query: String,
     ) -> Result<Option<PreviewPayload>, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         search_service::load_preview_payload(&self.db, &self.analysis_cache, item_id, query)
     }
 
@@ -444,6 +653,7 @@ impl ClipboardStoreApi for ClipboardStore {
         source_app: Option<String>,
         source_app_bundle_id: Option<String>,
     ) -> Result<String, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         let outcome = save_service::save_files(
             &self.db,
             &self.indexer,
@@ -464,6 +674,7 @@ impl ClipboardStoreApi for ClipboardStore {
         source_app_bundle_id: Option<String>,
         is_animated: bool,
     ) -> Result<String, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         let outcome = save_service::save_image(
             &self.db,
             &self.indexer,
@@ -485,6 +696,7 @@ impl ClipboardStoreApi for ClipboardStore {
         description: Option<String>,
         image_data: Option<Vec<u8>>,
     ) -> Result<(), ClipKittyError> {
+        let _permit = self.admission.admit()?;
         let row_id = self.require_row_id(&item_id)?;
         #[allow(unused_variables)]
         let resolved =
@@ -503,6 +715,7 @@ impl ClipboardStoreApi for ClipboardStore {
         item_id: String,
         description: String,
     ) -> Result<(), ClipKittyError> {
+        let _permit = self.admission.admit()?;
         let row_id = self.require_row_id(&item_id)?;
         // Bake in the "Image: " label once, up front, so the sync event and the
         // local store record the identical prefixed description across devices.
@@ -523,6 +736,7 @@ impl ClipboardStoreApi for ClipboardStore {
     }
 
     fn update_text_item(&self, item_id: String, text: String) -> Result<(), ClipKittyError> {
+        let _permit = self.admission.admit()?;
         let row_id = self.require_row_id(&item_id)?;
         #[cfg(feature = "sync")]
         self.sync_emitter.emit_text_edited(&item_id, &text)?;
@@ -538,6 +752,7 @@ impl ClipboardStoreApi for ClipboardStore {
     }
 
     fn update_timestamp(&self, item_id: String) -> Result<(), ClipKittyError> {
+        let _permit = self.admission.admit()?;
         let row_id = self.require_row_id(&item_id)?;
         #[allow(unused_variables)]
         let timestamp_unix = match save_service::update_timestamp(&self.db, &self.indexer, row_id)?
@@ -557,6 +772,7 @@ impl ClipboardStoreApi for ClipboardStore {
     }
 
     fn add_tag(&self, item_id: String, tag: ItemTag) -> Result<(), ClipKittyError> {
+        let _permit = self.admission.admit()?;
         let row_id = self.require_row_id(&item_id)?;
         #[cfg(feature = "sync")]
         self.sync_emitter.emit_bookmark_set(&item_id)?;
@@ -565,6 +781,7 @@ impl ClipboardStoreApi for ClipboardStore {
     }
 
     fn remove_tag(&self, item_id: String, tag: ItemTag) -> Result<(), ClipKittyError> {
+        let _permit = self.admission.admit()?;
         let row_id = self.require_row_id(&item_id)?;
         #[cfg(feature = "sync")]
         self.sync_emitter.emit_bookmark_cleared(&item_id)?;
@@ -573,6 +790,7 @@ impl ClipboardStoreApi for ClipboardStore {
     }
 
     fn delete_item(&self, item_id: String) -> Result<(), ClipKittyError> {
+        let _permit = self.admission.admit()?;
         let row_id = self.require_row_id(&item_id)?;
         #[cfg(feature = "sync")]
         self.sync_emitter.emit_item_deleted(&item_id)?;
@@ -581,6 +799,7 @@ impl ClipboardStoreApi for ClipboardStore {
     }
 
     fn clear(&self) -> Result<(), ClipKittyError> {
+        let _permit = self.admission.admit()?;
         #[cfg(feature = "sync")]
         for row_id in self.db.fetch_all_item_ids()? {
             if let Some(stable_id) = self.resolve_item_id(row_id)? {
@@ -592,6 +811,7 @@ impl ClipboardStoreApi for ClipboardStore {
     }
 
     fn prune_to_size(&self, max_bytes: i64, keep_ratio: f64) -> Result<u64, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         let outcome = save_service::prune_to_size(&self.db, &self.indexer, max_bytes, keep_ratio)?;
 
         #[cfg(feature = "sync")]
@@ -633,7 +853,7 @@ impl ClipboardStore {
         use purr_sync::store::SyncStore;
         use purr_sync::types::FLAG_INDEX_DIRTY;
 
-        let sync = SyncStore::new(self.db.pool());
+        let sync = SyncStore::new(&self.db.pool()?);
         sync.enqueue_index_upsert(item_id)?;
         sync.set_dirty_flag(FLAG_INDEX_DIRTY, true)?;
         Ok(())
@@ -643,7 +863,7 @@ impl ClipboardStore {
         use purr_sync::store::SyncStore;
         use purr_sync::types::FLAG_INDEX_DIRTY;
 
-        let sync = SyncStore::new(self.db.pool());
+        let sync = SyncStore::new(&self.db.pool()?);
         sync.enqueue_index_delete(item_id)?;
         sync.set_dirty_flag(FLAG_INDEX_DIRTY, true)?;
         Ok(())
@@ -665,7 +885,7 @@ impl ClipboardStore {
         use purr_sync::store::{ProjectionState, SyncStore};
         use purr_sync::types::ItemAggregate;
 
-        let sync = SyncStore::new(self.db.pool());
+        let sync = SyncStore::new(&self.db.pool()?);
 
         // Resolve local row ID: look up by item_id in the items table,
         // falling back to the caller-provided hint.
@@ -745,7 +965,7 @@ impl ClipboardStore {
     ) -> Result<Option<i64>, ClipKittyError> {
         use purr_sync::store::SyncStore;
 
-        let sync = SyncStore::new(self.db.pool());
+        let sync = SyncStore::new(&self.db.pool()?);
         let Some(_) = sync.fetch_projection(item_id)? else {
             return Ok(self
                 .db
@@ -776,7 +996,7 @@ impl ClipboardStore {
         let items = self.db.fetch_all_items()?;
         let item_ids: Vec<String> = items.iter().map(|item| item.item_id.clone()).collect();
         let tags_by_item_id = self.db.get_tags_for_item_ids(&item_ids)?;
-        let sync = SyncStore::new(self.db.pool());
+        let sync = SyncStore::new(&self.db.pool()?);
 
         items
             .into_iter()
@@ -839,6 +1059,9 @@ impl ClipboardStore {
     /// Set the device ID used for locally-originated sync events.
     /// Called by SyncEngine.start() with the stable UUID from UserDefaults.
     pub fn set_sync_device_id(&self, device_id: String) {
+        let Ok(_permit) = self.admission.admit() else {
+            return;
+        };
         self.sync_emitter.set_device_id(device_id);
     }
 
@@ -846,10 +1069,11 @@ impl ClipboardStore {
     pub fn pending_local_events(
         &self,
     ) -> Result<Vec<crate::interface::SyncEventRecord>, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         use crate::interface::SyncEventRecord;
         use purr_sync::store::SyncStore;
 
-        let sync = SyncStore::new(self.db.pool());
+        let sync = SyncStore::new(&self.db.pool()?);
         let events = sync.fetch_pending_upload_events()?;
         Ok(events
             .into_iter()
@@ -873,10 +1097,11 @@ impl ClipboardStore {
     pub fn pending_snapshot_records(
         &self,
     ) -> Result<Vec<crate::interface::SyncSnapshotRecord>, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         use crate::interface::SyncSnapshotRecord;
         use purr_sync::store::SyncStore;
 
-        let sync = SyncStore::new(self.db.pool());
+        let sync = SyncStore::new(&self.db.pool()?);
         let snapshots = sync.fetch_pending_upload_snapshots()?;
         Ok(snapshots
             .into_iter()
@@ -895,9 +1120,10 @@ impl ClipboardStore {
 
     /// Mark events as uploaded after CloudKit confirms receipt.
     pub fn mark_events_uploaded(&self, event_ids: Vec<String>) -> Result<(), ClipKittyError> {
+        let _permit = self.admission.admit()?;
         use purr_sync::store::SyncStore;
 
-        let sync = SyncStore::new(self.db.pool());
+        let sync = SyncStore::new(&self.db.pool()?);
         let refs: Vec<&str> = event_ids.iter().map(|s| s.as_str()).collect();
         sync.mark_events_uploaded(&refs)?;
         Ok(())
@@ -905,9 +1131,10 @@ impl ClipboardStore {
 
     /// Mark a snapshot as uploaded to CloudKit.
     pub fn mark_snapshot_uploaded(&self, item_id: String) -> Result<(), ClipKittyError> {
+        let _permit = self.admission.admit()?;
         use purr_sync::store::SyncStore;
 
-        let sync = SyncStore::new(self.db.pool());
+        let sync = SyncStore::new(&self.db.pool()?);
         sync.mark_snapshot_uploaded(&item_id)?;
         Ok(())
     }
@@ -920,6 +1147,7 @@ impl ClipboardStore {
         event_records: Vec<crate::interface::SyncEventRecord>,
         snapshot_records: Vec<crate::interface::SyncSnapshotRecord>,
     ) -> Result<crate::interface::SyncDownloadBatchOutcome, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         use crate::interface::SyncDownloadBatchOutcome;
         use purr_sync::event::ItemEvent;
         use purr_sync::replay;
@@ -952,7 +1180,7 @@ impl ClipboardStore {
             .map_err(|e| ClipKittyError::InvalidInput(e))?;
 
             let item_id = snapshot.item_id.clone();
-            let applied = replay::apply_remote_snapshots(self.db.pool(), &[snapshot])?;
+            let applied = replay::apply_remote_snapshots(&self.db.pool()?, &[snapshot])?;
             let local_item_id = self.materialize_current_sync_state(
                 &item_id,
                 true,
@@ -981,7 +1209,7 @@ impl ClipboardStore {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let mut batch_result = replay::apply_remote_event_batch(self.db.pool(), &events)?;
+        let mut batch_result = replay::apply_remote_event_batch(&self.db.pool()?, &events)?;
 
         // Materialize Applied events into the read model.
         // Re-fetch the applied events' aggregates from the sync store.
@@ -1041,6 +1269,7 @@ impl ClipboardStore {
         &self,
         record: crate::interface::SyncEventRecord,
     ) -> Result<crate::interface::SyncApplyOutcome, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         use crate::interface::SyncApplyOutcome;
         use purr_sync::event::ItemEvent;
         use purr_sync::replay;
@@ -1058,7 +1287,7 @@ impl ClipboardStore {
         .map_err(|e| ClipKittyError::InvalidInput(e))?;
 
         let fallback_local_item_id = self.db.fetch_row_id_by_item_id(&record.item_id)?;
-        let result = replay::apply_remote_event(self.db.pool(), &event)?;
+        let result = replay::apply_remote_event(&self.db.pool()?, &event)?;
 
         match &result {
             ApplyResult::Applied(_) => {
@@ -1096,6 +1325,7 @@ impl ClipboardStore {
         &self,
         record: crate::interface::SyncSnapshotRecord,
     ) -> Result<bool, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         use purr_sync::replay;
         use purr_sync::snapshot::ItemSnapshot;
 
@@ -1112,21 +1342,22 @@ impl ClipboardStore {
 
         let item_id = snapshot.item_id.clone();
         let fallback_local_item_id = self.db.fetch_row_id_by_item_id(&item_id)?;
-        let applied = replay::apply_remote_snapshots(self.db.pool(), &[snapshot])?;
+        let applied = replay::apply_remote_snapshots(&self.db.pool()?, &[snapshot])?;
         let _ = self.materialize_current_sync_state(&item_id, true, fallback_local_item_id)?;
         Ok(applied > 0)
     }
 
     /// Run compaction and retention for all items.
     pub fn run_compaction(&self) -> Result<crate::interface::CompactionResult, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         use crate::interface::CompactionResult;
         use purr_sync::compactor;
 
-        let items_compacted = compactor::compact_all(self.db.pool())? as u64;
+        let items_compacted = compactor::compact_all(&self.db.pool()?)? as u64;
         // Old compacted events stay local until CloudKit deletion is confirmed so
         // event cleanup and dedup pruning share one authoritative handoff.
         let events_purged = 0;
-        let tombstones_purged = compactor::purge_tombstone_snapshots(self.db.pool())? as u64;
+        let tombstones_purged = compactor::purge_tombstone_snapshots(&self.db.pool()?)? as u64;
 
         Ok(CompactionResult {
             items_compacted,
@@ -1154,6 +1385,7 @@ impl ClipboardStore {
         snapshot_records: Vec<crate::interface::SyncSnapshotRecord>,
         tail_event_records: Vec<crate::interface::SyncEventRecord>,
     ) -> Result<crate::interface::SyncFullResyncResult, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         use crate::interface::SyncFullResyncResult;
         use purr_sync::event::ItemEvent;
         use purr_sync::replay;
@@ -1213,12 +1445,12 @@ impl ClipboardStore {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let mut result = replay::full_resync(self.db.pool(), &resync_snapshots, &tail_events)?;
+        let mut result = replay::full_resync(&self.db.pool()?, &resync_snapshots, &tail_events)?;
         result.checkpoints_applied = result.checkpoints_applied.saturating_sub(local_base_count);
 
         // CloudKit only deletes local data via explicit tombstone snapshots/events.
         // Absence from the full feed means "missing remote proof", not "deleted".
-        let sync = SyncStore::new(self.db.pool());
+        let sync = SyncStore::new(&self.db.pool()?);
         let all_snapshots = sync.fetch_all_snapshots()?;
         for snapshot in &all_snapshots {
             let _ =
@@ -1242,11 +1474,12 @@ impl ClipboardStore {
         &self,
         device_id: String,
     ) -> Result<crate::interface::SyncDeviceState, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         use crate::interface::SyncDeviceState;
         use purr_sync::store::SyncStore;
         use purr_sync::types::{FLAG_INDEX_DIRTY, FLAG_NEEDS_FULL_RESYNC};
 
-        let sync = SyncStore::new(self.db.pool());
+        let sync = SyncStore::new(&self.db.pool()?);
         let token = sync.fetch_zone_change_token(&device_id)?;
         let needs_resync = sync.get_dirty_flag(FLAG_NEEDS_FULL_RESYNC)?;
         let index_dirty =
@@ -1266,9 +1499,10 @@ impl ClipboardStore {
         device_id: String,
         token: Option<Vec<u8>>,
     ) -> Result<(), ClipKittyError> {
+        let _permit = self.admission.admit()?;
         use purr_sync::store::SyncStore;
 
-        let sync = SyncStore::new(self.db.pool());
+        let sync = SyncStore::new(&self.db.pool()?);
         sync.upsert_device_state(&device_id, token.as_deref())?;
         Ok(())
     }
@@ -1279,19 +1513,21 @@ impl ClipboardStore {
         &self,
         max_age_days: u32,
     ) -> Result<Vec<String>, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         use purr_sync::store::SyncStore;
 
         let threshold = chrono::Utc::now().timestamp() - (max_age_days as i64 * 86400);
-        let sync = SyncStore::new(self.db.pool());
+        let sync = SyncStore::new(&self.db.pool()?);
         let ids = sync.fetch_checkpoint_safe_purgeable_events(threshold)?;
         Ok(ids)
     }
 
     /// Delete local event records after their CloudKit counterparts have been deleted.
     pub fn purge_cloud_events(&self, event_ids: Vec<String>) -> Result<u64, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         use purr_sync::store::SyncStore;
 
-        let sync = SyncStore::new(self.db.pool());
+        let sync = SyncStore::new(&self.db.pool()?);
         let refs: Vec<&str> = event_ids.iter().map(|s| s.as_str()).collect();
         let count = sync.delete_events_and_dedup_by_ids(&refs)?;
         Ok(count as u64)
@@ -1299,10 +1535,11 @@ impl ClipboardStore {
 
     /// Clear the index_dirty flag (after a successful rebuild).
     pub fn clear_index_dirty_flag(&self) -> Result<(), ClipKittyError> {
+        let _permit = self.admission.admit()?;
         use purr_sync::store::SyncStore;
         use purr_sync::types::FLAG_INDEX_DIRTY;
 
-        let sync = SyncStore::new(self.db.pool());
+        let sync = SyncStore::new(&self.db.pool()?);
         if sync.count_index_queue_entries()? == 0 {
             sync.set_dirty_flag(FLAG_INDEX_DIRTY, false)?;
         }
@@ -1311,11 +1548,12 @@ impl ClipboardStore {
 
     /// Enqueue every live item for derived search-index catch-up.
     pub fn enqueue_full_index_rebuild(&self) -> Result<u64, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         use purr_sync::store::SyncStore;
 
         let items = self.db.fetch_all_items()?;
         let item_ids: Vec<String> = items.into_iter().map(|item| item.item_id).collect();
-        let sync = SyncStore::new(self.db.pool());
+        let sync = SyncStore::new(&self.db.pool()?);
         sync.replace_index_queue_with_full_rebuild(&item_ids)?;
         Ok(item_ids.len() as u64)
     }
@@ -1325,11 +1563,12 @@ impl ClipboardStore {
         &self,
         max_items: u32,
     ) -> Result<crate::interface::IndexMaintenanceOutcome, ClipKittyError> {
+        let _permit = self.admission.admit()?;
         use crate::interface::IndexMaintenanceOutcome;
         use purr_sync::store::SyncStore;
         use purr_sync::types::{IndexQueueEntry, FLAG_INDEX_DIRTY};
 
-        let sync = SyncStore::new(self.db.pool());
+        let sync = SyncStore::new(&self.db.pool()?);
         if max_items == 0 {
             let remaining = sync.count_index_queue_entries()?;
             sync.set_dirty_flag(FLAG_INDEX_DIRTY, remaining > 0)?;
@@ -1470,6 +1709,94 @@ mod tests {
         assert!(dup.is_empty());
     }
 
+    #[test]
+    fn suspension_waits_for_admitted_work_and_is_terminal() {
+        let store = Arc::new(ClipboardStore::new_in_memory().unwrap());
+        let permit = store.admission.admit().unwrap();
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        let suspending_store = Arc::clone(&store);
+
+        let suspending_thread = std::thread::spawn(move || {
+            suspending_store.prepare_for_suspend();
+            finished_tx.send(()).unwrap();
+        });
+
+        while !matches!(
+            &*store.admission.lifecycle.lock(),
+            StoreLifecycle::Draining { .. }
+        ) {
+            std::thread::yield_now();
+        }
+        assert!(matches!(
+            finished_rx.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ));
+
+        drop(permit);
+        finished_rx.recv().unwrap();
+        suspending_thread.join().unwrap();
+
+        assert_eq!(
+            store.save_text("too late".into(), None, None),
+            Err(ClipKittyError::StoreSuspended)
+        );
+        store.prepare_for_suspend();
+    }
+
+    #[test]
+    fn suspension_transition_cancels_the_admitted_search_atomically() {
+        let admission = StoreAdmission::new();
+        let token = CancellationToken::new();
+        let permit = admission.admit_search(token.clone()).unwrap();
+
+        admission.seal_for_suspension();
+        assert!(token.is_cancelled());
+        assert!(matches!(
+            admission.claim_suspension(),
+            SuspensionStart::Leader
+        ));
+
+        drop(permit);
+        admission.wait_for_operations();
+        admission.finish_suspension();
+    }
+
+    #[tokio::test]
+    async fn suspended_store_rejects_new_searches() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        store.prepare_for_suspend();
+
+        let operation = store.start_search(
+            "too late".to_string(),
+            ItemQueryFilter::All,
+            ListPresentationProfile::CompactRow,
+        );
+        assert_eq!(
+            operation.await_result().await,
+            Err(ClipKittyError::StoreSuspended)
+        );
+    }
+
+    #[test]
+    fn suspended_store_releases_database_and_index_for_same_path_reopen() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("reopen.db");
+        let store = ClipboardStore::open_at_path(&db_path).unwrap();
+        let item_id = store
+            .save_text("survives terminal suspension".into(), None, None)
+            .unwrap();
+
+        store.prepare_for_suspend();
+        assert!(matches!(
+            store.db.pool(),
+            Err(crate::database::DatabaseError::Suspended)
+        ));
+
+        let reopened = ClipboardStore::open_at_path(&db_path).unwrap();
+        assert_eq!(reopened.fetch_by_ids(vec![item_id]).unwrap().len(), 1);
+        reopened.prepare_for_suspend();
+    }
+
     #[cfg(feature = "sync")]
     #[test]
     fn queued_full_index_rebuild_resets_stale_index_documents() {
@@ -1547,7 +1874,7 @@ mod tests {
 
     #[tokio::test]
     async fn second_consumer_search_cancels_first_consumers_in_flight_search() {
-        // Pins the single-flight contract on active_search_token: starting any
+        // Pins the single-flight search contract: starting any
         // search cancels the previous in-flight one, so each UI surface must
         // funnel interactive searches through a single owner.
         let store = ClipboardStore::new_in_memory().unwrap();

@@ -34,7 +34,7 @@ pub enum CompactionOutcome {
 }
 
 /// Check whether an item needs compaction.
-pub fn needs_compaction(sync: &SyncStore<'_>, item_id: &str) -> SyncResult<bool> {
+pub fn needs_compaction(sync: &SyncStore, item_id: &str) -> SyncResult<bool> {
     let count = sync.count_uncompacted_events(item_id)?;
     if count == 0 {
         return Ok(false);

@@ -6,6 +6,11 @@ import os.signpost
 
 private let poi = OSLog(subsystem: "com.eviljuliette.clipkitty", category: .pointsOfInterest)
 
+public enum BrowserSuspensionWork: Sendable {
+    case quiescent
+    case awaiting(Task<Void, Never>)
+}
+
 @MainActor
 @Observable
 public final class BrowserViewModel {
@@ -73,6 +78,11 @@ public final class BrowserViewModel {
         case performSelectionAction(action: @MainActor () -> Void)
     }
 
+    private enum MutationExecution {
+        case idle
+        case running(Task<Void, Never>)
+    }
+
     private enum TextSaveCompletion {
         /// Persistence succeeded and the saved draft is still the active edit.
         case readyForFollowUp
@@ -102,6 +112,7 @@ public final class BrowserViewModel {
     private var pendingMatchedExcerptItemIds: Set<String> = []
     private var pendingFilterSurfaceTask: Task<Void, Never>?
     private var pendingDeleteTask: Task<Void, Never>?
+    private var mutationExecution: MutationExecution = .idle
     private var queryGeneration = 0
     private var selectionGeneration = 0
     private var hasAppliedInitialSearch = false
@@ -268,7 +279,8 @@ public final class BrowserViewModel {
         startInitialSearch(initialSearchQuery: initialSearchQuery, targetContentRevision: contentRevision)
     }
 
-    public func prepareForSuspension() {
+    @discardableResult
+    public func prepareForSuspension() -> BrowserSuspensionWork {
         flushPendingDelete()
         cancelInFlightWork()
         dismissSnackbarNotification()
@@ -284,6 +296,12 @@ public final class BrowserViewModel {
         // hide/show cycle; the suggestion itself stays valid for the request.
         if case let .suggested(suggestion, _) = pendingFilterState {
             pendingFilterState = .suggested(suggestion, keyboardTarget: restingPendingFilterKeyboardTarget)
+        }
+        switch mutationExecution {
+        case .idle:
+            return .quiescent
+        case let .running(task):
+            return .awaiting(task)
         }
     }
 
@@ -648,10 +666,11 @@ public final class BrowserViewModel {
         previewPayloadsByItemId.removeAll()
         prefetchCache.removeAll()
 
-        Task { [weak self] in
+        mutationExecution = .running(Task { [weak self] in
             guard let self else { return }
             let result = await self.client.clear()
             await MainActor.run {
+                self.mutationExecution = .idle
                 guard case let .clearing(current) = self.mutationState,
                       current.id == transaction.id
                 else { return }
@@ -663,7 +682,7 @@ public final class BrowserViewModel {
                     self.restoreClearFailure(transactionID: transaction.id, error: error)
                 }
             }
-        }
+        })
     }
 
     public func addTagToSelectedItem(_ tag: ItemTag) {
@@ -825,10 +844,11 @@ public final class BrowserViewModel {
         )
         mutationState = .saving(transaction)
 
-        Task { [weak self] in
+        mutationExecution = .running(Task { [weak self] in
             guard let self else { return }
             let result = await self.client.updateTextItem(itemId: id, text: editedText)
             await MainActor.run {
+                self.mutationExecution = .idle
                 switch self.finishTextSave(transactionID: transaction.id, result: result) {
                 case .readyForFollowUp:
                     let actionContextStillCurrent = transaction.queryGeneration == self.queryGeneration
@@ -851,7 +871,7 @@ public final class BrowserViewModel {
                     return
                 }
             }
-        }
+        })
     }
 
     private func finishTextSave(
@@ -1810,7 +1830,7 @@ public final class BrowserViewModel {
         // The undo window is over; the Undo button must not outlive it.
         dismissSnackbarNotification()
 
-        Task { [weak self] in
+        mutationExecution = .running(Task { [weak self] in
             guard let self else { return }
             var lastError: ClipboardError?
             for itemId in transaction.deletedItemIds {
@@ -1820,6 +1840,7 @@ public final class BrowserViewModel {
                 }
             }
             await MainActor.run {
+                self.mutationExecution = .idle
                 guard case .deleting(.committing) = self.mutationState else { return }
                 self.mutationState = lastError.map {
                     .failed(ActionFailure(message: $0.localizedDescription))
@@ -1828,7 +1849,7 @@ public final class BrowserViewModel {
                     discardSelectedPayload: lastError != nil
                 )
             }
-        }
+        })
     }
 
     private func showDeleteUndoNotification(count: Int) {
@@ -2006,13 +2027,14 @@ public final class BrowserViewModel {
         mutationState = .tagging(transaction)
         applyOptimisticTagMutation(itemId: itemId, tag: tag, shouldInclude: shouldInclude)
 
-        Task { [weak self] in
+        mutationExecution = .running(Task { [weak self] in
             guard let self else { return }
             let result: Result<Void, ClipboardError> = shouldInclude
                 ? await self.client.addTag(itemId: itemId, tag: tag)
                 : await self.client.removeTag(itemId: itemId, tag: tag)
 
             await MainActor.run {
+                self.mutationExecution = .idle
                 guard case let .tagging(current) = self.mutationState,
                       current.id == transaction.id
                 else { return }
@@ -2029,7 +2051,7 @@ public final class BrowserViewModel {
                     discardSelectedPayload: discardSelectedPayload
                 )
             }
-        }
+        })
     }
 
     private func applyOptimisticTagMutation(itemId: String, tag: ItemTag, shouldInclude: Bool) {

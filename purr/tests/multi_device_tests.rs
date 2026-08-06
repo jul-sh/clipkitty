@@ -39,8 +39,8 @@ impl TestDevice {
         }
     }
 
-    fn sync_store(&self) -> SyncStore<'_> {
-        SyncStore::new(self.db.pool())
+    fn sync_store(&self) -> SyncStore {
+        SyncStore::new(&self.db.pool().unwrap())
     }
 
     /// Get pending local events for "upload".
@@ -58,7 +58,7 @@ impl TestDevice {
     fn apply_remote_events(&self, events: &[ItemEvent]) -> Vec<ApplyResult> {
         events
             .iter()
-            .map(|e| replay::apply_remote_event(self.db.pool(), e).unwrap())
+            .map(|e| replay::apply_remote_event(&self.db.pool().unwrap(), e).unwrap())
             .collect()
     }
 }
@@ -157,9 +157,9 @@ fn test_concurrent_edit_conflict_forks() {
     );
 
     // Apply the create event on both devices.
-    let result_a = replay::apply_remote_event(device_a.db.pool(), &create_event).unwrap();
+    let result_a = replay::apply_remote_event(&device_a.db.pool().unwrap(), &create_event).unwrap();
     assert!(matches!(result_a, ApplyResult::Applied(_)));
-    let result_b = replay::apply_remote_event(device_b.db.pool(), &create_event).unwrap();
+    let result_b = replay::apply_remote_event(&device_b.db.pool().unwrap(), &create_event).unwrap();
     assert!(matches!(result_b, ApplyResult::Applied(_)));
 
     // Device A edits the text (base version = 1).
@@ -183,11 +183,11 @@ fn test_concurrent_edit_conflict_forks() {
     );
 
     // A applies its own edit first.
-    let result_a = replay::apply_remote_event(device_a.db.pool(), &edit_a).unwrap();
+    let result_a = replay::apply_remote_event(&device_a.db.pool().unwrap(), &edit_a).unwrap();
     assert!(matches!(result_a, ApplyResult::Applied(_)));
 
     // A then receives B's concurrent edit — should fork (stale base version).
-    let result_ab = replay::apply_remote_event(device_a.db.pool(), &edit_b).unwrap();
+    let result_ab = replay::apply_remote_event(&device_a.db.pool().unwrap(), &edit_b).unwrap();
     assert!(
         matches!(result_ab, ApplyResult::Forked(_)),
         "Expected fork for concurrent edit conflict, got {result_ab:?}"
@@ -218,7 +218,8 @@ fn test_offline_reconnect_batch() {
     device_a.mark_uploaded(&events);
 
     // B comes back online and receives all events as a batch.
-    let batch_result = replay::apply_remote_event_batch(device_b.db.pool(), &events).unwrap();
+    let batch_result =
+        replay::apply_remote_event_batch(&device_b.db.pool().unwrap(), &events).unwrap();
     assert_eq!(batch_result.events_applied, 3);
     assert_eq!(batch_result.events_ignored, 0);
     assert_eq!(batch_result.events_deferred, 0);
@@ -240,7 +241,7 @@ fn test_out_of_order_events_deferred_then_resolved() {
     );
 
     // Apply create on A.
-    replay::apply_remote_event(device_a.db.pool(), &create_event).unwrap();
+    replay::apply_remote_event(&device_a.db.pool().unwrap(), &create_event).unwrap();
 
     // A edits the item.
     let edit_event = ItemEvent::new_local(
@@ -253,14 +254,15 @@ fn test_out_of_order_events_deferred_then_resolved() {
     );
 
     // Device B receives the edit BEFORE the create (out of order).
-    let result = replay::apply_remote_event(device_b.db.pool(), &edit_event).unwrap();
+    let result = replay::apply_remote_event(&device_b.db.pool().unwrap(), &edit_event).unwrap();
     assert!(
         matches!(result, ApplyResult::Deferred(DeferredReason::MissingItem)),
         "Expected Deferred(MissingItem), got {result:?}"
     );
 
     // Now B receives the create event. The batch apply should retry deferred.
-    let batch = replay::apply_remote_event_batch(device_b.db.pool(), &[create_event]).unwrap();
+    let batch =
+        replay::apply_remote_event_batch(&device_b.db.pool().unwrap(), &[create_event]).unwrap();
     assert_eq!(batch.events_applied, 2); // 1 create + 1 deferred edit resolved
     assert_eq!(batch.events_deferred, 0);
 }
@@ -278,8 +280,8 @@ fn test_delete_on_one_device_tombstones_on_other() {
             snapshot: text_snapshot("will be deleted"),
         },
     );
-    replay::apply_remote_event(device_a.db.pool(), &create_event).unwrap();
-    replay::apply_remote_event(device_b.db.pool(), &create_event).unwrap();
+    replay::apply_remote_event(&device_a.db.pool().unwrap(), &create_event).unwrap();
+    replay::apply_remote_event(&device_b.db.pool().unwrap(), &create_event).unwrap();
 
     // Device A deletes the item.
     let delete_event = ItemEvent::new_local(
@@ -289,10 +291,10 @@ fn test_delete_on_one_device_tombstones_on_other() {
             base_existence_version: 1,
         },
     );
-    replay::apply_remote_event(device_a.db.pool(), &delete_event).unwrap();
+    replay::apply_remote_event(&device_a.db.pool().unwrap(), &delete_event).unwrap();
 
     // Device B receives the delete.
-    let result = replay::apply_remote_event(device_b.db.pool(), &delete_event).unwrap();
+    let result = replay::apply_remote_event(&device_b.db.pool().unwrap(), &delete_event).unwrap();
     assert!(matches!(result, ApplyResult::Applied(_)));
 
     // Verify tombstone on B.
@@ -314,8 +316,8 @@ fn test_bookmark_and_edit_apply_independently() {
             snapshot: text_snapshot("independent domains"),
         },
     );
-    replay::apply_remote_event(device_a.db.pool(), &create_event).unwrap();
-    replay::apply_remote_event(device_b.db.pool(), &create_event).unwrap();
+    replay::apply_remote_event(&device_a.db.pool().unwrap(), &create_event).unwrap();
+    replay::apply_remote_event(&device_b.db.pool().unwrap(), &create_event).unwrap();
 
     // A bookmarks, B edits — different domains, no conflict.
     let bookmark_event = ItemEvent::new_local(
@@ -335,9 +337,9 @@ fn test_bookmark_and_edit_apply_independently() {
     );
 
     // Apply both on device A (both should succeed since they're different domains).
-    let r1 = replay::apply_remote_event(device_a.db.pool(), &bookmark_event).unwrap();
+    let r1 = replay::apply_remote_event(&device_a.db.pool().unwrap(), &bookmark_event).unwrap();
     assert!(matches!(r1, ApplyResult::Applied(_)));
-    let r2 = replay::apply_remote_event(device_a.db.pool(), &edit_event).unwrap();
+    let r2 = replay::apply_remote_event(&device_a.db.pool().unwrap(), &edit_event).unwrap();
     assert!(matches!(r2, ApplyResult::Applied(_)));
 
     // Verify both changes applied.
@@ -362,11 +364,11 @@ fn test_duplicate_event_across_devices() {
     );
 
     // Apply on both.
-    replay::apply_remote_event(device_a.db.pool(), &create_event).unwrap();
-    replay::apply_remote_event(device_b.db.pool(), &create_event).unwrap();
+    replay::apply_remote_event(&device_a.db.pool().unwrap(), &create_event).unwrap();
+    replay::apply_remote_event(&device_b.db.pool().unwrap(), &create_event).unwrap();
 
     // Apply the same event again on B (duplicate delivery).
-    let result = replay::apply_remote_event(device_b.db.pool(), &create_event).unwrap();
+    let result = replay::apply_remote_event(&device_b.db.pool().unwrap(), &create_event).unwrap();
     assert!(
         matches!(result, ApplyResult::Ignored(IgnoreReason::AlreadyApplied)),
         "Duplicate should be ignored, got {result:?}"

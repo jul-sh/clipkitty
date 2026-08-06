@@ -1080,6 +1080,12 @@ final class SyncEngineTests: XCTestCase {
         await waitUntil {
             transport.ensureZoneAttempts == 1 && transport.subscriptionSaveAttempts == 1
         }
+        await waitUntil {
+            if case .synced = engine.status {
+                return true
+            }
+            return false
+        }
         assertSynced(engine.status)
 
         transport.accountStatusResult = .success(.noAccount)
@@ -1129,6 +1135,48 @@ final class SyncEngineTests: XCTestCase {
 
         XCTAssertEqual(result, .failed("iCloud temporarily unavailable"))
         assertTemporarilyUnavailable(engine.status)
+    }
+
+    func testPrepareForSuspendDrainsAnAdmittedHeadlessCycleAndRejectsLaterCycles() async throws {
+        let store = try makeStore()
+        let defaults = makeDefaults()
+        let transport = FakeCloudTransport()
+        var accountStatusRequested = false
+        var releaseAccountStatus: CheckedContinuation<CKAccountStatus, Never>?
+        transport.accountStatusHandler = {
+            accountStatusRequested = true
+            return await withCheckedContinuation { continuation in
+                releaseAccountStatus = continuation
+            }
+        }
+        let engine = makeEngine(
+            store: store,
+            transport: transport,
+            defaults: defaults
+        )
+
+        let cycle = Task { @MainActor in
+            await engine.runBackgroundSyncCycle()
+        }
+        await waitUntil { accountStatusRequested }
+
+        var suspensionStarted = false
+        var suspensionCompleted = false
+        let suspension = Task { @MainActor in
+            suspensionStarted = true
+            await engine.prepareForSuspend()
+            suspensionCompleted = true
+        }
+        await waitUntil { suspensionStarted }
+        XCTAssertFalse(suspensionCompleted)
+
+        releaseAccountStatus?.resume(returning: .available)
+        _ = await cycle.value
+        await suspension.value
+
+        XCTAssertTrue(suspensionCompleted)
+        let postSuspensionResult = await engine.runBackgroundSyncCycle()
+        XCTAssertEqual(postSuspensionResult, .unavailable)
     }
 
     func testStatusChangesInvalidateObservation() async throws {

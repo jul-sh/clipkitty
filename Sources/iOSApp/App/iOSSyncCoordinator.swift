@@ -32,7 +32,13 @@
     final class iOSSyncCoordinator {
         private enum Runtime {
             case disabled(store: ClipKittyRust.ClipboardStore)
+            case stopped(
+                store: ClipKittyRust.ClipboardStore,
+                engine: any SyncEngineProtocol
+            )
             case enabled(store: ClipKittyRust.ClipboardStore, engine: any SyncEngineProtocol)
+            case suspending(Task<Void, Never>)
+            case suspended
         }
 
         @ObservationIgnored
@@ -50,7 +56,7 @@
 
         var status: SyncEngine.SyncStatus {
             switch runtime {
-            case .disabled:
+            case .disabled, .stopped, .suspending, .suspended:
                 return .idle
             case let .enabled(_, engine):
                 return engine.status
@@ -110,16 +116,26 @@
                 scheduleBackgroundSync()
                 engine.start()
 
+            case let .stopped(store, engine):
+                guard enabled else { return }
+                runtime = .enabled(store: store, engine: engine)
+                registerForRemoteNotifications()
+                scheduleBackgroundSync()
+                engine.start()
+
             case let .enabled(store, engine):
                 guard !enabled else { return }
                 engine.stop()
-                runtime = .disabled(store: store)
+                runtime = .stopped(store: store, engine: engine)
+
+            case .suspending, .suspended:
+                break
             }
         }
 
         func handleScenePhaseChange(_ phase: ScenePhase) {
             switch runtime {
-            case .disabled:
+            case .disabled, .stopped, .suspending, .suspended:
                 break
             case let .enabled(_, engine):
                 switch phase {
@@ -138,7 +154,7 @@
 
         func handleRemoteNotification() {
             switch runtime {
-            case .disabled:
+            case .disabled, .stopped, .suspending, .suspended:
                 break
             case let .enabled(_, engine):
                 scheduleBackgroundSync()
@@ -150,16 +166,32 @@
         func prepareForSuspension() async {
             switch runtime {
             case .disabled:
-                break
+                runtime = .suspended
+            case let .stopped(_, engine):
+                let task = Task { @MainActor in
+                    await engine.prepareForSuspend()
+                }
+                runtime = .suspending(task)
+                await task.value
+                runtime = .suspended
             case let .enabled(_, engine):
                 scheduleBackgroundSync()
-                await engine.prepareForSuspend()
+                let task = Task { @MainActor in
+                    await engine.prepareForSuspend()
+                }
+                runtime = .suspending(task)
+                await task.value
+                runtime = .suspended
+            case let .suspending(task):
+                await task.value
+            case .suspended:
+                break
             }
         }
 
         func performRemoteNotificationSync() async -> SyncEngine.BackgroundSyncResult {
             switch runtime {
-            case .disabled:
+            case .disabled, .stopped, .suspending, .suspended:
                 return .unavailable
             case let .enabled(_, engine):
                 return await engine.runBackgroundSyncCycle()
@@ -169,36 +201,78 @@
 
     // MARK: - Background Sync
 
-    @MainActor
-    enum iOSBackgroundTaskRunner {
-        static func run<Result>(
-            named name: String,
-            operation: @escaping @MainActor () async -> Result
-        ) async -> Result {
-            let operationTask = Task { @MainActor in
-                await operation()
-            }
-            return await run(named: name, operationTask: operationTask)
+    final class iOSBackgroundSyncExpiration: @unchecked Sendable {
+        let storeGate = AppStoreOpenGate()
+        let cancellation = AppBackgroundTaskCancellation()
+
+        func expireAndDrain() {
+            cancellation.cancel()
+            storeGate.expireAndDrain()
+        }
+    }
+
+    fileprivate enum iOSBackgroundSyncRunProtection {
+        case uiLease(AppBackgroundTaskLease)
+        case systemTask
+    }
+
+    private enum iOSBackgroundSyncRequestProtection {
+        case requiresUIKitLease
+        case systemTask
+    }
+
+    private enum iOSBackgroundSyncReservation {
+        case uiLease(AppBackgroundTaskLease)
+        case systemTask
+        case unavailable
+    }
+
+    final class iOSBackgroundSyncRun: @unchecked Sendable {
+        let id: UUID
+        let resultTask: Task<UIBackgroundFetchResult, Never>
+        let operationTask: Task<UIBackgroundFetchResult, Never>
+        private let expiration: iOSBackgroundSyncExpiration
+        private let protection: iOSBackgroundSyncRunProtection
+
+        fileprivate init(
+            id: UUID,
+            resultTask: Task<UIBackgroundFetchResult, Never>,
+            operationTask: Task<UIBackgroundFetchResult, Never>,
+            expiration: iOSBackgroundSyncExpiration,
+            protection: iOSBackgroundSyncRunProtection
+        ) {
+            self.id = id
+            self.resultTask = resultTask
+            self.operationTask = operationTask
+            self.expiration = expiration
+            self.protection = protection
         }
 
-        static func run<Result>(
-            named name: String,
-            operationTask: Task<Result, Never>
-        ) async -> Result {
-            await withTaskCancellationHandler {
-                let backgroundTask = UIApplication.shared.beginBackgroundTask(withName: name) {
-                    operationTask.cancel()
-                }
+        func expireAndDrain() {
+            expiration.expireAndDrain()
+        }
 
-                let result = await operationTask.value
-                if backgroundTask != .invalid {
-                    UIApplication.shared.endBackgroundTask(backgroundTask)
-                }
-                return result
-            } onCancel: {
-                operationTask.cancel()
+        @MainActor
+        func endProtection() {
+            switch protection {
+            case let .uiLease(lease):
+                lease.end()
+            case .systemTask:
+                break
             }
         }
+    }
+
+    private enum iOSHeadlessStoreOpenOutcome: @unchecked Sendable {
+        case opened(store: ClipKittyRust.ClipboardStore, plan: StoreBootstrapPlan)
+        case failed(String)
+    }
+
+    private enum iOSHeadlessIndexRepairOutcome: @unchecked Sendable {
+        case notNeeded
+        case processed(itemCount: UInt64, outcome: IndexMaintenanceOutcome)
+        case processingFailed(itemCount: UInt64, message: String)
+        case queueFailed(String)
     }
 
     @MainActor
@@ -208,29 +282,35 @@
         private let logger = Logger(subsystem: "com.clipkitty", category: "SyncBackground")
         private let headlessSyncOperation: (@MainActor () async -> UIBackgroundFetchResult)?
 
-        private struct InFlightRun {
-            let id: UUID
-            let resultTask: Task<UIBackgroundFetchResult, Never>
-            let operationTask: Task<UIBackgroundFetchResult, Never>
-        }
-
         private enum InFlightSync {
             case none
-            case running(InFlightRun)
+            case running(iOSBackgroundSyncRun)
+        }
+
+        private enum StoreAuthority {
+            case available
+            case foreground(UUID)
         }
 
         private var inFlightSync: InFlightSync = .none
+        private var storeAuthority: StoreAuthority = .available
 
         init(headlessSyncOperation: (@MainActor () async -> UIBackgroundFetchResult)? = nil) {
             self.headlessSyncOperation = headlessSyncOperation
         }
 
         func performRemoteNotificationSync() async -> UIBackgroundFetchResult {
-            await performSync(named: "ClipKitty iCloud Sync")
+            await performSync(
+                named: "ClipKitty iCloud Sync",
+                protection: .requiresUIKitLease
+            )
         }
 
         func performScheduledSync() async -> UIBackgroundFetchResult {
-            await performSync(named: "ClipKitty Scheduled iCloud Sync")
+            await performSync(
+                named: "ClipKitty Scheduled iCloud Sync",
+                protection: .systemTask
+            )
         }
 
         func cancelInFlightSync() {
@@ -238,107 +318,282 @@
             case .none:
                 break
             case let .running(run):
-                run.operationTask.cancel()
-                run.resultTask.cancel()
+                run.expireAndDrain()
+                run.endProtection()
             }
         }
 
-        private func performSync(named name: String) async -> UIBackgroundFetchResult {
+        func claimForegroundStore(_ claimID: UUID) {
+            storeAuthority = .foreground(claimID)
+            cancelInFlightSync()
+        }
+
+        func releaseForegroundStore(_ claimID: UUID) {
+            switch storeAuthority {
+            case .available:
+                break
+            case let .foreground(currentID) where currentID == claimID:
+                storeAuthority = .available
+            case .foreground:
+                break
+            }
+        }
+
+        private func performSync(
+            named name: String,
+            protection: iOSBackgroundSyncRequestProtection
+        ) async -> UIBackgroundFetchResult {
+            await beginSync(named: name, protection: protection).resultTask.value
+        }
+
+        func beginScheduledSync() -> iOSBackgroundSyncRun {
+            beginSync(
+                named: "ClipKitty Scheduled iCloud Sync",
+                protection: .systemTask
+            )
+        }
+
+        private func beginSync(
+            named name: String,
+            protection requestProtection: iOSBackgroundSyncRequestProtection
+        ) -> iOSBackgroundSyncRun {
+            switch storeAuthority {
+            case .available:
+                break
+            case .foreground:
+                return unavailableRun()
+            }
+
             switch inFlightSync {
             case .none:
                 break
             case let .running(run):
-                return await run.resultTask.value
+                return run
+            }
+
+            if headlessSyncOperation == nil {
+                switch UIApplication.shared.applicationState {
+                case .background:
+                    break
+                case .active, .inactive:
+                    return unavailableRun()
+                @unknown default:
+                    return unavailableRun()
+                }
             }
 
             let syncID = UUID()
-            let operationTask = Task { @MainActor in
-                await self.runHeadlessSyncIfEnabled()
+            let expiration = iOSBackgroundSyncExpiration()
+            let reservation: iOSBackgroundSyncReservation
+            switch requestProtection {
+            case .requiresUIKitLease:
+                switch AppBackgroundTaskLease.acquire(
+                    named: name,
+                    onExpiration: { expiration.expireAndDrain() }
+                ) {
+                case let .granted(lease):
+                    reservation = .uiLease(lease)
+                case .unavailable:
+                    reservation = .unavailable
+                }
+            case .systemTask:
+                reservation = .systemTask
             }
-            let resultTask = Task { @MainActor in
-                await iOSBackgroundTaskRunner.run(named: name, operationTask: operationTask)
-            }
-            inFlightSync = .running(
-                InFlightRun(
-                    id: syncID,
-                    resultTask: resultTask,
-                    operationTask: operationTask
-                )
-            )
 
-            let result = await resultTask.value
+            let operationTask: Task<UIBackgroundFetchResult, Never>
+            let resultTask: Task<UIBackgroundFetchResult, Never>
+            switch reservation {
+            case let .uiLease(lease):
+                operationTask = Task { @MainActor in
+                    await self.runHeadlessSyncIfEnabled(gate: expiration.storeGate)
+                }
+                expiration.cancellation.install { operationTask.cancel() }
+                resultTask = Task { @MainActor in
+                    let result = await operationTask.value
+                    lease.end()
+                    self.finish(runID: syncID)
+                    return result
+                }
+            case .systemTask:
+                operationTask = Task { @MainActor in
+                    await self.runHeadlessSyncIfEnabled(gate: expiration.storeGate)
+                }
+                expiration.cancellation.install { operationTask.cancel() }
+                resultTask = Task { @MainActor in
+                    let result = await operationTask.value
+                    self.finish(runID: syncID)
+                    return result
+                }
+            case .unavailable:
+                expiration.expireAndDrain()
+                operationTask = Task { .failed }
+                resultTask = Task { @MainActor in
+                    let result = await operationTask.value
+                    self.finish(runID: syncID)
+                    return result
+                }
+            }
+
+            let runProtection: iOSBackgroundSyncRunProtection
+            switch reservation {
+            case let .uiLease(lease):
+                runProtection = .uiLease(lease)
+            case .systemTask, .unavailable:
+                runProtection = .systemTask
+            }
+
+            let run = iOSBackgroundSyncRun(
+                id: syncID,
+                resultTask: resultTask,
+                operationTask: operationTask,
+                expiration: expiration,
+                protection: runProtection
+            )
+            inFlightSync = .running(run)
+            return run
+        }
+
+        private func unavailableRun() -> iOSBackgroundSyncRun {
+            let expiration = iOSBackgroundSyncExpiration()
+            expiration.expireAndDrain()
+            let result = Task<UIBackgroundFetchResult, Never> { .failed }
+            return iOSBackgroundSyncRun(
+                id: UUID(),
+                resultTask: result,
+                operationTask: result,
+                expiration: expiration,
+                protection: .systemTask
+            )
+        }
+
+        private func finish(runID: UUID) {
             switch inFlightSync {
             case .none:
                 break
-            case let .running(run) where run.id == syncID:
+            case let .running(run) where run.id == runID:
                 inFlightSync = .none
             case .running:
                 break
             }
-            return result
         }
 
-        private func runHeadlessSyncIfEnabled() async -> UIBackgroundFetchResult {
+        private func runHeadlessSyncIfEnabled(
+            gate: AppStoreOpenGate
+        ) async -> UIBackgroundFetchResult {
+            guard case .start = gate.begin() else { return .failed }
+
             if let headlessSyncOperation {
+                // Injected test operations do not own a real store. Mark the
+                // resource gate complete before their first suspension point
+                // so synchronous cancellation cannot wait on the main actor.
+                gate.completeFailure()
                 return await headlessSyncOperation()
             }
 
             if Task.isCancelled {
+                gate.completeFailure()
                 return .failed
             }
 
             guard iOSSettingsStore().syncEnabled else {
                 logger.debug("Skipping background sync because iCloud sync is disabled")
+                gate.completeFailure()
                 return .noData
             }
 
-            do {
-                DatabasePath.migrateIfNeeded()
-                let dbPath = try DatabasePath.resolve()
-                let plan = try inspectStoreBootstrap(dbPath: dbPath)
-                let store = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
-                defer { store.prepareForSuspend() }
+            // Bootstrap performs synchronous SQLite and mmap work. Keep it off
+            // the main actor so UIKit's expiration callback can seal the gate
+            // and synchronously wait for this exact open to register or fail.
+            let openOutcome = await Task.detached(priority: .utility) {
+                do {
+                    DatabasePath.migrateIfNeeded()
+                    let dbPath = try DatabasePath.resolve()
+                    let plan = try inspectStoreBootstrap(dbPath: dbPath)
+                    let store = try ClipKittyRust.ClipboardStore(dbPath: dbPath)
+                    gate.register(store)
+                    return iOSHeadlessStoreOpenOutcome.opened(store: store, plan: plan)
+                } catch {
+                    gate.completeFailure()
+                    return iOSHeadlessStoreOpenOutcome.failed(error.localizedDescription)
+                }
+            }.value
 
-                switch try iOSIndexMaintenance.queueBootstrapRepairIfNeeded(
-                    plan: plan,
-                    store: store
-                ) {
-                case .notNeeded:
-                    break
-                case let .queued(itemCount):
-                    logger.info("Queued background index repair for \(itemCount) items")
-                    do {
-                        let outcome = try iOSIndexMaintenance.processQueuedBatch(store: store)
-                        logIndexMaintenanceOutcome(outcome)
-                    } catch {
-                        logger.error("Background index maintenance failed: \(error.localizedDescription)")
+            switch openOutcome {
+            case let .opened(store, plan):
+                guard !Task.isCancelled else {
+                    gate.expireAndDrain()
+                    return .failed
+                }
+                return await runOpenedHeadlessSync(store: store, plan: plan, gate: gate)
+            case let .failed(message):
+                logger.error("Background sync bootstrap failed: \(message)")
+                return .failed
+            }
+        }
+
+        private func runOpenedHeadlessSync(
+            store: ClipKittyRust.ClipboardStore,
+            plan: StoreBootstrapPlan,
+            gate: AppStoreOpenGate
+        ) async -> UIBackgroundFetchResult {
+            defer { gate.expireAndDrain() }
+
+            let repairOutcome = await Task.detached(priority: .utility) {
+                do {
+                    switch try iOSIndexMaintenance.queueBootstrapRepairIfNeeded(
+                        plan: plan,
+                        store: store
+                    ) {
+                    case .notNeeded:
+                        return iOSHeadlessIndexRepairOutcome.notNeeded
+                    case let .queued(itemCount):
+                        do {
+                            let outcome = try iOSIndexMaintenance.processQueuedBatch(store: store)
+                            return .processed(itemCount: itemCount, outcome: outcome)
+                        } catch {
+                            return .processingFailed(
+                                itemCount: itemCount,
+                                message: error.localizedDescription
+                            )
+                        }
                     }
+                } catch {
+                    return .queueFailed(error.localizedDescription)
                 }
+            }.value
 
-                if Task.isCancelled {
-                    return .failed
-                }
+            switch repairOutcome {
+            case .notNeeded:
+                break
+            case let .processed(itemCount, outcome):
+                logger.info("Queued background index repair for \(itemCount) items")
+                logIndexMaintenanceOutcome(outcome)
+            case let .processingFailed(itemCount, message):
+                logger.info("Queued background index repair for \(itemCount) items")
+                logger.error("Background index maintenance failed: \(message)")
+            case let .queueFailed(message):
+                logger.error("Background sync bootstrap failed: \(message)")
+                return .failed
+            }
 
-                var contentChanged = false
-                let engine = SyncEngine(store: store)
-                engine.onContentChanged = {
-                    contentChanged = true
-                }
+            guard !Task.isCancelled else { return .failed }
 
-                let result = await engine.runBackgroundSyncCycle()
-                switch result {
-                case .completed:
-                    logger.info("Background sync completed")
-                    return contentChanged ? .newData : .noData
-                case .unavailable:
-                    logger.info("Background sync skipped because iCloud is unavailable")
-                    return .noData
-                case let .failed(reason):
-                    logger.error("Background sync failed: \(reason)")
-                    return .failed
-                }
-            } catch {
-                logger.error("Background sync bootstrap failed: \(error.localizedDescription)")
+            var contentChanged = false
+            let engine = SyncEngine(store: store)
+            engine.onContentChanged = {
+                contentChanged = true
+            }
+
+            let result = await engine.runBackgroundSyncCycle()
+            switch result {
+            case .completed:
+                logger.info("Background sync completed")
+                return contentChanged ? .newData : .noData
+            case .unavailable:
+                logger.info("Background sync skipped because iCloud is unavailable")
+                return .noData
+            case let .failed(reason):
+                logger.error("Background sync failed: \(reason)")
                 return .failed
             }
         }
@@ -366,6 +621,32 @@
             case .processing:
                 return "com.eviljuliette.clipkitty.sync.processing"
             }
+        }
+    }
+
+    final class iOSBackgroundTaskCompletion: @unchecked Sendable {
+        private enum State {
+            case pending
+            case completed
+        }
+
+        private let lock = NSLock()
+        private var state: State = .pending
+        private let task: BGTask
+
+        init(task: BGTask) {
+            self.task = task
+        }
+
+        func finish(success: Bool) {
+            lock.lock()
+            guard case .pending = state else {
+                lock.unlock()
+                return
+            }
+            state = .completed
+            lock.unlock()
+            task.setTaskCompleted(success: success)
         }
     }
 
@@ -420,8 +701,18 @@
                 forTaskWithIdentifier: kind.identifier,
                 using: nil
             ) { task in
+                let completion = iOSBackgroundTaskCompletion(task: task)
+                let launchExpiration = AppBackgroundTaskCancellation()
+                task.expirationHandler = {
+                    launchExpiration.cancel()
+                    completion.finish(success: false)
+                }
                 Task { @MainActor in
-                    self.handle(task: task, kind: kind)
+                    self.handle(
+                        kind: kind,
+                        completion: completion,
+                        launchExpiration: launchExpiration
+                    )
                 }
             }
 
@@ -433,25 +724,26 @@
             }
         }
 
-        private func handle(task: BGTask, kind: iOSBackgroundSyncTaskKind) {
+        private func handle(
+            kind: iOSBackgroundSyncTaskKind,
+            completion: iOSBackgroundTaskCompletion,
+            launchExpiration: AppBackgroundTaskCancellation
+        ) {
             schedule(kind: kind)
 
-            let operation = Task { @MainActor in
-                let result = await iOSBackgroundSyncRunner.shared.performScheduledSync()
+            let run = iOSBackgroundSyncRunner.shared.beginScheduledSync()
+            launchExpiration.install {
+                run.expireAndDrain()
+            }
+            Task { @MainActor in
+                let result = await run.resultTask.value
                 switch result {
                 case .newData, .noData:
-                    task.setTaskCompleted(success: true)
+                    completion.finish(success: true)
                 case .failed:
-                    task.setTaskCompleted(success: false)
+                    completion.finish(success: false)
                 @unknown default:
-                    task.setTaskCompleted(success: false)
-                }
-            }
-
-            task.expirationHandler = {
-                operation.cancel()
-                Task { @MainActor in
-                    iOSBackgroundSyncRunner.shared.cancelInFlightSync()
+                    completion.finish(success: false)
                 }
             }
         }

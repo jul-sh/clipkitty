@@ -78,26 +78,93 @@
         func deleteRecords(_ recordIDs: [CKRecord.ID]) async -> SyncRecordDeleteResult
     }
 
-    private final class StoreOperationTracker: @unchecked Sendable {
-        private let lock = NSLock()
-        private var activeOperationCount = 0
-        private var drainWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Admission for complete CloudKit coordinator cycles. Once sealed, no
+    /// cycle can resume into a store that is being terminally suspended.
+    private final class SyncCycleAdmission: @unchecked Sendable {
+        private enum Lifecycle {
+            case accepting(activeCycles: Int)
+            case draining(
+                activeCycles: Int,
+                waiters: [CheckedContinuation<Void, Never>]
+            )
+            case suspended
+        }
 
-        func begin() {
+        private let lock = NSLock()
+        private var lifecycle: Lifecycle = .accepting(activeCycles: 0)
+
+        func admit() -> Permit? {
             lock.lock()
-            activeOperationCount += 1
+            defer { lock.unlock() }
+
+            switch lifecycle {
+            case let .accepting(activeCycles):
+                lifecycle = .accepting(activeCycles: activeCycles + 1)
+                return Permit(admission: self)
+            case .draining, .suspended:
+                return nil
+            }
+        }
+
+        func seal() {
+            lock.lock()
+            switch lifecycle {
+            case .accepting(activeCycles: 0):
+                lifecycle = .suspended
+            case let .accepting(activeCycles):
+                lifecycle = .draining(activeCycles: activeCycles, waiters: [])
+            case .draining, .suspended:
+                break
+            }
             lock.unlock()
         }
 
-        func finish() {
+        func waitForDrain() async {
+            seal()
+            await withCheckedContinuation { continuation in
+                var shouldResumeImmediately = false
+                lock.lock()
+                switch lifecycle {
+                case .accepting:
+                    preconditionFailure("cycle admission must be sealed before draining")
+                case let .draining(activeCycles, waiters):
+                    lifecycle = .draining(
+                        activeCycles: activeCycles,
+                        waiters: waiters + [continuation]
+                    )
+                case .suspended:
+                    shouldResumeImmediately = true
+                }
+                lock.unlock()
+
+                if shouldResumeImmediately {
+                    continuation.resume()
+                }
+            }
+        }
+
+        fileprivate func finishCycle() {
             let waiters: [CheckedContinuation<Void, Never>]
             lock.lock()
-            activeOperationCount -= 1
-            if activeOperationCount == 0 {
-                waiters = drainWaiters
-                drainWaiters.removeAll()
-            } else {
+            switch lifecycle {
+            case let .accepting(activeCycles):
+                precondition(activeCycles > 0)
+                lifecycle = .accepting(activeCycles: activeCycles - 1)
                 waiters = []
+            case let .draining(activeCycles, drainWaiters):
+                precondition(activeCycles > 0)
+                if activeCycles == 1 {
+                    lifecycle = .suspended
+                    waiters = drainWaiters
+                } else {
+                    lifecycle = .draining(
+                        activeCycles: activeCycles - 1,
+                        waiters: drainWaiters
+                    )
+                    waiters = []
+                }
+            case .suspended:
+                preconditionFailure("a suspended cycle admission cannot retain a permit")
             }
             lock.unlock()
 
@@ -106,20 +173,15 @@
             }
         }
 
-        func waitForDrain() async {
-            await withCheckedContinuation { continuation in
-                var shouldResumeImmediately = false
-                lock.lock()
-                if activeOperationCount == 0 {
-                    shouldResumeImmediately = true
-                } else {
-                    drainWaiters.append(continuation)
-                }
-                lock.unlock()
+        final class Permit: @unchecked Sendable {
+            private let admission: SyncCycleAdmission
 
-                if shouldResumeImmediately {
-                    continuation.resume()
-                }
+            fileprivate init(admission: SyncCycleAdmission) {
+                self.admission = admission
+            }
+
+            func finish() {
+                admission.finishCycle()
             }
         }
     }
@@ -172,10 +234,18 @@
 
         // MARK: - State
 
+        private enum CoordinatorExecution {
+            case idle
+            case running(id: UUID, task: Task<Void, Never>)
+            case stopping(id: UUID, task: Task<Void, Never>)
+            case suspending(Task<Void, Never>)
+            case suspended
+        }
+
         @ObservationIgnored
-        private var coordinatorTask: Task<Void, Never>?
+        private var coordinatorExecution: CoordinatorExecution = .idle
         @ObservationIgnored
-        private let storeOperationTracker = StoreOperationTracker()
+        private let cycleAdmission = SyncCycleAdmission()
         @ObservationIgnored
         private var accountChangeObserver: NSObjectProtocol?
         @ObservationIgnored
@@ -407,7 +477,16 @@
         // MARK: - Lifecycle
 
         public func start() {
-            guard coordinatorTask == nil else { return }
+            let predecessor: Task<Void, Never>?
+            switch coordinatorExecution {
+            case .idle:
+                predecessor = nil
+            case let .stopping(_, task):
+                predecessor = task
+            case .running, .suspending, .suspended:
+                return
+            }
+
             engineState = .active(
                 ActiveState(
                     bootstrap: .needsZone,
@@ -422,15 +501,28 @@
             // Set the Rust-side device ID so events are attributed correctly.
             store.setSyncDeviceId(deviceId: deviceId)
 
-            coordinatorTask = Task.detached(priority: .utility) { [weak self] in
+            let executionID = UUID()
+            let task = Task.detached(priority: .utility) { [weak self] in
+                await predecessor?.value
                 guard let self else { return }
-                await self.runCoordinatorLoop()
+                if !Task.isCancelled {
+                    await self.runCoordinatorLoop(executionID: executionID)
+                }
+                await self.coordinatorDidFinish(executionID: executionID)
             }
+            coordinatorExecution = .running(id: executionID, task: task)
         }
 
         public func stop() {
-            coordinatorTask?.cancel()
-            coordinatorTask = nil
+            switch coordinatorExecution {
+            case let .running(id, task):
+                task.cancel()
+                coordinatorExecution = .stopping(id: id, task: task)
+            case let .stopping(_, task):
+                task.cancel()
+            case .idle, .suspending, .suspended:
+                break
+            }
             signalWake()
             completeCoordinatorCycleWaiters(result: .failed("iCloud sync stopped"))
             removeAccountChangeObserver()
@@ -438,36 +530,52 @@
             logger.info("SyncEngine stopped")
         }
 
-        /// Stop the coordinator and wait until any synchronous Rust store work
-        /// has fully drained before allowing iOS to suspend the process.
+        /// Stop the coordinator and wait until every admitted sync cycle has
+        /// drained. The app session owns the one terminal store close.
         public func prepareForSuspend() async {
-            let task = coordinatorTask
-            coordinatorTask = nil
-            task?.cancel()
+            let predecessor: Task<Void, Never>?
+            switch coordinatorExecution {
+            case .idle:
+                predecessor = nil
+            case let .running(_, task), let .stopping(_, task):
+                task.cancel()
+                predecessor = task
+            case let .suspending(task):
+                await task.value
+                if case .suspending = coordinatorExecution {
+                    coordinatorExecution = .suspended
+                }
+                return
+            case .suspended:
+                return
+            }
+
+            // Close cycle admission before the first suspension point so a
+            // reentrant background wake cannot start after the drain snapshot.
+            cycleAdmission.seal()
             signalWake()
             completeCoordinatorCycleWaiters(result: .failed("iCloud sync stopped"))
             removeAccountChangeObserver()
             engineState = .idle(maintenanceState())
 
-            await task?.value
-            await storeOperationTracker.waitForDrain()
-
-            guard !Task.isCancelled else {
-                logger.info("SyncEngine suspend preparation cancelled before store flush")
-                return
+            let cycleAdmission = self.cycleAdmission
+            let drainTask = Task { @MainActor in
+                await predecessor?.value
+                await cycleAdmission.waitForDrain()
             }
-
-            let store = self.store
-            await Task.detached(priority: .utility) {
-                store.prepareForSuspend()
-            }.value
-            logger.info("SyncEngine prepared for suspend")
+            coordinatorExecution = .suspending(drainTask)
+            await drainTask.value
+            if case .suspending = coordinatorExecution {
+                coordinatorExecution = .suspended
+            }
+            logger.info("SyncEngine cycles drained for suspend")
         }
 
         /// Signal the coordinator to wake up immediately (e.g. from push notification).
         public func handleRemoteNotification() {
-            guard coordinatorTask != nil else { return }
-            signalWake()
+            if case .running = coordinatorExecution {
+                signalWake()
+            }
         }
 
         /// Run a single sync cycle for an iOS background wake.
@@ -477,12 +585,15 @@
         /// the same coordinator cycle headlessly so a silent CloudKit push can
         /// catch up before the user opens the app.
         public func runBackgroundSyncCycle() async -> BackgroundSyncResult {
-            guard coordinatorTask == nil else {
+            switch coordinatorExecution {
+            case .running:
                 return await waitForCoordinatorCycleAfterBackgroundWake()
+            case .idle:
+                store.setSyncDeviceId(deviceId: deviceId)
+                return await runCoordinatorCycle()
+            case .stopping, .suspending, .suspended:
+                return .unavailable
             }
-
-            store.setSyncDeviceId(deviceId: deviceId)
-            return await runCoordinatorCycle()
         }
 
         /// Mark a wake as pending and resume any waiting sleeper.
@@ -594,9 +705,21 @@
         }
 
         /// Marks the engine as unavailable and stops it.
-        private func setUnavailable() {
-            coordinatorTask?.cancel()
-            coordinatorTask = nil
+        private func setUnavailable(executionID: UUID?) {
+            if let executionID {
+                guard case let .running(currentID, task) = coordinatorExecution,
+                      currentID == executionID
+                else {
+                    return
+                }
+                task.cancel()
+                coordinatorExecution = .stopping(id: currentID, task: task)
+                signalWake()
+            } else if case let .running(currentID, task) = coordinatorExecution {
+                task.cancel()
+                coordinatorExecution = .stopping(id: currentID, task: task)
+                signalWake()
+            }
             completeCoordinatorCycleWaiters(result: .unavailable)
             engineState = .unavailable(maintenanceState())
         }
@@ -705,9 +828,9 @@
 
         // MARK: - Coordinator Loop
 
-        private func runCoordinatorLoop() async {
+        private func runCoordinatorLoop(executionID: UUID) async {
             while !Task.isCancelled {
-                await runCoordinatorCycle()
+                _ = await runCoordinatorCycle(executionID: executionID)
                 guard !Task.isCancelled else {
                     break
                 }
@@ -727,6 +850,17 @@
                 let delay = backoff.currentDelay ?? interval
 
                 await sleepOrWake(for: delay)
+            }
+        }
+
+        private func coordinatorDidFinish(executionID: UUID) {
+            switch coordinatorExecution {
+            case let .running(currentID, _) where currentID == executionID:
+                coordinatorExecution = .idle
+            case let .stopping(currentID, _) where currentID == executionID:
+                coordinatorExecution = .idle
+            case .idle, .running, .stopping, .suspending, .suspended:
+                break
             }
         }
 
@@ -781,11 +915,8 @@
             _ body: @escaping @Sendable (ClipKittyRust.ClipboardStore) throws -> T
         ) async throws -> T {
             let store = self.store
-            let tracker = storeOperationTracker
-            tracker.begin()
             return try await Task.detached(priority: priority) {
-                defer { tracker.finish() }
-                return try body(store)
+                try body(store)
             }.value
         }
 
@@ -815,13 +946,22 @@
         /// Single serial coordinator cycle: fetch -> apply -> compact -> upload -> cleanup.
         @discardableResult
         public func runCoordinatorCycle() async -> BackgroundSyncResult {
+            await runCoordinatorCycle(executionID: nil)
+        }
+
+        private func runCoordinatorCycle(executionID: UUID?) async -> BackgroundSyncResult {
+            guard let permit = cycleAdmission.admit() else {
+                return .unavailable
+            }
+            defer { permit.finish() }
+
             beginCoordinatorCycle()
-            let result = await performCoordinatorCycle()
+            let result = await performCoordinatorCycle(executionID: executionID)
             finishCoordinatorCycle(result: result)
             return result
         }
 
-        private func performCoordinatorCycle() async -> BackgroundSyncResult {
+        private func performCoordinatorCycle(executionID: UUID?) async -> BackgroundSyncResult {
             do {
                 switch try await accountAvailability() {
                 case .available:
@@ -835,7 +975,7 @@
                     return .failed("iCloud temporarily unavailable")
                 case .unavailable:
                     logger.warning("iCloud account unavailable, sync disabled")
-                    setUnavailable()
+                    setUnavailable(executionID: executionID)
                     return .unavailable
                 }
 
@@ -1055,7 +1195,7 @@
         }
 
         private func handleAccountChanged() {
-            if coordinatorTask != nil {
+            if case .running = coordinatorExecution {
                 logger.info("iCloud account changed, waking sync coordinator")
                 signalWake()
                 return

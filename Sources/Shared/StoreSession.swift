@@ -30,10 +30,16 @@ public enum StoreOpener {
 
     public static func open(
         path: String,
-        repairStrategy: StoreIndexRepairStrategy
+        repairStrategy: StoreIndexRepairStrategy,
+        didConstructStore: @Sendable (ClipKittyRust.ClipboardStore) -> Void = { _ in }
     ) throws -> StoreSession {
         let plan = try inspect(path: path)
-        return try open(path: path, plan: plan, repairStrategy: repairStrategy)
+        return try open(
+            path: path,
+            plan: plan,
+            repairStrategy: repairStrategy,
+            didConstructStore: didConstructStore
+        )
     }
 
     /// Accepts an already-inspected plan so UI owners can select a lifecycle
@@ -41,9 +47,14 @@ public enum StoreOpener {
     public static func open(
         path: String,
         plan: StoreBootstrapPlan,
-        repairStrategy: StoreIndexRepairStrategy
+        repairStrategy: StoreIndexRepairStrategy,
+        didConstructStore: @Sendable (ClipKittyRust.ClipboardStore) -> Void = { _ in }
     ) throws -> StoreSession {
         let store = try ClipKittyRust.ClipboardStore(dbPath: path)
+        // Publish ownership before repair: expiration can now synchronously
+        // seal and drain this exact store while repair observes terminal
+        // admission instead of continuing with unowned file work.
+        didConstructStore(store)
         switch plan {
         case .ready:
             break
