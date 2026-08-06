@@ -35,9 +35,9 @@ extension View {
         let radius = systemWindowCornerRadius
         if #available(macOS 26.0, *) {
             if let radius {
-                glassEffect(.regular.interactive(), in: .rect(cornerRadius: radius, style: .continuous))
+                glassEffect(.regular, in: .rect(cornerRadius: radius, style: .continuous))
             } else {
-                glassEffect(.regular.interactive(), in: .rect)
+                glassEffect(.regular, in: .rect)
             }
         } else {
             if let radius {
