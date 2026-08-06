@@ -304,7 +304,16 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         panel.alphaValue = 0
         layer.transform = scaledTransform
         panel.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        switch mode {
+        case .production:
+            // The nonactivating panel can take keyboard focus without bringing
+            // ClipKitty forward or deactivating the app the user will paste into.
+            break
+        case .testing:
+            // The test-only window is intentionally activatable so XCUITest can
+            // discover and drive it through the accessibility hierarchy.
+            NSApp.activate(ignoringOtherApps: true)
+        }
 
         let spring = CASpringAnimation(keyPath: "transform")
         spring.fromValue = layer.transform
