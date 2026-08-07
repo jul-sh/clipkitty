@@ -118,6 +118,10 @@ final class ClipKittyUITests: XCTestCase {
         let appURL = try locateAppBundle()
         app = XCUIApplication(url: appURL)
 
+        terminateRunningApplications(
+            withBundleIdentifier: getBundleIdentifier(for: appURL)
+        )
+
         let appSupportDir = getAppSupportDirectory(for: appURL)
         try setupTestDatabase(in: appSupportDir)
 
@@ -214,6 +218,24 @@ final class ClipKittyUITests: XCTestCase {
         return false
     }
 
+    private func terminateRunningApplications(withBundleIdentifier bundleIdentifier: String) {
+        let runningApplications = NSRunningApplication.runningApplications(
+            withBundleIdentifier: bundleIdentifier
+        )
+        for runningApplication in runningApplications {
+            runningApplication.forceTerminate()
+        }
+
+        XCTAssertTrue(
+            waitForCondition(timeout: 5) {
+                NSRunningApplication.runningApplications(
+                    withBundleIdentifier: bundleIdentifier
+                ).isEmpty
+            },
+            "Previous app instance did not terminate before database setup"
+        )
+    }
+
     private func setupTestDatabase(in appSupportDir: URL) throws {
         let projectRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -228,14 +250,7 @@ final class ClipKittyUITests: XCTestCase {
         let targetURL = appSupportDir.appendingPathComponent("clipboard-screenshot.sqlite")
         try? FileManager.default.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
 
-        // Kill existing instances and clean up old data
-        let killTask = Process()
-        killTask.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        killTask.arguments = ["-9", "ClipKitty"]
-        try? killTask.run()
-        killTask.waitUntilExit()
-        Thread.sleep(forTimeInterval: 0.2)
-
+        // Clean up old data after setUp has stopped the app under test.
         try? FileManager.default.removeItem(at: targetURL)
         // Remove all Tantivy index versions so the app rebuilds from scratch
         if let contents = try? FileManager.default.contentsOfDirectory(at: appSupportDir, includingPropertiesForKeys: nil) {
