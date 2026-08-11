@@ -106,14 +106,14 @@ jobs:
           echo "release_date=$RELEASE_DATE" >> "$GITHUB_OUTPUT"
           echo "store_url=$STORE_URL" >> "$GITHUB_OUTPUT"
 
-      - name: Reject stable version regressions
+      - name: Determine promotion state
+        id: promotion
         shell: bash
         env:
           VERSION: ${{ steps.app-store.outputs.version }}
         run: |
           set -euo pipefail
 
-          BUILD_NUMBER="${VERSION##*.}"
           REPO="$GITHUB_REPOSITORY"
           STATE_FILE="$(mktemp)"
           APPCAST_FILE="$(mktemp)"
@@ -153,114 +153,39 @@ jobs:
           git fetch origin gh-pages
           git show origin/gh-pages:appcast-state.json > "$STATE_FILE"
           git show origin/gh-pages:appcast.xml > "$APPCAST_FILE"
-          python3 - "$STATE_FILE" "$APPCAST_FILE" "$VERSION" "$REPO" <<'PY'
-          import json
-          import re
-          import sys
-          import xml.etree.ElementTree as ET
-
-          state_path, appcast_path, candidate_version, repository = sys.argv[1:]
-          version_pattern = re.compile(r"^[0-9]+(?:\.[0-9]+){1,3}$")
-          candidate_build = int(candidate_version.rsplit(".", 1)[1])
-
-          with open(state_path, encoding="utf-8") as handle:
-              state = json.load(handle)
-          if not isinstance(state, dict) or "beta" not in state or "stable" not in state:
-              raise SystemExit("published appcast state must contain beta and stable fields")
-
-          def parse_release(channel):
-              release = state[channel]
-              if release is None:
-                  return None
-              if not isinstance(release, dict):
-                  raise SystemExit(f"published {channel} appcast state is not an object")
-              version = release.get("version")
-              build = release.get("build_number")
-              url = release.get("url")
-              if not isinstance(version, str) or not version_pattern.fullmatch(version):
-                  raise SystemExit(f"published {channel} version is malformed")
-              if not isinstance(build, str) or not build.isascii() or not build.isdecimal():
-                  raise SystemExit(f"published {channel} build number is malformed")
-              if int(version.rsplit(".", 1)[1]) != int(build):
-                  raise SystemExit(f"published {channel} version/build identity is inconsistent")
-              suffix = "-beta" if channel == "beta" else ""
-              expected_url = (
-                  f"https://github.com/{repository}/releases/download/"
-                  f"v{version}{suffix}/ClipKitty.dmg"
-              )
-              if url != expected_url:
-                  raise SystemExit(f"published {channel} URL is not canonical")
-              return version, int(build), url
-
-          beta = parse_release("beta")
-          stable = parse_release("stable")
-          if stable is None:
-              raise SystemExit("published appcast state has no stable release")
-          if beta is not None and beta[1] <= stable[1]:
-              raise SystemExit("published beta build must be newer than the stable build")
-
-          expected_stable_url = (
-              f"https://github.com/{repository}/releases/download/"
-              f"v{candidate_version}/ClipKitty.dmg"
-          )
-          if candidate_build < stable[1]:
-              raise SystemExit(
-                  f"refusing to regress stable appcast build {stable[1]} to {candidate_build}"
-              )
-          if candidate_build == stable[1]:
-              if stable != (candidate_version, candidate_build, expected_stable_url):
-                  raise SystemExit(
-                      f"stable build {candidate_build} is already bound to another release"
-                  )
-              raise SystemExit(0)
-
-          # A new stable build must already be present in the published feed as
-          # the exact beta item. This prevents promotion from interleaving in
-          # the gap between beta release creation and beta appcast publication.
-          root = ET.parse(appcast_path).getroot()
-          def local_name(element):
-              return element.tag.rsplit("}", 1)[-1]
-
-          matching_items = []
-          for item in (element for element in root.iter() if local_name(element) == "item"):
-              versions = [
-                  child.text for child in item
-                  if local_name(child) == "version"
-              ]
-              if versions == [str(candidate_build)]:
-                  matching_items.append(item)
-          if len(matching_items) != 1:
-              raise SystemExit(
-                  f"published appcast has {len(matching_items)} items for beta build {candidate_build}"
-              )
-          item = matching_items[0]
-          child_text = {
-              local_name(child): child.text
-              for child in item
-              if local_name(child) != "enclosure"
-          }
-          if child_text.get("shortVersionString") != candidate_version:
-              raise SystemExit("published beta appcast has the wrong short version")
-          if child_text.get("channel") != "beta":
-              raise SystemExit("candidate appcast item is not on the beta channel")
-          enclosures = [child for child in item if local_name(child) == "enclosure"]
-          expected_beta_url = (
-              f"https://github.com/{repository}/releases/download/"
-              f"v{candidate_version}-beta/ClipKitty.dmg"
-          )
-          if len(enclosures) != 1 or enclosures[0].get("url") != expected_beta_url:
-              raise SystemExit("published beta appcast has the wrong enclosure URL")
-          PY
+          PROMOTION_STATE="$(python3 .github/scripts/promotion_preflight.py \
+            "$STATE_FILE" "$APPCAST_FILE" "$VERSION" "$REPO")"
+          case "$PROMOTION_STATE" in
+            ready)
+              echo "App Store ${VERSION} has an exact published beta and is ready for promotion."
+              ;;
+            reconcile_existing)
+              echo "App Store ${VERSION} is already stable; reconciling publication targets."
+              ;;
+            waiting_for_beta)
+              MESSAGE="App Store ${VERSION} is live, but its exact signed GitHub beta is not published yet; deferring promotion."
+              echo "::notice::$MESSAGE"
+              printf '### Promotion deferred\n\n%s\n' "$MESSAGE" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              echo "::error::Unknown promotion state: ${PROMOTION_STATE}"
+              exit 1
+              ;;
+          esac
+          echo "state=$PROMOTION_STATE" >> "$GITHUB_OUTPUT"
 
       - name: Set up Nix
+        if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         uses: ./.github/actions/setup-nix
 
       - name: Install release publishing tools
+        if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         run: |
           nix profile install --no-update-lock-file --inputs-from . keytap#default
           make install-sparkle-cli
 
       - name: Validate publication credentials
+        if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         env:
           KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
         run: |
@@ -269,6 +194,7 @@ jobs:
           keytap decrypt clipkitty < secrets/HOMEBREW_TAP_TOKEN.age >/dev/null
 
       - name: Validate Sparkle signing identity
+        if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         shell: bash
         env:
           KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
@@ -343,6 +269,7 @@ jobs:
           fi
 
       - name: Reject Homebrew version regressions
+        if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         shell: bash
         env:
           KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
@@ -391,6 +318,7 @@ jobs:
           fi
 
       - name: Promote matching GitHub release
+        if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         shell: bash
         env:
           VERSION: ${{ steps.app-store.outputs.version }}
@@ -594,6 +522,7 @@ jobs:
           echo "Verified stable release ${STABLE_TAG} from immutable ${BETA_TAG} at ${BETA_TARGET}."
 
       - name: Update Sparkle stable appcast
+        if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         shell: bash
         env:
           KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
@@ -675,6 +604,7 @@ jobs:
           fi
 
       - name: Publish verified stable release to Homebrew
+        if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         shell: bash
         env:
           KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}

@@ -150,7 +150,18 @@ final class ClipKittyUITests: XCTestCase {
             searchField.waitForExistence(timeout: 15),
             "App UI did not appear. Hierarchy: \(app.debugDescription)"
         )
-        Thread.sleep(forTimeInterval: 0.5)
+        XCTAssertTrue(
+            waitForInitialItemReady(timeout: 30),
+            "Initial clipboard item did not become ready. Hierarchy: \(app.debugDescription)"
+        )
+    }
+
+    override func tearDownWithError() throws {
+        if let app {
+            app.terminate()
+            _ = waitForCondition(timeout: 5) { app.state == .notRunning }
+        }
+        app = nil
     }
 
     // MARK: - Setup Helpers
@@ -294,17 +305,17 @@ final class ClipKittyUITests: XCTestCase {
                              "Copied database is too small (\(copiedSize) bytes). Target: \(targetURL.path)")
     }
 
-    /// Helper to get the currently selected index by finding the button with isSelected trait
+    /// Reads the app-owned selection signal instead of AppKit's intermittently
+    /// missing `isSelected` accessibility trait.
     private func getSelectedIndex() -> Int? {
-        // Items are Button elements inside Cell elements inside the Outline
-        // Find which button is selected
-        let buttons = app.outlines.firstMatch.buttons.allElementsBoundByIndex
-        for (index, button) in buttons.enumerated() {
-            if button.isSelected {
-                return index
-            }
-        }
-        return nil
+        let prefix = "SelectedIndex_"
+        let selectionSignal = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", prefix))
+            .firstMatch
+        guard selectionSignal.exists,
+              selectionSignal.identifier.hasPrefix(prefix)
+        else { return nil }
+        return Int(selectionSignal.identifier.dropFirst(prefix.count))
     }
 
     /// Helper to wait for selected index to equal expected value
@@ -319,17 +330,15 @@ final class ClipKittyUITests: XCTestCase {
         return getSelectedIndex() == expected
     }
 
-    /// Wait for the initial item to be usable. On newer macOS runners,
-    /// AppKit can omit the selected accessibility trait from outline buttons
-    /// even though it has already rendered that item's preview.
+    /// Wait for the initial item and its action footer to be usable. The footer
+    /// appears only after the selected item's preview payload has loaded.
     private func waitForInitialItemReady(timeout: TimeInterval = 5) -> Bool {
         waitForCondition(timeout: timeout) {
-            guard !self.app.outlines.firstMatch.buttons.allElementsBoundByIndex.isEmpty else {
-                return false
-            }
-
+            let actionsButton = self.app.buttons["ActionsButton"]
             return self.getSelectedIndex() == 0
-                || self.app.textViews["PreviewTextView"].exists
+                && !self.app.outlines.firstMatch.buttons.allElementsBoundByIndex.isEmpty
+                && actionsButton.exists
+                && actionsButton.isHittable
         }
     }
 
@@ -740,14 +749,14 @@ final class ClipKittyUITests: XCTestCase {
     /// Tests that the actions button is visible in the metadata footer.
     func testActionsButtonVisible() {
         let actionsButton = app.buttons["ActionsButton"]
-        XCTAssertTrue(actionsButton.waitForExistence(timeout: 5), "Actions button should exist in footer")
+        XCTAssertTrue(actionsButton.exists, "Actions button should exist in footer")
         XCTAssertTrue(actionsButton.isHittable, "Actions button should be hittable")
     }
 
     /// Tests that clicking the actions button opens a popover with action options.
     func testActionsPopoverOpensOnClick() {
         let actionsButton = app.buttons["ActionsButton"]
-        XCTAssertTrue(actionsButton.waitForExistence(timeout: 15), "Actions button should exist")
+        XCTAssertTrue(actionsButton.exists, "Actions button should exist")
 
         actionsButton.click()
         Thread.sleep(forTimeInterval: 0.5)

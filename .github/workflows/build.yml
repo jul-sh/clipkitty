@@ -71,6 +71,9 @@ jobs:
         with:
           fetch-depth: 0 # Full history for commit count versioning
 
+      - name: Test promotion preflight decisions
+        run: python3 .github/scripts/test_promotion_preflight.py
+
       - name: Resolve Release Version
         id: resolve-version
         run: |
