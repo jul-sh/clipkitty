@@ -10,22 +10,37 @@ enum PanelMode {
     case testing
 }
 
-private enum PanelState: Equatable {
+private struct PendingPaste {
+    let id: UUID
+    let itemId: String
+    let content: ClipboardContent
+    let targetApp: NSRunningApplication?
+}
+
+private struct PasteOperation {
+    let id: UUID
+    let task: Task<Void, Never>
+}
+
+private enum PanelDismissal {
+    case previousApplication(previousApp: NSRunningApplication?)
+    case appWindow
+    case paste(PendingPaste)
+    case appWindowCancellingPaste(PendingPaste)
+}
+
+private enum PanelState {
     case hidden
     case visible(previousApp: NSRunningApplication?)
-
-    /// The previous app captured when showing, if any
-    var previousApp: NSRunningApplication? {
-        switch self {
-        case .hidden: return nil
-        case let .visible(app): return app
-        }
-    }
+    case dismissing(PanelDismissal)
+    case preparingPaste(PasteOperation)
+    case copyingPasteForAppWindow(PasteOperation)
 }
 
 private enum PanelDismissalDestination {
     case previousApplication
     case appWindow
+    case focusLoss
 }
 
 @MainActor
@@ -34,6 +49,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     private let store: ClipboardStore
     private let mode: PanelMode
     private let activationService: AppActivationService
+    private let pasteModeProvider: @MainActor () -> PasteMode
     private var panelState: PanelState = .hidden
     private var animatedLayer: CALayer? {
         panel.contentView?.layer
@@ -50,6 +66,16 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     /// Initial search query to pre-fill (for CI screenshots)
     var initialSearchQuery: String?
+
+    // Exposes the actual AppKit window to hosted unit tests without making
+    // panel lifecycle state externally mutable.
+    #if DEBUG
+        var panelForTesting: NSPanel {
+            panel
+        }
+
+        var pastePreparationDidStartForTesting: (() -> Void)?
+    #endif
 
     /// Whether an Accessibility-permission notice has been shown this launch.
     private var hasShownPermissionNotice = false
@@ -69,11 +95,13 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         store: ClipboardStore,
         mode: PanelMode = .production,
         activationService: AppActivationService? = nil,
-        snackbarCoordinator: SnackbarCoordinator? = nil
+        snackbarCoordinator: SnackbarCoordinator? = nil,
+        pasteModeProvider: @escaping @MainActor () -> PasteMode = { AppRuntimeState.shared.pasteMode }
     ) {
         self.store = store
         self.mode = mode
         self.activationService = activationService ?? AppActivationService()
+        self.pasteModeProvider = pasteModeProvider
         let coordinator = snackbarCoordinator ?? SnackbarCoordinator()
         self.snackbarCoordinator = coordinator
         snackbarWindow = SnackbarWindow(coordinator: coordinator)
@@ -99,8 +127,11 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     private func handleTextScaleChange() {
         panel.setContentSize(Self.oversizedPanelSize)
         updatePanelContent()
-        if case .visible = panelState {
+        switch panelState {
+        case .visible:
             centerPanel()
+        case .hidden, .dismissing, .preparingPaste, .copyingPasteForAppWindow:
+            break
         }
     }
 
@@ -201,6 +232,13 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             // can interact with it across multiple actions.
             // Safeguard: UI tests explicitly verify panel dismiss behavior via escape key.
             if case .production = mode {
+                switch panelState {
+                case .visible:
+                    break
+                case .hidden, .dismissing, .preparingPaste, .copyingPasteForAppWindow:
+                    return
+                }
+
                 if isPointerOverStatusItem {
                     // Since the macOS 27 menu bar, pressing a status item of an
                     // accessory app deactivates it at mouse-down, before the
@@ -212,7 +250,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
                     scheduleStatusItemInteractionFallback()
                     return
                 }
-                hide()
+                hide(destination: .focusLoss)
             }
         }
     }
@@ -258,6 +296,8 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             show()
         case .visible:
             hide()
+        case .dismissing, .preparingPaste, .copyingPasteForAppWindow:
+            break
         }
     }
 
@@ -361,8 +401,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         }
     }
 
-    @discardableResult
-    func hide() -> NSRunningApplication? {
+    func hide() {
         hide(destination: .previousApplication)
     }
 
@@ -370,19 +409,59 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         hide(destination: .appWindow)
     }
 
-    @discardableResult
-    private func hide(destination: PanelDismissalDestination) -> NSRunningApplication? {
+    private func hide(destination: PanelDismissalDestination) {
+        switch panelState {
+        case .hidden:
+            break
+        case let .visible(previousApp):
+            switch destination {
+            case .previousApplication:
+                beginDismissal(.previousApplication(previousApp: previousApp))
+            case .appWindow, .focusLoss:
+                beginDismissal(.appWindow)
+            }
+        case let .dismissing(dismissal):
+            switch (dismissal, destination) {
+            case (.previousApplication, .appWindow):
+                panelState = .dismissing(.appWindow)
+            case (.previousApplication, .focusLoss):
+                panelState = .dismissing(.appWindow)
+            case let (.paste(pendingPaste), .appWindow):
+                // An app window being opened has priority over an external-app
+                // paste. Keep the clipboard write, but do not reactivate the old
+                // target or synthesize Cmd-V after the app window takes focus.
+                panelState = .dismissing(.appWindowCancellingPaste(pendingPaste))
+            case (.previousApplication, .previousApplication),
+                 (.appWindow, _),
+                 (.paste, .previousApplication),
+                 (.paste, .focusLoss),
+                 (.appWindowCancellingPaste, _):
+                break
+            }
+        case let .preparingPaste(operation):
+            switch destination {
+            case .previousApplication:
+                break
+            case .appWindow, .focusLoss:
+                operation.task.cancel()
+                panelState = .copyingPasteForAppWindow(operation)
+            }
+        case .copyingPasteForAppWindow:
+            break
+        }
+    }
+
+    private func beginDismissal(_ dismissal: PanelDismissal) {
         snackbarObservationTask?.cancel()
         snackbarObservationTask = nil
         snackbarWindow.panelDidHide()
 
-        let previousApp: NSRunningApplication?
-        switch panelState {
-        case .hidden: return nil
-        case let .visible(app): previousApp = app
-        }
+        panelState = .dismissing(dismissal)
 
-        guard let layer = animatedLayer else { return previousApp }
+        guard let layer = animatedLayer else {
+            completeDismissal(layer: nil)
+            return
+        }
         let easeIn = CAMediaTimingFunction(name: .easeIn)
 
         let scale = CABasicAnimation(keyPath: "transform")
@@ -397,27 +476,38 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
         CATransaction.begin()
         CATransaction.setCompletionBlock { [weak self] in
-            guard let self else { return }
-            self.panel.orderOut(nil)
-            self.panel.alphaValue = 1
-            layer.removeAllAnimations()
-            layer.transform = CATransform3DIdentity
-            layer.opacity = 1
-            self.store.resetForDisplay()
-            self.store.setPanelVisibility(false)
+            self?.completeDismissal(layer: layer)
         }
         layer.add(scale, forKey: "transform")
         layer.add(fade, forKey: "opacity")
         CATransaction.commit()
+    }
 
-        panelState = .hidden
-        switch destination {
-        case .previousApplication:
+    private func completeDismissal(layer: CALayer?) {
+        guard case let .dismissing(dismissal) = panelState else { return }
+
+        // orderOut is the focus-release boundary: when the panel is key, AppKit
+        // makes the window behind it key before this call returns.
+        panel.orderOut(nil)
+        panel.alphaValue = 1
+        layer?.removeAllAnimations()
+        layer?.transform = CATransform3DIdentity
+        layer?.opacity = 1
+        store.resetForDisplay()
+        store.setPanelVisibility(false)
+
+        switch dismissal {
+        case let .previousApplication(previousApp):
+            panelState = .hidden
             activationService.activate(previousApp)
         case .appWindow:
-            break
+            panelState = .hidden
+        case let .paste(pendingPaste):
+            activationService.activate(pendingPaste.targetApp)
+            startPastePreparation(pendingPaste)
+        case let .appWindowCancellingPaste(pendingPaste):
+            startCopyingPasteForAppWindow(pendingPaste)
         }
-        return previousApp
     }
 
     private func centerPanel() {
@@ -434,25 +524,13 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
     private func selectItem(itemId: String, content: ClipboardContent) {
         #if ENABLE_SYNTHETIC_PASTE
-            let targetApp = hide()
-            Task { @MainActor in
-                guard await pasteReportingProgress(itemId: itemId, content: content) else { return }
-                let runtimeState = AppRuntimeState.shared
-                runtimeState.accessibilityPermissionMonitor.refresh()
-                switch runtimeState.pasteMode {
-                case .autoPaste:
-                    switch activationService.syntheticPasteBehavior(for: targetApp) {
-                    case let .paste(targetApp):
-                        activationService.simulatePaste(to: targetApp)
-                    case .copyOnly:
-                        showCopiedNotification()
-                    }
-                case .copyOnly:
-                    showCopiedNotification()
-                case let .unavailable(reason):
-                    showCopiedWithPermissionNotice(reason)
-                }
-            }
+            guard case let .visible(previousApp) = panelState else { return }
+            beginDismissal(.paste(PendingPaste(
+                id: UUID(),
+                itemId: itemId,
+                content: content,
+                targetApp: previousApp
+            )))
         #else
             hide()
             Task { @MainActor in
@@ -461,6 +539,129 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             }
         #endif
     }
+
+    #if DEBUG
+        func selectItemForTesting(itemId: String, content: ClipboardContent) {
+            selectItem(itemId: itemId, content: content)
+        }
+    #endif
+
+    #if ENABLE_SYNTHETIC_PASTE
+        private func startPastePreparation(_ pendingPaste: PendingPaste) {
+            let task = Task { @MainActor [weak self] in
+                guard let self else { return }
+                await prepareAndPaste(pendingPaste)
+            }
+            panelState = .preparingPaste(PasteOperation(id: pendingPaste.id, task: task))
+        }
+
+        private func prepareAndPaste(_ pendingPaste: PendingPaste) async {
+            defer { finishPasteOperation(id: pendingPaste.id) }
+
+            guard case let .preparingPaste(operation) = panelState,
+                  operation.id == pendingPaste.id
+            else {
+                return
+            }
+
+            #if DEBUG
+                pastePreparationDidStartForTesting?()
+            #endif
+
+            guard await pasteReportingProgress(
+                itemId: pendingPaste.itemId,
+                content: pendingPaste.content
+            ) else {
+                return
+            }
+
+            switch panelState {
+            case let .preparingPaste(currentOperation)
+                where currentOperation.id == pendingPaste.id && !Task.isCancelled:
+                break
+            case let .copyingPasteForAppWindow(currentOperation)
+                where currentOperation.id == pendingPaste.id:
+                showCopiedNotification()
+                return
+            case .hidden, .visible, .dismissing, .preparingPaste, .copyingPasteForAppWindow:
+                return
+            }
+
+            let runtimeState = AppRuntimeState.shared
+            runtimeState.accessibilityPermissionMonitor.refresh()
+            switch pasteModeProvider() {
+            case .autoPaste:
+                switch activationService.syntheticPasteBehavior(for: pendingPaste.targetApp) {
+                case let .paste(targetApp):
+                    let didPaste = await activationService.simulatePaste(to: targetApp)
+                    switch panelState {
+                    case let .preparingPaste(currentOperation)
+                        where currentOperation.id == pendingPaste.id && !Task.isCancelled:
+                        if !didPaste {
+                            showCopiedNotification()
+                        }
+                    case let .copyingPasteForAppWindow(currentOperation)
+                        where currentOperation.id == pendingPaste.id:
+                        // The clipboard was already written before activation
+                        // polling. Settings now owns focus, so suppress Cmd-V.
+                        showCopiedNotification()
+                    case .hidden, .visible, .dismissing, .preparingPaste, .copyingPasteForAppWindow:
+                        return
+                    }
+                case .copyOnly:
+                    showCopiedNotification()
+                }
+            case .copyOnly:
+                showCopiedNotification()
+            case let .unavailable(reason):
+                showCopiedWithPermissionNotice(reason)
+            }
+        }
+
+        private func finishPasteOperation(id: UUID) {
+            switch panelState {
+            case let .preparingPaste(operation),
+                 let .copyingPasteForAppWindow(operation):
+                guard operation.id == id else { return }
+                panelState = .hidden
+            case .hidden, .visible, .dismissing:
+                break
+            }
+        }
+
+        private func startCopyingPasteForAppWindow(_ pendingPaste: PendingPaste) {
+            let task = Task { @MainActor [weak self] in
+                guard let self else { return }
+                await copyPendingPaste(pendingPaste)
+            }
+            panelState = .copyingPasteForAppWindow(PasteOperation(
+                id: pendingPaste.id,
+                task: task
+            ))
+        }
+
+        private func copyPendingPaste(_ pendingPaste: PendingPaste) async {
+            defer { finishPasteOperation(id: pendingPaste.id) }
+            guard case let .copyingPasteForAppWindow(operation) = panelState,
+                  operation.id == pendingPaste.id
+            else {
+                return
+            }
+
+            guard await pasteReportingProgress(
+                itemId: pendingPaste.itemId,
+                content: pendingPaste.content
+            ) else {
+                return
+            }
+            guard case let .copyingPasteForAppWindow(currentOperation) = panelState,
+                  currentOperation.id == pendingPaste.id
+            else {
+                return
+            }
+            showCopiedNotification()
+        }
+    #endif
 
     private func copyOnlyItem(itemId: String, content: ClipboardContent) {
         hide()
@@ -481,7 +682,7 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         let ok = await store.paste(itemId: itemId, content: content)
         progressTask.cancel()
         snackbarWindow.dismissProgress()
-        if !ok {
+        if !ok, !Task.isCancelled {
             snackbarWindow.showNotification(.passive(message: String(localized: "Couldn’t copy image"), iconSystemName: "exclamationmark.triangle.fill"))
         }
         return ok

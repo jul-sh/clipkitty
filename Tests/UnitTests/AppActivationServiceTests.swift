@@ -47,4 +47,15 @@ final class AppActivationServiceTests: XCTestCase {
             RemoteDesktopApp.detect(bundleIdentifier: "com.microsoft.VSCode", localizedName: "Visual Studio Code")
         )
     }
+
+    func testSyntheticPasteDoesNotDispatchWhenTargetNeverBecomesFrontmost() async throws {
+        let workspace = MockWorkspace()
+        workspace.frontmostApplication = nil
+        let service = AppActivationService(workspace: workspace)
+        let targetApp = try XCTUnwrap(NSRunningApplication(processIdentifier: getpid()))
+
+        let didPaste = await service.simulatePaste(to: targetApp)
+
+        XCTAssertFalse(didPaste)
+    }
 }

@@ -12,6 +12,7 @@ name: Build and Release
 #   ios-smoke ───────────┤
 #   ios-build ───────────┤
 #   ios-screenshots ─────┤   (matrix: iphone, ipad)
+#   macos-tests ─────────┤
 #   macos-uitests ───────┤
 #   macos-marketing ─────┤
 #   intro-video-capture ── intro-videos ─┘   (matrix: two balanced locale shards)
@@ -748,6 +749,42 @@ jobs:
             xcodebuild-test.log
           if-no-files-found: ignore
 
+  macos-tests:
+    name: macOS Unit Tests
+    needs: prewarm-nix
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          lfs: true
+
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
+
+      - name: Install Tuist
+        run: nix profile install --no-update-lock-file .#tuist
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
+        with:
+          swift-version: "6.2"
+
+      - name: Generate Xcode Workspace
+        run: make workspace
+
+      - name: Run Unit Tests
+        timeout-minutes: 30
+        run: |
+          xcodebuild test \
+            -workspace ClipKitty.xcworkspace \
+            -scheme ClipKitty \
+            -destination "platform=macOS,arch=arm64" \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            -only-testing:ClipKittyTests
+
   # macOS marketing screenshots and the site icon; consumed by gh-pages and
   # the App Store upload.
   macos-marketing:
@@ -976,7 +1013,7 @@ jobs:
   # Screenshot/video jobs are allowed to skip only on PRs, where their job
   # conditions intentionally disable them. Every other result must succeed.
   build:
-    needs: [version, prewarm-nix, rust-tests, macos-build, ios-smoke, ios-build, ios-screenshots, macos-uitests, macos-marketing, intro-videos]
+    needs: [version, prewarm-nix, rust-tests, macos-build, ios-smoke, ios-build, ios-screenshots, macos-tests, macos-uitests, macos-marketing, intro-videos]
     runs-on: ubuntu-latest
     if: always()
 
@@ -1009,7 +1046,7 @@ jobs:
   # Stable publication belongs exclusively to promote-appstore-release.yml.
   release:
     name: Publish Beta Release
-    needs: [version, prewarm-nix, rust-tests, macos-build, macos-attestation, ios-smoke, ios-build, ios-screenshots, macos-uitests, macos-marketing, intro-videos]
+    needs: [version, prewarm-nix, rust-tests, macos-build, macos-attestation, ios-smoke, ios-build, ios-screenshots, macos-tests, macos-uitests, macos-marketing, intro-videos]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     concurrency:
@@ -1445,7 +1482,7 @@ jobs:
   # Upload to App Store Connect via ASC CLI
   appstore:
     runs-on: macos-26
-    needs: [rust-tests, macos-build, macos-uitests, macos-marketing, intro-videos]
+    needs: [rust-tests, macos-build, macos-tests, macos-uitests, macos-marketing, intro-videos]
     if: github.event_name == 'push' && github.ref_name == 'main'
 
     steps:

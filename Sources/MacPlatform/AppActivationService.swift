@@ -87,36 +87,41 @@ public final class AppActivationService {
             return .paste(targetApp: targetApp)
         }
 
-        public func simulatePaste(to targetApp: NSRunningApplication) {
-            guard !targetApp.isTerminated else { return }
+        public func simulatePaste(to targetApp: NSRunningApplication) async -> Bool {
+            guard !targetApp.isTerminated else { return false }
 
-            Task {
-                for _ in 0 ..< 50 {
-                    guard !targetApp.isTerminated else { return }
-                    if workspace.frontmostApplication == targetApp {
-                        break
+            for _ in 0 ..< 50 {
+                guard !Task.isCancelled, !targetApp.isTerminated else { return false }
+                if workspace.frontmostApplication == targetApp {
+                    guard let source = CGEventSource(stateID: .hidSystemState),
+                          let keyDown = CGEvent(
+                              keyboardEventSource: source,
+                              virtualKey: 0x09,
+                              keyDown: true
+                          ),
+                          let keyUp = CGEvent(
+                              keyboardEventSource: source,
+                              virtualKey: 0x09,
+                              keyDown: false
+                          )
+                    else {
+                        return false
                     }
-                    try? await Task.sleep(nanoseconds: 10_000_000)
+
+                    keyDown.flags = .maskCommand
+                    keyUp.flags = .maskCommand
+                    keyDown.post(tap: .cgSessionEventTap)
+                    keyUp.post(tap: .cgSessionEventTap)
+                    return true
                 }
 
-                await MainActor.run {
-                    guard let source = CGEventSource(stateID: .hidSystemState) else {
-                        return
-                    }
-
-                    guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true) else {
-                        return
-                    }
-                    keyDown.flags = .maskCommand
-                    keyDown.post(tap: .cgSessionEventTap)
-
-                    guard let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false) else {
-                        return
-                    }
-                    keyUp.flags = .maskCommand
-                    keyUp.post(tap: .cgSessionEventTap)
+                do {
+                    try await Task.sleep(nanoseconds: 10_000_000)
+                } catch {
+                    return false
                 }
             }
+            return false
         }
     #endif
 }
