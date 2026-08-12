@@ -4,8 +4,7 @@
 //! text at the right offsets.
 
 use purr::{
-    ClipboardStore, ClipboardStoreApi, HighlightKind, ListPresentationProfile, MatchedExcerpt,
-    RowPresentation,
+    ClipboardStore, HighlightKind, ListPresentationProfile, MatchedExcerpt, RowPresentation,
 };
 use tempfile::TempDir;
 

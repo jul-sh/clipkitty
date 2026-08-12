@@ -3,9 +3,9 @@
 use crate::database::{hydrate_item_metadata_tags, Database};
 use crate::indexer::{IndexInspection, Indexer};
 use crate::interface::{
-    ClipKittyError, ClipboardItem, ClipboardStoreApi, ItemQueryFilter, ItemTag,
-    ListPresentationProfile, MatchedExcerptRequest, MatchedExcerptResolution, NewFileInput,
-    PreviewPayload, SearchOutcome, SearchResult, StoreBootstrapPlan,
+    ClipKittyError, ClipboardItem, ItemQueryFilter, ItemTag, ListPresentationProfile,
+    MatchedExcerptRequest, MatchedExcerptResolution, NewFileInput, PreviewPayload, SearchOutcome,
+    SearchResult, StoreBootstrapPlan,
 };
 #[cfg(feature = "sync")]
 use crate::sync_bridge::{snapshot_from_stored_item_with_bookmark, RealSyncEmitter, SyncEmitter};
@@ -557,16 +557,15 @@ pub fn inspect_store_bootstrap(db_path: String) -> Result<StoreBootstrapPlan, Cl
 }
 
 #[uniffi::export]
-#[async_trait::async_trait]
-impl ClipboardStoreApi for ClipboardStore {
-    fn database_size(&self) -> i64 {
+impl ClipboardStore {
+    pub fn database_size(&self) -> i64 {
         let Ok(_permit) = self.admission.admit() else {
             return 0;
         };
         self.db.database_size().unwrap_or(0)
     }
 
-    fn save_text(
+    pub fn save_text(
         &self,
         text: String,
         source_app: Option<String>,
@@ -585,7 +584,7 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(outcome.ffi_id())
     }
 
-    async fn search(
+    pub async fn search(
         &self,
         query: String,
         presentation: ListPresentationProfile,
@@ -600,7 +599,7 @@ impl ClipboardStoreApi for ClipboardStore {
         }
     }
 
-    async fn search_filtered(
+    pub async fn search_filtered(
         &self,
         query: String,
         filter: ItemQueryFilter,
@@ -616,7 +615,10 @@ impl ClipboardStoreApi for ClipboardStore {
         }
     }
 
-    fn fetch_by_ids(&self, item_ids: Vec<String>) -> Result<Vec<ClipboardItem>, ClipKittyError> {
+    pub fn fetch_by_ids(
+        &self,
+        item_ids: Vec<String>,
+    ) -> Result<Vec<ClipboardItem>, ClipKittyError> {
         let _permit = self.admission.admit()?;
         let stored_items = self.db.fetch_items_by_item_ids(&item_ids)?;
         let mut items: Vec<ClipboardItem> = stored_items
@@ -630,7 +632,7 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(items)
     }
 
-    fn resolve_matched_excerpts(
+    pub fn resolve_matched_excerpts(
         &self,
         requests: Vec<MatchedExcerptRequest>,
     ) -> Result<Vec<MatchedExcerptResolution>, ClipKittyError> {
@@ -638,7 +640,7 @@ impl ClipboardStoreApi for ClipboardStore {
         search_service::resolve_matched_excerpts(&self.db, &self.analysis_cache, requests)
     }
 
-    fn load_preview_payload(
+    pub fn load_preview_payload(
         &self,
         item_id: String,
         query: String,
@@ -647,7 +649,7 @@ impl ClipboardStoreApi for ClipboardStore {
         search_service::load_preview_payload(&self.db, &self.analysis_cache, item_id, query)
     }
 
-    fn save_files(
+    pub fn save_files(
         &self,
         files: Vec<NewFileInput>,
         source_app: Option<String>,
@@ -666,7 +668,7 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(outcome.ffi_id())
     }
 
-    fn save_image(
+    pub fn save_image(
         &self,
         image_data: Vec<u8>,
         thumbnail: Option<Vec<u8>>,
@@ -689,7 +691,7 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(outcome.ffi_id())
     }
 
-    fn update_link_metadata(
+    pub fn update_link_metadata(
         &self,
         item_id: String,
         title: Option<String>,
@@ -710,7 +712,7 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(())
     }
 
-    fn update_image_description(
+    pub fn update_image_description(
         &self,
         item_id: String,
         description: String,
@@ -735,7 +737,7 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(())
     }
 
-    fn update_text_item(&self, item_id: String, text: String) -> Result<(), ClipKittyError> {
+    pub fn update_text_item(&self, item_id: String, text: String) -> Result<(), ClipKittyError> {
         let _permit = self.admission.admit()?;
         let row_id = self.require_row_id(&item_id)?;
         #[cfg(feature = "sync")]
@@ -751,7 +753,7 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(())
     }
 
-    fn update_timestamp(&self, item_id: String) -> Result<(), ClipKittyError> {
+    pub fn update_timestamp(&self, item_id: String) -> Result<(), ClipKittyError> {
         let _permit = self.admission.admit()?;
         let row_id = self.require_row_id(&item_id)?;
         #[allow(unused_variables)]
@@ -771,7 +773,7 @@ impl ClipboardStoreApi for ClipboardStore {
         Ok(())
     }
 
-    fn add_tag(&self, item_id: String, tag: ItemTag) -> Result<(), ClipKittyError> {
+    pub fn add_tag(&self, item_id: String, tag: ItemTag) -> Result<(), ClipKittyError> {
         let _permit = self.admission.admit()?;
         let row_id = self.require_row_id(&item_id)?;
         #[cfg(feature = "sync")]
@@ -780,7 +782,7 @@ impl ClipboardStoreApi for ClipboardStore {
         save_service::add_tag(&self.db, row_id, tag)
     }
 
-    fn remove_tag(&self, item_id: String, tag: ItemTag) -> Result<(), ClipKittyError> {
+    pub fn remove_tag(&self, item_id: String, tag: ItemTag) -> Result<(), ClipKittyError> {
         let _permit = self.admission.admit()?;
         let row_id = self.require_row_id(&item_id)?;
         #[cfg(feature = "sync")]
@@ -789,7 +791,7 @@ impl ClipboardStoreApi for ClipboardStore {
         save_service::remove_tag(&self.db, row_id, tag)
     }
 
-    fn delete_item(&self, item_id: String) -> Result<(), ClipKittyError> {
+    pub fn delete_item(&self, item_id: String) -> Result<(), ClipKittyError> {
         let _permit = self.admission.admit()?;
         let row_id = self.require_row_id(&item_id)?;
         #[cfg(feature = "sync")]
@@ -798,7 +800,7 @@ impl ClipboardStoreApi for ClipboardStore {
         save_service::delete_item(&self.db, &self.indexer, row_id)
     }
 
-    fn clear(&self) -> Result<(), ClipKittyError> {
+    pub fn clear(&self) -> Result<(), ClipKittyError> {
         let _permit = self.admission.admit()?;
         #[cfg(feature = "sync")]
         for row_id in self.db.fetch_all_item_ids()? {
@@ -810,7 +812,7 @@ impl ClipboardStoreApi for ClipboardStore {
         save_service::clear(&self.db, &self.indexer)
     }
 
-    fn prune_to_size(&self, max_bytes: i64, keep_ratio: f64) -> Result<u64, ClipKittyError> {
+    pub fn prune_to_size(&self, max_bytes: i64, keep_ratio: f64) -> Result<u64, ClipKittyError> {
         let _permit = self.admission.admit()?;
         let outcome = save_service::prune_to_size(&self.db, &self.indexer, max_bytes, keep_ratio)?;
 

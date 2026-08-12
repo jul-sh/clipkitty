@@ -6,7 +6,7 @@
 //! - Scene 2 (0:08-0:14): Color swatches "#" -> "#f", then image "cat"
 //! - Scene 3 (0:14-0:20): Typo forgiveness "rivresid" finds "Riverside"
 
-use purr::{ClipboardItem, ClipboardStore, ClipboardStoreApi, ListPresentationProfile};
+use purr::{ClipboardItem, ClipboardStore, ListPresentationProfile};
 use tempfile::TempDir;
 
 fn get_content_text(item: &ClipboardItem) -> String {

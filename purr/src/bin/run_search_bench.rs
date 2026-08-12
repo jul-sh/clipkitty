@@ -1,7 +1,7 @@
 use clap::Parser;
 use purr::{
     benchmark_fixture::{default_synthetic_bench_db_path, ensure_synthetic_benchmark_fixture},
-    inspect_store_bootstrap, ClipboardStore, ClipboardStoreApi, StoreBootstrapPlan,
+    inspect_store_bootstrap, ClipboardStore, StoreBootstrapPlan,
 };
 use std::path::PathBuf;
 use std::time::Instant;

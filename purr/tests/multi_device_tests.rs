@@ -13,7 +13,6 @@ use purr_sync::types::{
 
 use purr::database::Database;
 use purr::ClipboardStore;
-use purr::ClipboardStoreApi;
 use tempfile::TempDir;
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -7,9 +7,8 @@
 #   purrHost           host-arch dynamic library + uniffi-bindgen binary,
 #                      used solely to drive UniFFI Swift binding generation.
 #   purrSwiftBinds     generated Swift source (purr.swift), C header
-#                      (purrFFI.h) and module map, with the ClipKitty-
-#                      specific patches applied as explicit post-processing
-#                      steps.
+#                      (purrFFI.h), and module map, all configured by the
+#                      crate's shared uniffi.toml.
 #   purrMacAarch64     per-target static libraries
 #   purrMacX86_64
 #   purrMacUniversal   universal macOS static library (lipo'd)
@@ -23,7 +22,7 @@
 #   purrXcodeOverlay   thin adapter that reshapes the canonical outputs into
 #                      the exact file layout Project.swift expects:
 #                        Sources/ClipKittyRust/purrFFI.h
-#                        Sources/ClipKittyRust/module.modulemap
+#                        Sources/ClipKittyRust/purrFFI.modulemap
 #                        Sources/ClipKittyRust/libpurr.a               (universal macOS)
 #                        Sources/ClipKittyRust/ios-device/libpurr.a
 #                        Sources/ClipKittyRust/ios-simulator/libpurr.a
@@ -36,13 +35,9 @@
 #
 # Design notes:
 #
-#   * `purr/src/bin/generate_bindings.rs` exists and is the historical
-#     source of truth for how the Swift bindings were produced before the
-#     Nix flake took over. We deliberately do NOT call it from Nix: its
-#     patches are load-bearing (Swift 6 strict concurrency + the ClipKitty
-#     FFI module rename) and we want those patches to show up as explicit
-#     `sed` calls in the Nix build log rather than hide inside a Rust
-#     binary whose behaviour we'd have to infer from its source.
+#   * This is the sole Rust-to-Xcode artifact pipeline. Local Xcode pre-builds
+#     materialise `purrXcodeOverlay`, so they share UniFFI configuration and
+#     target-library orchestration with CI instead of reimplementing both.
 #
 #   * iOS cross-compilation uses host Xcode via `/usr/bin/xcrun`. The host
 #     Xcode dependency is validated by `clipkittyLib.xcodePreflightScript`
@@ -128,8 +123,8 @@ let
     export MACOSX_DEPLOYMENT_TARGET=14.0
   '';
 
-  # Host dylib + uniffi-bindgen binary. UniFFI's `--library` flag needs a real
-  # dylib to introspect exported symbols, not a static archive.
+  # Host dylib + uniffi-bindgen binary. Binding generation needs a real dylib
+  # to introspect exported symbols, not a static archive.
   purrHost = stdenv.mkDerivation {
     pname = "purr-host";
     version = "0.1.0";
@@ -158,20 +153,15 @@ let
     dontStrip = true;
   };
 
-  # UniFFI-generated Swift source + C header + modulemap.
-  #
-  # The two sed passes are load-bearing: Swift 6 strict concurrency forbids
-  # the default `private var initializationResult`, and we expose the C
-  # module under the name `ClipKittyRustFFI` rather than `purrFFI` so the
-  # wrapper module and Tuist target names line up. Keeping these as explicit
-  # `sed` steps here (instead of hiding inside generate_bindings.rs) means
-  # every transform is visible in the build log and auditable in isolation.
+  # UniFFI-generated Swift source, C header, and module map. The shared
+  # purr/uniffi.toml config names the C module ClipKittyRustFFI for both this
+  # reproducible build and the local Xcode pre-build path.
   purrSwiftBinds = runCommand "purr-swift-bindings"
     {
       nativeBuildInputs = [ purrHost rustToolchain ];
     } ''
-    # `uniffi-bindgen --library` still consults `cargo metadata` to resolve
-    # workspace layout, so we run from inside a writable copy of the Rust
+    # UniFFI still consults `cargo metadata` to resolve workspace layout, so
+    # we run from inside a writable copy of the Rust
     # source. CARGO_HOME is pointed at the vendored registry to keep it
     # fully offline.
     cp -R ${rustSrc}/. "$TMPDIR/rust-src"
@@ -182,19 +172,9 @@ let
 
     mkdir -p "$out"
     uniffi-bindgen generate \
-      --library ${purrHost}/lib/libpurr.dylib \
+      ${purrHost}/lib/libpurr.dylib \
       --language swift \
       --out-dir "$out"
-
-    sed -i.bak \
-      -e 's/private var initializationResult/nonisolated(unsafe) private var initializationResult/' \
-      -e 's/#if canImport(purrFFI)/#if canImport(ClipKittyRustFFI)/' \
-      -e 's/import purrFFI/import ClipKittyRustFFI/' \
-      "$out/purr.swift"
-    rm -f "$out/purr.swift.bak"
-
-    printf 'module ClipKittyRustFFI {\n    header "purrFFI.h"\n    export *\n}\n' \
-      > "$out/module.modulemap"
   '';
 
   # Build one Rust target as a static library. For iOS targets we pull SDK /
@@ -305,7 +285,7 @@ let
   #   $out/
   #     swift/purr.swift
   #     swift/purrFFI.h
-  #     swift/module.modulemap
+  #     swift/purrFFI.modulemap
   #     lib/macos/libpurr.a         (universal)
   #     lib/ios-device/libpurr.a
   #     lib/ios-simulator/libpurr.a
@@ -319,7 +299,7 @@ let
 
     cp ${purrSwiftBinds}/purr.swift       $out/swift/purr.swift
     cp ${purrSwiftBinds}/purrFFI.h        $out/swift/purrFFI.h
-    cp ${purrSwiftBinds}/module.modulemap $out/swift/module.modulemap
+    cp ${purrSwiftBinds}/purrFFI.modulemap $out/swift/purrFFI.modulemap
 
     cp ${purrMacUniversal}/lib/libpurr.a $out/lib/macos/libpurr.a
     cp ${purrIosDevice}/lib/libpurr.a    $out/lib/ios-device/libpurr.a
@@ -349,7 +329,7 @@ let
     # Sources/ClipKittyRust/. The Swift wrapper is compiled as part of the
     # ClipKittyRustWrapper target, so purr.swift goes there.
     cp ${purrBridge}/swift/purrFFI.h        $out/Sources/ClipKittyRust/purrFFI.h
-    cp ${purrBridge}/swift/module.modulemap $out/Sources/ClipKittyRust/module.modulemap
+    cp ${purrBridge}/swift/purrFFI.modulemap $out/Sources/ClipKittyRust/purrFFI.modulemap
     cp ${purrBridge}/swift/purr.swift       $out/Sources/ClipKittyRustWrapper/purr.swift
   '';
 

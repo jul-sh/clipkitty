@@ -6,10 +6,10 @@
 // │ DEPENDENCY MAP - These files must stay in sync:                             │
 // │                                                                             │
 // │ purr/ (Rust crate)                    ← Core engine                         │
-// │   ↓ generates (cargo run --bin generate-bindings)                           │
+// │   ↓ generates (nix build .#clipkitty-rust-xcode-overlay)                    │
 // │ Sources/ClipKittyRust/purrFFI.h            ← C header (auto-generated)      │
 // │ Sources/ClipKittyRust/libpurr.a            ← Static library (auto-built)    │
-// │ Sources/ClipKittyRust/module.modulemap     ← Module map (auto-generated)    │
+// │ Sources/ClipKittyRust/purrFFI.modulemap    ← Module map (auto-generated)    │
 // │                                                                             │
 // │ Project.swift links:                                                        │
 // │   - ClipKittyRustFFI target → this file + purrFFI.h                         │

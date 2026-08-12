@@ -12,10 +12,8 @@ NIX_RUN :=
 endif
 
 XTASK := $(NIX_RUN) cargo run --quiet -p xtask --
-PERF_FAIL_ON_HANGS ?= 1
-PERF_HANG_THRESHOLD ?= 250
 
-.PHONY: help check workspace install-hooks install-sparkle-cli app-hardened app-app-store release-dmg release-macos-appstore release-ios-appstore release-version release-appcast-generate release-appcast-update screenshots-macos screenshots-ios screenshots-ipad intro-video perf site-icon site-landing-page secrets-asc-auth shell
+.PHONY: help check workspace install-hooks install-sparkle-cli app-hardened app-app-store release-dmg release-macos-appstore release-ios-appstore release-version release-appcast-generate release-appcast-update screenshots-macos screenshots-ios screenshots-ipad intro-video site-icon site-landing-page secrets-asc-auth shell
 
 help: ## Show the supported automation entry points.
 	@awk 'BEGIN {FS = ":.*## "; printf "\nClipKitty automation entry points\n\n"} /^[a-zA-Z0-9_.-]+:.*## / { printf "  %-26s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -73,9 +71,6 @@ screenshots-ipad: ## Capture iPad screenshots. Optional CLIPKITTY_MARKETING_LOCA
 
 intro-video: ## Generate intro videos. Optional CLIPKITTY_MARKETING_LOCALES=en,fr.
 	@$(XTASK) marketing intro-video
-
-perf: ## Run the supported performance trace flow. Optional PERF_HANG_THRESHOLD=... PERF_FAIL_ON_HANGS=0|1
-	@$(XTASK) perf --hang-threshold "$(PERF_HANG_THRESHOLD)" $(if $(filter 1 true yes,$(PERF_FAIL_ON_HANGS)),--fail-on-hangs,)
 
 site-icon: ## Render the public icon to build/site/icon.png.
 	@$(XTASK) site render icon

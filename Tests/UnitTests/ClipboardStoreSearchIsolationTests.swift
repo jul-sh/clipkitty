@@ -12,22 +12,6 @@ private final class TempAppSupportFileManager: FileManagerProtocol {
     let temporaryAppSupportURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("ClipboardStoreSearchIsolationTests-\(UUID().uuidString)", isDirectory: true)
 
-    func fileExists(atPath path: String) -> Bool {
-        base.fileExists(atPath: path)
-    }
-
-    func contents(atPath path: String) -> Data? {
-        base.contents(atPath: path)
-    }
-
-    func contentsOfDirectory(atPath path: String) throws -> [String] {
-        try base.contentsOfDirectory(atPath: path)
-    }
-
-    func attributesOfItem(atPath path: String) throws -> [FileAttributeKey: Any] {
-        try base.attributesOfItem(atPath: path)
-    }
-
     func createDirectory(at url: URL, withIntermediateDirectories: Bool, attributes: [FileAttributeKey: Any]?) throws {
         try base.createDirectory(at: url, withIntermediateDirectories: withIntermediateDirectories, attributes: attributes)
     }
@@ -37,14 +21,6 @@ private final class TempAppSupportFileManager: FileManagerProtocol {
             return base.urls(for: directory, in: domainMask)
         }
         return [temporaryAppSupportURL]
-    }
-
-    var homeDirectoryForCurrentUser: URL {
-        base.homeDirectoryForCurrentUser
-    }
-
-    func removeItem(at url: URL) throws {
-        try base.removeItem(at: url)
     }
 }
 

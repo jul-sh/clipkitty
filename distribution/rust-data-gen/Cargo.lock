@@ -1690,13 +1690,10 @@ name = "purr"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "base64",
  "chrono",
  "clap",
  "csscolorparser",
- "futures",
- "image",
  "once_cell",
  "parking_lot",
  "r2d2",

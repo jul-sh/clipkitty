@@ -135,22 +135,6 @@ fn parses_marketing_commands() {
 }
 
 #[test]
-fn parses_perf() {
-    let cli = Cli::parse_from([
-        "clipkitty",
-        "perf",
-        "--hang-threshold",
-        "250",
-        "--fail-on-hangs",
-    ]);
-    let TopLevel::Perf(args) = cli.command else {
-        panic!("expected perf");
-    };
-    assert_eq!(args.hang_threshold, 250);
-    assert!(args.fail_on_hangs);
-}
-
-#[test]
 fn parses_secrets_asc_auth() {
     for (input, expected) in [
         ("key-id", AscAuthField::KeyId),
@@ -200,8 +184,6 @@ fn rejects_internalized_legacy_commands() {
         ["clipkitty", "env", "install-sparkle-cli"].as_slice(),
         ["clipkitty", "marketing", "screenshots-macos"].as_slice(),
         ["clipkitty", "marketing", "patch-demo-items"].as_slice(),
-        ["clipkitty", "perf", "run", "typing"].as_slice(),
-        ["clipkitty", "perf", "--output", "perf_traces"].as_slice(),
         ["clipkitty", "site", "icon"].as_slice(),
         [
             "clipkitty",

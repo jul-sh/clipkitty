@@ -446,7 +446,7 @@ fi
 cd "$PROJECT_DIR"
 MARKER=".make/rust-tree-hash"
 LIB="Sources/ClipKittyRust/libpurr.a"
-HASH_INPUTS="Cargo.toml Cargo.lock purr purr-sync"
+HASH_INPUTS="Cargo.toml Cargo.lock flake.nix flake.lock nix purr purr-sync"
 CURRENT_HASH=$(
     {
         git ls-files -s -- $HASH_INPUTS
@@ -466,13 +466,32 @@ if [ -f "$LIB" ] && [ "$CURRENT_HASH" = "$STORED_HASH" ]; then
 fi
 
 echo "Rust changed: $STORED_HASH -> $CURRENT_HASH"
-export CARGO_TARGET_DIR="$(dirname "$(realpath "$(git rev-parse --git-common-dir)")")/target"
-if [ -z "${IN_NIX_SHELL:-}" ]; then
-    nix develop --no-update-lock-file --experimental-features 'nix-command flakes' "$PROJECT_DIR#default" --command bash -c "cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run ${LOCKED:+--locked} --release --bin generate-bindings"
-else
-    (cd purr && MACOSX_DEPLOYMENT_TARGET=14.0 cargo run ${LOCKED:+--locked} --release --bin generate-bindings)
-fi
-mkdir -p .make && echo "$CURRENT_HASH" > "$MARKER"
+mkdir -p .make
+OVERLAY_LINK="$PROJECT_DIR/.make/rust-xcode-overlay"
+nix build \
+    --no-update-lock-file \
+    --experimental-features 'nix-command flakes' \
+    "path:$PROJECT_DIR#clipkitty-rust-xcode-overlay" \
+    --out-link "$OVERLAY_LINK"
+
+# Copy only the generated artifacts and make the materialised files writable.
+# This keeps later Rust changes replaceable despite the Nix store's read-only
+# output mode.
+for GENERATED_FILE in \
+    Sources/ClipKittyRust/purrFFI.h \
+    Sources/ClipKittyRust/purrFFI.modulemap \
+    Sources/ClipKittyRust/libpurr.a \
+    Sources/ClipKittyRust/ios-device/libpurr.a \
+    Sources/ClipKittyRust/ios-simulator/libpurr.a \
+    Sources/ClipKittyRustWrapper/purr.swift
+do
+    GENERATED_DESTINATION="$PROJECT_DIR/$GENERATED_FILE"
+    mkdir -p "$(dirname "$GENERATED_DESTINATION")"
+    rm -f "$GENERATED_DESTINATION"
+    cp "$OVERLAY_LINK/$GENERATED_FILE" "$GENERATED_DESTINATION"
+    chmod u+w "$GENERATED_DESTINATION"
+done
+echo "$CURRENT_HASH" > "$MARKER"
 """
 
 /// Creates a Rust pre-build execution action targeting the given app target.
@@ -710,7 +729,7 @@ let project = Project(
         // MARK: ClipKittyRustFFI — C library (FFI bridge to Rust)
 
         // SYNC: Library name must match purr/Cargo.toml [lib] name = "purr"
-        // SYNC: Header comes from purr/src/bin/generate_bindings.rs → purrFFI.h
+        // SYNC: Header comes from the clipkitty-rust-xcode-overlay Nix output.
         .target(
             name: "ClipKittyRustFFI",
             destinations: [.mac, .iPhone],
@@ -724,7 +743,7 @@ let project = Project(
             settings: .settings(
                 base: [
                     "HEADER_SEARCH_PATHS": .array(["$(inherited)", "$(PROJECT_DIR)/Sources/ClipKittyRust"]),
-                    "MODULEMAP_FILE": "$(PROJECT_DIR)/Sources/ClipKittyRust/module.modulemap",
+                    "MODULEMAP_FILE": "$(PROJECT_DIR)/Sources/ClipKittyRust/purrFFI.modulemap",
                     "SKIP_INSTALL": "YES",
                 ]
             )

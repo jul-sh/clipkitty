@@ -47,9 +47,6 @@ pub enum TopLevel {
     #[command(subcommand)]
     Marketing(MarketingCmd),
 
-    /// Run the supported performance trace flow.
-    Perf(PerfArgs),
-
     /// Resolve App Store Connect auth fields from repo secrets.
     #[command(subcommand)]
     Secrets(SecretsCmd),
@@ -208,14 +205,6 @@ pub enum ScreenshotPlatform {
     Ios,
     #[value(name = "ipad")]
     IPad,
-}
-
-#[derive(Args, Debug)]
-pub struct PerfArgs {
-    #[arg(long, default_value_t = 250)]
-    pub hang_threshold: u64,
-    #[arg(long)]
-    pub fail_on_hangs: bool,
 }
 
 #[derive(Subcommand, Debug)]
