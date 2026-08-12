@@ -56,6 +56,11 @@ enum StoreLifecycle: Equatable {
     case failed(String)
 }
 
+enum ClipboardDatabaseLocation: Equatable {
+    case applicationSupport(filename: String)
+    case explicit(URL)
+}
+
 @MainActor
 @Observable
 final class ClipboardStore {
@@ -135,15 +140,15 @@ final class ClipboardStore {
 
     // MARK: - Initialization
 
-    private let isScreenshotMode: Bool
+    private let databaseLocation: ClipboardDatabaseLocation
 
     init(
-        screenshotMode: Bool = false,
+        databaseLocation: ClipboardDatabaseLocation = .applicationSupport(filename: "clipboard.sqlite"),
         pasteboard: PasteboardProtocol = NSPasteboard.general,
         workspace: WorkspaceProtocol = NSWorkspace.shared,
         fileManager: FileManagerProtocol = FileManager.default
     ) {
-        isScreenshotMode = screenshotMode
+        self.databaseLocation = databaseLocation
         self.pasteboard = pasteboard
         pasteService = PasteService(pasteboard: pasteboard)
         self.workspace = workspace
@@ -180,11 +185,6 @@ final class ClipboardStore {
     }
 
     // MARK: - Database Setup
-
-    /// Returns the database filename based on mode
-    static func databaseFilename(screenshotMode: Bool) -> String {
-        screenshotMode ? "clipboard-screenshot.sqlite" : "clipboard.sqlite"
-    }
 
     private func startBootstrap() {
         guard let dbPath = resolveDatabasePath() else { return }
@@ -265,15 +265,25 @@ final class ClipboardStore {
 
     private func resolveDatabasePath() -> String? {
         do {
-            guard let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-                let error = ClipboardError.databaseInitFailed(underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to locate application support directory"]))
-                ErrorReporter.reportCritical(error)
-                state = .failed(error.localizedDescription)
-                return nil
+            switch databaseLocation {
+            case let .applicationSupport(filename):
+                guard let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+                    let error = ClipboardError.databaseInitFailed(underlying: NSError(domain: "ClipKitty", code: 1, userInfo: [NSLocalizedDescriptionKey: "Failed to locate application support directory"]))
+                    ErrorReporter.reportCritical(error)
+                    state = .failed(error.localizedDescription)
+                    return nil
+                }
+                let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
+                try fileManager.createDirectory(at: appDir, withIntermediateDirectories: true, attributes: nil)
+                return appDir.appendingPathComponent(filename).path
+            case let .explicit(url):
+                try fileManager.createDirectory(
+                    at: url.deletingLastPathComponent(),
+                    withIntermediateDirectories: true,
+                    attributes: nil
+                )
+                return url.path
             }
-            let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
-            try fileManager.createDirectory(at: appDir, withIntermediateDirectories: true, attributes: nil)
-            return appDir.appendingPathComponent(Self.databaseFilename(screenshotMode: isScreenshotMode)).path
         } catch {
             let dbError = ClipboardError.databaseInitFailed(underlying: error)
             ErrorReporter.reportCritical(dbError)

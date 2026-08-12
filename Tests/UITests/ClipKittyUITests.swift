@@ -2,12 +2,18 @@ import AppKit
 import XCTest
 
 final class ClipKittyUITests: XCTestCase {
+    private enum TestDatabaseState {
+        case unconfigured
+        case configured(directory: URL)
+    }
+
     var app: XCUIApplication!
     /// Wall-clock time when setUp started; used to compute the skip offset for video trimming.
     private var setUpStartTime = Date()
 
     private static let localeConfigFile = "clipkitty_screenshot_locale.txt"
     private static let dbConfigFile = "clipkitty_screenshot_db.txt"
+    private var testDatabaseState: TestDatabaseState = .unconfigured
 
     /// Padding around the window for screenshots and video crops (points).
     /// Shared between `saveScreenshot` and `testRecordIntroVideo`.
@@ -123,9 +129,14 @@ final class ClipKittyUITests: XCTestCase {
         )
 
         let appSupportDir = getAppSupportDirectory(for: appURL)
-        try setupTestDatabase(in: appSupportDir)
+        let databaseURL = try setupTestDatabase(in: appSupportDir)
+        testDatabaseState = .configured(directory: databaseURL.deletingLastPathComponent())
 
-        app.launchArguments = ["--use-simulated-db"]
+        app.launchArguments = [
+            "--use-simulated-db",
+            "--simulated-db-path",
+            databaseURL.path,
+        ]
 
         // Marketing screenshots and the intro video need the preview pane to
         // show "Paste" so the featured direct-paste capability is visible.
@@ -162,6 +173,14 @@ final class ClipKittyUITests: XCTestCase {
             _ = waitForCondition(timeout: 5) { app.state == .notRunning }
         }
         app = nil
+
+        switch testDatabaseState {
+        case .unconfigured:
+            break
+        case let .configured(directory):
+            try? FileManager.default.removeItem(at: directory)
+            testDatabaseState = .unconfigured
+        }
     }
 
     // MARK: - Setup Helpers
@@ -247,7 +266,7 @@ final class ClipKittyUITests: XCTestCase {
         )
     }
 
-    private func setupTestDatabase(in appSupportDir: URL) throws {
+    private func setupTestDatabase(in appSupportDir: URL) throws -> URL {
         let projectRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -258,26 +277,18 @@ final class ClipKittyUITests: XCTestCase {
         let databaseFilename = readTempConfig(Self.dbConfigFile, defaultValue: "SyntheticData.sqlite") ?? "SyntheticData.sqlite"
 
         let sqliteSourceURL = projectRoot.appendingPathComponent("distribution/\(databaseFilename)")
-        let targetURL = appSupportDir.appendingPathComponent("clipboard-screenshot.sqlite")
-        try? FileManager.default.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
-
-        // Clean up old data after setUp has stopped the app under test.
-        try? FileManager.default.removeItem(at: targetURL)
-        // Remove all Tantivy index versions so the app rebuilds from scratch
-        if let contents = try? FileManager.default.contentsOfDirectory(at: appSupportDir, includingPropertiesForKeys: nil) {
-            for item in contents where item.lastPathComponent.hasPrefix("tantivy_index_") {
-                try? FileManager.default.removeItem(at: item)
-            }
-        }
-        // SQLite WAL files: handle both hyphen (-wal) and dot (.wal) naming conventions
-        try? FileManager.default.removeItem(at: URL(fileURLWithPath: targetURL.path + "-wal"))
-        try? FileManager.default.removeItem(at: URL(fileURLWithPath: targetURL.path + "-shm"))
-        try? FileManager.default.removeItem(at: targetURL.appendingPathExtension("wal"))
-        try? FileManager.default.removeItem(at: targetURL.appendingPathExtension("shm"))
+        let testDirectory = appSupportDir
+            .appendingPathComponent("UITests", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let targetURL = testDirectory.appendingPathComponent("clipboard.sqlite")
+        try FileManager.default.createDirectory(
+            at: testDirectory,
+            withIntermediateDirectories: true
+        )
 
         guard FileManager.default.fileExists(atPath: sqliteSourceURL.path) else {
             XCTFail("\(databaseFilename) not found at: \(sqliteSourceURL.path)")
-            return
+            throw CocoaError(.fileNoSuchFile)
         }
 
         // Guard against Git LFS pointer files — if LFS hasn't been pulled, the .sqlite file
@@ -291,10 +302,10 @@ final class ClipKittyUITests: XCTestCase {
             }
             if headerData?.contains("git-lfs.github.com") == true {
                 XCTFail("Git LFS pointer not resolved for \(databaseFilename). Run 'git lfs pull' first. File at: \(sqliteSourceURL.path)")
-                return
+                throw CocoaError(.fileReadCorruptFile)
             }
             XCTFail("\(databaseFilename) is too small (\(fileSize) bytes) — likely corrupt or an LFS pointer. Path: \(sqliteSourceURL.path)")
-            return
+            throw CocoaError(.fileReadCorruptFile)
         }
 
         try FileManager.default.copyItem(at: sqliteSourceURL, to: targetURL)
@@ -303,6 +314,7 @@ final class ClipKittyUITests: XCTestCase {
         let copiedSize = (try? FileManager.default.attributesOfItem(atPath: targetURL.path)[.size] as? Int) ?? 0
         XCTAssertGreaterThan(copiedSize, 1024,
                              "Copied database is too small (\(copiedSize) bytes). Target: \(targetURL.path)")
+        return targetURL
     }
 
     /// Reads the app-owned selection signal instead of AppKit's intermittently

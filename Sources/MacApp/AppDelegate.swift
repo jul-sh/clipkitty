@@ -14,7 +14,10 @@ import SwiftUI
 
 private enum LaunchMode {
     case production
-    case simulatedDatabase(initialSearchQuery: String?)
+    case simulatedDatabase(
+        initialSearchQuery: String?,
+        databaseLocation: ClipboardDatabaseLocation
+    )
 
     static func fromCommandLine() -> LaunchMode {
         // The `--use-simulated-db` / `--search` launch arguments are XCUITest
@@ -32,7 +35,20 @@ private enum LaunchMode {
             {
                 searchQuery = CommandLine.arguments[searchIndex + 1]
             }
-            return .simulatedDatabase(initialSearchQuery: searchQuery)
+            let databaseLocation: ClipboardDatabaseLocation
+            if let pathIndex = CommandLine.arguments.firstIndex(of: "--simulated-db-path"),
+               pathIndex + 1 < CommandLine.arguments.count
+            {
+                databaseLocation = .explicit(
+                    URL(fileURLWithPath: CommandLine.arguments[pathIndex + 1])
+                )
+            } else {
+                databaseLocation = .applicationSupport(filename: "clipboard-screenshot.sqlite")
+            }
+            return .simulatedDatabase(
+                initialSearchQuery: searchQuery,
+                databaseLocation: databaseLocation
+            )
         #else
             return .production
         #endif
@@ -86,15 +102,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func applicationDidFinishLaunching(_: Notification) {
         FontManager.registerFonts()
 
-        if case .simulatedDatabase = launchMode {
-            populateTestDatabase()
-        }
-
         switch launchMode {
         case .production:
-            store = ClipboardStore(screenshotMode: false)
-        case .simulatedDatabase:
-            store = ClipboardStore(screenshotMode: true)
+            store = ClipboardStore()
+        case let .simulatedDatabase(_, databaseLocation):
+            store = ClipboardStore(databaseLocation: databaseLocation)
         }
         #if ENABLE_APP_SHORTCUTS
             configureShortcutRuntime()
@@ -171,7 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
 
         // When using simulated DB, wait for bootstrap then show the panel
-        if case let .simulatedDatabase(initialSearchQuery) = launchMode {
+        if case let .simulatedDatabase(initialSearchQuery, _) = launchMode {
             if let searchQuery = initialSearchQuery {
                 panelController.initialSearchQuery = searchQuery
             }
@@ -195,15 +207,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
         }
     #endif
-
-    /// Ensure the simulated database directory exists (UI Test runner handles file placement)
-    private func populateTestDatabase() {
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return
-        }
-        let appDir = appSupport.appendingPathComponent("ClipKitty", isDirectory: true)
-        try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
-    }
 
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)

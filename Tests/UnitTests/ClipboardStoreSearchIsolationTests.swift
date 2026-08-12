@@ -26,6 +26,41 @@ private final class TempAppSupportFileManager: FileManagerProtocol {
 
 @MainActor
 final class ClipboardStoreSearchIsolationTests: XCTestCase {
+    func testExplicitDatabaseLocationsKeepIndexesIsolated() async throws {
+        let testRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ClipboardStoreDatabaseLocationTests-\(UUID().uuidString)")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: testRoot)
+        }
+
+        let firstDirectory = testRoot.appendingPathComponent("first", isDirectory: true)
+        let secondDirectory = testRoot.appendingPathComponent("second", isDirectory: true)
+        let firstStore = ClipboardStore(
+            databaseLocation: .explicit(firstDirectory.appendingPathComponent("clipboard.sqlite")),
+            pasteboard: MockPasteboard(),
+            workspace: MockWorkspace()
+        )
+        let secondStore = ClipboardStore(
+            databaseLocation: .explicit(secondDirectory.appendingPathComponent("clipboard.sqlite")),
+            pasteboard: MockPasteboard(),
+            workspace: MockWorkspace()
+        )
+
+        await firstStore.awaitReady()
+        await secondStore.awaitReady()
+
+        XCTAssertEqual(firstStore.lifecycle, .ready)
+        XCTAssertEqual(secondStore.lifecycle, .ready)
+        XCTAssertTrue(
+            try FileManager.default.contentsOfDirectory(atPath: firstDirectory.path)
+                .contains(where: { $0.hasPrefix("tantivy_index_") })
+        )
+        XCTAssertTrue(
+            try FileManager.default.contentsOfDirectory(atPath: secondDirectory.path)
+                .contains(where: { $0.hasPrefix("tantivy_index_") })
+        )
+    }
+
     func testBackgroundMutationDoesNotCancelInFlightBrowserSearch() async {
         let fileManager = TempAppSupportFileManager()
         addTeardownBlock {
