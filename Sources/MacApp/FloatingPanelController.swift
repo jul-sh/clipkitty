@@ -51,8 +51,8 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     /// Initial search query to pre-fill (for CI screenshots)
     var initialSearchQuery: String?
 
-    /// Whether the Accessibility-permission notice has been shown this launch.
-    private var hasShownNoPermissionNotice = false
+    /// Whether an Accessibility-permission notice has been shown this launch.
+    private var hasShownPermissionNotice = false
 
     /// Provides the window hosting the app's menu bar status item, if any.
     /// Injected by AppDelegate so resign-key handling can recognize clicks on
@@ -437,7 +437,9 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             let targetApp = hide()
             Task { @MainActor in
                 guard await pasteReportingProgress(itemId: itemId, content: content) else { return }
-                switch AppRuntimeState.shared.pasteMode {
+                let runtimeState = AppRuntimeState.shared
+                runtimeState.accessibilityPermissionMonitor.refresh()
+                switch runtimeState.pasteMode {
                 case .autoPaste:
                     switch activationService.syntheticPasteBehavior(for: targetApp) {
                     case let .paste(targetApp):
@@ -447,8 +449,8 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
                     }
                 case .copyOnly:
                     showCopiedNotification()
-                case .noPermission:
-                    showCopiedWithPermissionNotice()
+                case let .unavailable(reason):
+                    showCopiedWithPermissionNotice(reason)
                 }
             }
         #else
@@ -485,19 +487,33 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         return ok
     }
 
-    /// Copy succeeded but synthetic paste is unavailable because the Accessibility
-    /// permission is missing; tell the user how to enable it, once per launch.
-    private func showCopiedWithPermissionNotice() {
-        if hasShownNoPermissionNotice {
+    /// Copy succeeded but synthetic paste is unavailable; explain how to restore
+    /// it once per launch, then use the normal copied notification thereafter.
+    private func showCopiedWithPermissionNotice(_ reason: AutomaticPasteUnavailableReason) {
+        if hasShownPermissionNotice {
             showCopiedNotification()
             return
         }
-        hasShownNoPermissionNotice = true
+        hasShownPermissionNotice = true
+
+        let presentation: (message: String, actionTitle: String) = switch reason {
+        case .permissionNotGranted:
+            (
+                String(localized: "Copied. Enable Accessibility to paste automatically"),
+                String(localized: "Enable")
+            )
+        case .permissionRequiresRepair:
+            (
+                String(localized: "Copied. Repair Accessibility to paste automatically"),
+                String(localized: "Repair")
+            )
+        }
+
         snackbarWindow.showNotification(
             .actionable(
-                message: String(localized: "Copied. Enable Accessibility to paste automatically"),
+                message: presentation.message,
                 iconSystemName: "exclamationmark.triangle.fill",
-                actionTitle: String(localized: "Enable"),
+                actionTitle: presentation.actionTitle,
                 action: {
                     NotificationCenter.default.post(name: .clipKittyOpenSettings, object: nil)
                 }

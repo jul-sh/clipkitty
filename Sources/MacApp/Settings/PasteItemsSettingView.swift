@@ -14,7 +14,7 @@ import SwiftUI
     struct PasteItemsSettingView: View {
         @ObservedObject private var settings = AppSettings.shared
         @State private var permissionMonitor = AppRuntimeState.shared.accessibilityPermissionMonitor
-        @State private var showingPermissionSheet = false
+        @State private var permissionSheetReason: AutomaticPasteUnavailableReason?
 
         /// Binding that maps autoPasteEnabled to our selection enum
         private var selection: Binding<PasteItemsSelection> {
@@ -24,11 +24,6 @@ import SwiftUI
                     settings.autoPasteEnabled = (newValue == .toActiveApp)
                 }
             )
-        }
-
-        /// Whether to show the permission prompt (user selected active app but no permission)
-        private var showPermissionPrompt: Bool {
-            settings.autoPasteEnabled && !permissionMonitor.isGranted
         }
 
         var body: some View {
@@ -44,12 +39,23 @@ import SwiftUI
                     )
 
                     // Permission prompt (nested under "To active app")
-                    if showPermissionPrompt {
-                        AccessibilityPermissionPromptRow {
-                            showingPermissionSheet = true
+                    if settings.autoPasteEnabled {
+                        switch permissionMonitor.status {
+                        case .granted:
+                            EmptyView()
+                        case .notGranted:
+                            AccessibilityPermissionPromptRow(reason: .permissionNotGranted) {
+                                permissionSheetReason = .permissionNotGranted
+                            }
+                            .padding(.leading, 22)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                        case .requiresRepair:
+                            AccessibilityPermissionPromptRow(reason: .permissionRequiresRepair) {
+                                permissionSheetReason = .permissionRequiresRepair
+                            }
+                            .padding(.leading, 22)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
                         }
-                        .padding(.leading, 22)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
                     }
 
                     // "To clipboard" option
@@ -67,14 +73,12 @@ import SwiftUI
                 PasteIllustrationView(type: selection.wrappedValue == .toActiveApp ? .toActiveApp : .toClipboard)
                     .frame(width: 80, height: 56)
             }
-            .animation(.easeInOut(duration: 0.2), value: showPermissionPrompt)
-            .sheet(isPresented: $showingPermissionSheet) {
-                AccessibilityPermissionSheet(isPresented: $showingPermissionSheet)
+            .animation(.easeInOut(duration: 0.2), value: permissionMonitor.status)
+            .sheet(item: $permissionSheetReason) { reason in
+                AccessibilityPermissionSheet(reason: reason)
             }
             .onAppear {
-                if !permissionMonitor.isGranted {
-                    permissionMonitor.start()
-                }
+                permissionMonitor.start()
             }
             .onDisappear {
                 permissionMonitor.stop()
@@ -259,6 +263,7 @@ import SwiftUI
 
     /// Inline prompt to enable accessibility access
     struct AccessibilityPermissionPromptRow: View {
+        let reason: AutomaticPasteUnavailableReason
         let onTap: () -> Void
 
         var body: some View {
@@ -269,9 +274,16 @@ import SwiftUI
                         .font(.system(size: 14))
                         .foregroundStyle(.red)
 
-                    Text(String(localized: "Enable accessibility access"))
-                        .font(.subheadline)
-                        .foregroundStyle(.primary)
+                    switch reason {
+                    case .permissionNotGranted:
+                        Text(String(localized: "Enable accessibility access"))
+                            .font(.subheadline)
+                            .foregroundStyle(.primary)
+                    case .permissionRequiresRepair:
+                        Text(String(localized: "Repair accessibility access"))
+                            .font(.subheadline)
+                            .foregroundStyle(.primary)
+                    }
 
                     Spacer()
 

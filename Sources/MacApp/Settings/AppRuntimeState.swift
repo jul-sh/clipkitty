@@ -4,14 +4,39 @@ import Combine
 @preconcurrency import CoreGraphics
 import Foundation
 
-enum PasteMode {
-    case noPermission
+enum AutomaticPasteUnavailableReason: Hashable, Identifiable {
+    case permissionNotGranted
+    case permissionRequiresRepair
+
+    var id: Self {
+        self
+    }
+}
+
+enum PasteMode: Equatable {
     case copyOnly
     case autoPaste
+    case unavailable(AutomaticPasteUnavailableReason)
+
+    init(autoPasteEnabled: Bool, permissionStatus: AccessibilityPermissionStatus) {
+        guard autoPasteEnabled else {
+            self = .copyOnly
+            return
+        }
+
+        switch permissionStatus {
+        case .granted:
+            self = .autoPaste
+        case .notGranted:
+            self = .unavailable(.permissionNotGranted)
+        case .requiresRepair:
+            self = .unavailable(.permissionRequiresRepair)
+        }
+    }
 
     var buttonLabel: String {
         switch self {
-        case .noPermission, .copyOnly:
+        case .copyOnly, .unavailable:
             return String(localized: "Copy")
         case .autoPaste:
             return String(localized: "Paste")
@@ -20,7 +45,7 @@ enum PasteMode {
 
     var editConfirmLabel: String {
         switch self {
-        case .noPermission, .copyOnly:
+        case .copyOnly, .unavailable:
             return String(localized: "Save & Copy")
         case .autoPaste:
             return String(localized: "Save & Paste")
@@ -84,9 +109,10 @@ final class AppRuntimeState: ObservableObject {
                     return .autoPaste
                 }
             #endif
-            guard AppSettings.shared.autoPasteEnabled else { return .copyOnly }
-            guard accessibilityPermissionMonitor.isGranted else { return .noPermission }
-            return .autoPaste
+            return PasteMode(
+                autoPasteEnabled: AppSettings.shared.autoPasteEnabled,
+                permissionStatus: accessibilityPermissionMonitor.status
+            )
         }
     #else
         var pasteMode: PasteMode {

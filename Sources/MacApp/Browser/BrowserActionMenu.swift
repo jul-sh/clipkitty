@@ -61,7 +61,7 @@ enum BrowserActionItem: Equatable {
             switch AppRuntimeState.shared.pasteMode {
             case .autoPaste:
                 return "doc.on.clipboard"
-            case .copyOnly, .noPermission:
+            case .copyOnly, .unavailable:
                 return "doc.on.doc"
             }
         case .copyOnly:

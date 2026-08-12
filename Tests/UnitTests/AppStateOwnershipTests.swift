@@ -1,4 +1,5 @@
 @testable import ClipKitty
+@testable import ClipKittyMacPlatform
 import XCTest
 
 @MainActor
@@ -43,8 +44,99 @@ final class AppStateOwnershipTests: XCTestCase {
         XCTAssertNil(defaults.object(forKey: "textScale"))
     }
 
+    func testPasteModePreservesUserIntentAndEffectivePermissionState() {
+        XCTAssertEqual(
+            PasteMode(autoPasteEnabled: false, permissionStatus: .requiresRepair),
+            .copyOnly
+        )
+        XCTAssertEqual(
+            PasteMode(autoPasteEnabled: true, permissionStatus: .granted),
+            .autoPaste
+        )
+        XCTAssertEqual(
+            PasteMode(autoPasteEnabled: true, permissionStatus: .notGranted),
+            .unavailable(.permissionNotGranted)
+        )
+        XCTAssertEqual(
+            PasteMode(autoPasteEnabled: true, permissionStatus: .requiresRepair),
+            .unavailable(.permissionRequiresRepair)
+        )
+    }
+
     private func isolatedDefaults() throws -> UserDefaults {
         let suiteName = "AppStateOwnershipTests.\(UUID().uuidString)"
         return try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    }
+}
+
+@MainActor
+final class AccessibilityPermissionMonitorTests: XCTestCase {
+    func testPermissionStatusRequiresBothAccessibilityTrustAndEventPostingAccess() {
+        let cases: [(trusted: Bool, canPost: Bool, expected: AccessibilityPermissionStatus)] = [
+            (false, false, .notGranted),
+            (true, true, .granted),
+            (true, false, .requiresRepair),
+            (false, true, .requiresRepair),
+        ]
+
+        for testCase in cases {
+            let state = PermissionClientState(
+                isAccessibilityTrusted: testCase.trusted,
+                canPostEvents: testCase.canPost
+            )
+
+            XCTAssertEqual(makeMonitor(state: state).status, testCase.expected)
+        }
+    }
+
+    func testRefreshDetectsAStaleGrant() {
+        let state = PermissionClientState(isAccessibilityTrusted: true, canPostEvents: true)
+        let monitor = makeMonitor(state: state)
+        XCTAssertEqual(monitor.status, .granted)
+
+        state.canPostEvents = false
+        monitor.refresh()
+
+        XCTAssertEqual(monitor.status, .requiresRepair)
+    }
+
+    func testPermissionRequestUsesEventPostingRequestAndRefreshesStatus() {
+        let state = PermissionClientState(isAccessibilityTrusted: false, canPostEvents: false)
+        state.requestResult = true
+        state.onRequest = {
+            state.isAccessibilityTrusted = true
+            state.canPostEvents = true
+        }
+        let monitor = makeMonitor(state: state)
+
+        XCTAssertTrue(monitor.requestPermission())
+        XCTAssertEqual(state.requestCount, 1)
+        XCTAssertEqual(monitor.status, .granted)
+    }
+
+    private func makeMonitor(state: PermissionClientState) -> AccessibilityPermissionMonitor {
+        AccessibilityPermissionMonitor(client: AccessibilityPermissionClient(
+            isAccessibilityTrusted: { state.isAccessibilityTrusted },
+            canPostEvents: { state.canPostEvents },
+            requestPostEventAccess: {
+                state.requestCount += 1
+                state.onRequest?()
+                return state.requestResult
+            }
+        ))
+    }
+}
+
+@MainActor
+private final class PermissionClientState {
+    var isAccessibilityTrusted: Bool
+    var canPostEvents: Bool
+    var requestResult = false
+    var requestCount = 0
+    var onRequest: (() -> Void)?
+
+    init(isAccessibilityTrusted: Bool, canPostEvents: Bool) {
+        self.isAccessibilityTrusted = isAccessibilityTrusted
+        self.canPostEvents = canPostEvents
     }
 }

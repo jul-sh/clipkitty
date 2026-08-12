@@ -5,8 +5,9 @@ import SwiftUI
 /// A sheet explaining what accessibility permission enables and how to grant it.
 /// Auto-dismisses when permission is detected as granted.
 struct AccessibilityPermissionSheet: View {
-    @Binding var isPresented: Bool
+    @Environment(\.dismiss) private var dismiss
     @State private var permissionMonitor = AppRuntimeState.shared.accessibilityPermissionMonitor
+    let reason: AutomaticPasteUnavailableReason
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,19 +17,34 @@ struct AccessibilityPermissionSheet: View {
                     .font(.system(size: 40))
                     .foregroundStyle(.blue)
 
-                Text(String(localized: "Enable Accessibility Access"))
-                    .font(.title2)
-                    .fontWeight(.semibold)
+                switch reason {
+                case .permissionNotGranted:
+                    Text(String(localized: "Enable Accessibility Access"))
+                        .font(.title2)
+                        .fontWeight(.semibold)
+                case .permissionRequiresRepair:
+                    Text(String(localized: "Repair Accessibility Access"))
+                        .font(.title2)
+                        .fontWeight(.semibold)
+                }
             }
             .padding(.top, 24)
             .padding(.bottom, 16)
 
             // Explanation
             VStack(alignment: .leading, spacing: 16) {
-                Text(String(localized: "ClipKitty needs accessibility permission to paste items directly into apps by simulating keyboard shortcuts (⌘V)."))
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                switch reason {
+                case .permissionNotGranted:
+                    Text(String(localized: "ClipKitty needs accessibility permission to paste items directly into apps by simulating keyboard shortcuts (⌘V)."))
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .permissionRequiresRepair:
+                    Text(String(localized: "macOS lists ClipKitty as allowed, but is blocking automatic paste. Remove ClipKitty from Accessibility, then add it again to repair access."))
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 // Steps
                 VStack(alignment: .leading, spacing: 12) {
@@ -36,10 +52,18 @@ struct AccessibilityPermissionSheet: View {
                         number: 1,
                         text: String(localized: "Click \"Open System Settings\" below")
                     )
-                    PermissionStepRow(
-                        number: 2,
-                        text: String(localized: "Find ClipKitty in the list")
-                    )
+                    switch reason {
+                    case .permissionNotGranted:
+                        PermissionStepRow(
+                            number: 2,
+                            text: String(localized: "Find ClipKitty in the list")
+                        )
+                    case .permissionRequiresRepair:
+                        PermissionStepRow(
+                            number: 2,
+                            text: String(localized: "Remove ClipKitty using the minus button, then add it again")
+                        )
+                    }
                     PermissionStepRow(
                         number: 3,
                         text: String(localized: "Toggle the switch to enable access")
@@ -74,7 +98,7 @@ struct AccessibilityPermissionSheet: View {
                 .buttonStyle(.borderedProminent)
 
                 Button(String(localized: "Cancel")) {
-                    isPresented = false
+                    dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
             }
@@ -83,18 +107,16 @@ struct AccessibilityPermissionSheet: View {
         }
         .frame(width: 380, height: 360)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onAppear {
-            permissionMonitor.start()
-        }
-        .onChange(of: permissionMonitor.isGranted) { _, isGranted in
-            guard isGranted else { return }
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(500))
-                isPresented = false
+        .onChange(of: permissionMonitor.status) { _, status in
+            switch status {
+            case .granted:
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(500))
+                    dismiss()
+                }
+            case .notGranted, .requiresRepair:
+                break
             }
-        }
-        .onDisappear {
-            permissionMonitor.stop()
         }
     }
 
@@ -129,5 +151,5 @@ private struct PermissionStepRow: View {
 }
 
 #Preview {
-    AccessibilityPermissionSheet(isPresented: .constant(true))
+    AccessibilityPermissionSheet(reason: .permissionRequiresRepair)
 }

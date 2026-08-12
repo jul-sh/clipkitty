@@ -14319,6 +14319,90 @@
                   }
               }
           }
+      },
+      "Copied. Repair Accessibility to paste automatically": {
+          "localizations": {
+              "de": { "stringUnit": { "state": "translated", "value": "Kopiert. Reparieren Sie die Bedienungshilfen, um automatisch einzusetzen" } },
+              "en": { "stringUnit": { "state": "translated", "value": "Copied. Repair Accessibility to paste automatically" } },
+              "es": { "stringUnit": { "state": "translated", "value": "Copiado. Repara Accesibilidad para pegar automáticamente" } },
+              "fr": { "stringUnit": { "state": "translated", "value": "Copié. Réparez Accessibilité pour coller automatiquement" } },
+              "ja": { "stringUnit": { "state": "translated", "value": "コピー済み。自動でペーストするにはアクセシビリティを修復してください" } },
+              "ko": { "stringUnit": { "state": "translated", "value": "복사됨. 자동으로 붙여넣으려면 손쉬운 사용을 복구하세요" } },
+              "pt-BR": { "stringUnit": { "state": "translated", "value": "Copiado. Repare a Acessibilidade para colar automaticamente" } },
+              "ru": { "stringUnit": { "state": "translated", "value": "Скопировано. Восстановите Универсальный доступ для автоматической вставки" } },
+              "zh-Hans": { "stringUnit": { "state": "translated", "value": "已复制。修复辅助功能权限以自动粘贴" } },
+              "zh-Hant": { "stringUnit": { "state": "translated", "value": "已複製。修復輔助使用權限以自動貼上" } }
+          }
+      },
+      "Repair": {
+          "localizations": {
+              "de": { "stringUnit": { "state": "translated", "value": "Reparieren" } },
+              "en": { "stringUnit": { "state": "translated", "value": "Repair" } },
+              "es": { "stringUnit": { "state": "translated", "value": "Reparar" } },
+              "fr": { "stringUnit": { "state": "translated", "value": "Réparer" } },
+              "ja": { "stringUnit": { "state": "translated", "value": "修復" } },
+              "ko": { "stringUnit": { "state": "translated", "value": "복구" } },
+              "pt-BR": { "stringUnit": { "state": "translated", "value": "Reparar" } },
+              "ru": { "stringUnit": { "state": "translated", "value": "Восстановить" } },
+              "zh-Hans": { "stringUnit": { "state": "translated", "value": "修复" } },
+              "zh-Hant": { "stringUnit": { "state": "translated", "value": "修復" } }
+          }
+      },
+      "Repair Accessibility Access": {
+          "localizations": {
+              "de": { "stringUnit": { "state": "translated", "value": "Bedienungshilfen-Zugriff reparieren" } },
+              "en": { "stringUnit": { "state": "translated", "value": "Repair Accessibility Access" } },
+              "es": { "stringUnit": { "state": "translated", "value": "Reparar acceso de accesibilidad" } },
+              "fr": { "stringUnit": { "state": "translated", "value": "Réparer l'accès d'accessibilité" } },
+              "ja": { "stringUnit": { "state": "translated", "value": "アクセシビリティアクセスを修復" } },
+              "ko": { "stringUnit": { "state": "translated", "value": "손쉬운 사용 접근 복구" } },
+              "pt-BR": { "stringUnit": { "state": "translated", "value": "Reparar acesso de acessibilidade" } },
+              "ru": { "stringUnit": { "state": "translated", "value": "Восстановить Универсальный доступ" } },
+              "zh-Hans": { "stringUnit": { "state": "translated", "value": "修复辅助功能访问" } },
+              "zh-Hant": { "stringUnit": { "state": "translated", "value": "修復輔助使用權限" } }
+          }
+      },
+      "Repair accessibility access": {
+          "localizations": {
+              "de": { "stringUnit": { "state": "translated", "value": "Bedienungshilfen-Zugriff reparieren" } },
+              "en": { "stringUnit": { "state": "translated", "value": "Repair accessibility access" } },
+              "es": { "stringUnit": { "state": "translated", "value": "Reparar acceso de accesibilidad" } },
+              "fr": { "stringUnit": { "state": "translated", "value": "Réparer l'accès d'accessibilité" } },
+              "ja": { "stringUnit": { "state": "translated", "value": "アクセシビリティアクセスを修復" } },
+              "ko": { "stringUnit": { "state": "translated", "value": "손쉬운 사용 접근 복구" } },
+              "pt-BR": { "stringUnit": { "state": "translated", "value": "Reparar acesso de acessibilidade" } },
+              "ru": { "stringUnit": { "state": "translated", "value": "Восстановить Универсальный доступ" } },
+              "zh-Hans": { "stringUnit": { "state": "translated", "value": "修复辅助功能访问" } },
+              "zh-Hant": { "stringUnit": { "state": "translated", "value": "修復輔助使用權限" } }
+          }
+      },
+      "macOS lists ClipKitty as allowed, but is blocking automatic paste. Remove ClipKitty from Accessibility, then add it again to repair access.": {
+          "localizations": {
+              "de": { "stringUnit": { "state": "translated", "value": "macOS führt ClipKitty als erlaubt auf, blockiert aber das automatische Einsetzen. Entfernen Sie ClipKitty aus den Bedienungshilfen und fügen Sie es erneut hinzu, um den Zugriff zu reparieren." } },
+              "en": { "stringUnit": { "state": "translated", "value": "macOS lists ClipKitty as allowed, but is blocking automatic paste. Remove ClipKitty from Accessibility, then add it again to repair access." } },
+              "es": { "stringUnit": { "state": "translated", "value": "macOS muestra ClipKitty como permitido, pero bloquea el pegado automático. Elimina ClipKitty de Accesibilidad y vuelve a añadirlo para reparar el acceso." } },
+              "fr": { "stringUnit": { "state": "translated", "value": "macOS indique que ClipKitty est autorisé, mais bloque le collage automatique. Retirez ClipKitty d'Accessibilité, puis ajoutez-le à nouveau pour réparer l'accès." } },
+              "ja": { "stringUnit": { "state": "translated", "value": "macOSではClipKittyが許可済みと表示されていますが、自動ペーストがブロックされています。アクセシビリティからClipKittyを削除し、再度追加してアクセスを修復してください。" } },
+              "ko": { "stringUnit": { "state": "translated", "value": "macOS에 ClipKitty가 허용된 것으로 표시되지만 자동 붙여넣기가 차단되어 있습니다. 손쉬운 사용에서 ClipKitty를 제거한 다음 다시 추가하여 접근을 복구하세요." } },
+              "pt-BR": { "stringUnit": { "state": "translated", "value": "O macOS mostra o ClipKitty como permitido, mas está bloqueando a colagem automática. Remova o ClipKitty de Acessibilidade e adicione-o novamente para reparar o acesso." } },
+              "ru": { "stringUnit": { "state": "translated", "value": "macOS показывает, что ClipKitty разрешён, но блокирует автоматическую вставку. Удалите ClipKitty из Универсального доступа, затем добавьте снова, чтобы восстановить доступ." } },
+              "zh-Hans": { "stringUnit": { "state": "translated", "value": "macOS 显示已允许 ClipKitty，但阻止了自动粘贴。请从辅助功能中移除 ClipKitty，然后重新添加以修复访问权限。" } },
+              "zh-Hant": { "stringUnit": { "state": "translated", "value": "macOS 顯示已允許 ClipKitty，但封鎖了自動貼上。請從輔助使用中移除 ClipKitty，然後重新加入以修復存取權限。" } }
+          }
+      },
+      "Remove ClipKitty using the minus button, then add it again": {
+          "localizations": {
+              "de": { "stringUnit": { "state": "translated", "value": "Entfernen Sie ClipKitty mit der Minustaste und fügen Sie es erneut hinzu" } },
+              "en": { "stringUnit": { "state": "translated", "value": "Remove ClipKitty using the minus button, then add it again" } },
+              "es": { "stringUnit": { "state": "translated", "value": "Elimina ClipKitty con el botón menos y vuelve a añadirlo" } },
+              "fr": { "stringUnit": { "state": "translated", "value": "Retirez ClipKitty avec le bouton moins, puis ajoutez-le à nouveau" } },
+              "ja": { "stringUnit": { "state": "translated", "value": "マイナスボタンでClipKittyを削除し、再度追加します" } },
+              "ko": { "stringUnit": { "state": "translated", "value": "빼기 버튼으로 ClipKitty를 제거한 다음 다시 추가하세요" } },
+              "pt-BR": { "stringUnit": { "state": "translated", "value": "Remova o ClipKitty usando o botão de menos e adicione-o novamente" } },
+              "ru": { "stringUnit": { "state": "translated", "value": "Удалите ClipKitty кнопкой с минусом, затем добавьте снова" } },
+              "zh-Hans": { "stringUnit": { "state": "translated", "value": "使用减号按钮移除 ClipKitty，然后重新添加" } },
+              "zh-Hant": { "stringUnit": { "state": "translated", "value": "使用減號按鈕移除 ClipKitty，然後重新加入" } }
+          }
       }
   },
   "version": "1.0"
