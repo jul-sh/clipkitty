@@ -188,7 +188,7 @@ jobs:
       - name: Install CI tools from Nix
         run: |
           # Install tools from flake-locked nixpkgs (pinned via flake.lock)
-          nix profile install --no-update-lock-file --inputs-from . keytap#default
+          nix profile install --no-update-lock-file .#keytap
           nix profile install --no-update-lock-file .#tuist
           tuist version
 
@@ -568,7 +568,7 @@ jobs:
       - name: Install CI tools from Nix
         run: |
           # age decrypts the ASC auth key below
-          nix profile install --no-update-lock-file --inputs-from . keytap#default
+          nix profile install --no-update-lock-file .#keytap
           nix profile install --no-update-lock-file .#tuist
           tuist version
 
@@ -809,7 +809,7 @@ jobs:
       - name: Install CI tools from Nix
         run: |
           # keytap decrypts the screenshot fixtures via $KEYTAP_KEY_CLIPKITTY
-          nix profile install --no-update-lock-file --inputs-from . keytap#default
+          nix profile install --no-update-lock-file .#keytap
           nix profile install --no-update-lock-file .#tuist
           tuist version
 
@@ -898,7 +898,7 @@ jobs:
 
       - name: Install CI tools from Nix
         run: |
-          nix profile install --no-update-lock-file --inputs-from . keytap#default
+          nix profile install --no-update-lock-file .#keytap
           nix profile install --no-update-lock-file --inputs-from . nixpkgs#ffmpeg
           nix profile install --no-update-lock-file .#tuist
           tuist version
@@ -1496,7 +1496,7 @@ jobs:
 
       - name: Install CI tools from Nix
         run: |
-          nix profile install --no-update-lock-file --inputs-from . keytap#default
+          nix profile install --no-update-lock-file .#keytap
           nix profile install --no-update-lock-file .#tuist
           nix profile install --no-update-lock-file .#asc
           tuist version
@@ -1657,7 +1657,7 @@ jobs:
 
       - name: Install CI tools from Nix
         run: |
-          nix profile install --no-update-lock-file --inputs-from . keytap#default
+          nix profile install --no-update-lock-file .#keytap
           nix profile install --no-update-lock-file .#tuist
           nix profile install --no-update-lock-file .#asc
           tuist version
