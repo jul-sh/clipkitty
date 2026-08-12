@@ -181,7 +181,7 @@ jobs:
       - name: Install release publishing tools
         if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         run: |
-          nix profile install --no-update-lock-file --inputs-from . keytap#default
+          nix profile install --no-update-lock-file .#keytap
           make install-sparkle-cli
 
       - name: Validate publication credentials
