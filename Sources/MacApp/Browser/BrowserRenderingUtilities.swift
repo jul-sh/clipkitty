@@ -175,6 +175,10 @@ struct ActionOptionRow: View {
                 Text(item.label)
                     .font(.system(size: 13))
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text(item.shortcut.description)
+                    .font(.system(size: 12, weight: .medium))
+                    .opacity(0.72)
             }
             .foregroundStyle(foregroundColor)
             .padding(.horizontal, 8)

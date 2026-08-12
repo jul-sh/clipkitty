@@ -1,4 +1,5 @@
 import AppKit
+import KeyboardShortcuts
 import SwiftUI
 
 // MARK: - Right-Click Popover
@@ -65,11 +66,16 @@ struct RightClickPopoverOverlay: NSViewRepresentable {
                     menu.addItem(.separator())
                 }
 
+                let shortcut = action.shortcut
                 let item = NSMenuItem(
                     title: action.label,
                     action: #selector(MenuActionHandler.handleMenuItem(_:)),
-                    keyEquivalent: ""
+                    keyEquivalent: shortcut.nsMenuItemKeyEquivalent ?? ""
                 )
+                item.keyEquivalentModifierMask = shortcut.modifiers
+                if #available(macOS 12.0, *) {
+                    item.allowsAutomaticKeyEquivalentLocalization = false
+                }
                 item.target = handler
                 item.representedObject = action
                 item.image = NSImage(

@@ -4,6 +4,17 @@ import KeyboardShortcuts
 extension KeyboardShortcuts.Shortcut {
     static let defaultShowClipboardHistory = Self(.space, modifiers: [.option])
     static let defaultDeleteSelectedItem = Self(.minus, modifiers: [.command])
+
+    static let browserBookmark = Self(.b, modifiers: [.command])
+    static let browserCopyOnly = Self(.c, modifiers: [.command])
+    static let browserDefaultAction = Self(.return)
+    static let browserDeleteFallback = Self(.delete)
+
+    static let reservedBrowserActionShortcuts: Set<Self> = [
+        .browserBookmark,
+        .browserCopyOnly,
+        .browserDefaultAction,
+    ]
 }
 
 extension KeyboardShortcuts.Name {
@@ -27,4 +38,13 @@ func shortcutConflictReason(for actionName: String) -> String {
 enum DeleteItemShortcutSetting: Codable, Equatable {
     case enabled(KeyboardShortcuts.Shortcut)
     case disabled
+
+    var browserShortcut: KeyboardShortcuts.Shortcut {
+        switch self {
+        case let .enabled(shortcut) where !KeyboardShortcuts.Shortcut.reservedBrowserActionShortcuts.contains(shortcut):
+            return shortcut
+        case .enabled, .disabled:
+            return .browserDeleteFallback
+        }
+    }
 }

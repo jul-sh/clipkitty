@@ -79,6 +79,16 @@ struct ShortcutsSettingsView: View {
     private func validateDeleteItemShortcut(
         _ shortcut: KeyboardShortcuts.Shortcut
     ) -> KeyboardShortcuts.ValidationResult {
+        if shortcut == .browserBookmark {
+            return .disallow(reason: shortcutConflictReason(for: String(localized: "Bookmark")))
+        }
+        if shortcut == .browserCopyOnly {
+            return .disallow(reason: shortcutConflictReason(for: String(localized: "Copy")))
+        }
+        if shortcut == .browserDefaultAction {
+            return .disallow(reason: shortcutConflictReason(for: String(localized: "Paste")))
+        }
+
         guard shortcut == KeyboardShortcuts.Name.showClipboardHistory.shortcut else {
             return .allow
         }

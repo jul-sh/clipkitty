@@ -210,21 +210,8 @@ struct BrowserView: View {
                 return nil
             }
 
-            // Configurable delete-item shortcut (default ⌘-). Suppressed while
-            // the pending filter chip is the keyboard target — row-only
-            // shortcuts must not fire at the chip.
-            switch AppSettings.shared.deleteItemShortcutSetting {
-            case let .enabled(shortcut):
-                if KeyboardShortcuts.Shortcut(event: event) == shortcut,
-                   !event.isARepeat,
-                   viewModel.selectedItem != nil,
-                   case .results = viewModel.keyboardTarget
-                {
-                    viewModel.deleteSelectedItem()
-                    return nil
-                }
-            case .disabled:
-                break
+            if handleBrowserActionShortcut(event) {
+                return nil
             }
 
             // While a delete is pending, Cmd+Z intentionally undoes the item
@@ -240,6 +227,51 @@ struct BrowserView: View {
 
             return event
         }
+    }
+
+    private func handleBrowserActionShortcut(_ event: NSEvent) -> Bool {
+        guard !event.isARepeat,
+              case .results = viewModel.keyboardTarget,
+              let selectedItem = viewModel.selectedItem,
+              let pressedShortcut = KeyboardShortcuts.Shortcut(event: event)
+        else {
+            return false
+        }
+
+        let actions = BrowserActionItem.items(for: selectedItem.itemMetadata.tags)
+        let shortcutFocus: BrowserActionShortcutFocus
+        if let editor = event.window?.firstResponder as? NSTextView {
+            if !editor.isFieldEditor {
+                shortcutFocus = .previewEditor
+            } else if editor.selectedRange().length > 0 {
+                shortcutFocus = .searchFieldSelection
+            } else {
+                shortcutFocus = .searchField
+            }
+        } else {
+            shortcutFocus = .result
+        }
+
+        guard let action = browserActionItem(
+            matching: pressedShortcut,
+            in: actions,
+            focus: shortcutFocus
+        ) else {
+            return false
+        }
+
+        // Return retains its existing context-sensitive behavior: it accepts a
+        // pending filter, activates the selected result, or selects the
+        // highlighted Actions-menu row depending on focus.
+        guard case .defaultAction = action else {
+            viewModel.performAction(
+                action.browserAction,
+                itemId: selectedItem.itemMetadata.itemId,
+                dismissOverlay: viewModel.closeOverlay
+            )
+            return true
+        }
+        return false
     }
 
     @MainActor

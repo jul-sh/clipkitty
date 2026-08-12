@@ -1,5 +1,6 @@
 @testable import ClipKitty
 @testable import ClipKittyMacPlatform
+import KeyboardShortcuts
 import XCTest
 
 @MainActor
@@ -66,6 +67,81 @@ final class AppStateOwnershipTests: XCTestCase {
     private func isolatedDefaults() throws -> UserDefaults {
         let suiteName = "AppStateOwnershipTests.\(UUID().uuidString)"
         return try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    }
+}
+
+@MainActor
+final class BrowserActionShortcutTests: XCTestCase {
+    func testEachSimultaneouslyVisibleActionHasAUniqueShortcut() {
+        let deleteSetting = DeleteItemShortcutSetting.enabled(.defaultDeleteSelectedItem)
+        let actions: [BrowserActionItem] = [.bookmark, .copyOnly, .defaultAction, .delete]
+        let shortcuts = actions.map { $0.shortcut(deleteItemShortcutSetting: deleteSetting) }
+
+        XCTAssertEqual(Set(shortcuts).count, actions.count)
+        XCTAssertTrue(shortcuts.allSatisfy { !$0.description.isEmpty })
+        XCTAssertEqual(
+            BrowserActionItem.unbookmark.shortcut(deleteItemShortcutSetting: deleteSetting),
+            .browserBookmark
+        )
+    }
+
+    func testActionShortcutAssignments() {
+        let deleteSetting = DeleteItemShortcutSetting.enabled(.defaultDeleteSelectedItem)
+
+        XCTAssertEqual(
+            BrowserActionItem.bookmark.shortcut(deleteItemShortcutSetting: deleteSetting),
+            .browserBookmark
+        )
+        XCTAssertEqual(
+            BrowserActionItem.copyOnly.shortcut(deleteItemShortcutSetting: deleteSetting),
+            .browserCopyOnly
+        )
+        XCTAssertEqual(
+            BrowserActionItem.defaultAction.shortcut(deleteItemShortcutSetting: deleteSetting),
+            .browserDefaultAction
+        )
+        XCTAssertEqual(
+            BrowserActionItem.delete.shortcut(deleteItemShortcutSetting: deleteSetting),
+            .defaultDeleteSelectedItem
+        )
+    }
+
+    func testDeleteShortcutFallsBackWhenDisabledOrConflicting() {
+        XCTAssertEqual(
+            BrowserActionItem.delete.shortcut(deleteItemShortcutSetting: .disabled),
+            .browserDeleteFallback
+        )
+        XCTAssertEqual(
+            BrowserActionItem.delete.shortcut(deleteItemShortcutSetting: .enabled(.browserBookmark)),
+            .browserDeleteFallback
+        )
+    }
+
+    func testCopyShortcutPreservesTheStandardCopyCommandForSelectedText() {
+        let actions: [BrowserActionItem] = [.bookmark, .copyOnly, .defaultAction, .delete]
+
+        XCTAssertNil(
+            browserActionItem(
+                matching: .browserCopyOnly,
+                in: actions,
+                focus: .searchFieldSelection
+            )
+        )
+        XCTAssertEqual(
+            browserActionItem(
+                matching: .browserCopyOnly,
+                in: actions,
+                focus: .searchField
+            ),
+            .copyOnly
+        )
+        XCTAssertNil(
+            browserActionItem(
+                matching: .browserCopyOnly,
+                in: actions,
+                focus: .previewEditor
+            )
+        )
     }
 }
 

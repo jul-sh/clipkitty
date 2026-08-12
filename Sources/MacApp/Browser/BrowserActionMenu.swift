@@ -1,5 +1,6 @@
 import ClipKittyBrowser
 import ClipKittyRust
+import KeyboardShortcuts
 import SwiftUI
 
 @MainActor
@@ -75,6 +76,23 @@ enum BrowserActionItem: Equatable {
         }
     }
 
+    var shortcut: KeyboardShortcuts.Shortcut {
+        shortcut(deleteItemShortcutSetting: AppSettings.shared.deleteItemShortcutSetting)
+    }
+
+    func shortcut(deleteItemShortcutSetting: DeleteItemShortcutSetting) -> KeyboardShortcuts.Shortcut {
+        switch self {
+        case .bookmark, .unbookmark:
+            return .browserBookmark
+        case .copyOnly:
+            return .browserCopyOnly
+        case .defaultAction:
+            return .browserDefaultAction
+        case .delete:
+            return deleteItemShortcutSetting.browserShortcut
+        }
+    }
+
     /// Map to the shared semantic action type for BrowserViewModel.
     var browserAction: BrowserViewModel.BrowserAction {
         switch self {
@@ -84,6 +102,29 @@ enum BrowserActionItem: Equatable {
         case .unbookmark: return .unbookmark
         case .delete: return .delete
         }
+    }
+}
+
+enum BrowserActionShortcutFocus {
+    case result
+    case searchField
+    case searchFieldSelection
+    case previewEditor
+}
+
+@MainActor
+func browserActionItem(
+    matching shortcut: KeyboardShortcuts.Shortcut,
+    in actions: [BrowserActionItem],
+    focus: BrowserActionShortcutFocus
+) -> BrowserActionItem? {
+    switch focus {
+    case .previewEditor:
+        return nil
+    case .searchFieldSelection where shortcut == .browserCopyOnly:
+        return nil
+    case .result, .searchField, .searchFieldSelection:
+        return actions.first(where: { $0.shortcut == shortcut })
     }
 }
 

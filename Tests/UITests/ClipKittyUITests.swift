@@ -770,6 +770,34 @@ final class ClipKittyUITests: XCTestCase {
         XCTAssertTrue(copyAction.waitForExistence(timeout: 3), "Copy action should appear in popover")
     }
 
+    func testActionsPopoverShowsAndExecutesBookmarkShortcut() {
+        let searchField = app.textFields["SearchField"]
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5), "Search field not found")
+
+        searchField.typeKey("k", modifierFlags: .command)
+        let bookmarkAction = app.buttons["Action_Bookmark"]
+        XCTAssertTrue(bookmarkAction.waitForExistence(timeout: 3), "Bookmark action should appear")
+        XCTAssertTrue(
+            bookmarkAction.label.contains("⌘B"),
+            "Bookmark action should expose its ⌘B shortcut; label was \(bookmarkAction.label)"
+        )
+
+        // Close the popover, then exercise the result-level shortcut directly.
+        app.typeKey(.escape, modifierFlags: [])
+        searchField.typeKey("b", modifierFlags: .command)
+
+        searchField.typeKey("k", modifierFlags: .command)
+        let unbookmarkAction = app.buttons["Action_Unbookmark"]
+        XCTAssertTrue(
+            unbookmarkAction.waitForExistence(timeout: 3),
+            "⌘B should bookmark the selected item"
+        )
+        XCTAssertTrue(
+            unbookmarkAction.label.contains("⌘B"),
+            "Unbookmark action should expose the same toggle shortcut"
+        )
+    }
+
     /// Tests that Cmd+K opens the actions popover.
     func testCmdKOpensActionsPopover() {
         let searchField = app.textFields["SearchField"]
