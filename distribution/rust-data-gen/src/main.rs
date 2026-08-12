@@ -13,7 +13,7 @@ use futures::StreamExt;
 use image::GenericImageView;
 use indicatif::{ProgressBar, ProgressStyle};
 use purr::content_detection::parse_color_to_rgba;
-use purr::{ClipboardStore, ClipboardStoreApi};
+use purr::ClipboardStore;
 use rand::prelude::*;
 use rand::rngs::StdRng;
 use rusqlite::params;

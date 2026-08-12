@@ -14,7 +14,6 @@ public protocol PasteboardProtocol: AnyObject {
     func string(forType type: NSPasteboard.PasteboardType) -> String?
     func data(forType type: NSPasteboard.PasteboardType) -> Data?
     func types() -> [NSPasteboard.PasteboardType]?
-    func propertyList(forType type: NSPasteboard.PasteboardType) -> Any?
     func readFileURLs() -> [URL]
 }
 
@@ -40,11 +39,6 @@ extension NSPasteboard: PasteboardProtocol {
 public protocol WorkspaceProtocol {
     var frontmostApplication: NSRunningApplication? { get }
     var notificationCenter: NotificationCenter { get }
-    func icon(forFile path: String) -> NSImage
-    func icon(forFileType type: String) -> NSImage
-    func urlForApplication(withBundleIdentifier bundleIdentifier: String) -> URL?
-    func urlForApplication(toOpen url: URL) -> URL?
-    @discardableResult func open(_ url: URL) -> Bool
 }
 
 // MARK: - NSWorkspace Conformance
@@ -55,14 +49,8 @@ extension NSWorkspace: WorkspaceProtocol {}
 
 /// Protocol for file system access, enabling mock injection for testing
 public protocol FileManagerProtocol {
-    func fileExists(atPath path: String) -> Bool
-    func contents(atPath path: String) -> Data?
-    func contentsOfDirectory(atPath path: String) throws -> [String]
-    func attributesOfItem(atPath path: String) throws -> [FileAttributeKey: Any]
     func createDirectory(at url: URL, withIntermediateDirectories: Bool, attributes: [FileAttributeKey: Any]?) throws
     func urls(for directory: FileManager.SearchPathDirectory, in domainMask: FileManager.SearchPathDomainMask) -> [URL]
-    var homeDirectoryForCurrentUser: URL { get }
-    func removeItem(at url: URL) throws
 }
 
 extension FileManager: FileManagerProtocol {}

@@ -43,7 +43,7 @@ let
       isGeneratedRustOverlay =
         rel == "Sources/ClipKittyRust/libpurr.a"
         || rel == "Sources/ClipKittyRust/purrFFI.h"
-        || rel == "Sources/ClipKittyRust/module.modulemap"
+        || rel == "Sources/ClipKittyRust/purrFFI.modulemap"
         || lib.hasPrefix "Sources/ClipKittyRust/ios-device" rel
         || lib.hasPrefix "Sources/ClipKittyRust/ios-simulator" rel
         || rel == "Sources/ClipKittyRustWrapper/purr.swift";

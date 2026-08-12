@@ -28,7 +28,7 @@ pub fn run_generate(dry_run: bool, reporter: &Reporter) -> Result<()> {
 const APP_NAME: &str = "ClipKitty";
 const OVERLAY_FILES: &[&str] = &[
     "Sources/ClipKittyRust/purrFFI.h",
-    "Sources/ClipKittyRust/module.modulemap",
+    "Sources/ClipKittyRust/purrFFI.modulemap",
     "Sources/ClipKittyRust/libpurr.a",
     "Sources/ClipKittyRust/ios-device/libpurr.a",
     "Sources/ClipKittyRust/ios-simulator/libpurr.a",
@@ -475,6 +475,9 @@ fn copy_dir(reporter: &Reporter, src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
 }
 
 fn copy_file(reporter: &Reporter, src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
+    // Nix store outputs are read-only. Remove a previously materialised copy
+    // before replacing it so repeated workspace generation stays idempotent.
+    remove_if_exists(dst)?;
     Runner::new(reporter, "cp")
         .arg(src.as_std_path())
         .arg(dst.as_std_path())

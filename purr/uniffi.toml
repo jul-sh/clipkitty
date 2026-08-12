@@ -1,0 +1,5 @@
+[bindings.swift]
+# Match the Clang target consumed by Project.swift. Keeping this in UniFFI's
+# config makes the generated Swift import and module map agree without patches.
+ffi_module_name = "ClipKittyRustFFI"
+ffi_module_filename = "purrFFI"

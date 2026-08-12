@@ -14,7 +14,6 @@ DerivedData/
 DerivedData-marketing/
 .deriveddata/
 DerivedDataTests/
-perf_traces/
 *.xcresult/
 *.trace/
 
@@ -38,16 +37,13 @@ purr/generated/
 purr/include/
 purr/*.a
 
-# Generated UniFFI bindings (regenerate with: cargo run --bin generate-bindings)
-Sources/ClipKittyRust/purr.swift
+# Generated UniFFI bindings (materialized by the Rust Xcode overlay)
 Sources/ClipKittyRust/purrFFI.h
-Sources/ClipKittyRust/module.modulemap
+Sources/ClipKittyRust/purrFFI.modulemap
 Sources/ClipKittyRust/*.a
 Sources/ClipKittyRust/ios-device/
 Sources/ClipKittyRust/ios-simulator/
 Sources/ClipKittyRustWrapper/purr.swift
-Sources/ClipKittyRustWrapper/purrFFI.h
-Sources/ClipKittyRustWrapper/purrFFI.modulemap
 
 # Screenshots
 screenshot.png
