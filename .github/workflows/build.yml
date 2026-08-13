@@ -187,7 +187,11 @@ jobs:
       - name: Install CI tools from Nix
         run: |
           # Install tools from flake-locked nixpkgs (pinned via flake.lock)
-          nix profile install --no-update-lock-file --inputs-from . keytap#default
+          # The known-good source pins an old Keytap release whose GitHub
+          # archive was removed. Use the current publisher's immutable package
+          # pin for secret decryption; application source remains bf1505a8.
+          nix profile install --no-update-lock-file \
+            'github:jul-sh/clipkitty/e6b84d5bc8525107eb97755c9730b4b87c258801#keytap'
           nix profile install --no-update-lock-file .#tuist
           tuist version
 
