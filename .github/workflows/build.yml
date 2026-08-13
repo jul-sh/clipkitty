@@ -122,6 +122,7 @@ jobs:
   # the fan-out restores instead of recompiling.
   prewarm-nix:
     name: Prewarm Nix Cache
+    if: github.event_name != 'workflow_dispatch'
     runs-on: macos-26
 
     steps:
@@ -167,6 +168,7 @@ jobs:
   macos-build:
     name: macOS Build
     needs: [version, prewarm-nix]
+    if: github.event_name != 'workflow_dispatch'
     runs-on: macos-26
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -474,6 +476,262 @@ jobs:
           name: ClipKitty-Release-Binary
           path: DerivedData/Build/Products/SparkleRelease/ClipKitty.app/Contents/MacOS/ClipKitty
           if-no-files-found: error
+
+  # One-shot emergency publication for the signed build from known-good source
+  # bf1505a8. This job exists only on the isolated rollback branch; its dispatch
+  # publishes build 1469 to the beta channel and leaves main untouched.
+  emergency-sparkle-rollback:
+    name: Publish emergency Sparkle rollback
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-26
+    concurrency:
+      group: clipkitty-publication
+      queue: max
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: write
+
+    env:
+      ARTIFACT_RUN_ID: "31736060556"
+      ARTIFACT_SOURCE_SHA: f5aeefc874b5d17ad57afab2b26526211b719c13
+      KNOWN_GOOD_SHA: bf1505a8edd2f67ea1918dd654fe1c8722c7ec52
+      PUBLISHER_SHA: e6b84d5bc8525107eb97755c9730b4b87c258801
+      ROLLBACK_VERSION: 1.13.1469
+      ROLLBACK_BUILD: "1469"
+      ROLLBACK_TAG: v1.13.1469-beta
+      ROLLBACK_URL: https://github.com/jul-sh/clipkitty/releases/download/v1.13.1469-beta/ClipKitty.dmg
+
+    steps:
+      - name: Checkout pinned publication tooling
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ env.PUBLISHER_SHA }}
+          fetch-depth: 0
+          path: publisher
+
+      - name: Set up Nix
+        uses: ./publisher/.github/actions/setup-nix
+
+      - name: Download signed rollback artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ClipKitty-Builds
+          path: rollback-artifact
+          github-token: ${{ github.token }}
+          run-id: ${{ env.ARTIFACT_RUN_ID }}
+
+      - name: Verify known-good source and signed archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          ARCHIVE="$GITHUB_WORKSPACE/rollback-artifact/ClipKitty.dmg"
+          test -s "$ARCHIVE"
+
+          CHANGED_FILES="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/compare/${KNOWN_GOOD_SHA}...${ARTIFACT_SOURCE_SHA}" \
+              --jq '[.files[].filename] | sort | join("\n")'
+          )"
+          if [ "$CHANGED_FILES" != ".github/workflows/build.yml" ]; then
+            echo "::error::Rollback artifact source differs from known-good code:"
+            printf '%s\n' "$CHANGED_FILES"
+            exit 1
+          fi
+
+          MOUNT_POINT="${RUNNER_TEMP}/clipkitty-rollback-mount"
+          mkdir -p "$MOUNT_POINT"
+          hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT_POINT" "$ARCHIVE"
+          cleanup_mount() {
+            hdiutil detach "$MOUNT_POINT" -quiet || true
+          }
+          trap cleanup_mount EXIT
+
+          APP="$MOUNT_POINT/ClipKitty.app"
+          PLIST="$APP/Contents/Info.plist"
+          test -d "$APP"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")" = \
+            "com.eviljuliette.clipkitty"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST")" = \
+            "$ROLLBACK_VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PLIST")" = \
+            "$ROLLBACK_BUILD"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          spctl --assess --type execute --verbose=4 "$APP"
+          xcrun stapler validate "$ARCHIVE"
+
+          cleanup_mount
+          trap - EXIT
+
+          ARCHIVE_SHA="$(shasum -a 256 "$ARCHIVE" | awk '{print $1}')"
+          echo "ARCHIVE_SHA=$ARCHIVE_SHA" >> "$GITHUB_ENV"
+          echo "Verified emergency archive SHA-256: $ARCHIVE_SHA"
+
+      - name: Create immutable emergency prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          ARCHIVE="$GITHUB_WORKSPACE/rollback-artifact/ClipKitty.dmg"
+          SERVED_ARCHIVE="${RUNNER_TEMP}/served-rollback/ClipKitty.dmg"
+          mkdir -p "$(dirname "$SERVED_ARCHIVE")"
+
+          if gh release view "$ROLLBACK_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            TAG_TYPE="$(
+              gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${ROLLBACK_TAG}" \
+                --jq .object.type
+            )"
+            TAG_OBJECT="$(
+              gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${ROLLBACK_TAG}" \
+                --jq .object.sha
+            )"
+            if [ "$TAG_TYPE" = tag ]; then
+              TAG_OBJECT="$(
+                gh api "repos/${GITHUB_REPOSITORY}/git/tags/${TAG_OBJECT}" \
+                  --jq .object.sha
+              )"
+            fi
+            test "$TAG_OBJECT" = "$ARTIFACT_SOURCE_SHA"
+            gh release download "$ROLLBACK_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --dir "$(dirname "$SERVED_ARCHIVE")" \
+              --pattern ClipKitty.dmg
+            cmp "$ARCHIVE" "$SERVED_ARCHIVE"
+          else
+            NOTES="${RUNNER_TEMP}/rollback-release-notes.md"
+            {
+              echo "Emergency Sparkle rollback for the beta channel."
+              echo
+              echo "This is the known-good application source from \`${KNOWN_GOOD_SHA}\`, rebuilt as"
+              echo "Sparkle build \`${ROLLBACK_BUILD}\` so clients on the faulty build 1468 can move"
+              echo "forward to it. Application source differs from the known-good commit only by the"
+              echo "isolated GitHub Actions workflow used to sign and notarize this artifact."
+              echo
+              echo "- Build workflow run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${ARTIFACT_RUN_ID}"
+              echo "- Artifact source commit: \`${ARTIFACT_SOURCE_SHA}\`"
+              echo "- SHA-256: \`${ARCHIVE_SHA}\`"
+            } > "$NOTES"
+
+            gh release create "$ROLLBACK_TAG" "$ARCHIVE" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$ARTIFACT_SOURCE_SHA" \
+              --title "ClipKitty ${ROLLBACK_VERSION} Emergency Rollback" \
+              --notes-file "$NOTES" \
+              --prerelease
+
+            gh release download "$ROLLBACK_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --dir "$(dirname "$SERVED_ARCHIVE")" \
+              --pattern ClipKitty.dmg
+            cmp "$ARCHIVE" "$SERVED_ARCHIVE"
+          fi
+
+      - name: Install Sparkle publication tools
+        working-directory: publisher
+        run: make install-sparkle-cli
+
+      - name: Publish rollback to the beta appcast
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+
+          PUBLISHER="$GITHUB_WORKSPACE/publisher"
+          ARCHIVE="$GITHUB_WORKSPACE/rollback-artifact/ClipKitty.dmg"
+          WORKTREE="${RUNNER_TEMP}/gh-pages-emergency-appcast"
+
+          git -C "$PUBLISHER" config user.name "github-actions[bot]"
+          git -C "$PUBLISHER" config user.email "github-actions[bot]@users.noreply.github.com"
+          git -C "$PUBLISHER" config --local --unset-all \
+            "http.https://github.com/.extraheader" || true
+          git config --global --unset-all "http.https://github.com/.extraheader" || true
+          git -C "$PUBLISHER" remote set-url origin \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$PUBLISHER" fetch origin gh-pages
+          git -C "$PUBLISHER" worktree add --force -B gh-pages \
+            "$WORKTREE" origin/gh-pages
+          cleanup_worktree() {
+            git -C "$PUBLISHER" worktree remove "$WORKTREE" --force || true
+          }
+          trap cleanup_worktree EXIT
+
+          cd "$WORKTREE"
+          make -C "$PUBLISHER" release-appcast-update \
+            STATE_PATH="$(pwd)/appcast-state.json" \
+            CHANNEL=beta \
+            VERSION="$ROLLBACK_VERSION" \
+            BUILD_NUMBER="$ROLLBACK_BUILD" \
+            URL="$ROLLBACK_URL"
+          make -C "$PUBLISHER" release-appcast-generate \
+            STATE_PATH="$(pwd)/appcast-state.json" \
+            OUTPUT_PATH="$(pwd)/appcast.xml" \
+            CHANNEL=beta \
+            ARCHIVE_PATH="$ARCHIVE"
+          xmllint --noout appcast.xml
+
+          python3 - <<'PY'
+          import json
+          import os
+          import xml.etree.ElementTree as ET
+
+          sparkle = "http://www.andymatuschak.org/xml-namespaces/sparkle"
+          state = json.load(open("appcast-state.json", encoding="utf-8"))
+          assert state["beta"] == {
+              "version": os.environ["ROLLBACK_VERSION"],
+              "build_number": os.environ["ROLLBACK_BUILD"],
+              "url": os.environ["ROLLBACK_URL"],
+          }
+          assert state["stable"]["build_number"] == "1462"
+
+          root = ET.parse("appcast.xml").getroot()
+          matches = []
+          for item in root.findall("./channel/item"):
+              version = item.findtext(f"{{{sparkle}}}version")
+              if version == os.environ["ROLLBACK_BUILD"]:
+                  matches.append(item)
+          assert len(matches) == 1
+          item = matches[0]
+          assert item.findtext(f"{{{sparkle}}}shortVersionString") == os.environ["ROLLBACK_VERSION"]
+          assert item.findtext(f"{{{sparkle}}}channel") == "beta"
+          enclosure = item.find("enclosure")
+          assert enclosure is not None
+          assert enclosure.attrib["url"] == os.environ["ROLLBACK_URL"]
+          assert enclosure.attrib[f"{{{sparkle}}}edSignature"]
+          PY
+
+          git add appcast.xml appcast-state.json
+          if git diff --cached --quiet; then
+            echo "Sparkle appcast already contains emergency build ${ROLLBACK_BUILD}."
+          else
+            git commit --no-verify -m \
+              "Emergency Sparkle rollback ${ROLLBACK_VERSION} [skip ci]"
+            git push origin gh-pages
+          fi
+
+      - name: Verify served beta rollback
+        run: |
+          set -euo pipefail
+
+          for attempt in $(seq 1 20); do
+            SERVED="${RUNNER_TEMP}/served-appcast.xml"
+            if curl -fsSL \
+              "https://jul-sh.github.io/clipkitty/appcast.xml?attempt=${attempt}" \
+              -o "$SERVED" \
+              && grep -q "<sparkle:version>${ROLLBACK_BUILD}</sparkle:version>" "$SERVED" \
+              && grep -q "$ROLLBACK_URL" "$SERVED"; then
+              xmllint --noout "$SERVED"
+              echo "Served appcast contains emergency beta build ${ROLLBACK_BUILD}."
+              exit 0
+            fi
+            sleep 3
+          done
+
+          echo "::error::Served appcast did not expose emergency beta build ${ROLLBACK_BUILD}."
+          exit 1
 
   # OIDC and attestation write authority live in this minimal job; none of the
   # PR-controlled build steps can mint attestations or request an OIDC token.
