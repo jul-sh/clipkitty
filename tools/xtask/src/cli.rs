@@ -1,14 +1,14 @@
 use camino::Utf8PathBuf;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use crate::model::{AscAuthField, ReleaseChannel};
+use crate::model::ReleaseChannel;
 
 #[derive(Parser, Debug)]
 #[command(
     name = "clipkitty",
     version,
     about = "ClipKitty automation CLI — one entrypoint for repo-owned automation",
-    long_about = "All supported repo-owned automation runs through this binary. Host tools (xcodebuild, codesign, nix, age, asc, ...) stay at the edge; orchestration, validation, and policy live here."
+    long_about = "All supported repo-owned automation runs through this binary. Host tools (xcodebuild, codesign, nix, asc, ...) stay at the edge; orchestration, validation, and policy live here."
 )]
 pub struct Cli {
     /// Print the exact host commands being executed.
@@ -46,10 +46,6 @@ pub enum TopLevel {
     /// Marketing asset generation.
     #[command(subcommand)]
     Marketing(MarketingCmd),
-
-    /// Resolve App Store Connect auth fields from repo secrets.
-    #[command(subcommand)]
-    Secrets(SecretsCmd),
 
     /// Public site assets.
     #[command(subcommand)]
@@ -205,18 +201,6 @@ pub enum ScreenshotPlatform {
     Ios,
     #[value(name = "ipad")]
     IPad,
-}
-
-#[derive(Subcommand, Debug)]
-pub enum SecretsCmd {
-    /// Print the resolved ASC auth field (key-id | issuer-id | private-key-b64).
-    AscAuth(AscAuthArgs),
-}
-
-#[derive(Args, Debug)]
-pub struct AscAuthArgs {
-    #[arg(value_enum)]
-    pub field: AscAuthField,
 }
 
 #[derive(Subcommand, Debug)]

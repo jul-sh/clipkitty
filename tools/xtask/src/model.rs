@@ -63,11 +63,3 @@ impl ReleaseChannel {
         }
     }
 }
-
-/// Which App Store Connect credential field a command needs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum AscAuthField {
-    KeyId,
-    IssuerId,
-    PrivateKeyB64,
-}

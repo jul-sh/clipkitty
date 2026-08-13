@@ -21,6 +21,7 @@ concurrency:
 jobs:
   promote:
     # Sparkle's maintained generate_appcast utility is a macOS executable.
+    if: github.ref == 'refs/heads/main'
     runs-on: macos-26
     env:
       APP_STORE_ID: "6759137247"
@@ -181,26 +182,41 @@ jobs:
       - name: Install release publishing tools
         if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         run: |
-          nix profile install --no-update-lock-file .#keytap
+          nix profile install --no-update-lock-file .#envtap
           make install-sparkle-cli
 
       - name: Validate publication credentials
         if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
         run: |
           set -euo pipefail
-          keytap decrypt clipkitty < secrets/SPARKLE_EDDSA_KEY.age >/dev/null
-          keytap decrypt clipkitty < secrets/HOMEBREW_TAP_TOKEN.age >/dev/null
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
+          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
+          for name in SPARKLE_EDDSA_KEY HOMEBREW_TAP_TOKEN; do
+            value="${!name:-}"
+            if [ -z "$value" ]; then
+              echo "::error::${name} is missing or empty in envtap.json."
+              exit 1
+            fi
+            masked="${value//%/%25}"
+            masked="${masked//$'\r'/%0D}"
+            masked="${masked//$'\n'/%0A}"
+            printf '::add-mask::%s\n' "$masked"
+          done
+          ENVTAP
 
       - name: Validate Sparkle signing identity
         if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         shell: bash
         env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
           VERSION: ${{ steps.app-store.outputs.version }}
         run: |
           set -euo pipefail
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
 
           VERIFY_DIR="$(mktemp -d)"
           APPCAST_FILE="$(mktemp)"
@@ -260,7 +276,7 @@ jobs:
           PY
           )"
           GENERATED_SIGNATURE="$(
-            keytap decrypt clipkitty < secrets/SPARKLE_EDDSA_KEY.age \
+            ENVTAP_IDENTITY="$envtap_identity" envtap run -- sh -c 'test -n "$SPARKLE_EDDSA_KEY" && printf "%s" "$SPARKLE_EDDSA_KEY"' \
               | /tmp/sparkle/bin/sign_update --ed-key-file - -p "$BETA_ARCHIVE"
           )"
           if [ -z "$GENERATED_SIGNATURE" ] || [ "$GENERATED_SIGNATURE" != "$EXPECTED_SIGNATURE" ]; then
@@ -272,22 +288,21 @@ jobs:
         if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         shell: bash
         env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
           VERSION: ${{ steps.app-store.outputs.version }}
         run: |
           set -euo pipefail
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
 
           TAP_DIR="$(mktemp -d)"
           trap 'rm -rf "$TAP_DIR"' EXIT
-          HOMEBREW_TAP_TOKEN="$(keytap decrypt clipkitty < secrets/HOMEBREW_TAP_TOKEN.age)"
-          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
-            echo "::error::Homebrew tap token decrypted to an empty value."
-            exit 1
-          fi
-          echo "::add-mask::$HOMEBREW_TAP_TOKEN"
-          git clone --depth 1 \
-            "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/jul-sh/homebrew-clipkitty.git" \
-            "$TAP_DIR"
+          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail -c '
+            test -n "$HOMEBREW_TAP_TOKEN"
+            git clone --depth 1 \
+              "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/jul-sh/homebrew-clipkitty.git" \
+              "$1"
+          ' _ "$TAP_DIR"
           git -C "$TAP_DIR" config user.name "github-actions[bot]"
           git -C "$TAP_DIR" config user.email "github-actions[bot]@users.noreply.github.com"
           git -C "$TAP_DIR" commit --allow-empty -m "Verify Homebrew write access"
@@ -525,10 +540,12 @@ jobs:
         if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         shell: bash
         env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
           VERSION: ${{ steps.app-store.outputs.version }}
         run: |
           set -euo pipefail
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
 
           BUILD_NUMBER="${VERSION##*.}"
           STABLE_TAG="v${VERSION}"
@@ -587,11 +604,16 @@ jobs:
             BUILD_NUMBER="$BUILD_NUMBER" \
             URL="$STABLE_URL"
 
-          make -C "$GITHUB_WORKSPACE" release-appcast-generate \
-            STATE_PATH="$(pwd)/appcast-state.json" \
-            OUTPUT_PATH="$(pwd)/appcast.xml" \
-            CHANNEL="stable" \
-            ARCHIVE_PATH="$STABLE_ARCHIVE"
+          APPCAST_STATE="$(pwd)/appcast-state.json"
+          APPCAST_OUTPUT="$(pwd)/appcast.xml"
+          (
+            cd "$GITHUB_WORKSPACE"
+            ENVTAP_IDENTITY="$envtap_identity" envtap run -- make release-appcast-generate \
+              STATE_PATH="$APPCAST_STATE" \
+              OUTPUT_PATH="$APPCAST_OUTPUT" \
+              CHANNEL="stable" \
+              ARCHIVE_PATH="$STABLE_ARCHIVE"
+          )
 
           xmllint --noout appcast.xml
 
@@ -607,10 +629,12 @@ jobs:
         if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         shell: bash
         env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
           VERSION: ${{ steps.app-store.outputs.version }}
         run: |
           set -euo pipefail
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
 
           STABLE_TAG="v${VERSION}"
           BETA_TAG="v${VERSION}-beta"
@@ -636,13 +660,12 @@ jobs:
           fi
           SHA256="$(shasum -a 256 "$STABLE_ARCHIVE" | cut -d' ' -f1)"
 
-          HOMEBREW_TAP_TOKEN="$(keytap decrypt clipkitty < secrets/HOMEBREW_TAP_TOKEN.age)"
-          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
-            echo "::error::Homebrew tap token decrypted to an empty value."
-            exit 1
-          fi
-          echo "::add-mask::$HOMEBREW_TAP_TOKEN"
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/jul-sh/homebrew-clipkitty.git" "$TAP_DIR"
+          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail -c '
+            test -n "$HOMEBREW_TAP_TOKEN"
+            git clone \
+              "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/jul-sh/homebrew-clipkitty.git" \
+              "$1"
+          ' _ "$TAP_DIR"
           cd "$TAP_DIR"
 
           CASK_PATH="Casks/clipkitty.rb"

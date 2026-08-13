@@ -5,10 +5,14 @@
     nixpkgs.url = "github:NixOS/nixpkgs/832efc09b4caf6b4569fbf9dc01bec3082a00611"; # nixpkgs-unstable
     rust-overlay.url = "github:oxalica/rust-overlay/cc80954a95f6f356c303ed9f08d0b63ca86216ac";
     flake-utils.url = "github:numtide/flake-utils/11707dc2f618dd54ca8739b309ec4fc024de578b";
-    keytap.url = "github:jul-sh/keytap/099f2e1d00bcd999ecd2cd6ad815ff5bc33f3f6f";
+    envtap = {
+      url = "github:jul-sh/envtap/d7c83ff5e1eb44b98aa06fe11acc7746c10eb5c8";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.flake-utils.follows = "flake-utils";
+    };
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, keytap, ... }:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, envtap, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         inherit (nixpkgs) lib;
@@ -20,7 +24,7 @@
         # Darwin; other systems keep a portable Rust/test audit surface plus
         # general CLI tooling, but not Apple build products.
         isDarwin = lib.hasSuffix "-darwin" system;
-        keytapPackage = keytap.packages.${system}.default or null;
+        envtapPackage = envtap.packages.${system}.default or null;
 
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [ "rust-src" "rust-std" ];
@@ -148,7 +152,7 @@
             clipkitty-rust-tests = rustOutputs.rustTests;
             xtask = xtaskPackage;
           }
-          // lib.optionalAttrs (keytapPackage != null) { keytap = keytapPackage; }
+          // lib.optionalAttrs (envtapPackage != null) { envtap = envtapPackage; }
           // lib.optionalAttrs isDarwin {
             # Re-export tools CI workflows install with
             # `nix profile install .#<name>` so they come from this
@@ -197,7 +201,6 @@
             rustToolchain
             pkgs.sqlite
             pkgs.ffmpeg
-            pkgs.age
             pkgs.cmark-gfm
             pkgs.cargo-deny
           ]
@@ -206,7 +209,7 @@
             pkgs.swiftlint
             pkgs.swiftformat
           ]
-          ++ lib.optional (keytapPackage != null) keytapPackage
+          ++ lib.optional (envtapPackage != null) envtapPackage
           ++ lib.optional (asc != null) asc;
 
           shellHook = ''
