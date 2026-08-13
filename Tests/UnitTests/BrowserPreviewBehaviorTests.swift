@@ -23,21 +23,29 @@ final class BrowserPreviewBehaviorTests: XCTestCase {
         )
 
         viewModel.onAppear(initialSearchQuery: "")
-        await flushMainActor()
-
-        XCTAssertEqual(viewModel.selectedItemId, "1")
+        let didStartInitialFetch = await settle {
+            if case .loading("1", .automatic, _) = viewModel.selectionState {
+                return true
+            }
+            return false
+        }
+        XCTAssertTrue(didStartInitialFetch, "Expected initial selection to begin loading")
 
         viewModel.select(itemId: "2", origin: .click)
-        await flushMainActor()
-
         client.resumeFetch(id: "1", with: makeItem(id: "1", text: "first"))
         await flushMainActor()
-        XCTAssertNil(viewModel.selectedItem)
+        guard case .loading("2", .click, _) = viewModel.selectionState else {
+            return XCTFail("Stale completion must leave the newer selection loading")
+        }
 
         client.resumeFetch(id: "2", with: makeItem(id: "2", text: "second"))
-        await flushMainActor()
-
-        XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, "2")
+        let didSelectNewerItem = await settle {
+            guard case let .selected(selection) = viewModel.selectionState else {
+                return false
+            }
+            return selection.item.itemMetadata.itemId == "2"
+        }
+        XCTAssertTrue(didSelectNewerItem, "Expected newer selection to win")
     }
 
     func testItemFetchSpinnerPhaseMovesFromWaitingToShowing() async {

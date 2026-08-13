@@ -178,23 +178,56 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         sleep(1)
         waitForFeedSettled(context: "share screenshot prep")
 
-        let firstCard = app.scrollViews.firstMatch.buttons.firstMatch
-        XCTAssertTrue(firstCard.waitForExistence(timeout: 5),
-                      "no card found for share screenshot (locale \(locale!))")
-        firstCard.press(forDuration: 1.2)
-
         guard let shareTitle = Self.shareMenuTitles[locale] else {
             XCTFail("no share menu title mapped for locale \(locale!)")
             return
         }
-        // On newer iOS simulators, context-menu actions can be exposed as a
-        // menu item rather than a button. The localized action label is the
-        // stable contract across those accessibility roles.
-        let shareItem = app.descendants(matching: .any).matching(
-            NSPredicate(format: "label == %@", shareTitle)
-        ).firstMatch
-        XCTAssertTrue(shareItem.waitForExistence(timeout: 5),
-                      "context menu Share item ('\(shareTitle)') not found for locale \(locale!)")
+
+        let maxAttempts = 2
+        var foundCard = false
+        var shareItem: XCUIElement?
+
+        for attempt in 1 ... maxAttempts {
+            // Resolve the card again on every attempt because dismissing a
+            // context-menu lift can invalidate the previous element snapshot.
+            let firstCard = app.scrollViews.firstMatch.buttons.firstMatch
+            if firstCard.waitForExistence(timeout: 5) {
+                foundCard = true
+                firstCard.press(forDuration: 1.2)
+
+                // Let the system finish presenting the context menu before
+                // asking XCTest for a fresh accessibility hierarchy.
+                sleep(1)
+
+                // On newer iOS simulators, context-menu actions can be exposed
+                // as a menu item rather than a button. The localized action
+                // label is the stable contract across those accessibility roles.
+                let candidate = app.descendants(matching: .any).matching(
+                    NSPredicate(format: "label == %@", shareTitle)
+                ).firstMatch
+                if candidate.waitForExistence(timeout: 5) {
+                    shareItem = candidate
+                    break
+                }
+            }
+
+            if attempt < maxAttempts {
+                // Dismiss either a half-presented menu or a drag lift before
+                // retrying. The top-left status-bar area is outside the card
+                // and menu, and tapping it is harmless while the feed is at top.
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.02)).tap()
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+        }
+
+        guard foundCard else {
+            XCTFail("no card found for share screenshot (locale \(locale!))")
+            return
+        }
+        guard let shareItem else {
+            XCTFail("context menu Share item ('\(shareTitle)') not found for locale \(locale!)")
+            return
+        }
         shareItem.tap()
 
         // Give the activity sheet time to lay out its app row and previews.

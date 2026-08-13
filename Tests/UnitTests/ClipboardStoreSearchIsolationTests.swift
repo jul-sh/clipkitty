@@ -1,6 +1,7 @@
 @testable import ClipKitty
 @testable import ClipKittyMacPlatform
 import ClipKittyRust
+import ClipKittyStore
 import Foundation
 import XCTest
 
@@ -26,6 +27,48 @@ private final class TempAppSupportFileManager: FileManagerProtocol {
 
 @MainActor
 final class ClipboardStoreSearchIsolationTests: XCTestCase {
+    func testAwaitReadyPublishesReadyStateBeforeReturningFromIndexRebuild() async throws {
+        let testRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ClipboardStoreReadinessTests-\(UUID().uuidString)")
+        let databaseURL = testRoot.appendingPathComponent("clipboard.sqlite")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: testRoot)
+        }
+
+        try FileManager.default.createDirectory(at: testRoot, withIntermediateDirectories: true)
+        try seedDatabase(at: databaseURL)
+        for entry in try FileManager.default.contentsOfDirectory(
+            at: testRoot,
+            includingPropertiesForKeys: nil
+        ) where entry.lastPathComponent.hasPrefix("tantivy_index_") {
+            try FileManager.default.removeItem(at: entry)
+        }
+        XCTAssertEqual(try StoreOpener.inspect(path: databaseURL.path), .rebuildIndex)
+
+        let store = ClipboardStore(
+            databaseLocation: .explicit(databaseURL),
+            pasteboard: MockPasteboard(),
+            workspace: MockWorkspace()
+        )
+
+        await store.awaitReady()
+
+        XCTAssertEqual(store.lifecycle, .ready)
+        let outcome = await store.startSearch(
+            query: "",
+            filter: .all,
+            presentation: .compactRow
+        ).awaitOutcome()
+        switch outcome {
+        case let .success(result):
+            XCTAssertEqual(result.totalCount, 1)
+        case .cancelled:
+            XCTFail("Search was unexpectedly cancelled immediately after awaitReady")
+        case let .failure(error):
+            XCTFail("Search failed immediately after awaitReady: \(error.localizedDescription)")
+        }
+    }
+
     func testExplicitDatabaseLocationsKeepIndexesIsolated() async throws {
         let testRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("ClipboardStoreDatabaseLocationTests-\(UUID().uuidString)")
@@ -87,5 +130,14 @@ final class ClipboardStoreSearchIsolationTests: XCTestCase {
             XCTFail("Background mutation must not cancel the in-flight browser search")
         }
         XCTAssertGreaterThan(store.contentRevision, 0)
+    }
+
+    private func seedDatabase(at databaseURL: URL) throws {
+        let store = try ClipKittyRust.ClipboardStore(dbPath: databaseURL.path)
+        _ = try store.saveText(
+            text: "ready after rebuild",
+            sourceApp: nil,
+            sourceAppBundleId: nil
+        )
     }
 }

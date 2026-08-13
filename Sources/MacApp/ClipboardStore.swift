@@ -68,7 +68,7 @@ final class ClipboardStore {
 
     private enum State {
         case initializing
-        case rebuildingIndex(Task<StoreSession, Error>)
+        case rebuildingIndex(Task<Void, Never>)
         case ready(session: StoreSession, previewLoader: PreviewLoader)
         case failed(String)
 
@@ -235,18 +235,17 @@ final class ClipboardStore {
 
     /// Slow path: rebuild index on a background thread.
     private func openWithRebuild(dbPath: String) {
-        let task = Task.detached(priority: .userInitiated) {
+        let rebuildTask = Task.detached(priority: .userInitiated) {
             try StoreOpener.open(
                 path: dbPath,
                 plan: .rebuildIndex,
                 repairStrategy: .rebuildImmediately
             )
         }
-        state = .rebuildingIndex(task)
 
-        Task {
+        let completionTask = Task {
             do {
-                let session = try await task.value
+                let session = try await rebuildTask.value
                 self.state = .ready(
                     session: session,
                     previewLoader: PreviewLoader(repository: session.repository)
@@ -261,6 +260,7 @@ final class ClipboardStore {
                 self.state = .failed(dbError.localizedDescription)
             }
         }
+        state = .rebuildingIndex(completionTask)
     }
 
     private func resolveDatabasePath() -> String? {
@@ -294,7 +294,7 @@ final class ClipboardStore {
 
     func awaitReady() async {
         guard case let .rebuildingIndex(task) = state else { return }
-        _ = try? await task.value
+        await task.value
     }
 
     #if ENABLE_APP_SHORTCUTS
