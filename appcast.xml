@@ -5,6 +5,16 @@
         <link>https://jul-sh.github.io/clipkitty/appcast.xml</link>
         <language>en</language>
         <item>
+            <title>1.13.1469</title>
+            <pubDate>Thu, 13 Aug 2026 21:37:09 +0000</pubDate>
+            <link>https://jul-sh.github.io/clipkitty/</link>
+            <sparkle:channel>beta</sparkle:channel>
+            <sparkle:version>1469</sparkle:version>
+            <sparkle:shortVersionString>1.13.1469</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.13.1469-beta/ClipKitty.dmg" length="19589642" type="application/octet-stream" sparkle:edSignature="EdNPDFIZODPa7uNEmyFrqQiIfeSo/kiOqaHWBgh0M+fuKFmxtvuvMCYMSw7bwvZAC6Uju4Erg3nOY+5wlPgUAg=="/>
+        </item>
+        <item>
             <title>1.13.1468</title>
             <pubDate>Wed, 12 Aug 2026 21:39:36 +0000</pubDate>
             <link>https://jul-sh.github.io/clipkitty/</link>
@@ -32,16 +42,6 @@
             <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.13.1462/ClipKitty.dmg" length="19589097" type="application/octet-stream" sparkle:edSignature="0yB1ZVbl4x/khin1CQZ9YBIgKygujrBr+9YzxzeXv6NZ1MjxXbwve4WdYnjqan1Y1bwWstpVKeNJjZFJJX2OAQ=="/>
             <title>1.13.1462</title>
             <pubDate>Wed, 12 Aug 2026 10:24:39 +0000</pubDate>
-        </item>
-        <item>
-            <title>1.13.1458</title>
-            <pubDate>Thu, 06 Aug 2026 06:33:33 +0000</pubDate>
-            <link>https://jul-sh.github.io/clipkitty/</link>
-            <sparkle:channel>beta</sparkle:channel>
-            <sparkle:version>1458</sparkle:version>
-            <sparkle:shortVersionString>1.13.1458</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.13.1458-beta/ClipKitty.dmg" length="19589636" type="application/octet-stream" sparkle:edSignature="TtgWNQ/03FT1k0GRWj0919t5OSiQLMPmYDv5F6aYHKMXEN6zcJ7l+/HYn7aG8xH6MK3D0TthflQ+wCujBYHFCA=="/>
         </item>
         <item>
             <title>ClipKitty 1.13.1428</title>
