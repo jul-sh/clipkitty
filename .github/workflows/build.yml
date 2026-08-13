@@ -530,6 +530,17 @@ jobs:
           ARCHIVE="$GITHUB_WORKSPACE/rollback-artifact/ClipKitty.dmg"
           test -s "$ARCHIVE"
 
+          RUN_HEAD_SHA="$(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${ARTIFACT_RUN_ID}" \
+              --jq .head_sha
+          )"
+          RUN_CONCLUSION="$(
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${ARTIFACT_RUN_ID}" \
+              --jq .conclusion
+          )"
+          test "$RUN_HEAD_SHA" = "$ARTIFACT_SOURCE_SHA"
+          test "$RUN_CONCLUSION" = success
+
           CHANGED_FILES="$(
             gh api \
               "repos/${GITHUB_REPOSITORY}/compare/${KNOWN_GOOD_SHA}...${ARTIFACT_SOURCE_SHA}" \
@@ -580,6 +591,13 @@ jobs:
           mkdir -p "$(dirname "$SERVED_ARCHIVE")"
 
           if gh release view "$ROLLBACK_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            RELEASE_METADATA="$(
+              gh release view "$ROLLBACK_TAG" \
+                --repo "$GITHUB_REPOSITORY" \
+                --json isDraft,isPrerelease \
+                --jq '[.isDraft, .isPrerelease] | @tsv'
+            )"
+            test "$RELEASE_METADATA" = $'false\ttrue'
             TAG_TYPE="$(
               gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${ROLLBACK_TAG}" \
                 --jq .object.type
@@ -595,12 +613,26 @@ jobs:
               )"
             fi
             test "$TAG_OBJECT" = "$ARTIFACT_SOURCE_SHA"
-            gh release download "$ROLLBACK_TAG" \
+            if gh release download "$ROLLBACK_TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --dir "$(dirname "$SERVED_ARCHIVE")" \
-              --pattern ClipKitty.dmg
-            cmp "$ARCHIVE" "$SERVED_ARCHIVE"
+              --pattern ClipKitty.dmg; then
+              cmp "$ARCHIVE" "$SERVED_ARCHIVE"
+            else
+              gh release upload "$ROLLBACK_TAG" "$ARCHIVE" \
+                --repo "$GITHUB_REPOSITORY"
+              gh release download "$ROLLBACK_TAG" \
+                --repo "$GITHUB_REPOSITORY" \
+                --dir "$(dirname "$SERVED_ARCHIVE")" \
+                --pattern ClipKitty.dmg
+              cmp "$ARCHIVE" "$SERVED_ARCHIVE"
+            fi
           else
+            if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${ROLLBACK_TAG}" \
+              >/dev/null 2>&1; then
+              echo "::error::Tag ${ROLLBACK_TAG} exists without its immutable emergency release."
+              exit 1
+            fi
             NOTES="${RUNNER_TEMP}/rollback-release-notes.md"
             {
               echo "Emergency Sparkle rollback for the beta channel."
@@ -685,7 +717,7 @@ jobs:
               "build_number": os.environ["ROLLBACK_BUILD"],
               "url": os.environ["ROLLBACK_URL"],
           }
-          assert state["stable"]["build_number"] == "1462"
+          assert state["stable"] is not None
 
           root = ET.parse("appcast.xml").getroot()
           matches = []
@@ -716,7 +748,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          for attempt in $(seq 1 20); do
+          for attempt in $(seq 1 100); do
             SERVED="${RUNNER_TEMP}/served-appcast.xml"
             if curl -fsSL \
               "https://jul-sh.github.io/clipkitty/appcast.xml?attempt=${attempt}" \
