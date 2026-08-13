@@ -1267,10 +1267,24 @@ fn import_metadata(
             Ok(())
         }
         Err(err) => {
-            let release_notes_removed = remove_release_notes(&import_metadata)?;
-            if release_notes_removed
-                && err.to_string().contains("whatsNew")
-                && err.to_string().contains("cannot be edited")
+            let error_message = err.to_string();
+            if is_immutable_app_name_error(&error_message)
+                && remove_localized_metadata_file(&import_metadata, "name.txt")?
+            {
+                // App names belong to App Info, not a platform version. ASC
+                // rejects changing them while an existing version is in some
+                // editable states, even though the rest of the version
+                // metadata remains writable. Retry only this known response
+                // with names omitted; all other errors remain visible.
+                reporter.info(
+                    "App name is immutable for this version state; retrying metadata import without names...",
+                );
+                asc_command(repo, &args, asc_env, reporter)?;
+                reporter.info("Metadata uploaded.");
+                Ok(())
+            } else if error_message.contains("whatsNew")
+                && error_message.contains("cannot be edited")
+                && remove_localized_metadata_file(&import_metadata, "release_notes.txt")?
             {
                 reporter.info(
                     "whatsNew rejected (first submission), retrying without release notes...",
@@ -2003,7 +2017,14 @@ fn collect_ids(value: &Value) -> Vec<String> {
     }
 }
 
-fn remove_release_notes(dir: &Utf8Path) -> Result<bool> {
+fn is_immutable_app_name_error(message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    message.contains("field 'name'")
+        && message.contains("can not be modified")
+        && message.contains("current state")
+}
+
+fn remove_localized_metadata_file(dir: &Utf8Path, file_name: &str) -> Result<bool> {
     let mut removed = false;
     if !dir.as_std_path().is_dir() {
         return Ok(false);
@@ -2013,8 +2034,8 @@ fn remove_release_notes(dir: &Utf8Path) -> Result<bool> {
         let path = Utf8PathBuf::from_path_buf(entry.path())
             .map_err(|p| anyhow!("non-UTF-8 path: {p:?}"))?;
         if path.as_std_path().is_dir() {
-            removed |= remove_release_notes(&path)?;
-        } else if path.file_name() == Some("release_notes.txt") {
+            removed |= remove_localized_metadata_file(&path, file_name)?;
+        } else if path.file_name() == Some(file_name) {
             fs::remove_file(path.as_std_path()).with_context(|| format!("removing {path}"))?;
             removed = true;
         }
@@ -2963,10 +2984,11 @@ fn write_atomically(path: &Utf8Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        app_preview_state, collect_ids, is_preview_upload_in_progress_error, looks_like_locale_dir,
-        promote_existing_appcast_item, validate_generated_appcast, write_atomically,
-        AppPreviewState, AppcastBuildNumber,
-        AppcastDownloadLocation, AppcastRelease, AppcastState, AppcastStateUpdate, ReleaseTarget,
+        app_preview_state, collect_ids, is_immutable_app_name_error,
+        is_preview_upload_in_progress_error, looks_like_locale_dir, promote_existing_appcast_item,
+        remove_localized_metadata_file, validate_generated_appcast, write_atomically,
+        AppPreviewState, AppcastBuildNumber, AppcastDownloadLocation, AppcastRelease, AppcastState,
+        AppcastStateUpdate, ReleaseTarget,
     };
     use crate::model::ReleaseChannel;
     use camino::Utf8PathBuf;
@@ -3210,6 +3232,35 @@ mod tests {
     }
 
     #[test]
+    fn immutable_app_name_error_is_recognized_without_matching_other_errors() {
+        assert!(is_immutable_app_name_error(
+            "migrate import failed: The field 'name' can not be modified in the current state."
+        ));
+        assert!(!is_immutable_app_name_error(
+            "migrate import failed: The field 'subtitle' can not be modified in the current state."
+        ));
+    }
+
+    #[test]
+    fn removing_localized_metadata_file_preserves_other_metadata() {
+        let temp = tempdir().unwrap();
+        let metadata = Utf8PathBuf::from_path_buf(temp.path().join("metadata")).unwrap();
+        let english = metadata.join("en-US");
+        let french = metadata.join("fr-FR");
+        std::fs::create_dir_all(english.as_std_path()).unwrap();
+        std::fs::create_dir_all(french.as_std_path()).unwrap();
+        std::fs::write(english.join("name.txt"), "ClipKitty").unwrap();
+        std::fs::write(french.join("name.txt"), "ClipKitty").unwrap();
+        std::fs::write(english.join("description.txt"), "A clipboard manager").unwrap();
+
+        assert!(remove_localized_metadata_file(&metadata, "name.txt").unwrap());
+        assert!(!english.join("name.txt").exists());
+        assert!(!french.join("name.txt").exists());
+        assert!(english.join("description.txt").exists());
+        assert!(!remove_localized_metadata_file(&metadata, "name.txt").unwrap());
+    }
+
+    #[test]
     fn app_preview_state_waits_for_processing_video() {
         let preview = json!({
             "type": "appPreviews",
@@ -3299,5 +3350,4 @@ mod tests {
         assert_eq!(mac_screenshots.marketing_dir_name, "marketing");
         assert_eq!(mac_screenshots.device_types, &["APP_DESKTOP"]);
     }
-
 }
