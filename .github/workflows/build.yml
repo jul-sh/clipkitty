@@ -139,6 +139,7 @@ jobs:
 
   rust-tests:
     name: Rust Tests
+    if: github.event_name != 'workflow_dispatch'
     runs-on: macos-26
 
     steps:
@@ -518,6 +519,7 @@ jobs:
   ios-smoke:
     name: iOS Smoke Build
     needs: prewarm-nix
+    if: github.event_name != 'workflow_dispatch'
     runs-on: macos-26
 
     steps:
@@ -547,6 +549,7 @@ jobs:
   ios-build:
     name: iOS Build
     needs: [version, prewarm-nix]
+    if: github.event_name != 'workflow_dispatch'
     runs-on: macos-26
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -608,7 +611,7 @@ jobs:
   ios-screenshots:
     name: iOS Screenshots (${{ matrix.device }})
     needs: prewarm-nix
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push'
     runs-on: macos-26
     strategy:
       fail-fast: false
@@ -666,6 +669,7 @@ jobs:
   macos-uitests:
     name: macOS UI Tests
     needs: prewarm-nix
+    if: github.event_name != 'workflow_dispatch'
     runs-on: macos-26
 
     steps:
@@ -750,6 +754,7 @@ jobs:
   macos-marketing:
     name: macOS Marketing Assets
     needs: prewarm-nix
+    if: github.event_name != 'workflow_dispatch'
     runs-on: macos-26
 
     steps:
@@ -836,7 +841,7 @@ jobs:
     name: Intro Videos (${{ matrix.shard }})
     needs: prewarm-nix
     runs-on: macos-26
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push'
     strategy:
       fail-fast: false
       matrix:
@@ -935,7 +940,7 @@ jobs:
   intro-videos:
     name: Intro Videos
     needs: intro-video-capture
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
     steps:
@@ -975,7 +980,7 @@ jobs:
   build:
     needs: [version, prewarm-nix, rust-tests, macos-build, ios-smoke, ios-build, ios-screenshots, macos-uitests, macos-marketing, intro-videos]
     runs-on: ubuntu-latest
-    if: always()
+    if: github.event_name != 'workflow_dispatch'
 
     steps:
       - name: Check job results
