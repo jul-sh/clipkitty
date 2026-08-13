@@ -105,4 +105,13 @@ nix build .#clipkitty-sparkle
 nix build .#clipkitty-hardened
 ```
 
+Release commands read their secrets from the encrypted `envtap.json`. Unlock
+them with your passkey:
+
+```bash
+nix develop
+envtap auth login
+envtap run -- make release-dmg
+```
+
 Run `make help` for the complete automation surface. Building requires macOS 15+, Xcode with Swift 6.2+, and Nix with flakes enabled.

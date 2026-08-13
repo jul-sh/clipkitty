@@ -1,9 +1,9 @@
 //! One shared runner for host-tool subprocess invocations.
 //!
 //! Centralised so every command picks up verbose command echoing, consistent
-//! stdout/stderr policy, exit-code mapping, and (later) secret redaction.
+//! stdout/stderr policy, exit-code mapping, and secret redaction.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::process::{Command, ExitStatus, Stdio};
 
@@ -12,8 +12,28 @@ use camino::Utf8Path;
 
 use crate::output::Reporter;
 
+enum CommandArg {
+    Visible(OsString),
+    Sensitive(OsString),
+}
+
+impl CommandArg {
+    fn value(&self) -> &OsStr {
+        match self {
+            Self::Visible(value) | Self::Sensitive(value) => value,
+        }
+    }
+
+    fn render(&self) -> String {
+        match self {
+            Self::Visible(value) => shell_quote(&value.to_string_lossy()),
+            Self::Sensitive(_) => "<redacted>".to_string(),
+        }
+    }
+}
+
 /// Return whether an executable is available on `PATH` without writing to
-/// stdout or stderr. Secrets commands rely on this silence when stdout is data.
+/// stdout or stderr, so callers can use command output as data.
 pub(crate) fn command_exists(program: &str) -> bool {
     Command::new("which")
         .arg(program)
@@ -26,7 +46,7 @@ pub(crate) fn command_exists(program: &str) -> bool {
 /// Fluent builder for a single host-tool invocation.
 pub struct Runner<'a> {
     program: OsString,
-    args: Vec<OsString>,
+    args: Vec<CommandArg>,
     cwd: Option<OsString>,
     env: Vec<(OsString, OsString)>,
     env_remove: Vec<OsString>,
@@ -52,7 +72,13 @@ impl<'a> Runner<'a> {
     }
 
     pub fn arg(mut self, arg: impl Into<OsString>) -> Self {
-        self.args.push(arg.into());
+        self.args.push(CommandArg::Visible(arg.into()));
+        self
+    }
+
+    /// Pass an argument to the child while redacting it from traces and errors.
+    pub fn sensitive_arg(mut self, arg: impl Into<OsString>) -> Self {
+        self.args.push(CommandArg::Sensitive(arg.into()));
         self
     }
 
@@ -61,7 +87,8 @@ impl<'a> Runner<'a> {
         I: IntoIterator<Item = S>,
         S: Into<OsString>,
     {
-        self.args.extend(args.into_iter().map(Into::into));
+        self.args
+            .extend(args.into_iter().map(|arg| CommandArg::Visible(arg.into())));
         self
     }
 
@@ -135,14 +162,14 @@ impl<'a> Runner<'a> {
         let mut parts = Vec::with_capacity(self.args.len() + 1);
         parts.push(self.program.to_string_lossy().into_owned());
         for arg in &self.args {
-            parts.push(shell_quote(&arg.to_string_lossy()));
+            parts.push(arg.render());
         }
         parts.join(" ")
     }
 
     fn build_command(&self) -> Command {
         let mut cmd = Command::new(&self.program);
-        cmd.args(&self.args);
+        cmd.args(self.args.iter().map(CommandArg::value));
         if let Some(cwd) = &self.cwd {
             cmd.current_dir(cwd);
         }
@@ -293,4 +320,54 @@ fn shell_quote(arg: &str) -> String {
     }
     let escaped = arg.replace('\'', "'\\''");
     format!("'{escaped}'")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SECRET: &str = "runner-secret-do-not-render";
+
+    #[test]
+    fn verbose_command_rendering_redacts_sensitive_arguments() {
+        let reporter = Reporter::new(true);
+        let runner = Runner::new(&reporter, "example")
+            .arg("--password")
+            .sensitive_arg(SECRET)
+            .arg("visible");
+
+        let rendered = runner.display();
+        assert_eq!(rendered, "example --password <redacted> visible");
+        assert!(!rendered.contains(SECRET));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sensitive_arguments_reach_the_child_unchanged() {
+        let reporter = Reporter::new(false);
+        let output = Runner::new(&reporter, "sh")
+            .args(["-c", "printf '%s' \"$1\"", "runner-test"])
+            .sensitive_arg(SECRET)
+            .output()
+            .expect("command should succeed")
+            .stdout_string()
+            .expect("command output should be UTF-8");
+
+        assert_eq!(output, SECRET);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn command_errors_redact_sensitive_arguments() {
+        let reporter = Reporter::new(false);
+        let error = Runner::new(&reporter, "sh")
+            .args(["-c", "exit 7", "runner-test"])
+            .sensitive_arg(SECRET)
+            .run()
+            .expect_err("command should fail");
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("<redacted>"));
+        assert!(!rendered.contains(SECRET));
+    }
 }

@@ -6,14 +6,13 @@
 
 use std::collections::BTreeMap;
 use std::env;
-use std::ffi::OsString;
 use std::fs;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context, Result};
-use base64::Engine;
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,10 +23,10 @@ use crate::cli::{
     VersionArgs, VersionField,
 };
 use crate::cmd::build;
-use crate::cmd::secrets;
 use crate::cmd::sign;
+use crate::environment;
 use crate::filesystem::{copy_directory, remove_if_exists};
-use crate::model::{AscAuthField, MacVariant, ReleaseChannel, SetupAction};
+use crate::model::{MacVariant, ReleaseChannel, SetupAction};
 use crate::output::Reporter;
 use crate::process::{command_exists, Runner};
 use crate::repo::RepoRoot;
@@ -71,13 +70,15 @@ fn macos_appstore(
         return Ok(());
     }
 
-    let mut signing_session = AppStoreSigningSession::begin(repo, reporter)?;
-    signing_session.ensure_provisioning_profile()?;
+    let signing_session = AppStoreSigningSession::begin(reporter)?;
+    let provisioning_profile = signing_session.provisioning_profile()?;
 
     sign::sign_app(
         repo,
         &sign::SignAppRequest {
-            target: sign::SignableMacVariant::AppStore,
+            target: sign::SignableMacVariant::AppStore {
+                provisioning_profile,
+            },
             build_version: ResolvedVersion {
                 version: args.version.clone(),
                 build_number: args.build_number.clone(),
@@ -111,16 +112,13 @@ fn macos_appstore(
 }
 
 struct AppStoreSigningSession<'a> {
-    repo: &'a RepoRoot,
-    reporter: &'a Reporter,
-    previous_provisioning_profile: Option<OsString>,
-    hydrated_provisioning_profile: Option<Utf8PathBuf>,
+    _teardown: AppStoreSigningTeardown<'a>,
+    provisioning_profile: NamedTempFile,
 }
 
 impl<'a> AppStoreSigningSession<'a> {
-    fn begin(repo: &'a RepoRoot, reporter: &'a Reporter) -> Result<Self> {
+    fn begin(reporter: &'a Reporter) -> Result<Self> {
         sign::setup(
-            repo,
             &sign::SetupRequest {
                 flow: sign::SetupFlow::AppStore,
                 action: SetupAction::Init,
@@ -128,63 +126,32 @@ impl<'a> AppStoreSigningSession<'a> {
             false,
             reporter,
         )?;
+        let teardown = AppStoreSigningTeardown { reporter };
+        let decoded = environment::required_base64("PROVISION_PROFILE_BASE64")?;
+        let mut profile =
+            NamedTempFile::new().context("creating temporary provisioning profile")?;
+        profile
+            .write_all(&decoded)
+            .context("writing temporary provisioning profile")?;
         Ok(Self {
-            repo,
-            reporter,
-            previous_provisioning_profile: env::var_os("PROVISIONING_PROFILE"),
-            hydrated_provisioning_profile: None,
+            _teardown: teardown,
+            provisioning_profile: profile,
         })
     }
 
-    fn ensure_provisioning_profile(&mut self) -> Result<()> {
-        let has_external_profile = self
-            .previous_provisioning_profile
-            .as_ref()
-            .is_some_and(|value| !value.is_empty());
-        if has_external_profile {
-            return Ok(());
-        }
-
-        let secret_path = self.repo.join("secrets/PROVISION_PROFILE_BASE64.age");
-        if !secret_path.as_std_path().is_file() {
-            return Err(anyhow!(
-                "PROVISIONING_PROFILE is unset and provisioning secret not found at {secret_path}"
-            ));
-        }
-
-        self.reporter
-            .info("Decrypting provisioning profile from secrets...");
-        let encoded = secrets::read_secret(&secret_path, self.reporter)
-            .with_context(|| format!("decrypting {secret_path}"))?;
-        let encoded = std::str::from_utf8(&encoded)
-            .context("PROVISION_PROFILE_BASE64 secret is not valid UTF-8")?;
-        let cleaned: String = encoded.chars().filter(|c| !c.is_whitespace()).collect();
-        let decoded = base64::engine::general_purpose::STANDARD
-            .decode(&cleaned)
-            .context("decoding PROVISION_PROFILE_BASE64")?;
-
-        let profile_path = self.repo.join("ClipKitty.provisionprofile");
-        fs::write(profile_path.as_std_path(), decoded)
-            .with_context(|| format!("writing provisioning profile to {profile_path}"))?;
-        env::set_var("PROVISIONING_PROFILE", profile_path.as_std_path());
-        self.hydrated_provisioning_profile = Some(profile_path);
-        Ok(())
+    fn provisioning_profile(&self) -> Result<Utf8PathBuf> {
+        Utf8PathBuf::from_path_buf(self.provisioning_profile.path().to_path_buf())
+            .map_err(|path| anyhow!("temporary provisioning profile path is not UTF-8: {path:?}"))
     }
 }
 
-impl Drop for AppStoreSigningSession<'_> {
+struct AppStoreSigningTeardown<'a> {
+    reporter: &'a Reporter,
+}
+
+impl Drop for AppStoreSigningTeardown<'_> {
     fn drop(&mut self) {
-        match &self.previous_provisioning_profile {
-            Some(value) => env::set_var("PROVISIONING_PROFILE", value),
-            None => env::remove_var("PROVISIONING_PROFILE"),
-        }
-
-        if let Some(path) = &self.hydrated_provisioning_profile {
-            let _ = fs::remove_file(path.as_std_path());
-        }
-
         let _ = sign::setup(
-            self.repo,
             &sign::SetupRequest {
                 flow: sign::SetupFlow::AppStore,
                 action: SetupAction::Teardown,
@@ -253,38 +220,24 @@ fn publish(
         ));
     }
 
-    reporter.info("Decrypting App Store Connect secrets...");
-    let asc_key_id = secrets::resolve_asc_field(repo, AscAuthField::KeyId, reporter)?;
-    let asc_issuer_id = secrets::resolve_asc_field(repo, AscAuthField::IssuerId, reporter)?;
-    let asc_private_key_b64 =
-        secrets::resolve_asc_field(repo, AscAuthField::PrivateKeyB64, reporter)?;
-
-    let key_bytes = base64::engine::general_purpose::STANDARD
-        .decode(asc_private_key_b64.trim())
-        .context("decoding ASC private key")?;
-    let asc_key_file = NamedTempFile::new().context("creating temporary ASC key file")?;
-    fs::set_permissions(
-        asc_key_file.path(),
-        std::os::unix::fs::PermissionsExt::from_mode(0o600),
-    )
-    .ok();
-    fs::write(asc_key_file.path(), &key_bytes).context("writing ASC private key")?;
+    let asc_key_id = environment::required("APPSTORE_KEY_ID")?;
+    let asc_issuer_id = environment::required("APPSTORE_ISSUER_ID")?;
+    let key_bytes = environment::required_base64("APPSTORE_KEY_BASE64")?;
+    let mut asc_key_file = NamedTempFile::new().context("creating temporary ASC key file")?;
+    asc_key_file
+        .as_file()
+        .set_permissions(fs::Permissions::from_mode(0o600))
+        .context("restricting temporary ASC private key permissions")?;
+    asc_key_file
+        .write_all(&key_bytes)
+        .context("writing ASC private key")?;
 
     let altool_key_dir =
         Utf8PathBuf::from(env::var("HOME").context("HOME is not set")?).join(".private_keys");
     fs::create_dir_all(altool_key_dir.as_std_path())
         .with_context(|| format!("creating {altool_key_dir}"))?;
     let altool_key_path = altool_key_dir.join(format!("AuthKey_{asc_key_id}.p8"));
-    let altool_key_existed = altool_key_path.as_std_path().is_file();
-    if !altool_key_existed {
-        fs::write(altool_key_path.as_std_path(), &key_bytes)
-            .with_context(|| format!("writing {altool_key_path}"))?;
-        fs::set_permissions(
-            altool_key_path.as_std_path(),
-            std::os::unix::fs::PermissionsExt::from_mode(0o600),
-        )
-        .ok();
-    }
+    let altool_key = AltoolPrivateKey::prepare(altool_key_path, &key_bytes)?;
 
     let asc_env = [
         ("ASC_KEY_ID", asc_key_id.as_str()),
@@ -307,9 +260,6 @@ fn publish(
         Err(err) => {
             if let Some(locked) = err.downcast_ref::<VersionLockedError>() {
                 reporter.info(&format!("Skipping {} publish: {locked}", target.label()));
-                if !altool_key_existed {
-                    let _ = fs::remove_file(altool_key_path.as_std_path());
-                }
                 return Ok(());
             }
             return Err(err);
@@ -329,7 +279,7 @@ fn publish(
             target,
             &asc_key_id,
             &asc_issuer_id,
-            &altool_key_path,
+            altool_key.path(),
             reporter,
         )?;
         reporter.info("\n=== Uploading metadata ===");
@@ -359,10 +309,65 @@ fn publish(
         Ok(())
     })();
 
-    if !altool_key_existed {
-        let _ = fs::remove_file(altool_key_path.as_std_path());
-    }
     publish_result
+}
+
+enum AltoolPrivateKey {
+    Existing(Utf8PathBuf),
+    Created(Utf8PathBuf),
+}
+
+impl AltoolPrivateKey {
+    fn prepare(path: Utf8PathBuf, contents: &[u8]) -> Result<Self> {
+        let parent = path
+            .parent()
+            .ok_or_else(|| anyhow!("ASC private key path has no parent: {path}"))?;
+        let mut temporary = NamedTempFile::new_in(parent.as_std_path())
+            .with_context(|| format!("creating temporary ASC private key beside {path}"))?;
+        temporary
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(0o600))
+            .with_context(|| {
+                format!("restricting temporary ASC private key permissions for {path}")
+            })?;
+        temporary
+            .write_all(contents)
+            .with_context(|| format!("writing temporary ASC private key for {path}"))?;
+        temporary
+            .as_file()
+            .sync_all()
+            .with_context(|| format!("syncing temporary ASC private key for {path}"))?;
+
+        match temporary.persist_noclobber(path.as_std_path()) {
+            Ok(_) => Ok(Self::Created(path)),
+            Err(error) if error.error.kind() == ErrorKind::AlreadyExists => {
+                let metadata = fs::symlink_metadata(path.as_std_path())
+                    .with_context(|| format!("inspecting existing ASC private key at {path}"))?;
+                if !metadata.file_type().is_file() {
+                    return Err(anyhow!(
+                        "existing ASC private key path is not a regular file: {path}"
+                    ));
+                }
+                Ok(Self::Existing(path))
+            }
+            Err(error) => Err(error.error)
+                .with_context(|| format!("atomically creating ASC private key at {path}")),
+        }
+    }
+
+    fn path(&self) -> &Utf8Path {
+        match self {
+            Self::Existing(path) | Self::Created(path) => path,
+        }
+    }
+}
+
+impl Drop for AltoolPrivateKey {
+    fn drop(&mut self) {
+        if let Self::Created(path) = self {
+            let _ = fs::remove_file(path.as_std_path());
+        }
+    }
 }
 
 /// How a version leaves review. `AFTER_APPROVAL` releases automatically the
@@ -2336,17 +2341,12 @@ end tell
 
 fn appcast(repo: &RepoRoot, sub: &AppcastCmd, dry_run: bool, reporter: &Reporter) -> Result<()> {
     match sub {
-        AppcastCmd::Generate(args) => appcast_generate(repo, args, dry_run, reporter),
+        AppcastCmd::Generate(args) => appcast_generate(args, dry_run, reporter),
         AppcastCmd::UpdateState(args) => appcast_update_state(repo, args, dry_run, reporter),
     }
 }
 
-fn appcast_generate(
-    repo: &RepoRoot,
-    args: &AppcastGenerateArgs,
-    dry_run: bool,
-    reporter: &Reporter,
-) -> Result<()> {
+fn appcast_generate(args: &AppcastGenerateArgs, dry_run: bool, reporter: &Reporter) -> Result<()> {
     let state = read_appcast_state(&args.state_path)?;
     let release = state.release(args.channel).ok_or_else(|| {
         anyhow!(
@@ -2379,11 +2379,7 @@ fn appcast_generate(
             "Sparkle generate_appcast was not found at {generator_program}. Run `make install-sparkle-cli`."
         ));
     }
-    let private_key = match env::var("SPARKLE_EDDSA_KEY") {
-        Ok(value) if !value.trim().is_empty() => value.into_bytes(),
-        _ => secrets::read_secret(&repo.join("secrets/SPARKLE_EDDSA_KEY.age"), reporter)
-            .context("decrypting Sparkle EdDSA key for generate_appcast")?,
-    };
+    let private_key = environment::required("SPARKLE_EDDSA_KEY")?.into_bytes();
     let generation = tempdir().context("creating Sparkle appcast generation directory")?;
     let generation = Utf8PathBuf::from_path_buf(generation.path().to_path_buf())
         .map_err(|path| anyhow!("non-UTF-8 appcast generation path: {path:?}"))?;
@@ -2987,12 +2983,15 @@ mod tests {
         app_preview_state, collect_ids, is_immutable_app_name_error,
         is_preview_upload_in_progress_error, looks_like_locale_dir, promote_existing_appcast_item,
         remove_localized_metadata_file, validate_generated_appcast, write_atomically,
-        AppPreviewState, AppcastBuildNumber, AppcastDownloadLocation, AppcastRelease, AppcastState,
-        AppcastStateUpdate, ReleaseTarget,
+        AltoolPrivateKey, AppPreviewState, AppcastBuildNumber, AppcastDownloadLocation,
+        AppcastRelease, AppcastState, AppcastStateUpdate, ReleaseTarget,
     };
     use crate::model::ReleaseChannel;
+    use anyhow::{anyhow, Result};
     use camino::Utf8PathBuf;
     use serde_json::json;
+    use std::fs;
+    use std::os::unix::fs::{symlink, PermissionsExt};
     use tempfile::tempdir;
 
     fn appcast_release(version: &str, build_number: &str) -> AppcastRelease {
@@ -3001,6 +3000,58 @@ mod tests {
             build_number: AppcastBuildNumber::parse(build_number.to_string()).unwrap(),
             url: format!("https://example.com/v{version}/ClipKitty.dmg"),
         }
+    }
+
+    #[test]
+    fn created_altool_private_key_is_private_and_removed_on_early_return() {
+        let directory = tempdir().unwrap();
+        let path = Utf8PathBuf::from_path_buf(directory.path().join("AuthKey_TEST.p8")).unwrap();
+
+        let result = (|| -> Result<()> {
+            let key = AltoolPrivateKey::prepare(path.clone(), b"private key")?;
+            assert_eq!(fs::read(key.path()).unwrap(), b"private key");
+            assert_eq!(
+                fs::metadata(key.path()).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            Err(anyhow!("preflight failed"))
+        })();
+
+        assert_eq!(result.unwrap_err().to_string(), "preflight failed");
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn existing_altool_private_key_is_preserved() {
+        let directory = tempdir().unwrap();
+        let path = Utf8PathBuf::from_path_buf(directory.path().join("AuthKey_TEST.p8")).unwrap();
+        fs::write(path.as_std_path(), b"existing key").unwrap();
+
+        {
+            let key = AltoolPrivateKey::prepare(path.clone(), b"replacement key").unwrap();
+            assert_eq!(fs::read(key.path()).unwrap(), b"existing key");
+        }
+
+        assert_eq!(fs::read(path.as_std_path()).unwrap(), b"existing key");
+    }
+
+    #[test]
+    fn altool_private_key_rejects_an_existing_symlink() {
+        let directory = tempdir().unwrap();
+        let target = directory.path().join("target.p8");
+        let path = Utf8PathBuf::from_path_buf(directory.path().join("AuthKey_TEST.p8")).unwrap();
+        fs::write(&target, b"existing key").unwrap();
+        symlink(&target, path.as_std_path()).unwrap();
+
+        let error = match AltoolPrivateKey::prepare(path, b"replacement key") {
+            Ok(_) => panic!("symlink must be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(error
+            .to_string()
+            .contains("existing ASC private key path is not a regular file"));
+        assert_eq!(fs::read(target).unwrap(), b"existing key");
     }
 
     #[test]

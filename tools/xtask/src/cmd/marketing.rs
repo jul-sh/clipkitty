@@ -1319,7 +1319,6 @@ fn record_preview_video(
 ) -> Result<()> {
     if env::var("SKIP_SIGNING").ok().as_deref() != Some("1") {
         sign::setup(
-            repo,
             &sign::SetupRequest {
                 flow: sign::SetupFlow::Dev,
                 action: SetupAction::Init,

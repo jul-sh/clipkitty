@@ -7,6 +7,7 @@
 pub mod apple;
 pub mod cli;
 pub mod cmd;
+mod environment;
 mod filesystem;
 pub mod icon;
 pub mod model;

@@ -170,6 +170,7 @@ jobs:
   macos-build:
     name: macOS Build
     needs: [version, prewarm-nix]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: macos-26
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -188,25 +189,42 @@ jobs:
       - name: Install CI tools from Nix
         run: |
           # Install tools from flake-locked nixpkgs (pinned via flake.lock)
-          nix profile install --no-update-lock-file .#keytap
+          nix profile install --no-update-lock-file .#envtap
           nix profile install --no-update-lock-file .#tuist
           tuist version
 
-      - name: Decrypt secrets
-        id: secrets
+      - name: Read Developer ID certificate inputs
+        id: developer-id-certificate
         run: |
-          for f in secrets/*.age; do
-            name=$(basename "$f" .age)
-            value=$(keytap decrypt clipkitty < "$f")
-            echo "::add-mask::$value"
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
+          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
+          emit() {
+            local name="$1" value masked delimiter
+            value="${!name-}"
+            if [ -z "$value" ]; then
+              echo "::error::${name} is missing or empty in envtap.json."
+              exit 1
+            fi
+            masked="${value//%/%25}"
+            masked="${masked//$'\r'/%0D}"
+            masked="${masked//$'\n'/%0A}"
+            printf '::add-mask::%s\n' "$masked"
+            delimiter="ENVTAP_$(uuidgen | tr -d '-')"
+            while printf '%s\n' "$value" | grep -Fqx -- "$delimiter"; do
+              delimiter="ENVTAP_$(uuidgen | tr -d '-')"
+            done
             {
-              echo "${name}<<AGEDELIM"
-              echo "$value"
-              echo "AGEDELIM"
+              printf '%s<<%s\n' "$name" "$delimiter"
+              printf '%s\n' "$value"
+              printf '%s\n' "$delimiter"
             } >> "$GITHUB_OUTPUT"
-          done
+          }
+          emit MACOS_P12_BASE64
+          emit MACOS_P12_PASSWORD
+          ENVTAP
         env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
 
       - name: Setup Swift
         uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
@@ -217,14 +235,47 @@ jobs:
       - name: Install Developer ID Certificate
         uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
         with:
-          p12-file-base64: ${{ steps.secrets.outputs.MACOS_P12_BASE64 }}
-          p12-password: ${{ steps.secrets.outputs.MACOS_P12_PASSWORD }}
+          p12-file-base64: ${{ steps.developer-id-certificate.outputs.MACOS_P12_BASE64 }}
+          p12-password: ${{ steps.developer-id-certificate.outputs.MACOS_P12_PASSWORD }}
+
+      - name: Read Apple Development certificate inputs
+        id: apple-development-certificate
+        run: |
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
+          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
+          emit() {
+            local name="$1" value masked delimiter
+            value="${!name-}"
+            if [ -z "$value" ]; then
+              echo "::error::${name} is missing or empty in envtap.json."
+              exit 1
+            fi
+            masked="${value//%/%25}"
+            masked="${masked//$'\r'/%0D}"
+            masked="${masked//$'\n'/%0A}"
+            printf '::add-mask::%s\n' "$masked"
+            delimiter="ENVTAP_$(uuidgen | tr -d '-')"
+            while printf '%s\n' "$value" | grep -Fqx -- "$delimiter"; do
+              delimiter="ENVTAP_$(uuidgen | tr -d '-')"
+            done
+            {
+              printf '%s<<%s\n' "$name" "$delimiter"
+              printf '%s\n' "$value"
+              printf '%s\n' "$delimiter"
+            } >> "$GITHUB_OUTPUT"
+          }
+          emit MAC_DEV_P12_BASE64
+          emit MAC_DEV_P12_PASSWORD
+          ENVTAP
+        env:
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
 
       - name: Install Apple Development Certificate
         uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
         with:
-          p12-file-base64: ${{ steps.secrets.outputs.MAC_DEV_P12_BASE64 }}
-          p12-password: ${{ steps.secrets.outputs.MAC_DEV_P12_PASSWORD }}
+          p12-file-base64: ${{ steps.apple-development-certificate.outputs.MAC_DEV_P12_BASE64 }}
+          p12-password: ${{ steps.apple-development-certificate.outputs.MAC_DEV_P12_PASSWORD }}
           keychain: dev_signing
 
       - name: Fix keychain search list
@@ -240,14 +291,10 @@ jobs:
       - name: Build App (AppStore)
         timeout-minutes: 90
         run: make app-app-store
-        env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Stage Hardened App
         timeout-minutes: 30
         run: make app-hardened
-        env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Create AppStore Archive
         run: |
@@ -376,17 +423,28 @@ jobs:
       - name: Build and Sign DMG
         timeout-minutes: 30
         run: |
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
+          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
           make release-dmg
           codesign --force --sign "Developer ID Application" ClipKitty.dmg
+          ENVTAP
         env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
 
       # 2. Notarize with Apple
       - name: Notarize DMG
         run: |
-          echo "$NOTARY_KEY_BASE64" | base64 --decode > auth_key.p8
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
+          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
+          umask 077
+          AUTH_DIR="$(mktemp -d "$RUNNER_TEMP/clipkitty-notary.XXXXXX")"
+          AUTH_KEY="$AUTH_DIR/AuthKey.p8"
+          trap 'rm -f "$AUTH_KEY"; rmdir "$AUTH_DIR" 2>/dev/null || true' EXIT
+          printf '%s' "$NOTARY_KEY_BASE64" | base64 --decode > "$AUTH_KEY"
           xcrun notarytool submit ClipKitty.dmg \
-            --key auth_key.p8 \
+            --key "$AUTH_KEY" \
             --key-id "$NOTARY_KEY_ID" \
             --issuer "$NOTARY_ISSUER_ID" \
             --wait --output-format json | tee notarization_result.json
@@ -397,20 +455,27 @@ jobs:
             echo "::error::Notarization failed with status: $STATUS"
             SUBMISSION_ID=$(python3 -c "import json,sys; print(json.load(sys.stdin)['id'])" < notarization_result.json)
             xcrun notarytool log "$SUBMISSION_ID" \
-              --key auth_key.p8 \
+              --key "$AUTH_KEY" \
               --key-id "$NOTARY_KEY_ID" \
               --issuer "$NOTARY_ISSUER_ID" || true
             exit 1
           fi
+          ENVTAP
         env:
-          NOTARY_KEY_BASE64: ${{ steps.secrets.outputs.NOTARY_KEY_BASE64 }}
-          NOTARY_KEY_ID: ${{ steps.secrets.outputs.NOTARY_KEY_ID }}
-          NOTARY_ISSUER_ID: ${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
 
       - name: Notarize Hardened ZIP
         run: |
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
+          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
+          umask 077
+          AUTH_DIR="$(mktemp -d "$RUNNER_TEMP/clipkitty-notary.XXXXXX")"
+          AUTH_KEY="$AUTH_DIR/AuthKey.p8"
+          trap 'rm -f "$AUTH_KEY"; rmdir "$AUTH_DIR" 2>/dev/null || true' EXIT
+          printf '%s' "$NOTARY_KEY_BASE64" | base64 --decode > "$AUTH_KEY"
           xcrun notarytool submit ClipKitty-Hardened.zip \
-            --key auth_key.p8 \
+            --key "$AUTH_KEY" \
             --key-id "$NOTARY_KEY_ID" \
             --issuer "$NOTARY_ISSUER_ID" \
             --wait --output-format json | tee notarization_result_hardened.json
@@ -421,18 +486,14 @@ jobs:
             echo "::error::Notarization failed for Hardened ZIP with status: $STATUS"
             SUBMISSION_ID=$(python3 -c "import json,sys; print(json.load(sys.stdin)['id'])" < notarization_result_hardened.json)
             xcrun notarytool log "$SUBMISSION_ID" \
-              --key auth_key.p8 \
+              --key "$AUTH_KEY" \
               --key-id "$NOTARY_KEY_ID" \
               --issuer "$NOTARY_ISSUER_ID" || true
             exit 1
           fi
+          ENVTAP
         env:
-          NOTARY_KEY_ID: ${{ steps.secrets.outputs.NOTARY_KEY_ID }}
-          NOTARY_ISSUER_ID: ${{ steps.secrets.outputs.NOTARY_ISSUER_ID }}
-
-      - name: Clean up Notary Key
-        if: always()
-        run: rm -f auth_key.p8
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
 
       # 3. Staple Notarization (Required for offline Gatekeeper approval)
       #    Apple's CDN can occasionally lag behind even after "Accepted" status.
@@ -551,6 +612,7 @@ jobs:
   ios-build:
     name: iOS Build
     needs: [version, prewarm-nix]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: macos-26
     env:
       VERSION: ${{ needs.version.outputs.version }}
@@ -567,8 +629,7 @@ jobs:
 
       - name: Install CI tools from Nix
         run: |
-          # age decrypts the ASC auth key below
-          nix profile install --no-update-lock-file .#keytap
+          nix profile install --no-update-lock-file .#envtap
           nix profile install --no-update-lock-file .#tuist
           tuist version
 
@@ -577,35 +638,47 @@ jobs:
         with:
           swift-version: "6.2"
 
-      - name: Prepare Xcode Authentication
-        id: xcode-auth
-        run: |
-          mkdir -p .make/keys
-          make secrets-asc-auth FIELD=private-key-b64 | base64 --decode > .make/keys/AuthKey.p8
-          echo "key_id=$(make secrets-asc-auth FIELD=key-id)" >> "$GITHUB_OUTPUT"
-          echo "issuer_id=$(make secrets-asc-auth FIELD=issuer-id)" >> "$GITHUB_OUTPUT"
-          echo "key_path=$(pwd)/.make/keys/AuthKey.p8" >> "$GITHUB_OUTPUT"
-        env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
-
       - name: Generate Xcode Workspace
         run: make workspace
 
       - name: Build iOS App (AppStore)
         timeout-minutes: 20
         run: |
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
+          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
+          for name in APPSTORE_KEY_ID APPSTORE_ISSUER_ID APPSTORE_KEY_BASE64; do
+            value="${!name-}"
+            if [ -z "$value" ]; then
+              echo "::error::${name} is missing or empty in envtap.json."
+              exit 1
+            fi
+            masked="${value//%/%25}"
+            masked="${masked//$'\r'/%0D}"
+            masked="${masked//$'\n'/%0A}"
+            printf '::add-mask::%s\n' "$masked"
+          done
+
+          umask 077
+          AUTH_DIR="$(mktemp -d "$RUNNER_TEMP/clipkitty-xcode-auth.XXXXXX")"
+          AUTH_KEY="$AUTH_DIR/AuthKey.p8"
+          trap 'rm -f "$AUTH_KEY"; rmdir "$AUTH_DIR" 2>/dev/null || true' EXIT
+          printf '%s' "$APPSTORE_KEY_BASE64" | base64 --decode > "$AUTH_KEY"
           xcodebuild build \
             -workspace ClipKitty.xcworkspace \
             -scheme ClipKittyiOS-AppStore \
             -derivedDataPath DerivedData \
             -destination "generic/platform=iOS" \
             -allowProvisioningUpdates \
-            -authenticationKeyPath ${{ steps.xcode-auth.outputs.key_path }} \
-            -authenticationKeyID ${{ steps.xcode-auth.outputs.key_id }} \
-            -authenticationKeyIssuerID ${{ steps.xcode-auth.outputs.issuer_id }} \
+            -authenticationKeyPath "$AUTH_KEY" \
+            -authenticationKeyID "$APPSTORE_KEY_ID" \
+            -authenticationKeyIssuerID "$APPSTORE_ISSUER_ID" \
             MARKETING_VERSION="$VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             CODE_SIGNING_ALLOWED=NO
+          ENVTAP
+        env:
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
 
   # iPhone and iPad marketing screenshots run as independent simulator jobs so
   # a failure on one device surfaces without waiting for the other.
@@ -808,8 +881,6 @@ jobs:
 
       - name: Install CI tools from Nix
         run: |
-          # keytap decrypts the screenshot fixtures via $KEYTAP_KEY_CLIPKITTY
-          nix profile install --no-update-lock-file .#keytap
           nix profile install --no-update-lock-file .#tuist
           tuist version
 
@@ -848,8 +919,6 @@ jobs:
         run: |
           SKIP_SIGNING=1 LOCKED=1 make screenshots-macos
           ls -lh marketing/*/screenshot_*.png
-        env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Teardown Virtual Display
         if: always()
@@ -898,7 +967,6 @@ jobs:
 
       - name: Install CI tools from Nix
         run: |
-          nix profile install --no-update-lock-file .#keytap
           nix profile install --no-update-lock-file --inputs-from . nixpkgs#ffmpeg
           nix profile install --no-update-lock-file .#tuist
           tuist version
@@ -931,7 +999,6 @@ jobs:
           unset TOOLCHAINS
           SKIP_SIGNING=1 LOCKED=1 make intro-video
         env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
           CLIPKITTY_MARKETING_LOCALES: ${{ matrix.locales }}
 
       - name: Teardown Virtual Display
@@ -1010,8 +1077,9 @@ jobs:
 
   # Aggregate status check: branch protection requires a check named "build",
   # and PR authors get one canonical pass/fail without enumerating jobs.
-  # Screenshot/video jobs are allowed to skip only on PRs, where their job
-  # conditions intentionally disable them. Every other result must succeed.
+  # Signing, screenshot, and video jobs are allowed to skip only on PRs, where
+  # repository credentials are intentionally unavailable. Every other result
+  # must succeed.
   build:
     needs: [version, prewarm-nix, rust-tests, macos-build, ios-smoke, ios-build, ios-screenshots, macos-tests, macos-uitests, macos-marketing, intro-videos]
     runs-on: ubuntu-latest
@@ -1031,7 +1099,12 @@ jobs:
                   and (
                     $event != "pull_request"
                     or .value.result != "skipped"
-                    or (.key != "ios-screenshots" and .key != "intro-videos")
+                    or (
+                      .key != "macos-build"
+                      and .key != "ios-build"
+                      and .key != "ios-screenshots"
+                      and .key != "intro-videos"
+                    )
                   )
                 )
             ]
@@ -1396,7 +1469,9 @@ jobs:
         uses: ./.github/actions/setup-nix
 
       - name: Install Sparkle publishing tools
-        run: make install-sparkle-cli
+        run: |
+          nix profile install --no-update-lock-file .#envtap
+          make install-sparkle-cli
 
       - name: Download and verify released archive
         env:
@@ -1431,9 +1506,11 @@ jobs:
       - name: Publish verified Sparkle appcast
         env:
           GH_TOKEN: ${{ github.token }}
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
         run: |
           set -euo pipefail
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
 
           RELEASE_ARCHIVE="${RUNNER_TEMP}/appcast-release-archive/ClipKitty.dmg"
           WORKTREE="${RUNNER_TEMP}/gh-pages-appcast"
@@ -1463,11 +1540,16 @@ jobs:
           # Sparkle owns archive signing, bundle metadata extraction,
           # enclosure metadata, and feed serialization. xtask owns only the
           # channel transition and atomically installs the generated feed.
-          make -C "$GITHUB_WORKSPACE" release-appcast-generate \
-            STATE_PATH="$(pwd)/appcast-state.json" \
-            OUTPUT_PATH="$(pwd)/appcast.xml" \
-            CHANNEL="${{ needs.version.outputs.channel }}" \
-            ARCHIVE_PATH="$RELEASE_ARCHIVE"
+          APPCAST_STATE="$(pwd)/appcast-state.json"
+          APPCAST_OUTPUT="$(pwd)/appcast.xml"
+          (
+            cd "$GITHUB_WORKSPACE"
+            ENVTAP_IDENTITY="$envtap_identity" envtap run -- make release-appcast-generate \
+              STATE_PATH="$APPCAST_STATE" \
+              OUTPUT_PATH="$APPCAST_OUTPUT" \
+              CHANNEL="${{ needs.version.outputs.channel }}" \
+              ARCHIVE_PATH="$RELEASE_ARCHIVE"
+          )
 
           xmllint --noout appcast.xml
 
@@ -1496,26 +1578,43 @@ jobs:
 
       - name: Install CI tools from Nix
         run: |
-          nix profile install --no-update-lock-file .#keytap
+          nix profile install --no-update-lock-file .#envtap
           nix profile install --no-update-lock-file .#tuist
           nix profile install --no-update-lock-file .#asc
           tuist version
 
-      - name: Decrypt secrets
-        id: secrets
+      - name: Read App Store installer certificate inputs
+        id: app-store-installer-certificate
         run: |
-          for f in secrets/*.age; do
-            name=$(basename "$f" .age)
-            value=$(keytap decrypt clipkitty < "$f")
-            echo "::add-mask::$value"
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
+          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
+          emit() {
+            local name="$1" value masked delimiter
+            value="${!name-}"
+            if [ -z "$value" ]; then
+              echo "::error::${name} is missing or empty in envtap.json."
+              exit 1
+            fi
+            masked="${value//%/%25}"
+            masked="${masked//$'\r'/%0D}"
+            masked="${masked//$'\n'/%0A}"
+            printf '::add-mask::%s\n' "$masked"
+            delimiter="ENVTAP_$(uuidgen | tr -d '-')"
+            while printf '%s\n' "$value" | grep -Fqx -- "$delimiter"; do
+              delimiter="ENVTAP_$(uuidgen | tr -d '-')"
+            done
             {
-              echo "${name}<<AGEDELIM"
-              echo "$value"
-              echo "AGEDELIM"
+              printf '%s<<%s\n' "$name" "$delimiter"
+              printf '%s\n' "$value"
+              printf '%s\n' "$delimiter"
             } >> "$GITHUB_OUTPUT"
-          done
+          }
+          emit APPSTORE_CERT_BASE64
+          emit P12_PASSWORD
+          ENVTAP
         env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
 
       - name: Setup Swift
         uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
@@ -1531,14 +1630,47 @@ jobs:
       - name: Install App Store Installer Certificate
         uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
         with:
-          p12-file-base64: ${{ steps.secrets.outputs.APPSTORE_CERT_BASE64 }}
-          p12-password: ${{ steps.secrets.outputs.P12_PASSWORD }}
+          p12-file-base64: ${{ steps.app-store-installer-certificate.outputs.APPSTORE_CERT_BASE64 }}
+          p12-password: ${{ steps.app-store-installer-certificate.outputs.P12_PASSWORD }}
+
+      - name: Read App Store application certificate inputs
+        id: app-store-application-certificate
+        run: |
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
+          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
+          emit() {
+            local name="$1" value masked delimiter
+            value="${!name-}"
+            if [ -z "$value" ]; then
+              echo "::error::${name} is missing or empty in envtap.json."
+              exit 1
+            fi
+            masked="${value//%/%25}"
+            masked="${masked//$'\r'/%0D}"
+            masked="${masked//$'\n'/%0A}"
+            printf '::add-mask::%s\n' "$masked"
+            delimiter="ENVTAP_$(uuidgen | tr -d '-')"
+            while printf '%s\n' "$value" | grep -Fqx -- "$delimiter"; do
+              delimiter="ENVTAP_$(uuidgen | tr -d '-')"
+            done
+            {
+              printf '%s<<%s\n' "$name" "$delimiter"
+              printf '%s\n' "$value"
+              printf '%s\n' "$delimiter"
+            } >> "$GITHUB_OUTPUT"
+          }
+          emit APPSTORE_APP_CERT_BASE64
+          emit P12_PASSWORD
+          ENVTAP
+        env:
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
 
       - name: Install App Store Application Certificate
         uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
         with:
-          p12-file-base64: ${{ steps.secrets.outputs.APPSTORE_APP_CERT_BASE64 }}
-          p12-password: ${{ steps.secrets.outputs.P12_PASSWORD }}
+          p12-file-base64: ${{ steps.app-store-application-certificate.outputs.APPSTORE_APP_CERT_BASE64 }}
+          p12-password: ${{ steps.app-store-application-certificate.outputs.P12_PASSWORD }}
           keychain: app_signing
 
       - name: Remove duplicate Application cert from Installer P12
@@ -1578,21 +1710,16 @@ jobs:
           # by extracting into `marketing/`.
           path: marketing
 
-      - name: Prepare API Key for Automatic Signing
-        run: |
-          mkdir -p .make/keys
-          make secrets-asc-auth FIELD=private-key-b64 | base64 --decode > .make/keys/AuthKey.p8
-        env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
-
       - name: Build and Publish to App Store Connect
         run: |
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
           unset TOOLCHAINS
           VERSION=$(make release-version FIELD=version)
           COMMIT_COUNT=$(make release-version FIELD=build-number)
-          make release-macos-appstore VERSION="$VERSION" BUILD_NUMBER="$COMMIT_COUNT"
+          ENVTAP_IDENTITY="$envtap_identity" envtap run -- make release-macos-appstore VERSION="$VERSION" BUILD_NUMBER="$COMMIT_COUNT"
         env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
           CLIPKITTY_SIGNING_EXTERNAL: "1"
           # The ASC API intermittently takes >30s per request; a metadata
           # PATCH timing out after the binary upload leaves the run
@@ -1657,26 +1784,43 @@ jobs:
 
       - name: Install CI tools from Nix
         run: |
-          nix profile install --no-update-lock-file .#keytap
+          nix profile install --no-update-lock-file .#envtap
           nix profile install --no-update-lock-file .#tuist
           nix profile install --no-update-lock-file .#asc
           tuist version
 
-      - name: Decrypt secrets
-        id: secrets
+      - name: Read iOS distribution certificate inputs
+        id: ios-distribution-certificate
         run: |
-          for f in secrets/*.age; do
-            name=$(basename "$f" .age)
-            value=$(keytap decrypt clipkitty < "$f")
-            echo "::add-mask::$value"
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
+          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
+          emit() {
+            local name="$1" value masked delimiter
+            value="${!name-}"
+            if [ -z "$value" ]; then
+              echo "::error::${name} is missing or empty in envtap.json."
+              exit 1
+            fi
+            masked="${value//%/%25}"
+            masked="${masked//$'\r'/%0D}"
+            masked="${masked//$'\n'/%0A}"
+            printf '::add-mask::%s\n' "$masked"
+            delimiter="ENVTAP_$(uuidgen | tr -d '-')"
+            while printf '%s\n' "$value" | grep -Fqx -- "$delimiter"; do
+              delimiter="ENVTAP_$(uuidgen | tr -d '-')"
+            done
             {
-              echo "${name}<<AGEDELIM"
-              echo "$value"
-              echo "AGEDELIM"
+              printf '%s<<%s\n' "$name" "$delimiter"
+              printf '%s\n' "$value"
+              printf '%s\n' "$delimiter"
             } >> "$GITHUB_OUTPUT"
-          done
+          }
+          emit IOS_DIST_CERT_BASE64
+          emit IOS_DIST_P12_PASSWORD
+          ENVTAP
         env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
 
       - name: Setup Swift
         uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
@@ -1692,8 +1836,8 @@ jobs:
       - name: Install iOS Distribution Certificate
         uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
         with:
-          p12-file-base64: ${{ steps.secrets.outputs.IOS_DIST_CERT_BASE64 }}
-          p12-password: ${{ steps.secrets.outputs.IOS_DIST_P12_PASSWORD }}
+          p12-file-base64: ${{ steps.ios-distribution-certificate.outputs.IOS_DIST_CERT_BASE64 }}
+          p12-password: ${{ steps.ios-distribution-certificate.outputs.IOS_DIST_P12_PASSWORD }}
           keychain: ios_signing
 
       - name: Fix keychain search list
@@ -1704,12 +1848,19 @@ jobs:
 
       - name: Install iOS Provisioning Profiles
         run: |
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          echo "$APP_PROFILE" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/clipkitty-ios.mobileprovision
-          echo "$SHARE_PROFILE" | base64 --decode > ~/Library/MobileDevice/Provisioning\ Profiles/clipkitty-share.mobileprovision
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
+          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
+          umask 077
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$PROFILE_DIR"
+          printf '%s' "$IOS_APPSTORE_PROFILE_BASE64" \
+            | base64 --decode > "$PROFILE_DIR/clipkitty-ios.mobileprovision"
+          printf '%s' "$IOS_SHARE_PROFILE_BASE64" \
+            | base64 --decode > "$PROFILE_DIR/clipkitty-share.mobileprovision"
+          ENVTAP
         env:
-          APP_PROFILE: ${{ steps.secrets.outputs.IOS_APPSTORE_PROFILE_BASE64 }}
-          SHARE_PROFILE: ${{ steps.secrets.outputs.IOS_SHARE_PROFILE_BASE64 }}
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
 
       # actions/upload-artifact@v4 strips the common path prefix (here the
       # `marketing-ios/` / `marketing-ipad/` roots), so each artifact holds
@@ -1742,13 +1893,6 @@ jobs:
             done
           done
 
-      - name: Prepare API Key
-        run: |
-          mkdir -p .make/keys
-          make secrets-asc-auth FIELD=private-key-b64 | base64 --decode > .make/keys/AuthKey.p8
-        env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
-
       - name: Verify repo invariants
         run: make check
 
@@ -1774,12 +1918,14 @@ jobs:
 
       - name: Build and Publish iOS to App Store Connect
         run: |
+          envtap_identity="${ENVTAP_IDENTITY:?}"
+          unset ENVTAP_IDENTITY
           unset TOOLCHAINS
           VERSION=$(make release-version FIELD=version)
           COMMIT_COUNT=$(make release-version FIELD=build-number)
-          make release-ios-appstore VERSION="$VERSION" BUILD_NUMBER="$COMMIT_COUNT"
+          ENVTAP_IDENTITY="$envtap_identity" envtap run -- make release-ios-appstore VERSION="$VERSION" BUILD_NUMBER="$COMMIT_COUNT"
         env:
-          KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
+          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
           # See the macOS publish step: ASC requests can exceed asc's
           # default timeout, and a failed publish can't be rerun once the
           # binary for this build number has been uploaded.
