@@ -10,7 +10,7 @@
 //! where the release tag and the installed app disagree; that divergence
 //! makes Sparkle compare stale numbers and silently skip updates.
 
-use std::fs;
+use std::{env, fs};
 
 use anyhow::{anyhow, Context, Result};
 
@@ -29,6 +29,33 @@ pub struct ResolvedVersion {
 
 /// Resolve the release version for the current repo state.
 pub fn resolve(repo: &RepoRoot, reporter: &Reporter) -> Result<ResolvedVersion> {
+    match (
+        env::var("CLIPKITTY_EMERGENCY_RELEASE_VERSION"),
+        env::var("CLIPKITTY_EMERGENCY_RELEASE_BUILD"),
+    ) {
+        (Ok(version), Ok(build_number)) if version.is_empty() && build_number.is_empty() => {}
+        (Ok(version), Ok(build_number)) => {
+            if version != "1.13.1469" || build_number != "1469" {
+                return Err(anyhow!(
+                    "invalid emergency release override: {version} ({build_number})"
+                ));
+            }
+            reporter.info(&format!(
+                "Using emergency release override {version} ({build_number})"
+            ));
+            return Ok(ResolvedVersion {
+                version,
+                build_number,
+            });
+        }
+        (Err(env::VarError::NotPresent), Err(env::VarError::NotPresent)) => {}
+        _ => {
+            return Err(anyhow!(
+                "emergency release override requires both version and build"
+            ));
+        }
+    }
+
     let (major, minor) = read_base_major_minor(repo)?;
     let commit_count = commit_count(repo, reporter)?;
     Ok(ResolvedVersion {
