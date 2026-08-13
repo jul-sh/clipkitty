@@ -193,6 +193,12 @@ let
       buildPhase = ''
         runHook preBuild
         ${cargoEnvSetup}
+        # The target derivations can be scheduled concurrently in the same
+        # Nix build top-level directory. Cargo build scripts run on the host,
+        # so sharing one target directory lets an ARM build script be reused
+        # by the x86_64 build, which then fails with "cannot execute binary
+        # file". Keep every cross target's intermediate artifacts isolated.
+        export CARGO_TARGET_DIR="$TMPDIR/cargo-target-${target}"
         cd purr
       '' + lib.optionalString (sdk != null) ''
         ${clipkittyLib.xcodePreflightScript}
