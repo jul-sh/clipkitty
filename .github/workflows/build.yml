@@ -544,7 +544,8 @@ jobs:
               "repos/${GITHUB_REPOSITORY}/compare/${KNOWN_GOOD_SHA}...${ARTIFACT_SOURCE_SHA}" \
               --jq '[.files[].filename] | sort | join("\n")'
           )"
-          if [ "$CHANGED_FILES" != ".github/workflows/build.yml" ]; then
+          EXPECTED_CHANGES=$'.github/workflows/build.yml\nflake.lock\nflake.nix'
+          if [ "$CHANGED_FILES" != "$EXPECTED_CHANGES" ]; then
             echo "::error::Rollback artifact source differs from known-good code:"
             printf '%s\n' "$CHANGED_FILES"
             exit 1
@@ -638,7 +639,8 @@ jobs:
               echo "This is the known-good application source from \`${KNOWN_GOOD_SHA}\`, rebuilt as"
               echo "Sparkle build \`${ROLLBACK_BUILD}\` so clients on the faulty build 1468 can move"
               echo "forward to it. Application source differs from the known-good commit only by the"
-              echo "isolated GitHub Actions workflow used to sign and notarize this artifact."
+              echo "isolated GitHub Actions workflow and its Keytap tooling pin used to sign and"
+              echo "notarize this artifact."
               echo
               echo "- Build workflow run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${ARTIFACT_RUN_ID}"
               echo "- Artifact source commit: \`${ARTIFACT_SOURCE_SHA}\`"
