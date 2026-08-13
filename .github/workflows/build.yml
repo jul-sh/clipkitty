@@ -122,7 +122,6 @@ jobs:
   # the fan-out restores instead of recompiling.
   prewarm-nix:
     name: Prewarm Nix Cache
-    if: github.event_name != 'workflow_dispatch'
     runs-on: macos-26
 
     steps:
@@ -168,11 +167,10 @@ jobs:
   macos-build:
     name: macOS Build
     needs: [version, prewarm-nix]
-    if: github.event_name != 'workflow_dispatch'
     runs-on: macos-26
     env:
-      VERSION: ${{ needs.version.outputs.version }}
-      BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && '1.13.1469' || needs.version.outputs.version }}
+      BUILD_NUMBER: ${{ github.event_name == 'workflow_dispatch' && '1469' || needs.version.outputs.build_number }}
 
     steps:
       - name: Checkout
@@ -486,7 +484,8 @@ jobs:
   # publishes build 1469 to the beta channel and leaves main untouched.
   emergency-sparkle-rollback:
     name: Publish emergency Sparkle rollback
-    if: github.event_name == 'workflow_dispatch'
+    needs: macos-build
+    if: github.event_name == 'workflow_dispatch' && needs.macos-build.result == 'success'
     runs-on: macos-26
     concurrency:
       group: clipkitty-publication
@@ -497,8 +496,9 @@ jobs:
       contents: write
 
     env:
-      ARTIFACT_RUN_ID: "31736060556"
-      ARTIFACT_SOURCE_SHA: f5aeefc874b5d17ad57afab2b26526211b719c13
+      ARTIFACT_RUN_ID: ${{ github.run_id }}
+      ARTIFACT_SOURCE_SHA: ${{ github.sha }}
+      ARTIFACT_BUILD_RESULT: ${{ needs.macos-build.result }}
       KNOWN_GOOD_SHA: bf1505a8edd2f67ea1918dd654fe1c8722c7ec52
       PUBLISHER_SHA: e6b84d5bc8525107eb97755c9730b4b87c258801
       ROLLBACK_VERSION: 1.13.1469
@@ -522,8 +522,6 @@ jobs:
         with:
           name: ClipKitty-Builds
           path: rollback-artifact
-          github-token: ${{ github.token }}
-          run-id: ${{ env.ARTIFACT_RUN_ID }}
 
       - name: Verify known-good source and signed archive
         env:
@@ -538,12 +536,8 @@ jobs:
             gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${ARTIFACT_RUN_ID}" \
               --jq .head_sha
           )"
-          RUN_CONCLUSION="$(
-            gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${ARTIFACT_RUN_ID}" \
-              --jq .conclusion
-          )"
           test "$RUN_HEAD_SHA" = "$ARTIFACT_SOURCE_SHA"
-          test "$RUN_CONCLUSION" = success
+          test "$ARTIFACT_BUILD_RESULT" = success
 
           CHANGED_FILES="$(
             gh api \
