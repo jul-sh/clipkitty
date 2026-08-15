@@ -1,49 +1,66 @@
 import ClipKittyCore
 import SwiftUI
 
+struct AppearanceSettingsSection: View {
+    var body: some View {
+        Section {
+            NavigationLink {
+                AppearanceSettingsScreen()
+            } label: {
+                Label(String(localized: "Appearance"), systemImage: "paintbrush")
+            }
+            .accessibilityIdentifier("settings.appearanceLink")
+        }
+    }
+}
+
 /// "App Typeface" + "Preview Spacing" settings, mirroring the macOS
 /// `AppearanceSettingsView`. Where the Mac shows radio rows beside one shared
 /// specimen, iOS uses tappable Form rows — each carries its own live specimen
 /// on the right and a checkmark when selected, which reads more natively here.
-struct AppearanceSettingsSection: View {
+private struct AppearanceSettingsScreen: View {
     @Environment(iOSSettingsStore.self) private var settings
     @Environment(HapticsClient.self) private var haptics
 
     var body: some View {
         @Bindable var settings = settings
 
-        Section(String(localized: "App Typeface")) {
-            ForEach(AppFontPreference.allCases) { preference in
-                AppearanceOptionRow(
-                    title: typefaceTitle(preference),
-                    description: typefaceDescription(preference),
-                    isSelected: settings.fontPreference == preference,
-                    specimen: { TypefaceSpecimen(typeface: preference) }
-                ) {
-                    settings.fontPreference = preference
-                    haptics.fire(.selection)
-                }
-            }
-        }
-        .animation(.easeInOut(duration: 0.18), value: settings.fontPreference)
-
-        Section(String(localized: "Preview Spacing")) {
-            ForEach(PreviewFontPreference.allCases) { style in
-                AppearanceOptionRow(
-                    title: spacingTitle(style),
-                    description: spacingDescription(style),
-                    isSelected: settings.previewFontPreference == style,
-                    specimen: {
-                        SpacingSpecimen(style: style, typeface: settings.fontPreference)
+        Form {
+            Section(String(localized: "App Typeface")) {
+                ForEach(AppFontPreference.allCases) { preference in
+                    AppearanceOptionRow(
+                        title: typefaceTitle(preference),
+                        description: typefaceDescription(preference),
+                        isSelected: settings.fontPreference == preference,
+                        specimen: { TypefaceSpecimen(typeface: preference) }
+                    ) {
+                        settings.fontPreference = preference
+                        haptics.fire(.selection)
                     }
-                ) {
-                    settings.previewFontPreference = style
-                    haptics.fire(.selection)
                 }
             }
+            .animation(.easeInOut(duration: 0.18), value: settings.fontPreference)
+
+            Section(String(localized: "Preview Spacing")) {
+                ForEach(PreviewFontPreference.allCases) { style in
+                    AppearanceOptionRow(
+                        title: spacingTitle(style),
+                        description: spacingDescription(style),
+                        isSelected: settings.previewFontPreference == style,
+                        specimen: {
+                            SpacingSpecimen(style: style, typeface: settings.fontPreference)
+                        }
+                    ) {
+                        settings.previewFontPreference = style
+                        haptics.fire(.selection)
+                    }
+                }
+            }
+            .animation(.easeInOut(duration: 0.18), value: settings.previewFontPreference)
+            .animation(.easeInOut(duration: 0.18), value: settings.fontPreference)
         }
-        .animation(.easeInOut(duration: 0.18), value: settings.previewFontPreference)
-        .animation(.easeInOut(duration: 0.18), value: settings.fontPreference)
+        .navigationTitle(String(localized: "Appearance"))
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private func typefaceTitle(_ preference: AppFontPreference) -> String {

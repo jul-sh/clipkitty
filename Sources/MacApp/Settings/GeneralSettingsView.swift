@@ -18,7 +18,11 @@ struct GeneralSettingsView: View {
     @State private var iCloudStatusMessage: String? = nil
     @State private var committedLimitGB: Double?
     @State private var showShrinkConfirmation = false
-    @State private var isAdvancedExpanded = false
+    @State private var isStorageExpanded = false
+    #if ENABLE_SPARKLE_UPDATES
+        @State private var isUpdatesExpanded = false
+    #endif
+    @State private var isAboutExpanded = false
 
     let store: ClipboardStore
     #if ENABLE_SPARKLE_UPDATES
@@ -89,11 +93,17 @@ struct GeneralSettingsView: View {
             }
 
             Section {
-                DisclosureGroup(String(localized: "Advanced"), isExpanded: $isAdvancedExpanded) {
-                    historySettings
-                    #if ENABLE_SPARKLE_UPDATES
+                DisclosureGroup(String(localized: "Storage"), isExpanded: $isStorageExpanded) {
+                    storageSettings
+                }
+
+                #if ENABLE_SPARKLE_UPDATES
+                    DisclosureGroup(String(localized: "Updates"), isExpanded: $isUpdatesExpanded) {
                         updatesSettings
-                    #endif
+                    }
+                #endif
+
+                DisclosureGroup(String(localized: "About"), isExpanded: $isAboutExpanded) {
                     aboutSettings
                 }
             }
@@ -116,12 +126,9 @@ struct GeneralSettingsView: View {
         }
     }
 
-    // MARK: - Advanced subsections
+    // MARK: - Disclosure content
 
-    @ViewBuilder
-    private var historySettings: some View {
-        advancedHeader(String(localized: "History"))
-
+    private var storageSettings: some View {
         VStack(spacing: 10) {
             StorageBarView(
                 limitGB: $settings.maxDatabaseSizeGB,
@@ -168,8 +175,6 @@ struct GeneralSettingsView: View {
     #if ENABLE_SPARKLE_UPDATES
         @ViewBuilder
         private var updatesSettings: some View {
-            advancedHeader(String(localized: "Updates"))
-
             Toggle(
                 String(localized: "Automatically install updates"),
                 isOn: $settings.autoInstallUpdates
@@ -231,8 +236,6 @@ struct GeneralSettingsView: View {
 
     @ViewBuilder
     private var aboutSettings: some View {
-        advancedHeader(String(localized: "About"))
-
         LabeledContent(String(localized: "Version")) {
             Text("\(appVersion) (\(buildNumber)) \(buildChannel)")
                 .foregroundStyle(.secondary)
@@ -247,16 +250,6 @@ struct GeneralSettingsView: View {
                 }
             }
         #endif
-    }
-
-    /// Section label shown inside the Advanced disclosure group, styled like a
-    /// grouped-form section header so each subsection stays distinct.
-    private func advancedHeader(_ title: String) -> some View {
-        Text(title)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 6)
     }
 
     /// Called when the user releases the dial knob. Shrinking the limit below

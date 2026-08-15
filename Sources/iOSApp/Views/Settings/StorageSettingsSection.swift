@@ -1,19 +1,20 @@
 import ClipKittyCore
 import SwiftUI
 
-struct AdvancedSettingsSection: View {
+struct StorageSettingsSection: View {
     var body: some View {
         Section {
             NavigationLink {
-                AdvancedSettingsScreen()
+                StorageSettingsScreen()
             } label: {
-                Label(String(localized: "Advanced"), systemImage: "gearshape.2")
+                Label(String(localized: "Storage"), systemImage: "externaldrive")
             }
+            .accessibilityIdentifier("settings.storageLink")
         }
     }
 }
 
-private struct AdvancedSettingsScreen: View {
+private struct StorageSettingsScreen: View {
     @Environment(AppContainer.self) private var container
     @Environment(AppState.self) private var appState
 
@@ -33,14 +34,6 @@ private struct AdvancedSettingsScreen: View {
         case confirmingClear
         case clearing
         case failed(String)
-    }
-
-    private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
-    }
-
-    private var buildNumber: String {
-        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "Unknown"
     }
 
     var body: some View {
@@ -105,24 +98,8 @@ private struct AdvancedSettingsScreen: View {
                     }
                 }
             }
-
-            Section {
-                Toggle(
-                    String(localized: "Allow Shortcuts to Read History"),
-                    isOn: $settings.allowShortcutsReadAccess
-                )
-            } header: {
-                Text(String(localized: "Shortcuts"))
-            } footer: {
-                Text(String(localized: "When off, Shortcuts and automations cannot read or search your clipboard history; saving new clips from Shortcuts still works. Turn this off if you do not want automations to access your history."))
-            }
-
-            Section("About") {
-                LabeledContent("Version", value: appVersion)
-                LabeledContent("Build", value: buildNumber)
-            }
         }
-        .navigationTitle(String(localized: "Advanced"))
+        .navigationTitle(String(localized: "Storage"))
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await loadDatabaseSize(committedLimitGB: settings.maxDatabaseSizeGB)

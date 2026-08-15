@@ -7,10 +7,6 @@ import Foundation
 final class iOSSettingsStore {
     // MARK: - Settings
 
-    var hapticsEnabled: Bool {
-        didSet { defaults.set(hapticsEnabled, forKey: hapticsEnabledKey) }
-    }
-
     var generateLinkPreviews: Bool {
         didSet { defaults.set(generateLinkPreviews, forKey: generateLinkPreviewsKey) }
     }
@@ -76,7 +72,6 @@ final class iOSSettingsStore {
 
     // MARK: - Keys
 
-    private let hapticsEnabledKey = "iOSHapticsEnabled"
     private let generateLinkPreviewsKey = "iOSGenerateLinkPreviews"
     private let autoAddFromClipboardKey = "iOSAutoAddFromClipboard"
     private let allowShortcutsReadAccessKey = "allowShortcutsReadAccess"
@@ -98,7 +93,6 @@ final class iOSSettingsStore {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
 
-        hapticsEnabled = defaults.object(forKey: hapticsEnabledKey) as? Bool ?? true
         generateLinkPreviews = defaults.object(forKey: generateLinkPreviewsKey) as? Bool ?? true
         autoAddFromClipboard = defaults.object(forKey: autoAddFromClipboardKey) as? Bool ?? false
         allowShortcutsReadAccess = defaults.object(forKey: allowShortcutsReadAccessKey) as? Bool ?? true

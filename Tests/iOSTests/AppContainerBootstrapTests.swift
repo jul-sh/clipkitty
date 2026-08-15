@@ -228,7 +228,6 @@ final class AppContainerBootstrapTests: TemporaryDirectoryTestCase {
             return
         }
 
-        XCTAssertTrue(container.settings.hapticsEnabled)
         XCTAssertTrue(container.settings.generateLinkPreviews)
     }
 

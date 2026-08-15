@@ -19,9 +19,10 @@ final class iOSSettingsStoreTests: XCTestCase {
 
     func testDefaultValues() {
         let store = iOSSettingsStore(defaults: defaults)
-        XCTAssertTrue(store.hapticsEnabled)
         XCTAssertTrue(store.generateLinkPreviews)
         XCTAssertFalse(store.autoAddFromClipboard)
+        XCTAssertTrue(store.allowShortcutsReadAccess)
+        XCTAssertFalse(store.captureSensitiveClips)
         XCTAssertEqual(store.maxDatabaseSizeGB, 7.0, accuracy: 1e-9)
         XCTAssertEqual(store.lastIngestedPasteboardChangeCount, 0)
     }
@@ -42,14 +43,6 @@ final class iOSSettingsStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.lastIngestedPasteboardChangeCount, 42)
     }
 
-    func testHapticsEnabledPersists() {
-        let store = iOSSettingsStore(defaults: defaults)
-        store.hapticsEnabled = false
-
-        let reloaded = iOSSettingsStore(defaults: defaults)
-        XCTAssertFalse(reloaded.hapticsEnabled)
-    }
-
     func testGenerateLinkPreviewsPersists() {
         let store = iOSSettingsStore(defaults: defaults)
         store.generateLinkPreviews = false
@@ -68,32 +61,34 @@ final class iOSSettingsStoreTests: XCTestCase {
 
     func testMultipleSettingsPersistIndependently() {
         let store = iOSSettingsStore(defaults: defaults)
-        store.hapticsEnabled = false
-        store.generateLinkPreviews = true
+        store.generateLinkPreviews = false
         store.autoAddFromClipboard = true
+        store.allowShortcutsReadAccess = false
+        store.captureSensitiveClips = true
 
         let reloaded = iOSSettingsStore(defaults: defaults)
-        XCTAssertFalse(reloaded.hapticsEnabled)
-        XCTAssertTrue(reloaded.generateLinkPreviews)
+        XCTAssertFalse(reloaded.generateLinkPreviews)
         XCTAssertTrue(reloaded.autoAddFromClipboard)
+        XCTAssertFalse(reloaded.allowShortcutsReadAccess)
+        XCTAssertTrue(reloaded.captureSensitiveClips)
     }
 
     func testChangingOneSettingDoesNotOverwriteAnotherKey() {
         let store = iOSSettingsStore(defaults: defaults)
         defaults.set(false, forKey: "iOSGenerateLinkPreviews")
 
-        store.hapticsEnabled = false
+        store.autoAddFromClipboard = true
 
         XCTAssertFalse(defaults.bool(forKey: "iOSGenerateLinkPreviews"))
     }
 
-    func testToggleBackAndForth() {
+    func testCaptureSensitiveClipsTogglesBackAndForth() {
         let store = iOSSettingsStore(defaults: defaults)
 
-        store.hapticsEnabled = false
-        XCTAssertFalse(iOSSettingsStore(defaults: defaults).hapticsEnabled)
+        store.captureSensitiveClips = true
+        XCTAssertTrue(iOSSettingsStore(defaults: defaults).captureSensitiveClips)
 
-        store.hapticsEnabled = true
-        XCTAssertTrue(iOSSettingsStore(defaults: defaults).hapticsEnabled)
+        store.captureSensitiveClips = false
+        XCTAssertFalse(iOSSettingsStore(defaults: defaults).captureSensitiveClips)
     }
 }

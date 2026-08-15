@@ -115,7 +115,7 @@ final class AppContainer {
         )
         let settings = iOSSettingsStore()
         let clipboardService = iOSClipboardService(settings: settings)
-        let haptics = HapticsClient(settings: settings)
+        let haptics = HapticsClient()
 
         return AppContainer(
             storeSession: storeSession,

@@ -9,15 +9,8 @@ struct GeneralSettingsSection: View {
         @Bindable var settings = settings
 
         Section(String(localized: "General")) {
-            Toggle(String(localized: "Haptic Feedback"), isOn: $settings.hapticsEnabled)
             Toggle(String(localized: "Generate Link Previews"), isOn: $settings.generateLinkPreviews)
             Toggle(String(localized: "Auto-Add from Clipboard"), isOn: $settings.autoAddFromClipboard)
-        }
-
-        Section {
-            Toggle(String(localized: "Capture Sensitive Clips"), isOn: $settings.captureSensitiveClips)
-        } footer: {
-            Text(String(localized: "When off, clips that an app marks as sensitive (such as passwords and one-time codes from a password manager) are not saved to history. Turn this on only if you want those clips captured too."))
         }
 
         if !settings.permissionHintDismissed {

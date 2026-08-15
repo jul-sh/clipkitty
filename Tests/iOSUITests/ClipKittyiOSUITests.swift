@@ -3,8 +3,8 @@ import XCTest
 /// UI tests for the iOS app's core navigation, settings, and interaction flows.
 ///
 /// These tests verify the app's UI at the integration level:
-/// - Tab navigation between Library and Settings
-/// - Settings screen structure and toggle behavior
+/// - Settings sheet presentation and dismissal
+/// - Settings screen structure, navigation, and toggle behavior
 /// - Clear history confirmation flow
 /// - Card swipe actions (bookmark, delete)
 final class ClipKittyiOSUITests: XCTestCase {
@@ -16,98 +16,103 @@ final class ClipKittyiOSUITests: XCTestCase {
         app.launch()
 
         // Wait for the app to finish bootstrapping
-        let libraryTab = app.tabBars.buttons["Library"]
+        let settingsButton = app.buttons["home.settingsButton"]
         XCTAssertTrue(
-            libraryTab.waitForExistence(timeout: 10),
-            "App should finish launching and show the Library tab"
+            settingsButton.waitForExistence(timeout: 10),
+            "App should finish launching and show the Library"
         )
     }
 
-    // MARK: - Tab Navigation
+    // MARK: - Navigation
 
-    func testLibraryTabIsSelectedByDefault() {
-        let libraryTab = app.tabBars.buttons["Library"]
-        XCTAssertTrue(libraryTab.isSelected, "Library tab should be selected on launch")
+    func testLibraryIsShownByDefault() {
+        XCTAssertTrue(app.navigationBars["ClipKitty"].exists, "Library should be visible on launch")
+        XCTAssertTrue(app.buttons["home.settingsButton"].isHittable)
     }
 
-    func testNavigateToSettingsTab() {
-        let settingsTab = app.tabBars.buttons["Settings"]
-        XCTAssertTrue(settingsTab.exists)
+    func testOpenSettings() {
+        openSettings()
+    }
 
-        settingsTab.tap()
+    func testDismissSettingsReturnsToLibrary() {
+        openSettings()
 
-        // Verify settings screen is visible
-        let settingsTitle = app.navigationBars["Settings"]
+        let doneButton = app.buttons["Done"]
+        XCTAssertTrue(doneButton.waitForExistence(timeout: 3), "Settings should have a Done button")
+        doneButton.tap()
+
         XCTAssertTrue(
-            settingsTitle.waitForExistence(timeout: 5),
-            "Settings navigation title should be visible"
+            app.navigationBars["Settings"].waitForNonExistence(timeout: 5),
+            "Settings sheet should dismiss"
         )
-    }
-
-    func testNavigateBackToLibraryFromSettings() {
-        // Go to settings
-        app.tabBars.buttons["Settings"].tap()
-        let settingsTitle = app.navigationBars["Settings"]
-        XCTAssertTrue(settingsTitle.waitForExistence(timeout: 5))
-
-        // Go back to library
-        app.tabBars.buttons["Library"].tap()
-
-        // Verify we're back on the library (search button should be visible)
-        let searchButton = app.buttons["Search"]
         XCTAssertTrue(
-            searchButton.waitForExistence(timeout: 5),
-            "Search button should be visible after returning to Library"
+            app.buttons["home.settingsButton"].waitForExistence(timeout: 5),
+            "Library should be visible after dismissing Settings"
         )
     }
 
     // MARK: - Settings Screen Structure
 
-    func testSettingsScreenShowsAllSections() {
-        app.tabBars.buttons["Settings"].tap()
-        let settingsTitle = app.navigationBars["Settings"]
-        XCTAssertTrue(settingsTitle.waitForExistence(timeout: 5))
+    func testSettingsScreenShowsRootSections() {
+        openSettings()
 
-        // General section
-        XCTAssertTrue(app.staticTexts["General"].exists, "General section should exist")
-        XCTAssertTrue(app.switches["Haptic Feedback"].exists, "Haptic Feedback toggle should exist")
-        XCTAssertTrue(app.switches["Generate Link Previews"].exists, "Generate Link Previews toggle should exist")
-
-        // History section
-        XCTAssertTrue(app.staticTexts["History"].exists, "History section should exist")
-        XCTAssertTrue(app.staticTexts["Database Size"].exists, "Database Size label should exist")
-
-        // About section
-        XCTAssertTrue(app.staticTexts["About"].exists, "About section should exist")
-        XCTAssertTrue(app.staticTexts["Version"].exists, "Version label should exist")
-        XCTAssertTrue(app.staticTexts["Build"].exists, "Build label should exist")
+        XCTAssertFalse(app.staticTexts["Status"].exists, "Sync status should not appear in Settings")
+        XCTAssertFalse(app.switches["Haptic Feedback"].exists, "Haptic Feedback should not appear in Settings")
+        assertSettingsTextIsReachable("iCloud Sync")
+        assertSettingsControlIsReachable(
+            settingsSwitch(named: "Sync via iCloud"),
+            named: "Sync via iCloud"
+        )
+        assertSettingsTextIsReachable("General")
+        assertSettingsControlIsReachable(
+            settingsSwitch(named: "Generate Link Previews"),
+            named: "Generate Link Previews"
+        )
+        assertSettingsControlIsReachable(
+            settingsSwitch(named: "Auto-Add from Clipboard"),
+            named: "Auto-Add from Clipboard"
+        )
+        assertSettingsControlIsReachable(
+            app.buttons["settings.appearanceLink"],
+            named: "Appearance"
+        )
+        assertSettingsTextIsReachable("Privacy")
+        assertSettingsControlIsReachable(
+            settingsSwitch(named: "Allow Shortcuts to Read History"),
+            named: "Allow Shortcuts to Read History"
+        )
+        assertSettingsControlIsReachable(
+            settingsSwitch(named: "Capture Sensitive Clips"),
+            named: "Capture Sensitive Clips"
+        )
+        assertSettingsControlIsReachable(app.buttons["settings.storageLink"], named: "Storage")
     }
 
-    func testHapticFeedbackToggle() {
-        app.tabBars.buttons["Settings"].tap()
-        let settingsTitle = app.navigationBars["Settings"]
-        XCTAssertTrue(settingsTitle.waitForExistence(timeout: 5))
+    func testAppearancePageContainsTypefaceAndPreviewSpacing() {
+        openSettings()
+        openSettingsPage(named: "Appearance")
 
-        let toggle = app.switches["Haptic Feedback"]
-        XCTAssertTrue(toggle.exists)
+        assertSettingsTextIsReachable("App Typeface")
+        assertSettingsTextIsReachable("Preview Spacing")
+    }
 
-        let initialValue = toggle.value as? String
-        toggle.tap()
+    func testStoragePageContainsStorageAndHistoryControls() {
+        openSettings()
+        openSettingsPage(named: "Storage")
 
-        let newValue = toggle.value as? String
-        XCTAssertNotEqual(initialValue, newValue, "Toggle value should change after tap")
-
-        // Toggle back to restore state
-        toggle.tap()
+        assertSettingsTextIsReachable("Storage Limit")
+        assertSettingsTextIsReachable("History")
+        assertSettingsControlIsReachable(app.buttons["Clear History"], named: "Clear History")
+        XCTAssertFalse(app.staticTexts["About"].exists, "About should not appear in Storage")
+        XCTAssertFalse(app.staticTexts["Version"].exists, "Version should not appear in Storage")
+        XCTAssertFalse(app.staticTexts["Build"].exists, "Build should not appear in Storage")
     }
 
     func testLinkPreviewsToggle() {
-        app.tabBars.buttons["Settings"].tap()
-        let settingsTitle = app.navigationBars["Settings"]
-        XCTAssertTrue(settingsTitle.waitForExistence(timeout: 5))
+        openSettings()
 
-        let toggle = app.switches["Generate Link Previews"]
-        XCTAssertTrue(toggle.exists)
+        let toggle = settingsSwitch(named: "Generate Link Previews")
+        XCTAssertTrue(revealInSettings(toggle), "Generate Link Previews toggle should be reachable")
 
         let initialValue = toggle.value as? String
         toggle.tap()
@@ -122,13 +127,12 @@ final class ClipKittyiOSUITests: XCTestCase {
     // MARK: - Clear History Confirmation Flow
 
     func testClearHistoryRequiresConfirmation() {
-        app.tabBars.buttons["Settings"].tap()
-        let settingsTitle = app.navigationBars["Settings"]
-        XCTAssertTrue(settingsTitle.waitForExistence(timeout: 5))
+        openSettings()
+        openSettingsPage(named: "Storage")
 
         // First tap shows confirmation
         let clearButton = app.buttons["Clear History"]
-        XCTAssertTrue(clearButton.exists, "Clear History button should exist")
+        XCTAssertTrue(revealInSettings(clearButton), "Clear History button should be reachable")
 
         clearButton.tap()
 
@@ -138,6 +142,93 @@ final class ClipKittyiOSUITests: XCTestCase {
             confirmButton.waitForExistence(timeout: 3),
             "Confirmation button should appear after first tap"
         )
+    }
+
+    // MARK: - Settings Helpers
+
+    private func openSettings() {
+        let settingsButton = app.buttons["home.settingsButton"]
+        XCTAssertTrue(settingsButton.waitForExistence(timeout: 5), "Settings button should exist")
+        settingsButton.tap()
+
+        XCTAssertTrue(
+            app.navigationBars["Settings"].waitForExistence(timeout: 5),
+            "Settings navigation title should be visible"
+        )
+    }
+
+    private func openSettingsPage(named name: String) {
+        let identifier: String
+        switch name {
+        case "Appearance":
+            identifier = "settings.appearanceLink"
+        case "Storage":
+            identifier = "settings.storageLink"
+        default:
+            XCTFail("Unknown settings page: \(name)")
+            return
+        }
+        let link = app.buttons[identifier]
+        XCTAssertTrue(revealInSettings(link), "\(name) settings should be reachable")
+        link.tap()
+        XCTAssertTrue(
+            app.navigationBars[name].waitForExistence(timeout: 5),
+            "\(name) navigation title should be visible"
+        )
+    }
+
+    private func settingsSwitch(named name: String) -> XCUIElement {
+        app.switches.matching(
+            NSPredicate(format: "label CONTAINS[c] %@", name)
+        ).firstMatch
+    }
+
+    private func assertSettingsTextIsReachable(
+        _ label: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(
+            revealInSettings(app.staticTexts[label]),
+            "\(label) should be reachable in Settings",
+            file: file,
+            line: line
+        )
+    }
+
+    private func assertSettingsControlIsReachable(
+        _ element: XCUIElement,
+        named name: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(
+            revealInSettings(element),
+            "\(name) should be reachable in Settings",
+            file: file,
+            line: line
+        )
+    }
+
+    private func revealInSettings(_ element: XCUIElement, maximumSwipes: Int = 12) -> Bool {
+        if element.waitForExistence(timeout: 0.5), element.isHittable {
+            return true
+        }
+
+        let collectionView = app.collectionViews.firstMatch
+        let scrollView = app.scrollViews.firstMatch
+        let scrollContainer = collectionView.exists
+            ? collectionView
+            : (scrollView.exists ? scrollView : app!)
+
+        for _ in 0 ..< maximumSwipes {
+            scrollContainer.swipeUp()
+            if element.waitForExistence(timeout: 0.3), element.isHittable {
+                return true
+            }
+        }
+
+        return false
     }
 
     // MARK: - Search Interaction

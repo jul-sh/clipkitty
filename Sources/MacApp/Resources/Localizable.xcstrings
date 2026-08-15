@@ -10396,7 +10396,6 @@
       }
     },
     "Storage": {
-      "extractionState": "stale",
       "localizations": {
         "de": {
           "stringUnit": {
@@ -11744,7 +11743,6 @@
       }
     },
     "Updates": {
-      "extractionState": "stale",
       "localizations": {
         "de": {
           "stringUnit": {
