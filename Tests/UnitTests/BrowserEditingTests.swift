@@ -51,6 +51,7 @@ final class BrowserEditingTests: XCTestCase {
 
     func testCommitEditShowsSavedNotificationAfterSearchRefresh() async {
         let client = MockBrowserStoreClient()
+        client.defersTextUpdates = true
         var notification: NotificationRequest?
         let viewModel = await makeLoadedTextViewModel(
             client: client,
@@ -60,12 +61,17 @@ final class BrowserEditingTests: XCTestCase {
         editText("edited text", in: viewModel)
 
         viewModel.commitCurrentEdit()
+        let didStartSave = await settle { client.updatedTexts.count == 1 }
+        guard didStartSave else {
+            return XCTFail("Expected persistence to start")
+        }
         guard case .saving = viewModel.mutationState else {
             return XCTFail("Expected persistence to be in flight")
         }
         viewModel.updateSearchText("")
         XCTAssertEqual(viewModel.editSession, .dirty(itemId: "1", draft: "edited text"))
 
+        client.resumeTextUpdate(with: .success(()))
         let didShowNotification = await settle { notification != nil }
         XCTAssertTrue(didShowNotification)
         guard case let .passive(message, iconSystemName)? = notification else {
@@ -778,7 +784,15 @@ final class BrowserEditingTests: XCTestCase {
             showSnackbarNotification: showSnackbarNotification
         )
         viewModel.onAppear(initialSearchQuery: "")
-        await flushMainActor()
+        let didLoadSelection = await settle {
+            switch viewModel.selectionState {
+            case let .selected(selection):
+                return selection.item.itemMetadata.itemId == "1"
+            case .none, .loading, .failed:
+                return false
+            }
+        }
+        XCTAssertTrue(didLoadSelection, "Expected fixture item to be selected")
         return viewModel
     }
 
