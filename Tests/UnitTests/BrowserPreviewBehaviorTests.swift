@@ -671,7 +671,13 @@ final class BrowserPreviewBehaviorTests: XCTestCase {
         )
 
         viewModel.onAppear(initialSearchQuery: "")
-        await flushMainActor()
+        let didSelectInitialItem = await settle {
+            guard case let .selected(selection) = viewModel.selectionState else {
+                return false
+            }
+            return selection.item.itemMetadata.itemId == "1"
+        }
+        XCTAssertTrue(didSelectInitialItem, "Expected initial search to select the first item")
 
         XCTAssertEqual(viewModel.selectedItemId, "1")
         XCTAssertEqual(viewModel.selectedItem?.itemMetadata.itemId, "1")
