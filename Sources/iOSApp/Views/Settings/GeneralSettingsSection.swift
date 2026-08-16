@@ -8,7 +8,7 @@ struct GeneralSettingsSection: View {
     var body: some View {
         @Bindable var settings = settings
 
-        Section(String(localized: "General")) {
+        Section(String(localized: "Behavior")) {
             #if ENABLE_ICLOUD_SYNC
                 SyncSettingsRow()
             #endif

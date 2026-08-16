@@ -3987,6 +3987,11 @@
         }
       }
     },
+    "Behavior" : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Behavior" } }
+      }
+    },
     "Generate Link Previews" : {
       "localizations" : {
         "de" : {

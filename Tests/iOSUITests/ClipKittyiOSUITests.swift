@@ -62,7 +62,7 @@ final class ClipKittyiOSUITests: XCTestCase {
             settingsSwitch(named: "Sync via iCloud"),
             named: "Sync via iCloud"
         )
-        assertSettingsTextIsReachable("General")
+        assertSettingsTextIsReachable("Behavior")
         assertSettingsControlIsReachable(
             settingsSwitch(named: "Auto-Add from Clipboard"),
             named: "Auto-Add from Clipboard"
