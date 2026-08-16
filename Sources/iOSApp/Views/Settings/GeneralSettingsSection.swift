@@ -12,7 +12,6 @@ struct GeneralSettingsSection: View {
             #if ENABLE_ICLOUD_SYNC
                 SyncSettingsRow()
             #endif
-            Toggle(String(localized: "Generate Link Previews"), isOn: $settings.generateLinkPreviews)
             Toggle(String(localized: "Auto-Add from Clipboard"), isOn: $settings.autoAddFromClipboard)
         }
 

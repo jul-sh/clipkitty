@@ -7,15 +7,17 @@ struct PrivacySettingsSection: View {
         @Bindable var settings = settings
 
         Section(String(localized: "Privacy")) {
+            Toggle(String(localized: "Generate Link Previews"), isOn: $settings.generateLinkPreviews)
+
             PrivacyToggleRow(
                 title: String(localized: "Allow Shortcuts to Read History"),
-                description: String(localized: "When off, Shortcuts and automations cannot read or search your clipboard history; saving new clips from Shortcuts still works. Turn this off if you do not want automations to access your history."),
+                description: String(localized: "Lets Shortcuts and automations read your clipboard history."),
                 isOn: $settings.allowShortcutsReadAccess
             )
 
             PrivacyToggleRow(
                 title: String(localized: "Capture Sensitive Clips"),
-                description: String(localized: "When off, clips that an app marks as sensitive (such as passwords and one-time codes from a password manager) are not saved to history. Turn this on only if you want those clips captured too."),
+                description: String(localized: "Saves clips marked sensitive by apps, such as passwords and codes."),
                 isOn: $settings.captureSensitiveClips
             )
         }

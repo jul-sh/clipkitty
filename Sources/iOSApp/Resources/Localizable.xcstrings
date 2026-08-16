@@ -67,6 +67,16 @@
         "en" : { "stringUnit" : { "state" : "translated", "value" : "When off, clips that an app marks as sensitive (such as passwords and one-time codes from a password manager) are not saved to history. Turn this on only if you want those clips captured too." } }
       }
     },
+    "Lets Shortcuts and automations read your clipboard history." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Lets Shortcuts and automations read your clipboard history." } }
+      }
+    },
+    "Saves clips marked sensitive by apps, such as passwords and codes." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Saves clips marked sensitive by apps, such as passwords and codes." } }
+      }
+    },
     "Advanced" : {
       "localizations" : {
         "de" : {

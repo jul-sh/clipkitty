@@ -64,10 +64,6 @@ final class ClipKittyiOSUITests: XCTestCase {
         )
         assertSettingsTextIsReachable("General")
         assertSettingsControlIsReachable(
-            settingsSwitch(named: "Generate Link Previews"),
-            named: "Generate Link Previews"
-        )
-        assertSettingsControlIsReachable(
             settingsSwitch(named: "Auto-Add from Clipboard"),
             named: "Auto-Add from Clipboard"
         )
@@ -76,6 +72,10 @@ final class ClipKittyiOSUITests: XCTestCase {
             named: "Appearance"
         )
         assertSettingsTextIsReachable("Privacy")
+        assertSettingsControlIsReachable(
+            settingsSwitch(named: "Generate Link Previews"),
+            named: "Generate Link Previews"
+        )
         assertSettingsControlIsReachable(
             settingsSwitch(named: "Allow Shortcuts to Read History"),
             named: "Allow Shortcuts to Read History"
