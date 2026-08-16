@@ -3,14 +3,12 @@ import SwiftUI
 
 struct StorageSettingsSection: View {
     var body: some View {
-        Section {
-            NavigationLink {
-                StorageSettingsScreen()
-            } label: {
-                Label(String(localized: "Storage"), systemImage: "externaldrive")
-            }
-            .accessibilityIdentifier("settings.storageLink")
+        NavigationLink {
+            StorageSettingsScreen()
+        } label: {
+            Label(String(localized: "Storage"), systemImage: "externaldrive")
         }
+        .accessibilityIdentifier("settings.storageLink")
     }
 }
 

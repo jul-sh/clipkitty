@@ -3,14 +3,12 @@ import SwiftUI
 
 struct AppearanceSettingsSection: View {
     var body: some View {
-        Section {
-            NavigationLink {
-                AppearanceSettingsScreen()
-            } label: {
-                Label(String(localized: "Appearance"), systemImage: "paintbrush")
-            }
-            .accessibilityIdentifier("settings.appearanceLink")
+        NavigationLink {
+            AppearanceSettingsScreen()
+        } label: {
+            Label(String(localized: "Appearance"), systemImage: "paintbrush")
         }
+        .accessibilityIdentifier("settings.appearanceLink")
     }
 }
 

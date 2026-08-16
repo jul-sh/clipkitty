@@ -58,7 +58,6 @@ final class ClipKittyiOSUITests: XCTestCase {
 
         XCTAssertFalse(app.staticTexts["Status"].exists, "Sync status should not appear in Settings")
         XCTAssertFalse(app.switches["Haptic Feedback"].exists, "Haptic Feedback should not appear in Settings")
-        assertSettingsTextIsReachable("iCloud Sync")
         assertSettingsControlIsReachable(
             settingsSwitch(named: "Sync via iCloud"),
             named: "Sync via iCloud"

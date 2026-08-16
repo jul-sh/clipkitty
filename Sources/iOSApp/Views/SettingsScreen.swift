@@ -6,13 +6,12 @@ struct SettingsScreen: View {
     var body: some View {
         NavigationStack {
             Form {
-                #if ENABLE_ICLOUD_SYNC
-                    SyncSettingsSection()
-                #endif
                 GeneralSettingsSection()
-                AppearanceSettingsSection()
                 PrivacySettingsSection()
-                StorageSettingsSection()
+                Section {
+                    StorageSettingsSection()
+                    AppearanceSettingsSection()
+                }
             }
             .navigationTitle(String(localized: "Settings"))
             .toolbar {
