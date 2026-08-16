@@ -9,8 +9,8 @@ struct SettingsScreen: View {
                 GeneralSettingsSection()
                 PrivacySettingsSection()
                 Section {
-                    StorageSettingsSection()
                     AppearanceSettingsSection()
+                    StorageSettingsSection()
                 }
             }
             .navigationTitle(String(localized: "Settings"))
