@@ -249,7 +249,16 @@ private struct WelcomeContentView: View {
         .onPreferenceChange(ContentHeightPreferenceKey.self) { height in
             onContentHeightChanged(height)
         }
-        .clipKittyWindowGlassBackground()
+        .background(
+            LinearGradient(
+                colors: [
+                    Color(nsColor: .controlBackgroundColor),
+                    Color(nsColor: .controlBackgroundColor).opacity(0.95),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
     }
 }
 
