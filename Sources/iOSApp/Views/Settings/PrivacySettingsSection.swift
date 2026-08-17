@@ -7,7 +7,11 @@ struct PrivacySettingsSection: View {
         @Bindable var settings = settings
 
         Section(String(localized: "Privacy")) {
-            Toggle(String(localized: "Generate Link Previews"), isOn: $settings.generateLinkPreviews)
+            PrivacyToggleRow(
+                title: String(localized: "Generate Link Previews"),
+                description: String(localized: "Downloads web content. May trigger tracking links."),
+                isOn: $settings.generateLinkPreviews
+            )
 
             PrivacyToggleRow(
                 title: String(localized: "Allow Shortcuts to Read History"),

@@ -4056,6 +4056,20 @@
         }
       }
     },
+    "Downloads web content. May trigger tracking links." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Lädt Webinhalte herunter. Kann Tracking-Links auslösen." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Downloads web content. May trigger tracking links." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Descarga contenido web. Puede activar enlaces de rastreo." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Télécharge du contenu web. Peut déclencher des liens de suivi." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Webコンテンツをダウンロードします。トラッキングリンクが作動する場合があります。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "웹 콘텐츠를 다운로드합니다. 추적 링크가 실행될 수 있습니다." } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Baixa conteúdo da web. Pode acionar links de rastreamento." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Загружает веб-контент. Может активировать ссылки отслеживания." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "下载网页内容。可能会触发跟踪链接。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "下載網頁內容。可能會觸發追蹤連結。" } }
+      }
+    },
     "Haptic Feedback" : {
       "localizations" : {
         "de" : {
