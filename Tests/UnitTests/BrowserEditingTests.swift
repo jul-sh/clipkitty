@@ -230,7 +230,15 @@ final class BrowserEditingTests: XCTestCase {
             onDismiss: {}
         )
         viewModel.onAppear(initialSearchQuery: "")
-        await flushMainActor()
+        let didLoadSelection = await settle {
+            guard case let .selected(selection) = viewModel.selectionState else {
+                return false
+            }
+            return selection.item.itemMetadata.itemId == "1"
+        }
+        guard didLoadSelection else {
+            return XCTFail("Expected fixture item to be selected")
+        }
         editText("edited text", in: viewModel)
         viewModel.confirmSelection()
         let didStartSave = await settle { client.updatedTexts.count == 1 }

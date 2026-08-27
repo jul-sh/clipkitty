@@ -61,29 +61,45 @@ struct ContentView: View {
             isPanelVisible: { store.isPanelVisible }
         )
         .onAppear {
-            viewModel.onAppear(
-                initialSearchQuery: initialSearchQuery,
-                contentRevision: contentRevision
-            )
+            startInitialSearchWhenReady(contentRevision: contentRevision)
+        }
+        // The panel eagerly hosts its SwiftUI content, including while the
+        // store rebuilds an index. Do not turn that early appearance into a
+        // terminal "database not available" search; launch the first search
+        // only after the store has a repository.
+        .onChange(of: store.lifecycle) { _, lifecycle in
+            guard lifecycle == .ready else { return }
+            startInitialSearchWhenReady(contentRevision: store.contentRevision)
         }
         .onChange(of: displayVersion) { _, _ in
+            guard store.lifecycle == .ready else { return }
             viewModel.handleDisplayReset(
                 initialSearchQuery: initialSearchQuery,
                 contentRevision: contentRevision
             )
         }
         .onChange(of: contentRevision) { _, newRevision in
+            guard store.lifecycle == .ready else { return }
             viewModel.handleContentRevisionChange(
                 newRevision,
                 isPanelVisible: isPanelVisible
             )
         }
         .onChange(of: isPanelVisible) { _, visible in
+            guard store.lifecycle == .ready else { return }
             viewModel.handlePanelVisibilityChange(
                 visible,
                 initialSearchQuery: initialSearchQuery,
                 contentRevision: contentRevision
             )
         }
+    }
+
+    private func startInitialSearchWhenReady(contentRevision: Int) {
+        guard store.lifecycle == .ready else { return }
+        viewModel.onAppear(
+            initialSearchQuery: initialSearchQuery,
+            contentRevision: contentRevision
+        )
     }
 }
