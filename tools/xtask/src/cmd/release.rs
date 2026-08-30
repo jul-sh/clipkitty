@@ -1270,18 +1270,19 @@ fn import_metadata(
 }
 
 /// `asc migrate import` mixes persistent App Info with version metadata. ASC
-/// can reject an unchanged App Info name or subtitle for the current app
-/// state while the version metadata remains writable. Remove only the exact
-/// field named by that known response from the temporary import copy and
-/// retry. The third policy retains the existing first-submission fallback for
-/// `whatsNew`. Any unclassified response, missing file, or exhausted retry
-/// budget returns the original ASC error.
-const MAX_METADATA_IMPORT_RETRIES: usize = 3;
+/// can reject unchanged App Info name, subtitle, or privacy policy URL fields
+/// for the current app state while the version metadata remains writable.
+/// Remove only the exact field named by that known response from the temporary
+/// import copy and retry. The fourth policy retains the existing
+/// first-submission fallback for `whatsNew`. Any unclassified response,
+/// missing file, or exhausted retry budget returns the original ASC error.
+const MAX_METADATA_IMPORT_RETRIES: usize = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MetadataImportRetry {
     ImmutableAppName,
     ImmutableAppSubtitle,
+    ImmutableAppPrivacyPolicyUrl,
     UneditableWhatsNew,
 }
 
@@ -1290,6 +1291,7 @@ impl MetadataImportRetry {
         match self {
             Self::ImmutableAppName => "name.txt",
             Self::ImmutableAppSubtitle => "subtitle.txt",
+            Self::ImmutableAppPrivacyPolicyUrl => "privacy_url.txt",
             Self::UneditableWhatsNew => "release_notes.txt",
         }
     }
@@ -1301,6 +1303,9 @@ impl MetadataImportRetry {
             }
             Self::ImmutableAppSubtitle => {
                 "App subtitle is immutable for this version state; retrying metadata import without subtitles..."
+            }
+            Self::ImmutableAppPrivacyPolicyUrl => {
+                "App privacy policy URL is immutable for this version state; retrying metadata import without privacy policy URLs..."
             }
             Self::UneditableWhatsNew => {
                 "whatsNew rejected (first submission), retrying without release notes..."
@@ -1351,6 +1356,8 @@ fn metadata_import_retry_for_error(message: &str) -> Option<MetadataImportRetry>
         Some(MetadataImportRetry::ImmutableAppName)
     } else if is_immutable_app_info_field_error(message, "subtitle") {
         Some(MetadataImportRetry::ImmutableAppSubtitle)
+    } else if is_immutable_app_info_field_error(message, "privacyPolicyUrl") {
+        Some(MetadataImportRetry::ImmutableAppPrivacyPolicyUrl)
     } else if message.contains("whatsNew") && message.contains("cannot be edited") {
         Some(MetadataImportRetry::UneditableWhatsNew)
     } else {
@@ -2078,6 +2085,7 @@ fn collect_ids(value: &Value) -> Vec<String> {
 
 fn is_immutable_app_info_field_error(message: &str, field: &str) -> bool {
     let message = message.to_ascii_lowercase();
+    let field = field.to_ascii_lowercase();
     message.contains(&format!("field '{field}'"))
         && message.contains("can not be modified")
         && message.contains("current state")
@@ -3317,6 +3325,12 @@ mod tests {
             metadata_import_retry_for_error(
                 "migrate import failed: The field 'privacyPolicyUrl' can not be modified in the current state."
             ),
+            Some(MetadataImportRetry::ImmutableAppPrivacyPolicyUrl)
+        );
+        assert_eq!(
+            metadata_import_retry_for_error(
+                "migrate import failed: The field 'privacyChoicesUrl' can not be modified in the current state."
+            ),
             None
         );
         assert_eq!(
@@ -3368,13 +3382,16 @@ mod tests {
 
         let mut outcomes = VecDeque::from([
             Err(anyhow!(
+                "whatsNew cannot be edited for the first submission"
+            )),
+            Err(anyhow!(
                 "The field 'name' can not be modified in the current state."
             )),
             Err(anyhow!(
                 "The field 'subtitle' can not be modified in the current state."
             )),
             Err(anyhow!(
-                "whatsNew cannot be edited for the first submission"
+                "The field 'privacyPolicyUrl' can not be modified in the current state."
             )),
             Ok(()),
         ]);
@@ -3390,22 +3407,83 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(attempts, 4);
+        assert_eq!(attempts, 5);
         assert_eq!(
             retries,
             [
+                MetadataImportRetry::UneditableWhatsNew,
                 MetadataImportRetry::ImmutableAppName,
                 MetadataImportRetry::ImmutableAppSubtitle,
-                MetadataImportRetry::UneditableWhatsNew,
+                MetadataImportRetry::ImmutableAppPrivacyPolicyUrl,
             ]
         );
         for locale in [&english, &japanese] {
             assert!(!locale.join("name.txt").exists());
             assert!(!locale.join("subtitle.txt").exists());
             assert!(!locale.join("release_notes.txt").exists());
+            assert!(!locale.join("privacy_url.txt").exists());
             assert!(locale.join("description.txt").exists());
-            assert!(locale.join("privacy_url.txt").exists());
         }
+    }
+
+    #[test]
+    fn metadata_import_retry_policy_stops_when_known_field_is_already_removed() {
+        let temp = tempdir().unwrap();
+        let metadata = Utf8PathBuf::from_path_buf(temp.path().join("metadata")).unwrap();
+        let english = metadata.join("en-US");
+        std::fs::create_dir_all(english.as_std_path()).unwrap();
+        std::fs::write(
+            english.join("privacy_url.txt"),
+            "https://clipkitty.app/privacy",
+        )
+        .unwrap();
+        std::fs::write(english.join("description.txt"), "A clipboard manager").unwrap();
+
+        let mut attempts = 0;
+        let mut retries = Vec::new();
+        let error = run_metadata_import_with_retries(
+            &metadata,
+            || {
+                attempts += 1;
+                Err(anyhow!(
+                    "The field 'privacyPolicyUrl' can not be modified in the current state."
+                ))
+            },
+            |retry| retries.push(retry),
+        )
+        .expect_err("a repeated response for an omitted field must fail closed");
+
+        assert_eq!(attempts, 2);
+        assert_eq!(retries, [MetadataImportRetry::ImmutableAppPrivacyPolicyUrl]);
+        assert!(error.to_string().contains("field 'privacyPolicyUrl'"));
+        assert!(!english.join("privacy_url.txt").exists());
+        assert!(english.join("description.txt").exists());
+    }
+
+    #[test]
+    fn metadata_import_retry_policy_does_not_retry_without_matching_file() {
+        let temp = tempdir().unwrap();
+        let metadata = Utf8PathBuf::from_path_buf(temp.path().join("metadata")).unwrap();
+        let english = metadata.join("en-US");
+        std::fs::create_dir_all(english.as_std_path()).unwrap();
+        std::fs::write(english.join("description.txt"), "A clipboard manager").unwrap();
+
+        let mut attempts = 0;
+        let error = run_metadata_import_with_retries(
+            &metadata,
+            || {
+                attempts += 1;
+                Err(anyhow!(
+                    "The field 'privacyPolicyUrl' can not be modified in the current state."
+                ))
+            },
+            |_| panic!("missing retry file must not trigger a retry"),
+        )
+        .expect_err("a known response without its corresponding file must fail closed");
+
+        assert_eq!(attempts, 1);
+        assert!(error.to_string().contains("field 'privacyPolicyUrl'"));
+        assert!(english.join("description.txt").exists());
     }
 
     #[test]
