@@ -11,6 +11,7 @@ name: Build and Release
 #   macos-build ─────────┤   (parallel checks / artifact producers)
 #   ios-smoke ───────────┤
 #   ios-build ───────────┤
+#   ios-tests ───────────┤
 #   ios-screenshots ─────┤   (matrix: iphone, ipad)
 #   macos-tests ─────────┤
 #   macos-uitests ───────┤
@@ -607,6 +608,58 @@ jobs:
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             CODE_SIGNING_ALLOWED=NO
 
+  # Runs the iOS unit suite on the same iPad simulator used for App Store
+  # captures. Keeping this on pull requests makes layout-policy regressions
+  # actionable before the push-only screenshot jobs run.
+  ios-tests:
+    name: iOS Unit Tests
+    needs: prewarm-nix
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          lfs: true
+
+      - name: Set up Nix
+        uses: ./.github/actions/setup-nix
+
+      - name: Install Tuist
+        run: nix profile install --no-update-lock-file .#tuist
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
+        with:
+          swift-version: "6.2"
+
+      - name: Generate Xcode Workspace
+        run: make workspace
+
+      - name: Run iOS Unit Tests
+        timeout-minutes: 30
+        run: |
+          xcodebuild test \
+            -workspace ClipKitty.xcworkspace \
+            -scheme ClipKittyiOS \
+            -destination "platform=iOS Simulator,name=iPad Pro 13-inch (M5)" \
+            -destination-timeout 120 \
+            -test-timeouts-enabled YES \
+            -maximum-test-execution-time-allowance 300 \
+            -derivedDataPath DerivedData \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            -only-testing:ClipKittyiOSTests/DockedKeyboardInsetTests
+
+      - name: Upload Test Results
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: iOS-TestResults
+          path: TestResults.xcresult
+          if-no-files-found: ignore
+
   # iPhone and iPad marketing screenshots run as independent simulator jobs so
   # a failure on one device surfaces without waiting for the other.
   ios-screenshots:
@@ -1013,7 +1066,7 @@ jobs:
   # Screenshot/video jobs are allowed to skip only on PRs, where their job
   # conditions intentionally disable them. Every other result must succeed.
   build:
-    needs: [version, prewarm-nix, rust-tests, macos-build, ios-smoke, ios-build, ios-screenshots, macos-tests, macos-uitests, macos-marketing, intro-videos]
+    needs: [version, prewarm-nix, rust-tests, macos-build, ios-smoke, ios-build, ios-tests, ios-screenshots, macos-tests, macos-uitests, macos-marketing, intro-videos]
     runs-on: ubuntu-latest
     if: always()
 
@@ -1046,7 +1099,7 @@ jobs:
   # Stable publication belongs exclusively to promote-appstore-release.yml.
   release:
     name: Publish Beta Release
-    needs: [version, prewarm-nix, rust-tests, macos-build, macos-attestation, ios-smoke, ios-build, ios-screenshots, macos-tests, macos-uitests, macos-marketing, intro-videos]
+    needs: [version, prewarm-nix, rust-tests, macos-build, macos-attestation, ios-smoke, ios-build, ios-tests, ios-screenshots, macos-tests, macos-uitests, macos-marketing, intro-videos]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     concurrency:

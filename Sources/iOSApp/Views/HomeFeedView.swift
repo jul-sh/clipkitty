@@ -5,6 +5,7 @@ import SwiftUI
 struct HomeFeedView: View {
     @Environment(AppState.self) private var appState
     @Environment(BrowserViewModel.self) private var viewModel
+    @Environment(\.dockedKeyboardInset) private var dockedKeyboardInset
 
     @State private var isSearchActive = false
     @State private var previewItemId: String?
@@ -47,13 +48,14 @@ struct HomeFeedView: View {
             ZStack(alignment: .bottom) {
                 feedContent
                     .safeAreaInset(edge: .bottom) {
-                        Color.clear.frame(height: 72)
+                        Color.clear.frame(height: 72 + dockedKeyboardInset)
                     }
 
                 BottomControlBar(
                     isSearchActive: $isSearchActive,
                     searchFocusRequestID: searchFocusRequestID
                 )
+                .padding(.bottom, dockedKeyboardInset)
             }
             .navigationTitle("ClipKitty")
             .navigationBarTitleDisplayMode(.inline)

@@ -13,6 +13,7 @@ struct PreviewScreen: View {
     @Environment(AppState.self) private var appState
     @Environment(HapticsClient.self) private var haptics
     @Environment(iOSSettingsStore.self) private var settings
+    @Environment(\.dockedKeyboardInset) private var dockedKeyboardInset
     @Environment(\.dismiss) private var dismiss
 
     /// Preview-text font honouring the user's typeface + spacing preferences.
@@ -39,6 +40,7 @@ struct PreviewScreen: View {
             .toolbar(.hidden, for: .bottomBar)
             .safeAreaInset(edge: .bottom) {
                 actionBar
+                    .padding(.bottom, dockedKeyboardInset)
             }
             .alert(String(localized: "Delete Item"), isPresented: $showDeleteConfirmation) {
                 Button(String(localized: "Delete"), role: .destructive) {

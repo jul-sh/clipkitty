@@ -7,6 +7,7 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.dockedKeyboardInset) private var dockedKeyboardInset
     #if ENABLE_ICLOUD_SYNC
         /// Optional on purpose: the coordinator leaves the environment when the
         /// app suspends (`syncCoordinator = nil` in finishPreparingForSuspension)
@@ -27,13 +28,14 @@ struct RootView: View {
             .overlay(alignment: .bottom) {
                 if let item = activeSnackbar {
                     SnackbarOverlay(item: item, onAction: performSnackbarAction)
-                        .padding(.bottom, 80)
+                        .padding(.bottom, 80 + dockedKeyboardInset)
                 }
             }
             // Drive the slot's transition off the active value so info-state
             // changes (sourced from `@Observable` coordinators that don't wrap
             // mutations in `withAnimation`) still animate.
             .animation(.bouncy, value: activeSnackbar)
+            .avoidsOnlyDockedKeyboard()
     }
 
     // MARK: - Snackbar resolution
