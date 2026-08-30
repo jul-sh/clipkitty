@@ -12,17 +12,14 @@ struct ExternalCopyDragHost<Content: View>: UIViewControllerRepresentable {
     let content: Content
     let makePayload: ExternalCopyDragInteractionDelegate.PayloadFactory
     let onExternalCopyTransferCompleted: ExternalCopyDragInteractionDelegate.Completion
-    let accessibilityDragName: String?
 
     init(
         makePayload: @escaping ExternalCopyDragInteractionDelegate.PayloadFactory,
         onExternalCopyTransferCompleted: @escaping ExternalCopyDragInteractionDelegate.Completion,
-        accessibilityDragName: String? = nil,
         @ViewBuilder content: () -> Content
     ) {
         self.makePayload = makePayload
         self.onExternalCopyTransferCompleted = onExternalCopyTransferCompleted
-        self.accessibilityDragName = accessibilityDragName
         self.content = content()
     }
 
@@ -38,7 +35,6 @@ struct ExternalCopyDragHost<Content: View>: UIViewControllerRepresentable {
         controller.view.backgroundColor = .clear
         controller.sizingOptions = [.intrinsicContentSize]
         controller.view.addInteraction(context.coordinator.interaction)
-        configureAccessibility(on: controller.view)
         return controller
     }
 
@@ -49,19 +45,33 @@ struct ExternalCopyDragHost<Content: View>: UIViewControllerRepresentable {
         context.coordinator.makePayload = makePayload
         context.coordinator.onExternalCopyTransferCompleted = onExternalCopyTransferCompleted
         controller.rootView = content
-        configureAccessibility(on: controller.view)
     }
 
-    private func configureAccessibility(on view: UIView) {
-        // Keep SwiftUI's accessible card descendants visible; only attach the
-        // drag location metadata to the UIKit view that owns the interaction.
-        view.isAccessibilityElement = false
-        if let accessibilityDragName, !accessibilityDragName.isEmpty {
-            view.accessibilityDragSourceDescriptors = [
-                UIAccessibilityLocationDescriptor(name: accessibilityDragName, view: view),
-            ]
-        } else {
-            view.accessibilityDragSourceDescriptors = nil
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        uiViewController controller: UIHostingController<Content>,
+        context _: Context
+    ) -> CGSize? {
+        // UIViewControllerRepresentable does not automatically forward the
+        // hosted SwiftUI view's ideal height. Without this bridge the UIKit
+        // ancestor is laid out at zero height even though its SwiftUI child
+        // still draws outside those bounds, leaving a visible card that
+        // cannot receive taps, context menus, or drags.
+        let constraint = CGSize(
+            width: proposal.width ?? .greatestFiniteMagnitude,
+            height: proposal.height ?? .greatestFiniteMagnitude
+        )
+        let fitted = controller.sizeThatFits(in: constraint)
+        guard fitted.width.isFinite,
+              fitted.height.isFinite,
+              fitted.width >= 0,
+              fitted.height >= 0
+        else {
+            return nil
         }
+        return CGSize(
+            width: proposal.width ?? fitted.width,
+            height: proposal.height ?? fitted.height
+        )
     }
 }

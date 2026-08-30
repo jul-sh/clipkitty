@@ -84,8 +84,7 @@ struct CardView: View {
             // still independently guarded by the opt-in setting in Home.
             ExternalCopyDragHost(
                 makePayload: makeManagedDragPayload,
-                onExternalCopyTransferCompleted: onExternalCopyTransferCompleted,
-                accessibilityDragName: accessibilityCardLabel
+                onExternalCopyTransferCompleted: onExternalCopyTransferCompleted
             ) {
                 standardInteractiveCard
                     // A UIHostingController begins a new SwiftUI environment
@@ -132,6 +131,10 @@ struct CardView: View {
         cardSurface
             .accessibilityHint(String(localized: "Double tap to copy"))
             .accessibilityAddTraits(.isButton)
+            // Advertise the drag point on the accessible SwiftUI card itself.
+            // The enclosing UIKit host owns the single UIDragInteraction, but
+            // must not replace or split this element's accessibility target.
+            .accessibilityDragPoint(.center, description: accessibilityCardLabel)
             .onTapGesture {
                 viewModel.copyOnlyItem(itemId: metadata.itemId)
             }

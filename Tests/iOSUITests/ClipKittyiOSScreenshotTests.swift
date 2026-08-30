@@ -193,6 +193,10 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
             let firstCard = app.scrollViews.firstMatch.buttons.firstMatch
             if firstCard.waitForExistence(timeout: 5) {
                 foundCard = true
+                XCTAssertTrue(
+                    firstCard.isHittable,
+                    "first card has a visible accessibility frame but no hit target (locale \(locale!))"
+                )
                 firstCard.press(forDuration: 1.2)
 
                 // Let the system finish presenting the context menu before
