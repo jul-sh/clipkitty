@@ -1260,42 +1260,101 @@ fn import_metadata(
         "--fastlane-dir",
         import_root.as_str(),
     ];
-    let output = asc_command(repo, &args, asc_env, reporter);
-    match output {
-        Ok(_) => {
-            reporter.info("Metadata uploaded.");
-            Ok(())
+    run_metadata_import_with_retries(
+        &import_metadata,
+        || asc_command(repo, &args, asc_env, reporter).map(|_| ()),
+        |retry| reporter.info(retry.log_message()),
+    )?;
+    reporter.info("Metadata uploaded.");
+    Ok(())
+}
+
+/// `asc migrate import` mixes persistent App Info with version metadata. ASC
+/// can reject an unchanged App Info name or subtitle for the current app
+/// state while the version metadata remains writable. Remove only the exact
+/// field named by that known response from the temporary import copy and
+/// retry. The third policy retains the existing first-submission fallback for
+/// `whatsNew`. Any unclassified response, missing file, or exhausted retry
+/// budget returns the original ASC error.
+const MAX_METADATA_IMPORT_RETRIES: usize = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MetadataImportRetry {
+    ImmutableAppName,
+    ImmutableAppSubtitle,
+    UneditableWhatsNew,
+}
+
+impl MetadataImportRetry {
+    fn localized_file_name(self) -> &'static str {
+        match self {
+            Self::ImmutableAppName => "name.txt",
+            Self::ImmutableAppSubtitle => "subtitle.txt",
+            Self::UneditableWhatsNew => "release_notes.txt",
         }
-        Err(err) => {
-            let error_message = err.to_string();
-            if is_immutable_app_name_error(&error_message)
-                && remove_localized_metadata_file(&import_metadata, "name.txt")?
-            {
-                // App names belong to App Info, not a platform version. ASC
-                // rejects changing them while an existing version is in some
-                // editable states, even though the rest of the version
-                // metadata remains writable. Retry only this known response
-                // with names omitted; all other errors remain visible.
-                reporter.info(
-                    "App name is immutable for this version state; retrying metadata import without names...",
-                );
-                asc_command(repo, &args, asc_env, reporter)?;
-                reporter.info("Metadata uploaded.");
-                Ok(())
-            } else if error_message.contains("whatsNew")
-                && error_message.contains("cannot be edited")
-                && remove_localized_metadata_file(&import_metadata, "release_notes.txt")?
-            {
-                reporter.info(
-                    "whatsNew rejected (first submission), retrying without release notes...",
-                );
-                asc_command(repo, &args, asc_env, reporter)?;
-                reporter.info("Metadata uploaded.");
-                Ok(())
-            } else {
-                Err(err)
+    }
+
+    fn log_message(self) -> &'static str {
+        match self {
+            Self::ImmutableAppName => {
+                "App name is immutable for this version state; retrying metadata import without names..."
+            }
+            Self::ImmutableAppSubtitle => {
+                "App subtitle is immutable for this version state; retrying metadata import without subtitles..."
+            }
+            Self::UneditableWhatsNew => {
+                "whatsNew rejected (first submission), retrying without release notes..."
             }
         }
+    }
+}
+
+fn run_metadata_import_with_retries(
+    import_metadata: &Utf8Path,
+    mut import: impl FnMut() -> Result<()>,
+    mut on_retry: impl FnMut(MetadataImportRetry),
+) -> Result<()> {
+    let mut retries = 0;
+    loop {
+        match import() {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                if retries >= MAX_METADATA_IMPORT_RETRIES {
+                    return Err(err);
+                }
+                let Some(retry) = prepare_metadata_import_retry(import_metadata, &err.to_string())?
+                else {
+                    return Err(err);
+                };
+                retries += 1;
+                on_retry(retry);
+            }
+        }
+    }
+}
+
+fn prepare_metadata_import_retry(
+    import_metadata: &Utf8Path,
+    error_message: &str,
+) -> Result<Option<MetadataImportRetry>> {
+    let Some(retry) = metadata_import_retry_for_error(error_message) else {
+        return Ok(None);
+    };
+    if !remove_localized_metadata_file(import_metadata, retry.localized_file_name())? {
+        return Ok(None);
+    }
+    Ok(Some(retry))
+}
+
+fn metadata_import_retry_for_error(message: &str) -> Option<MetadataImportRetry> {
+    if is_immutable_app_info_field_error(message, "name") {
+        Some(MetadataImportRetry::ImmutableAppName)
+    } else if is_immutable_app_info_field_error(message, "subtitle") {
+        Some(MetadataImportRetry::ImmutableAppSubtitle)
+    } else if message.contains("whatsNew") && message.contains("cannot be edited") {
+        Some(MetadataImportRetry::UneditableWhatsNew)
+    } else {
+        None
     }
 }
 
@@ -2017,9 +2076,9 @@ fn collect_ids(value: &Value) -> Vec<String> {
     }
 }
 
-fn is_immutable_app_name_error(message: &str) -> bool {
+fn is_immutable_app_info_field_error(message: &str, field: &str) -> bool {
     let message = message.to_ascii_lowercase();
-    message.contains("field 'name'")
+    message.contains(&format!("field '{field}'"))
         && message.contains("can not be modified")
         && message.contains("current state")
 }
@@ -2984,15 +3043,18 @@ fn write_atomically(path: &Utf8Path, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        app_preview_state, collect_ids, is_immutable_app_name_error,
-        is_preview_upload_in_progress_error, looks_like_locale_dir, promote_existing_appcast_item,
-        remove_localized_metadata_file, validate_generated_appcast, write_atomically,
-        AppPreviewState, AppcastBuildNumber, AppcastDownloadLocation, AppcastRelease, AppcastState,
-        AppcastStateUpdate, ReleaseTarget,
+        app_preview_state, collect_ids, is_preview_upload_in_progress_error, looks_like_locale_dir,
+        metadata_import_retry_for_error, promote_existing_appcast_item,
+        remove_localized_metadata_file, run_metadata_import_with_retries,
+        validate_generated_appcast, write_atomically, AppPreviewState, AppcastBuildNumber,
+        AppcastDownloadLocation, AppcastRelease, AppcastState, AppcastStateUpdate,
+        MetadataImportRetry, ReleaseTarget, MAX_METADATA_IMPORT_RETRIES,
     };
     use crate::model::ReleaseChannel;
+    use anyhow::anyhow;
     use camino::Utf8PathBuf;
     use serde_json::json;
+    use std::collections::VecDeque;
     use tempfile::tempdir;
 
     fn appcast_release(version: &str, build_number: &str) -> AppcastRelease {
@@ -3232,13 +3294,37 @@ mod tests {
     }
 
     #[test]
-    fn immutable_app_name_error_is_recognized_without_matching_other_errors() {
-        assert!(is_immutable_app_name_error(
-            "migrate import failed: The field 'name' can not be modified in the current state."
-        ));
-        assert!(!is_immutable_app_name_error(
-            "migrate import failed: The field 'subtitle' can not be modified in the current state."
-        ));
+    fn metadata_import_retry_errors_are_classified_narrowly() {
+        assert_eq!(
+            metadata_import_retry_for_error(
+                "migrate import failed: The field 'name' can not be modified in the current state."
+            ),
+            Some(MetadataImportRetry::ImmutableAppName)
+        );
+        assert_eq!(
+            metadata_import_retry_for_error(
+                "migrate import failed: The field 'subtitle' can not be modified in the current state."
+            ),
+            Some(MetadataImportRetry::ImmutableAppSubtitle)
+        );
+        assert_eq!(
+            metadata_import_retry_for_error(
+                "migrate import failed: whatsNew cannot be edited for the first submission"
+            ),
+            Some(MetadataImportRetry::UneditableWhatsNew)
+        );
+        assert_eq!(
+            metadata_import_retry_for_error(
+                "migrate import failed: The field 'privacyPolicyUrl' can not be modified in the current state."
+            ),
+            None
+        );
+        assert_eq!(
+            metadata_import_retry_for_error(
+                "migrate import failed: The field 'subtitle' is invalid."
+            ),
+            None
+        );
     }
 
     #[test]
@@ -3258,6 +3344,97 @@ mod tests {
         assert!(!french.join("name.txt").exists());
         assert!(english.join("description.txt").exists());
         assert!(!remove_localized_metadata_file(&metadata, "name.txt").unwrap());
+    }
+
+    #[test]
+    fn metadata_import_retry_policy_handles_sequential_locked_fields() {
+        let temp = tempdir().unwrap();
+        let metadata = Utf8PathBuf::from_path_buf(temp.path().join("metadata")).unwrap();
+        let english = metadata.join("en-US");
+        let japanese = metadata.join("ja");
+        std::fs::create_dir_all(english.as_std_path()).unwrap();
+        std::fs::create_dir_all(japanese.as_std_path()).unwrap();
+        for locale in [&english, &japanese] {
+            std::fs::write(locale.join("name.txt"), "ClipKitty").unwrap();
+            std::fs::write(locale.join("subtitle.txt"), "Clipboard History").unwrap();
+            std::fs::write(locale.join("release_notes.txt"), "Bug fixes").unwrap();
+            std::fs::write(locale.join("description.txt"), "A clipboard manager").unwrap();
+            std::fs::write(
+                locale.join("privacy_url.txt"),
+                "https://clipkitty.app/privacy",
+            )
+            .unwrap();
+        }
+
+        let mut outcomes = VecDeque::from([
+            Err(anyhow!(
+                "The field 'name' can not be modified in the current state."
+            )),
+            Err(anyhow!(
+                "The field 'subtitle' can not be modified in the current state."
+            )),
+            Err(anyhow!(
+                "whatsNew cannot be edited for the first submission"
+            )),
+            Ok(()),
+        ]);
+        let mut retries = Vec::new();
+        let mut attempts = 0;
+        run_metadata_import_with_retries(
+            &metadata,
+            || {
+                attempts += 1;
+                outcomes.pop_front().expect("unexpected import attempt")
+            },
+            |retry| retries.push(retry),
+        )
+        .unwrap();
+
+        assert_eq!(attempts, 4);
+        assert_eq!(
+            retries,
+            [
+                MetadataImportRetry::ImmutableAppName,
+                MetadataImportRetry::ImmutableAppSubtitle,
+                MetadataImportRetry::UneditableWhatsNew,
+            ]
+        );
+        for locale in [&english, &japanese] {
+            assert!(!locale.join("name.txt").exists());
+            assert!(!locale.join("subtitle.txt").exists());
+            assert!(!locale.join("release_notes.txt").exists());
+            assert!(locale.join("description.txt").exists());
+            assert!(locale.join("privacy_url.txt").exists());
+        }
+    }
+
+    #[test]
+    fn metadata_import_retry_policy_is_bounded_and_fail_closed() {
+        let temp = tempdir().unwrap();
+        let metadata = Utf8PathBuf::from_path_buf(temp.path().join("metadata")).unwrap();
+        let english = metadata.join("en-US");
+        std::fs::create_dir_all(english.as_std_path()).unwrap();
+        std::fs::write(english.join("name.txt"), "ClipKitty").unwrap();
+
+        let mut attempts = 0;
+        let error = run_metadata_import_with_retries(
+            &metadata,
+            || {
+                attempts += 1;
+                if attempts > 1 {
+                    std::fs::write(english.join("name.txt"), "ClipKitty").unwrap();
+                }
+                Err(anyhow!(
+                    "The field 'name' can not be modified in the current state."
+                ))
+            },
+            |_| {},
+        )
+        .expect_err("retry budget must remain bounded");
+
+        assert_eq!(attempts, MAX_METADATA_IMPORT_RETRIES + 1);
+        assert!(error.to_string().contains("field 'name'"));
+        assert!(english.join("name.txt").exists());
     }
 
     #[test]
