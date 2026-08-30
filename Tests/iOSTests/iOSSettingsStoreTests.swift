@@ -21,6 +21,7 @@ final class iOSSettingsStoreTests: XCTestCase {
         let store = iOSSettingsStore(defaults: defaults)
         XCTAssertTrue(store.generateLinkPreviews)
         XCTAssertFalse(store.autoAddFromClipboard)
+        XCTAssertFalse(store.deleteAfterSuccessfulExternalDrop)
         XCTAssertTrue(store.allowShortcutsReadAccess)
         XCTAssertFalse(store.captureSensitiveClips)
         XCTAssertEqual(store.maxDatabaseSizeGB, 7.0, accuracy: 1e-9)
@@ -57,6 +58,30 @@ final class iOSSettingsStoreTests: XCTestCase {
 
         let reloaded = iOSSettingsStore(defaults: defaults)
         XCTAssertTrue(reloaded.autoAddFromClipboard)
+    }
+
+    func testDeleteAfterSuccessfulExternalDropPersists() {
+        let store = iOSSettingsStore(defaults: defaults)
+        store.deleteAfterSuccessfulExternalDrop = true
+
+        let enabledReload = iOSSettingsStore(defaults: defaults)
+        XCTAssertTrue(enabledReload.deleteAfterSuccessfulExternalDrop)
+
+        enabledReload.deleteAfterSuccessfulExternalDrop = false
+
+        let disabledReload = iOSSettingsStore(defaults: defaults)
+        XCTAssertFalse(disabledReload.deleteAfterSuccessfulExternalDrop)
+    }
+
+    func testDeleteAfterSuccessfulExternalDropPersistsIndependently() {
+        let store = iOSSettingsStore(defaults: defaults)
+        store.autoAddFromClipboard = true
+        store.deleteAfterSuccessfulExternalDrop = true
+        store.autoAddFromClipboard = false
+
+        let reloaded = iOSSettingsStore(defaults: defaults)
+        XCTAssertFalse(reloaded.autoAddFromClipboard)
+        XCTAssertTrue(reloaded.deleteAfterSuccessfulExternalDrop)
     }
 
     func testMultipleSettingsPersistIndependently() {

@@ -251,6 +251,14 @@ pub(crate) trait SyncEmitter: Send + Sync {
 
     fn emit_item_deleted(&self, item_id: &str) -> Result<(), ClipKittyError>;
 
+    /// Emit a deletion into an existing transaction. Transfer deletion uses
+    /// this to commit the tombstone and read-model deletion atomically.
+    fn emit_item_deleted_on_connection(
+        &self,
+        conn: &rusqlite::Connection,
+        item_id: &str,
+    ) -> Result<(), ClipKittyError>;
+
     fn emit_link_metadata_updated(
         &self,
         item_id: &str,
@@ -296,14 +304,30 @@ impl RealSyncEmitter {
     }
 
     fn append_local_event_and_advance(&self, event: &ItemEvent) -> Result<(), ClipKittyError> {
-        let sync = self.sync_store()?;
-        let current_aggregate = sync.fetch_snapshot(&event.item_id)?.map(|s| s.aggregate);
+        let mut conn = self.database.get_conn()?;
+        let transaction = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(crate::database::DatabaseError::from)?;
+        self.append_local_event_and_advance_on_connection(&transaction, event)?;
+        transaction
+            .commit()
+            .map_err(crate::database::DatabaseError::from)?;
+        Ok(())
+    }
+
+    fn append_local_event_and_advance_on_connection(
+        &self,
+        conn: &rusqlite::Connection,
+        event: &ItemEvent,
+    ) -> Result<(), ClipKittyError> {
+        let current_aggregate = SyncStore::fetch_snapshot_on_connection(conn, &event.item_id)?
+            .map(|snapshot| snapshot.aggregate);
 
         match projector::apply_event(current_aggregate.as_ref(), &event.payload) {
             ApplyResult::Applied(delta) => {
-                sync.append_local_event(event)?;
-                self.persist_local_aggregate(
-                    &sync,
+                SyncStore::append_local_event_on_connection(conn, event)?;
+                self.persist_local_aggregate_on_connection(
+                    conn,
                     &event.item_id,
                     &delta.new_aggregate,
                     &event.event_id,
@@ -325,14 +349,14 @@ impl RealSyncEmitter {
         }
     }
 
-    fn persist_local_aggregate(
+    fn persist_local_aggregate_on_connection(
         &self,
-        sync: &SyncStore,
+        conn: &rusqlite::Connection,
         item_id: &str,
         aggregate: &ItemAggregate,
         event_id: &str,
     ) -> Result<(), ClipKittyError> {
-        let existing_snapshot = sync.fetch_snapshot(item_id)?;
+        let existing_snapshot = SyncStore::fetch_snapshot_on_connection(conn, item_id)?;
         let previous_revision = existing_snapshot
             .as_ref()
             .map(|snapshot| snapshot.snapshot_revision)
@@ -343,9 +367,9 @@ impl RealSyncEmitter {
             event_id.to_string(),
             aggregate.clone(),
         );
-        sync.upsert_snapshot(&snapshot)?;
+        SyncStore::upsert_snapshot_on_connection(conn, &snapshot)?;
 
-        let existing_projection = sync.fetch_projection(item_id)?;
+        let existing_projection = SyncStore::fetch_projection_on_connection(conn, item_id)?;
         let projection_state = match aggregate {
             ItemAggregate::Live(live) => match existing_projection.map(|entry| entry.state) {
                 Some(ProjectionState::Materialized { .. }) => ProjectionState::Materialized {
@@ -362,7 +386,7 @@ impl RealSyncEmitter {
             },
         };
 
-        sync.upsert_projection(item_id, &projection_state)?;
+        SyncStore::upsert_projection_on_connection(conn, item_id, &projection_state)?;
         Ok(())
     }
 
@@ -372,6 +396,26 @@ impl RealSyncEmitter {
         item_id: &str,
     ) -> Result<Option<purr_sync::types::VersionVector>, ClipKittyError> {
         let projection = sync.fetch_projection(item_id)?;
+        match projection.map(|entry| entry.state) {
+            Some(ProjectionState::Materialized { versions, .. }) => Ok(Some(versions)),
+            Some(ProjectionState::PendingMaterialization { .. }) => {
+                Err(ClipKittyError::DataInconsistency(format!(
+                    "global item `{item_id}` is pending materialization for a local mutation"
+                )))
+            }
+            Some(ProjectionState::Tombstoned { .. }) => Err(ClipKittyError::DataInconsistency(
+                format!("global item `{item_id}` is tombstoned for a local mutation"),
+            )),
+            None => Ok(None),
+        }
+    }
+
+    fn materialized_projection_versions_on_connection(
+        &self,
+        conn: &rusqlite::Connection,
+        item_id: &str,
+    ) -> Result<Option<purr_sync::types::VersionVector>, ClipKittyError> {
+        let projection = SyncStore::fetch_projection_on_connection(conn, item_id)?;
         match projection.map(|entry| entry.state) {
             Some(ProjectionState::Materialized { versions, .. }) => Ok(Some(versions)),
             Some(ProjectionState::PendingMaterialization { .. }) => {
@@ -464,8 +508,25 @@ impl SyncEmitter for RealSyncEmitter {
     }
 
     fn emit_item_deleted(&self, item_id: &str) -> Result<(), ClipKittyError> {
-        let sync = self.sync_store()?;
-        if let Some(versions) = self.materialized_projection_versions(&sync, item_id)? {
+        let mut conn = self.database.get_conn()?;
+        let transaction = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(crate::database::DatabaseError::from)?;
+        self.emit_item_deleted_on_connection(&transaction, item_id)?;
+        transaction
+            .commit()
+            .map_err(crate::database::DatabaseError::from)?;
+        Ok(())
+    }
+
+    fn emit_item_deleted_on_connection(
+        &self,
+        conn: &rusqlite::Connection,
+        item_id: &str,
+    ) -> Result<(), ClipKittyError> {
+        if let Some(versions) =
+            self.materialized_projection_versions_on_connection(conn, item_id)?
+        {
             let event = ItemEvent::new_local(
                 item_id.to_string(),
                 &self.local_device_id(),
@@ -473,7 +534,7 @@ impl SyncEmitter for RealSyncEmitter {
                     base_existence_version: versions.existence,
                 },
             );
-            self.append_local_event_and_advance(&event)?;
+            self.append_local_event_and_advance_on_connection(conn, &event)?;
         }
         Ok(())
     }

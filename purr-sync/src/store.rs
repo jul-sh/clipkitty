@@ -33,6 +33,14 @@ impl SyncStore {
     /// Append a local event to sync_events.
     pub fn append_local_event(&self, event: &ItemEvent) -> SyncResult<()> {
         let conn = self.get_conn()?;
+        Self::append_local_event_on_connection(&conn, event)
+    }
+
+    /// Append a local event using an existing connection or transaction.
+    pub fn append_local_event_on_connection(
+        conn: &rusqlite::Connection,
+        event: &ItemEvent,
+    ) -> SyncResult<()> {
         conn.execute(
             r#"INSERT INTO sync_events
                (event_id, item_id, origin_device_id, schema_version, recorded_at,
@@ -234,6 +242,14 @@ impl SyncStore {
     /// Upsert a snapshot (insert or replace).
     pub fn upsert_snapshot(&self, snapshot: &ItemSnapshot) -> SyncResult<()> {
         let conn = self.get_conn()?;
+        Self::upsert_snapshot_on_connection(&conn, snapshot)
+    }
+
+    /// Upsert a snapshot using an existing connection or transaction.
+    pub fn upsert_snapshot_on_connection(
+        conn: &rusqlite::Connection,
+        snapshot: &ItemSnapshot,
+    ) -> SyncResult<()> {
         conn.execute(
             r#"INSERT INTO sync_snapshots
                (item_id, snapshot_revision, schema_version,
@@ -262,6 +278,14 @@ impl SyncStore {
     /// Fetch snapshot for an item.
     pub fn fetch_snapshot(&self, item_id: &str) -> SyncResult<Option<ItemSnapshot>> {
         let conn = self.get_conn()?;
+        Self::fetch_snapshot_on_connection(&conn, item_id)
+    }
+
+    /// Fetch a snapshot using an existing connection or transaction.
+    pub fn fetch_snapshot_on_connection(
+        conn: &rusqlite::Connection,
+        item_id: &str,
+    ) -> SyncResult<Option<ItemSnapshot>> {
         let result = conn.query_row(
             r#"SELECT item_id, snapshot_revision, schema_version,
                       covers_through_event, aggregate_state, uploaded, uploaded_at
@@ -443,12 +467,21 @@ impl SyncStore {
 
     /// Upsert a projection entry tracking lifecycle state and versions.
     pub fn upsert_projection(&self, item_id: &str, state: &ProjectionState) -> SyncResult<()> {
+        let conn = self.get_conn()?;
+        Self::upsert_projection_on_connection(&conn, item_id, state)
+    }
+
+    /// Upsert a projection using an existing connection or transaction.
+    pub fn upsert_projection_on_connection(
+        conn: &rusqlite::Connection,
+        item_id: &str,
+        state: &ProjectionState,
+    ) -> SyncResult<()> {
         let (versions, is_tombstoned, is_materialized) = match state {
             ProjectionState::PendingMaterialization { versions } => (versions, false, false),
             ProjectionState::Materialized { versions } => (versions, false, true),
             ProjectionState::Tombstoned { versions } => (versions, true, false),
         };
-        let conn = self.get_conn()?;
         conn.execute(
             r#"INSERT INTO sync_projection
                (item_id, content_version, bookmark_version,
@@ -480,6 +513,14 @@ impl SyncStore {
     /// Fetch the projection entry for a global item.
     pub fn fetch_projection(&self, item_id: &str) -> SyncResult<Option<ProjectionEntry>> {
         let conn = self.get_conn()?;
+        Self::fetch_projection_on_connection(&conn, item_id)
+    }
+
+    /// Fetch a projection using an existing connection or transaction.
+    pub fn fetch_projection_on_connection(
+        conn: &rusqlite::Connection,
+        item_id: &str,
+    ) -> SyncResult<Option<ProjectionEntry>> {
         let result = conn.query_row(
             r#"SELECT item_id, content_version, bookmark_version,
                       existence_version, touch_version, metadata_version,

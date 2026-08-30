@@ -31,12 +31,14 @@ public final class PreviewLoader {
     #if ENABLE_LINK_PREVIEWS
         public func refreshLinkMetadata(url: String, itemId: String) async -> ClipboardItem? {
             let metadata = await linkMetadataFetcher.fetchMetadata(for: url, itemId: itemId)
+            guard !Task.isCancelled else { return nil }
             _ = await repository.updateLinkMetadata(
                 itemId: itemId,
                 title: metadata?.title ?? "",
                 description: metadata?.description,
                 imageData: metadata?.imageData
             )
+            guard !Task.isCancelled else { return nil }
             return await repository.fetchItem(id: itemId)
         }
     #endif

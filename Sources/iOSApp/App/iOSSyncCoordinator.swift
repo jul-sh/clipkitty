@@ -205,8 +205,31 @@
         let storeGate = AppStoreOpenGate()
         let cancellation = AppBackgroundTaskCancellation()
 
-        func expireAndDrain() {
+        /// Stops new work synchronously without waiting for an opening or
+        /// already-open store to quiesce. This is safe to call from UIKit's
+        /// main-actor lifecycle callbacks.
+        func cancelAndSeal() {
             cancellation.cancel()
+            storeGate.seal()
+        }
+
+        /// Joins the exact store owned by this expiration while keeping every
+        /// condition wait and Rust drain off the caller's actor.
+        func drainAfterSeal() async {
+            await Task.detached(priority: .utility) { [storeGate] in
+                storeGate.expireAndDrain()
+            }.value
+        }
+
+        func expireWithoutBlocking() {
+            cancelAndSeal()
+            Task.detached(priority: .utility) { [storeGate] in
+                storeGate.expireAndDrain()
+            }
+        }
+
+        func expireAndDrain() {
+            cancelAndSeal()
             storeGate.expireAndDrain()
         }
     }
@@ -248,8 +271,16 @@
             self.protection = protection
         }
 
-        func expireAndDrain() {
-            expiration.expireAndDrain()
+        func expireWithoutBlocking() {
+            expiration.expireWithoutBlocking()
+        }
+
+        func cancelAndSeal() {
+            expiration.cancelAndSeal()
+        }
+
+        func drainAfterSeal() async {
+            await expiration.drainAfterSeal()
         }
 
         @MainActor
@@ -313,19 +344,24 @@
             )
         }
 
-        func cancelInFlightSync() {
+        func cancelInFlightSync() async {
             switch inFlightSync {
             case .none:
                 break
             case let .running(run):
-                run.expireAndDrain()
+                // Seal admission before yielding so a newly registering store
+                // can never be adopted after the foreground claim. The exact
+                // store is then joined off-main before the caller may open the
+                // foreground store.
+                run.cancelAndSeal()
+                await run.drainAfterSeal()
                 run.endProtection()
             }
         }
 
-        func claimForegroundStore(_ claimID: UUID) {
+        func claimForegroundStore(_ claimID: UUID) async {
             storeAuthority = .foreground(claimID)
-            cancelInFlightSync()
+            await cancelInFlightSync()
         }
 
         func releaseForegroundStore(_ claimID: UUID) {
@@ -389,7 +425,7 @@
             case .requiresUIKitLease:
                 switch AppBackgroundTaskLease.acquire(
                     named: name,
-                    onExpiration: { expiration.expireAndDrain() }
+                    onExpiration: { expiration.expireWithoutBlocking() }
                 ) {
                 case let .granted(lease):
                     reservation = .uiLease(lease)
@@ -485,7 +521,7 @@
             if let headlessSyncOperation {
                 // Injected test operations do not own a real store. Mark the
                 // resource gate complete before their first suspension point
-                // so synchronous cancellation cannot wait on the main actor.
+                // so cancellation has no resource drain to join.
                 gate.completeFailure()
                 return await headlessSyncOperation()
             }
@@ -502,8 +538,8 @@
             }
 
             // Bootstrap performs synchronous SQLite and mmap work. Keep it off
-            // the main actor so UIKit's expiration callback can seal the gate
-            // and synchronously wait for this exact open to register or fail.
+            // the main actor. UIKit's expiration callback seals the gate
+            // synchronously, while a detached task joins this exact open.
             let openOutcome = await Task.detached(priority: .utility) {
                 do {
                     DatabasePath.migrateIfNeeded()
@@ -521,7 +557,9 @@
             switch openOutcome {
             case let .opened(store, plan):
                 guard !Task.isCancelled else {
-                    gate.expireAndDrain()
+                    await Task.detached(priority: .utility) {
+                        gate.expireAndDrain()
+                    }.value
                     return .failed
                 }
                 return await runOpenedHeadlessSync(store: store, plan: plan, gate: gate)
@@ -536,8 +574,17 @@
             plan: StoreBootstrapPlan,
             gate: AppStoreOpenGate
         ) async -> UIBackgroundFetchResult {
-            defer { gate.expireAndDrain() }
+            let result = await performOpenedHeadlessSync(store: store, plan: plan)
+            await Task.detached(priority: .utility) {
+                gate.expireAndDrain()
+            }.value
+            return result
+        }
 
+        private func performOpenedHeadlessSync(
+            store: ClipKittyRust.ClipboardStore,
+            plan: StoreBootstrapPlan
+        ) async -> UIBackgroundFetchResult {
             let repairOutcome = await Task.detached(priority: .utility) {
                 do {
                     switch try iOSIndexMaintenance.queueBootstrapRepairIfNeeded(
@@ -733,7 +780,7 @@
 
             let run = iOSBackgroundSyncRunner.shared.beginScheduledSync()
             launchExpiration.install {
-                run.expireAndDrain()
+                run.expireWithoutBlocking()
             }
             Task { @MainActor in
                 let result = await run.resultTask.value

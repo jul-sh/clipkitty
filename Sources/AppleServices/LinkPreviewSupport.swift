@@ -2,6 +2,7 @@
     import ClipKittyRust
     import LinkPresentation
     import SwiftUI
+    import UniformTypeIdentifiers
 
     // MARK: - Shared LPLinkMetadata Builder
 
@@ -17,16 +18,23 @@
             if let title = payload.title {
                 metadata.title = title
             }
-            if let imageData = payload.imageData {
-                #if canImport(AppKit)
-                    if let image = NSImage(data: imageData) {
-                        metadata.imageProvider = NSItemProvider(object: image)
-                    }
-                #else
-                    if let image = UIImage(data: imageData) {
-                        metadata.imageProvider = NSItemProvider(object: image)
-                    }
-                #endif
+            if let imageData = payload.imageData,
+               !imageData.isEmpty,
+               imageData.count <= LinkMetadataImagePolicy.standard.maximumSourceByteCount
+            {
+                // Supplying the encoded bytes keeps legacy metadata away from
+                // UIImage/NSImage decoding on the UI actor. Newly fetched data
+                // was already validated and bounded by LinkMetadataImagePreparer;
+                // the byte ceiling also rejects oversized legacy rows.
+                let imageProvider = NSItemProvider()
+                imageProvider.registerDataRepresentation(
+                    forTypeIdentifier: UTType.image.identifier,
+                    visibility: .all
+                ) { completion in
+                    completion(imageData, nil)
+                    return nil
+                }
+                metadata.imageProvider = imageProvider
             }
         }
         return metadata

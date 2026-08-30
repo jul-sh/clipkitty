@@ -95,6 +95,17 @@ final class AppContainerBootstrapTests: TemporaryDirectoryTestCase {
         XCTAssertEqual(probe.recordedCount(), 1)
     }
 
+    func testCompletedBackgroundCancellationDropsInstalledAction() {
+        let cancellation = AppBackgroundTaskCancellation()
+        let probe = AppBackgroundTaskCancellationProbe()
+
+        cancellation.install { probe.record() }
+        cancellation.complete()
+        cancellation.cancel()
+
+        XCTAssertEqual(probe.recordedCount(), 0)
+    }
+
     func testBackgroundTaskReservationIsUnavailableForInvalidIdentifier() {
         let probe = AppBackgroundTaskClientProbe(
             beginBehavior: .returnIdentifier(.invalid)
@@ -159,6 +170,520 @@ final class AppContainerBootstrapTests: TemporaryDirectoryTestCase {
         lease.end()
 
         XCTAssertEqual(probe.events, [.cleanup, .ended(identifier)])
+    }
+
+    func testDroppingGrantedBackgroundTaskLeaseEndsReservationExactlyOnce() {
+        let identifier = UIBackgroundTaskIdentifier(rawValue: 43)
+        let probe = AppBackgroundTaskClientProbe(
+            beginBehavior: .returnIdentifier(identifier)
+        )
+        var lease: AppBackgroundTaskLease?
+
+        switch AppBackgroundTaskLease.acquire(
+            named: "abandoned-reservation",
+            client: probe.makeClient(),
+            onExpiration: { probe.recordCleanup() }
+        ) {
+        case let .granted(grantedLease):
+            lease = grantedLease
+        case .unavailable:
+            return XCTFail("Expected a valid UIKit identifier to grant a lease")
+        }
+
+        weak let weakLease = lease
+        lease = nil
+
+        XCTAssertNil(weakLease)
+        XCTAssertEqual(probe.events, [.ended(identifier)])
+    }
+
+    func testForegroundTaskIsCancelledAndJoinedByAppStateSuspension() async {
+        guard case let .success(container) = AppContainer.bootstrap(
+            databasePath: databasePath("foreground-task-suspension.db")
+        ) else {
+            return XCTFail("Bootstrap failed")
+        }
+        let appState = AppState(container: container)
+        let taskID = UUID()
+        let foregroundTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .seconds(30))
+            } catch {
+                // Cancellation is the expected terminal path.
+            }
+        }
+        XCTAssertTrue(appState.registerForegroundTask(id: taskID, task: foregroundTask))
+
+        let suspension = appState.prepareForSuspension()
+        guard case let .awaiting(join) = suspension else {
+            return XCTFail("The registered foreground task must make suspension joinable")
+        }
+        await join.value
+
+        XCTAssertTrue(foregroundTask.isCancelled)
+        var rejectedTaskStartedStoreWork = false
+        let rejectedTask = Task { @MainActor in
+            guard !Task.isCancelled else { return }
+            rejectedTaskStartedStoreWork = true
+        }
+        XCTAssertFalse(appState.registerForegroundTask(id: UUID(), task: rejectedTask))
+        await rejectedTask.value
+        XCTAssertTrue(rejectedTask.isCancelled)
+        XCTAssertFalse(rejectedTaskStartedStoreWork)
+    }
+
+    func testCancelledForegroundTaskCanReconcileCommittedWriteDuringSuspension() async {
+        guard case let .success(container) = AppContainer.bootstrap(
+            databasePath: databasePath("committed-write-reconciliation.db")
+        ) else {
+            return XCTFail("Bootstrap failed")
+        }
+        let appState = AppState(container: container)
+        let taskID = UUID()
+        let foregroundTask = Task { @MainActor in
+            defer { appState.finishForegroundTask(id: taskID) }
+            do {
+                try await Task.sleep(for: .seconds(30))
+            } catch {
+                // Model an admitted repository operation that reports its
+                // committed success only after terminal cancellation.
+            }
+            appState.refreshFeed()
+        }
+        XCTAssertTrue(appState.registerForegroundTask(id: taskID, task: foregroundTask))
+
+        let suspension = appState.prepareForSuspension()
+        guard case let .awaiting(join) = suspension else {
+            return XCTFail("Committed foreground work must remain joinable")
+        }
+        await join.value
+
+        XCTAssertTrue(foregroundTask.isCancelled)
+        XCTAssertEqual(appState.contentRevision, 1)
+        guard case .idle = appState.viewModel.contentState else {
+            return XCTFail("Reconciliation must not start browser work on the outgoing session")
+        }
+    }
+
+    func testRefreshAfterSuspensionDefersBrowserWorkButPreservesRevision() {
+        guard case let .success(container) = AppContainer.bootstrap(
+            databasePath: databasePath("deferred-background-refresh.db")
+        ) else {
+            return XCTFail("Bootstrap failed")
+        }
+        let appState = AppState(container: container)
+
+        _ = appState.prepareForSuspension()
+        appState.refreshFeed()
+
+        XCTAssertEqual(appState.contentRevision, 1)
+        guard case .idle = appState.viewModel.contentState else {
+            return XCTFail("A suspended refresh must not start BrowserViewModel work")
+        }
+    }
+
+    func testImageDescriptionWorkerProcessesCommittedImagesSeriallyInFIFOOrder() async throws {
+        guard case let .success(container) = AppContainer.bootstrap(
+            databasePath: databasePath("serial-image-description-worker.db")
+        ) else {
+            return XCTFail("Bootstrap failed")
+        }
+        let firstStarted = expectation(description: "first image description started")
+        let secondStarted = expectation(description: "second image description started")
+        let firstRelease = AppSessionWorkCompletion()
+        let secondRelease = AppSessionWorkCompletion()
+        var startedItemIDs: [String] = []
+        var activeUpdateCount = 0
+        var maximumActiveUpdateCount = 0
+        let appState = AppState(
+            container: container,
+            imageDescriptionUpdate: { itemID in
+                let index = startedItemIDs.count
+                startedItemIDs.append(itemID)
+                activeUpdateCount += 1
+                maximumActiveUpdateCount = max(
+                    maximumActiveUpdateCount,
+                    activeUpdateCount
+                )
+                if index == 0 {
+                    firstStarted.fulfill()
+                    await firstRelease.wait()
+                } else {
+                    secondStarted.fulfill()
+                    await secondRelease.wait()
+                }
+                activeUpdateCount -= 1
+                return .success(true)
+            }
+        )
+
+        let firstItemID = try await appState.saveImage(
+            imageData: Data([0x01]),
+            thumbnail: nil,
+            sourceApp: "Test",
+            sourceAppBundleId: nil,
+            isAnimated: false
+        ).get()
+        await fulfillment(of: [firstStarted], timeout: 2)
+        let secondItemID = try await appState.saveImage(
+            imageData: Data([0x02]),
+            thumbnail: nil,
+            sourceApp: "Test",
+            sourceAppBundleId: nil,
+            isAnimated: false
+        ).get()
+
+        XCTAssertEqual(startedItemIDs, [firstItemID])
+        XCTAssertEqual(maximumActiveUpdateCount, 1)
+        firstRelease.finish()
+        await fulfillment(of: [secondStarted], timeout: 2)
+        XCTAssertEqual(startedItemIDs, [firstItemID, secondItemID])
+        XCTAssertEqual(maximumActiveUpdateCount, 1)
+
+        secondRelease.finish()
+        await eventually { appState.contentRevision == 2 }
+        XCTAssertEqual(activeUpdateCount, 0)
+    }
+
+    func testImageDescriptionWorkerSuspensionDropsQueueAndReconcilesCurrentCommit() async throws {
+        guard case let .success(container) = AppContainer.bootstrap(
+            databasePath: databasePath("suspended-image-description-worker.db")
+        ) else {
+            return XCTFail("Bootstrap failed")
+        }
+        let firstStarted = expectation(description: "image description started")
+        var startedItemIDs: [String] = []
+        var observedCancellation = false
+        let appState = AppState(
+            container: container,
+            imageDescriptionUpdate: { itemID in
+                startedItemIDs.append(itemID)
+                if startedItemIDs.count == 1 {
+                    firstStarted.fulfill()
+                }
+                do {
+                    try await Task.sleep(for: .seconds(30))
+                } catch {
+                    observedCancellation = Task.isCancelled
+                }
+                // Model a repository description mutation that committed just
+                // before cancellation became observable to its caller.
+                return .success(true)
+            }
+        )
+
+        let firstItemID = try await appState.saveImage(
+            imageData: Data([0x01]),
+            thumbnail: nil,
+            sourceApp: "Test",
+            sourceAppBundleId: nil,
+            isAnimated: false
+        ).get()
+        await fulfillment(of: [firstStarted], timeout: 2)
+        _ = try await appState.saveImage(
+            imageData: Data([0x02]),
+            thumbnail: nil,
+            sourceApp: "Test",
+            sourceAppBundleId: nil,
+            isAnimated: false
+        ).get()
+        XCTAssertEqual(startedItemIDs, [firstItemID])
+
+        guard case let .awaiting(join) = appState.prepareForSuspension() else {
+            return XCTFail("The serial image description worker must be joined")
+        }
+        await join.value
+
+        XCTAssertTrue(observedCancellation)
+        XCTAssertEqual(startedItemIDs, [firstItemID])
+        XCTAssertEqual(appState.contentRevision, 1)
+        guard case .idle = appState.viewModel.contentState else {
+            return XCTFail("A suspended description commit must not start browser work")
+        }
+    }
+
+    func testExternalTransferLeaseKeepsSuspensionPendingUntilTransferFinishes() async throws {
+        guard case let .success(container) = AppContainer.bootstrap(
+            databasePath: databasePath("external-transfer-suspension.db")
+        ) else {
+            return XCTFail("Bootstrap failed")
+        }
+        let appState = AppState(container: container)
+        let backgroundProbe = AppBackgroundTaskClientProbe(
+            beginBehavior: .returnIdentifier(UIBackgroundTaskIdentifier(rawValue: 51))
+        )
+        let lease = try XCTUnwrap(appState.beginExternalTransfer(
+            backgroundTaskClient: backgroundProbe.makeClient()
+        ))
+        lease.installExpirationHandler {}
+
+        guard case let .awaiting(join) = appState.prepareForSuspension() else {
+            return XCTFail("An external transfer must be joined before suspension")
+        }
+        var didJoin = false
+        let observer = Task { @MainActor in
+            await join.value
+            didJoin = true
+        }
+        await Task.yield()
+        XCTAssertFalse(didJoin)
+
+        lease.finish()
+        await observer.value
+
+        XCTAssertTrue(didJoin)
+        XCTAssertEqual(
+            backgroundProbe.events,
+            [.ended(UIBackgroundTaskIdentifier(rawValue: 51))]
+        )
+    }
+
+    func testExternalTransferBackgroundExpirationCancelsAndReleasesSuspension() async throws {
+        guard case let .success(container) = AppContainer.bootstrap(
+            databasePath: databasePath("expired-external-transfer.db")
+        ) else {
+            return XCTFail("Bootstrap failed")
+        }
+        let appState = AppState(container: container)
+        let backgroundProbe = AppBackgroundTaskClientProbe(
+            beginBehavior: .returnIdentifier(UIBackgroundTaskIdentifier(rawValue: 52))
+        )
+        let cancellationProbe = AppBackgroundTaskCancellationProbe()
+        let lease = try XCTUnwrap(appState.beginExternalTransfer(
+            backgroundTaskClient: backgroundProbe.makeClient()
+        ))
+        lease.installExpirationHandler {
+            cancellationProbe.record()
+        }
+
+        guard case let .awaiting(join) = appState.prepareForSuspension() else {
+            return XCTFail("An external transfer must be joined before suspension")
+        }
+        backgroundProbe.expire()
+        await join.value
+
+        XCTAssertEqual(cancellationProbe.recordedCount(), 1)
+        XCTAssertEqual(
+            backgroundProbe.events,
+            [.ended(UIBackgroundTaskIdentifier(rawValue: 52))]
+        )
+    }
+
+    func testExternalTransferExpirationBeforeHandlerInstallationCancelsImmediately() throws {
+        guard case let .success(container) = AppContainer.bootstrap(
+            databasePath: databasePath("early-expired-external-transfer.db")
+        ) else {
+            return XCTFail("Bootstrap failed")
+        }
+        let appState = AppState(container: container)
+        let identifier = UIBackgroundTaskIdentifier(rawValue: 53)
+        let backgroundProbe = AppBackgroundTaskClientProbe(
+            beginBehavior: .returnIdentifier(identifier)
+        )
+        let cancellationProbe = AppBackgroundTaskCancellationProbe()
+        let lease = try XCTUnwrap(appState.beginExternalTransfer(
+            backgroundTaskClient: backgroundProbe.makeClient()
+        ))
+
+        backgroundProbe.expire()
+        lease.installExpirationHandler {
+            cancellationProbe.record()
+        }
+        lease.finish()
+
+        XCTAssertEqual(cancellationProbe.recordedCount(), 1)
+        XCTAssertEqual(backgroundProbe.events, [.ended(identifier)])
+    }
+
+    func testDroppingExternalTransferLeaseReleasesSuspensionAndReservation() async throws {
+        guard case let .success(container) = AppContainer.bootstrap(
+            databasePath: databasePath("abandoned-external-transfer.db")
+        ) else {
+            return XCTFail("Bootstrap failed")
+        }
+        let appState = AppState(container: container)
+        let identifier = UIBackgroundTaskIdentifier(rawValue: 54)
+        let backgroundProbe = AppBackgroundTaskClientProbe(
+            beginBehavior: .returnIdentifier(identifier)
+        )
+        var lease: AppExternalTransferLease? = try XCTUnwrap(
+            appState.beginExternalTransfer(backgroundTaskClient: backgroundProbe.makeClient())
+        )
+        lease?.installExpirationHandler {}
+
+        guard case let .awaiting(join) = appState.prepareForSuspension() else {
+            return XCTFail("An external transfer must be joined before suspension")
+        }
+        weak let weakLease = lease
+        lease = nil
+        await join.value
+
+        XCTAssertNil(weakLease)
+        XCTAssertEqual(backgroundProbe.events, [.ended(identifier)])
+    }
+
+    func testDroppingExternalDragPayloadCancelsAndReleasesItsLease() async throws {
+        guard case let .success(container) = AppContainer.bootstrap(
+            databasePath: databasePath("abandoned-external-payload.db")
+        ) else {
+            return XCTFail("Bootstrap failed")
+        }
+        let appState = AppState(container: container)
+        let identifier = UIBackgroundTaskIdentifier(rawValue: 55)
+        let backgroundProbe = AppBackgroundTaskClientProbe(
+            beginBehavior: .returnIdentifier(identifier)
+        )
+        var lease: AppExternalTransferLease? = try XCTUnwrap(
+            appState.beginExternalTransfer(backgroundTaskClient: backgroundProbe.makeClient())
+        )
+        var payload: ExternalCopyDragPayload? = ExternalCopyDragPayload(
+            itemIDs: [],
+            externalTransferLease: lease,
+            fetchSnapshot: { _ in nil }
+        )
+        lease = nil
+
+        guard case let .awaiting(join) = appState.prepareForSuspension() else {
+            return XCTFail("The payload's lease must be joined before suspension")
+        }
+        payload = nil
+        await join.value
+
+        XCTAssertNil(payload)
+        XCTAssertEqual(backgroundProbe.events, [.ended(identifier)])
+    }
+
+    func testCancellingProviderLoadsKeepsLeaseUntilFollowUpFinishes() async throws {
+        guard case let .success(container) = AppContainer.bootstrap(
+            databasePath: databasePath("external-follow-up-suspension.db")
+        ) else {
+            return XCTFail("Bootstrap failed")
+        }
+        let appState = AppState(container: container)
+        let identifier = UIBackgroundTaskIdentifier(rawValue: 56)
+        let backgroundProbe = AppBackgroundTaskClientProbe(
+            beginBehavior: .returnIdentifier(identifier)
+        )
+        let lease = try XCTUnwrap(
+            appState.beginExternalTransfer(backgroundTaskClient: backgroundProbe.makeClient())
+        )
+        let payload = ExternalCopyDragPayload(
+            itemIDs: [],
+            externalTransferLease: lease,
+            fetchSnapshot: { _ in nil }
+        )
+
+        guard case let .awaiting(join) = appState.prepareForSuspension() else {
+            return XCTFail("The payload's lease must be joined before suspension")
+        }
+        var didJoin = false
+        let observer = Task { @MainActor in
+            await join.value
+            didJoin = true
+        }
+
+        let allowFollowUpToFinish = AppSessionWorkCompletion()
+        var didStartFollowUp = false
+        let evidence = [
+            ExternalCopyTransferEvidence(
+                itemID: "transferred-item",
+                deletionToken: "token"
+            ),
+        ]
+        var receivedEvidence: [ExternalCopyTransferEvidence] = []
+        let followUp = ExternalCopyDragFollowUp.start(
+            payload: payload,
+            evidence: evidence,
+            completion: { completedEvidence in
+                receivedEvidence = completedEvidence
+                didStartFollowUp = true
+                await allowFollowUpToFinish.wait()
+            }
+        )
+        await Task.yield()
+        XCTAssertTrue(didStartFollowUp)
+        XCTAssertFalse(didJoin)
+        XCTAssertEqual(backgroundProbe.events, [])
+
+        allowFollowUpToFinish.finish()
+        await followUp.value
+        await observer.value
+
+        XCTAssertTrue(didJoin)
+        XCTAssertEqual(receivedEvidence, evidence)
+        XCTAssertEqual(backgroundProbe.events, [.ended(identifier)])
+    }
+
+    func testBackgroundExpirationCancelsFollowUpAndReleasesPayloadLease() async throws {
+        guard case let .success(container) = AppContainer.bootstrap(
+            databasePath: databasePath("expired-external-follow-up.db")
+        ) else {
+            return XCTFail("Bootstrap failed")
+        }
+        let appState = AppState(container: container)
+        let identifier = UIBackgroundTaskIdentifier(rawValue: 57)
+        let backgroundProbe = AppBackgroundTaskClientProbe(
+            beginBehavior: .returnIdentifier(identifier)
+        )
+        let lease = try XCTUnwrap(
+            appState.beginExternalTransfer(backgroundTaskClient: backgroundProbe.makeClient())
+        )
+        let payload = ExternalCopyDragPayload(
+            itemIDs: [],
+            externalTransferLease: lease,
+            fetchSnapshot: { _ in nil }
+        )
+
+        guard case let .awaiting(join) = appState.prepareForSuspension() else {
+            return XCTFail("The payload's lease must be joined before suspension")
+        }
+        let followUpStarted = AppSessionWorkCompletion()
+        var didObserveCancellation = false
+        let followUp = ExternalCopyDragFollowUp.start(
+            payload: payload,
+            evidence: [
+                ExternalCopyTransferEvidence(itemID: "item", deletionToken: "token"),
+            ],
+            completion: { _ in
+                followUpStarted.finish()
+                do {
+                    try await Task.sleep(nanoseconds: 30_000_000_000)
+                } catch {
+                    didObserveCancellation = true
+                }
+            }
+        )
+        await followUpStarted.wait()
+        backgroundProbe.expire()
+        await followUp.value
+        await join.value
+
+        XCTAssertTrue(didObserveCancellation)
+        XCTAssertEqual(backgroundProbe.events, [.ended(identifier)])
+    }
+
+    func testUnavailableExternalTransferLeaseFailsWithoutRegisteringSuspensionWork() {
+        guard case let .success(container) = AppContainer.bootstrap(
+            databasePath: databasePath("unavailable-external-transfer.db")
+        ) else {
+            return XCTFail("Bootstrap failed")
+        }
+        let appState = AppState(container: container)
+        let backgroundProbe = AppBackgroundTaskClientProbe(
+            beginBehavior: .returnIdentifier(.invalid)
+        )
+
+        XCTAssertNil(appState.beginExternalTransfer(
+            backgroundTaskClient: backgroundProbe.makeClient()
+        ))
+
+        switch appState.prepareForSuspension() {
+        case .quiescent:
+            break
+        case .awaiting:
+            XCTFail("A denied lease must not strand suspension work")
+        }
+        XCTAssertEqual(backgroundProbe.events, [])
     }
 
     func testStoreOpenGateExpirationBeforeBeginRejectsOpen() {
@@ -322,7 +847,20 @@ final class AppContainerBootstrapTests: TemporaryDirectoryTestCase {
         }
     }
 
+    func testForegroundResumeRetryPolicyIsBounded() {
+        XCTAssertNotNil(AppResumeRetryPolicy.delay(forAttempt: 0))
+        XCTAssertNotNil(AppResumeRetryPolicy.delay(forAttempt: 1))
+        XCTAssertNotNil(AppResumeRetryPolicy.delay(forAttempt: 2))
+        XCTAssertNil(AppResumeRetryPolicy.delay(forAttempt: 3))
+        XCTAssertNil(AppResumeRetryPolicy.delay(forAttempt: -1))
+    }
+
     func testBootstrapWithInvalidPathFails() {
+        // The Rust connection pool deliberately retries an unavailable path
+        // for its 30-second connection timeout before surfacing the bootstrap
+        // error. Give this single negative-path test explicit headroom when
+        // XCTest's per-test timeout enforcement is enabled in CI.
+        executionTimeAllowance = 60
         let result = AppContainer.bootstrap(databasePath: "/nonexistent/path/to/db")
         switch result {
         case .success:
@@ -344,5 +882,17 @@ final class AppContainerBootstrapTests: TemporaryDirectoryTestCase {
             XCTFail("Second bootstrap failed")
             return
         }
+    }
+
+    private func eventually(
+        timeout: Duration = .seconds(2),
+        condition: () -> Bool
+    ) async {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !condition(), clock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertTrue(condition(), "Condition did not become true before timeout")
     }
 }

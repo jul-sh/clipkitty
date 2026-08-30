@@ -5,10 +5,10 @@
 //! `nix develop --command`; xtask itself always assumes it is already running
 //! inside the shell.
 
-use std::fs;
+use std::{fs, process::ExitStatus};
 
 use anyhow::{anyhow, Context, Result};
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use tempfile::tempdir;
 
 use crate::cli::{EnvCmd, InstallArgs, InstallTarget, InternalCmd};
@@ -175,9 +175,8 @@ pub(crate) fn run_pre_commit_command(
             continue;
         }
         let output = Runner::new(reporter, "swiftlint")
-            .args(["lint", "--path"])
-            .arg(path.as_std_path())
-            .args(["--config", ".swiftlint.yml"])
+            .args(swiftlint_arguments(&path))
+            .sanitize_for_xcode()
             .cwd(repo.as_path())
             .capture_stderr()
             .output_status()?;
@@ -186,6 +185,7 @@ pub(crate) fn run_pre_commit_command(
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        ensure_swiftlint_succeeded(file, &output.status, &combined)?;
         if combined.contains("Hardcoded") {
             print!("{combined}");
             hardcoded_found = true;
@@ -199,6 +199,35 @@ pub(crate) fn run_pre_commit_command(
 
     reporter.info("Checking localization coverage for staged Swift files...");
     check::check_localization_files(repo, &staged_swift_files, false, reporter)
+}
+
+fn swiftlint_arguments(path: &Utf8Path) -> [String; 5] {
+    [
+        "lint".to_string(),
+        // This hook intentionally enforces only the localization rules below.
+        // Downgrade unrelated default-rule errors so a successful lint run
+        // exits zero; parser, SourceKit, and other tool failures still fail
+        // closed through `ensure_swiftlint_succeeded`.
+        "--lenient".to_string(),
+        "--config".to_string(),
+        ".swiftlint.yml".to_string(),
+        path.to_string(),
+    ]
+}
+
+fn ensure_swiftlint_succeeded(file: &str, status: &ExitStatus, output: &str) -> Result<()> {
+    if status.success() {
+        return Ok(());
+    }
+
+    let details = output.trim();
+    if details.is_empty() {
+        Err(anyhow!("SwiftLint failed for {file} with status {status}"))
+    } else {
+        Err(anyhow!(
+            "SwiftLint failed for {file} with status {status}:\n{details}"
+        ))
+    }
 }
 
 fn staged_swift_files(repo: &RepoRoot, reporter: &Reporter) -> Result<Vec<String>> {
@@ -227,4 +256,40 @@ fn git_hooks_dir(repo: &RepoRoot, reporter: &Reporter) -> Result<Utf8PathBuf> {
         ));
     }
     Ok(repo.join(hooks))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::Command;
+
+    use super::*;
+
+    #[test]
+    fn swiftlint_file_path_is_a_positional_argument() {
+        assert_eq!(
+            swiftlint_arguments(Utf8Path::new("Sources/My View.swift")),
+            [
+                "lint",
+                "--lenient",
+                "--config",
+                ".swiftlint.yml",
+                "Sources/My View.swift",
+            ]
+        );
+    }
+
+    #[test]
+    fn failed_swiftlint_invocation_fails_closed() {
+        let status = Command::new("/usr/bin/false").status().unwrap();
+        let error = ensure_swiftlint_succeeded(
+            "Sources/My View.swift",
+            &status,
+            "Error: Unknown option '--path'",
+        )
+        .unwrap_err();
+
+        let message = error.to_string();
+        assert!(message.contains("SwiftLint failed for Sources/My View.swift"));
+        assert!(message.contains("Unknown option '--path'"));
+    }
 }

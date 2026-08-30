@@ -733,6 +733,177 @@ final class BrowserMutationTests: XCTestCase {
         XCTAssertEqual(transaction.deletedItemIds, ["1", "2"])
     }
 
+    func testBatchDeleteDeduplicatesInStableOrderAndUndoRestoresSelection() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [
+                makeMatch(id: "1", excerpt: "one"),
+                makeMatch(id: "2", excerpt: "two"),
+                makeMatch(id: "3", excerpt: "three"),
+                makeMatch(id: "4", excerpt: "four"),
+            ],
+            firstItem: makeItem(id: "1", text: "one"),
+            totalCount: 4
+        ))
+        var notifications: [NotificationRequest] = []
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {},
+            showSnackbarNotification: { notifications.append($0) }
+        )
+        viewModel.onAppear(initialSearchQuery: "")
+        let didLoad = await settle { viewModel.selectedItemId == "1" }
+        XCTAssertTrue(didLoad)
+
+        XCTAssertTrue(viewModel.deleteItems(itemIds: ["1", "2", "1"]))
+
+        XCTAssertEqual(viewModel.itemIds, ["3", "4"])
+        XCTAssertEqual(viewModel.contentState.response?.totalCount, 2)
+        XCTAssertEqual(viewModel.selectedItemId, "3")
+        XCTAssertEqual(notifications.count, 1)
+        guard case let .deleting(.pending(transaction)) = viewModel.mutationState else {
+            return XCTFail("Expected one pending batch delete")
+        }
+        XCTAssertEqual(transaction.deletedItemIds, ["1", "2"])
+
+        viewModel.undoPendingDelete()
+
+        XCTAssertEqual(viewModel.itemIds, ["1", "2", "3", "4"])
+        XCTAssertEqual(viewModel.contentState.response?.totalCount, 4)
+        XCTAssertEqual(viewModel.selectedItemId, "1")
+        guard case .idle = viewModel.mutationState else {
+            return XCTFail("Expected undo to end the batch delete")
+        }
+    }
+
+    func testBatchDeleteAdvancesSelectionPastEveryDeletedRow() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [
+                makeMatch(id: "1", excerpt: "one"),
+                makeMatch(id: "2", excerpt: "two"),
+                makeMatch(id: "3", excerpt: "three"),
+                makeMatch(id: "4", excerpt: "four"),
+            ],
+            firstItem: makeItem(id: "1", text: "one"),
+            totalCount: 4
+        ))
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+        viewModel.onAppear(initialSearchQuery: "")
+        let didLoad = await settle { viewModel.itemIds == ["1", "2", "3", "4"] }
+        XCTAssertTrue(didLoad)
+        viewModel.select(itemId: "2", origin: .click)
+        client.resumeFetch(id: "2", with: makeItem(id: "2", text: "two"))
+        let didSelect = await settle { viewModel.selectedItemId == "2" }
+        XCTAssertTrue(didSelect)
+
+        XCTAssertTrue(viewModel.deleteItems(itemIds: ["2", "3"]))
+
+        XCTAssertEqual(viewModel.itemIds, ["1", "4"])
+        XCTAssertEqual(viewModel.selectedItemId, "4")
+    }
+
+    func testDeletingStaleItemDoesNotChangeVisibleRowsOrTotalCount() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstItem: makeItem(id: "1", text: "one"),
+            totalCount: 2
+        ))
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+        viewModel.onAppear(initialSearchQuery: "")
+        let didLoad = await settle { viewModel.itemIds == ["1", "2"] }
+        XCTAssertTrue(didLoad)
+
+        XCTAssertTrue(viewModel.deleteItem(itemId: "stale-item"))
+
+        XCTAssertEqual(viewModel.itemIds, ["1", "2"])
+        XCTAssertEqual(viewModel.contentState.response?.totalCount, 2)
+        guard case let .deleting(.pending(transaction)) = viewModel.mutationState else {
+            return XCTFail("Expected stale item deletion to remain pending for persistence")
+        }
+        XCTAssertEqual(transaction.deletedItemIds, ["stale-item"])
+    }
+
+    func testPendingBatchDeleteMasksOnlyMatchingItemsFromNewSearchCount() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [
+                makeMatch(id: "1", excerpt: "one"),
+                makeMatch(id: "2", excerpt: "two"),
+                makeMatch(id: "4", excerpt: "four"),
+            ],
+            firstItem: makeItem(id: "1", text: "one"),
+            totalCount: 3
+        ))
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+        viewModel.onAppear(initialSearchQuery: "")
+        let didLoad = await settle { viewModel.itemIds == ["1", "2", "4"] }
+        XCTAssertTrue(didLoad)
+        XCTAssertTrue(viewModel.deleteItems(itemIds: ["1", "2"]))
+
+        let nextRequest = SearchRequest(text: "next", filter: .all)
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: nextRequest,
+            items: [makeMatch(id: "2", excerpt: "two"), makeMatch(id: "3", excerpt: "three")],
+            firstItem: makeItem(id: "2", text: "two"),
+            totalCount: 2
+        ))
+        viewModel.updateSearchText("next")
+
+        let didLoadNextSearch = await settle {
+            viewModel.contentState.request == nextRequest && viewModel.itemIds == ["3"]
+        }
+        XCTAssertTrue(didLoadNextSearch)
+        XCTAssertEqual(viewModel.contentState.response?.totalCount, 1)
+    }
+
+    func testBatchDeleteCommitsEachUniqueItemOnceInInputOrder() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstItem: makeItem(id: "1", text: "one"),
+            totalCount: 2
+        ))
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {},
+            deleteCommitDelay: 0.05
+        )
+        viewModel.onAppear(initialSearchQuery: "")
+        let didLoad = await settle { viewModel.itemIds == ["1", "2"] }
+        XCTAssertTrue(didLoad)
+
+        XCTAssertTrue(viewModel.deleteItems(itemIds: ["2", "1", "2"]))
+
+        let didCommit = await settle { client.deletedItemIds == ["2", "1"] }
+        XCTAssertTrue(didCommit)
+    }
+
     func testMixedDeleteResultReconcilesWithAuthoritativeStoreState() async {
         let client = MockBrowserStoreClient()
         let request = SearchRequest(text: "", filter: .all)

@@ -102,6 +102,7 @@ impl<'a> Runner<'a> {
             "SDKROOT",
             "MACOSX_DEPLOYMENT_TARGET",
             "TOOLCHAINS",
+            "DEVELOPER_DIR",
             "DEVELOPER_DIR_OVERRIDE",
         ];
         for key in FIXED {
@@ -277,6 +278,19 @@ fn format_status(status: ExitStatus) -> String {
     match status.code() {
         Some(code) => code.to_string(),
         None => "signal".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn xcode_sanitization_removes_nix_developer_directory() {
+        let reporter = Reporter::new(false);
+        let runner = Runner::new(&reporter, "/usr/bin/true").sanitize_for_xcode();
+
+        assert!(runner.env_remove.iter().any(|key| key == "DEVELOPER_DIR"));
     }
 }
 

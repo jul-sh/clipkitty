@@ -1,6 +1,258 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "ClipKitty couldn't access this clipboard item. Check Paste permissions or try again." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty konnte nicht auf dieses Element in der Zwischenablage zugreifen. Prüfe die Einfügeberechtigung oder versuche es erneut." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty couldn't access this clipboard item. Check Paste permissions or try again." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty no pudo acceder a este elemento del portapapeles. Comprueba los permisos para pegar o inténtalo de nuevo." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty n’a pas pu accéder à cet élément du presse-papiers. Vérifiez les autorisations de collage ou réessayez." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このクリップボード項目にアクセスできませんでした。「ペースト」の権限を確認するか、もう一度お試しください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty가 이 클립보드 항목에 접근할 수 없습니다. 붙여넣기 권한을 확인하거나 다시 시도하십시오." } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "O ClipKitty não conseguiu acessar este item da área de transferência. Verifique as permissões de colagem ou tente novamente." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty не удалось получить доступ к этому элементу буфера обмена. Проверьте разрешение на вставку или повторите попытку." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty 无法访问此剪贴板项目。请检查粘贴权限或重试。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty 無法取用此剪貼簿項目。請檢查貼上權限或再試一次。" } }
+      }
+    },
+    "This clipboard item is empty, unsupported, protected, or too large to add." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Dieses Zwischenablageelement ist leer, wird nicht unterstützt, ist geschützt oder zu groß zum Hinzufügen." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This clipboard item is empty, unsupported, protected, or too large to add." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Este elemento del portapapeles está vacío, no es compatible, está protegido o es demasiado grande para añadirlo." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Cet élément du presse-papiers est vide, non pris en charge, protégé ou trop volumineux pour être ajouté." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このクリップボード項目は、空、未対応、保護済み、または追加するには大きすぎます。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이 클립보드 항목은 비어 있거나 지원되지 않거나 보호되어 있거나 추가하기에 너무 큽니다." } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Este item da área de transferência está vazio, não é compatível, está protegido ou é grande demais para ser adicionado." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Этот элемент буфера обмена пуст, не поддерживается, защищён или слишком велик для добавления." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此剪贴板项目为空、不受支持、受保护或过大，无法添加。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "此剪貼簿項目為空、不受支援、受保護或過大，無法加入。" } }
+      }
+    },
+    "Delete After Drag and Drop" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Nach Drag & Drop löschen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete After Drag and Drop" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Eliminar después de arrastrar y soltar" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Supprimer après un glisser-déposer" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ドラッグ＆ドロップ後に削除" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "드래그 앤 드롭 후 삭제" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Excluir após arrastar e soltar" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Удалять после перетаскивания" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "拖放后删除" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "拖放後刪除" } }
+      }
+    },
+    "Deletes a clip from history after it is successfully dropped into another app." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Löscht einen Eintrag aus dem Verlauf, nachdem er erfolgreich in einer anderen App abgelegt wurde." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Deletes a clip from history after it is successfully dropped into another app." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Elimina un elemento del historial después de soltarlo correctamente en otra app." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Supprime un élément de l’historique après l’avoir déposé dans une autre app." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ほかのアプリへのドロップに成功すると、その項目を履歴から削除します。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "다른 앱에 성공적으로 놓으면 해당 항목을 기록에서 삭제합니다." } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Exclui um item do histórico depois que ele é solto com sucesso em outro app." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Удаляет фрагмент из истории после успешного переноса в другое приложение." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "成功拖放到其他 App 后，将该项目从历史记录中删除。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "成功拖放至其他 App 後，將該項目從記錄中刪除。" } }
+      }
+    },
+    "Select" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Auswählen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Select" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Seleccionar" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Sélectionner" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "選択" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "선택" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Selecionar" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Выбрать" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "选择" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "選取" } }
+      }
+    },
+    "Select All" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Alle auswählen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Select All" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Seleccionar todo" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Tout sélectionner" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "すべてを選択" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "모두 선택" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Selecionar Tudo" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Выбрать все" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "全选" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "全選" } }
+      }
+    },
+    "Deselect All" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Auswahl aufheben" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Deselect All" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Anular selección" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Tout désélectionner" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "選択をすべて解除" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "모두 선택 해제" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Desmarcar Tudo" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Отменить выбор" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "取消全选" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "取消全選" } }
+      }
+    },
+    "%lld Selected" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "%lld ausgewählt" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld Selected" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "%lld seleccionados" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "%lld sélectionnés" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld件を選択中" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "%lld개 선택됨" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "%lld selecionados" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Выбрано: %lld" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已选择 %lld 项" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "已選取 %lld 項" } }
+      }
+    },
+    "Delete Selected Items?" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Ausgewählte Einträge löschen?" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete Selected Items?" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "¿Eliminar los elementos seleccionados?" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Supprimer les éléments sélectionnés ?" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "選択した項目を削除しますか？" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "선택한 항목을 삭제하시겠습니까?" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Excluir os itens selecionados?" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Удалить выбранные элементы?" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "删除所选项目？" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "刪除所選項目？" } }
+      }
+    },
+    "Are you sure you want to delete the selected items?" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Möchten Sie die ausgewählten Einträge wirklich löschen?" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Are you sure you want to delete the selected items?" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "¿Seguro que quieres eliminar los elementos seleccionados?" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Voulez-vous vraiment supprimer les éléments sélectionnés ?" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "選択した項目を削除してもよろしいですか？" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "선택한 항목을 삭제하시겠습니까?" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Tem certeza de que deseja excluir os itens selecionados?" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Вы уверены, что хотите удалить выбранные элементы?" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "确定要删除所选项目吗？" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "確定要刪除所選項目嗎？" } }
+      }
+    },
+    "Double tap to select" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Zum Auswählen doppeltippen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Double tap to select" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Toca dos veces para seleccionar" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Touchez deux fois pour sélectionner" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ダブルタップして選択" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이중 탭하여 선택" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Toque duas vezes para selecionar" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Коснитесь дважды, чтобы выбрать" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "轻点两下以选择" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "點兩下以選取" } }
+      }
+    },
+    "Double tap to deselect" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Zum Aufheben der Auswahl doppeltippen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Double tap to deselect" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Toca dos veces para anular la selección" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Touchez deux fois pour désélectionner" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ダブルタップして選択を解除" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이중 탭하여 선택 해제" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Toque duas vezes para desmarcar" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Коснитесь дважды, чтобы отменить выбор" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "轻点两下以取消选择" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "點兩下以取消選取" } }
+      }
+    },
+    "Drag Selected Items" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Ausgewählte Einträge ziehen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Drag Selected Items" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Arrastrar elementos seleccionados" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Faire glisser les éléments sélectionnés" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "選択した項目をドラッグ" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "선택한 항목 드래그" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Arrastar itens selecionados" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Перетащить выбранные элементы" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "拖动所选项目" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "拖移所選項目" } }
+      }
+    },
+    "Drag the selected items into another app" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Ziehe die ausgewählten Einträge in eine andere App" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Drag the selected items into another app" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Arrastra los elementos seleccionados a otra app" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Faites glisser les éléments sélectionnés vers une autre app" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "選択した項目を別のアプリにドラッグします" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "선택한 항목을 다른 앱으로 드래그합니다" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Arraste os itens selecionados para outro app" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Перетащите выбранные элементы в другое приложение" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "将所选项目拖到其他 App" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "將所選項目拖至其他 App" } }
+      }
+    },
+    "Copy or drag up to %lld items at a time." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Kopiere oder ziehe bis zu %lld Einträge gleichzeitig." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Copy or drag up to %lld items at a time." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Copia o arrastra hasta %lld elementos a la vez." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Copiez ou faites glisser jusqu’à %lld éléments à la fois." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "一度にコピーまたはドラッグできるのは%lld件までです。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "한 번에 최대 %lld개 항목을 복사하거나 드래그할 수 있습니다." } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Copie ou arraste até %lld itens por vez." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Копируйте или перетаскивайте не более %lld элементов за раз." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "每次最多可拷贝或拖动 %lld 个项目。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "每次最多可拷貝或拖移 %lld 個項目。" } }
+      }
+    },
+    "Select %lld or fewer items to drag." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Wähle höchstens %lld Einträge zum Ziehen aus." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Select %lld or fewer items to drag." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Selecciona %lld elementos o menos para arrastrarlos." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Sélectionnez au maximum %lld éléments à faire glisser." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ドラッグする項目を%lld件以下にしてください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "드래그할 항목을 %lld개 이하로 선택하십시오." } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Selecione no máximo %lld itens para arrastar." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Выберите не более %lld элементов для перетаскивания." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请选择不超过 %lld 个项目进行拖动。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "請選取不超過 %lld 個項目進行拖移。" } }
+      }
+    },
+    "The selected items are too large to copy or drag together." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Die ausgewählten Einträge sind zu groß, um sie gemeinsam zu kopieren oder zu ziehen." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "The selected items are too large to copy or drag together." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Los elementos seleccionados son demasiado grandes para copiarlos o arrastrarlos juntos." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Les éléments sélectionnés sont trop volumineux pour être copiés ou déplacés ensemble." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "選択した項目は、一緒にコピーまたはドラッグするには大きすぎます。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "선택한 항목은 함께 복사하거나 드래그하기에 너무 큽니다." } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Os itens selecionados são grandes demais para serem copiados ou arrastados juntos." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Выбранные элементы слишком велики для совместного копирования или перетаскивания." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "所选项目太大，无法一起拷贝或拖动。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "所選項目太大，無法一起拷貝或拖移。" } }
+      }
+    },
+    "ClipKitty couldn't reopen its database. Please relaunch the app." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty konnte seine Datenbank nicht erneut öffnen. Bitte starte die App neu." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty couldn't reopen its database. Please relaunch the app." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty no pudo volver a abrir su base de datos. Reinicia la app." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty n’a pas pu rouvrir sa base de données. Veuillez relancer l’app." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ClipKittyのデータベースを再度開けませんでした。アプリを再起動してください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty가 데이터베이스를 다시 열 수 없습니다. 앱을 다시 실행하십시오." } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "O ClipKitty não conseguiu reabrir o banco de dados. Reinicie o app." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty не удалось снова открыть базу данных. Перезапустите приложение." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty 无法重新打开数据库。请重新启动 App。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty 無法重新開啟資料庫。請重新啟動 App。" } }
+      }
+    },
     "Indexing…" : {
       "localizations" : {
         "de" : { "stringUnit" : { "state" : "translated", "value" : "Indizierung…" } },
@@ -6120,6 +6372,70 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已儲存到ClipKitty"
+          }
+        }
+      }
+    },
+    "Saving to ClipKitty…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wird in ClipKitty gesichert…"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Saving to ClipKitty…"
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Guardando en ClipKitty…"
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enregistrement dans ClipKitty…"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ClipKittyに保存中…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ClipKitty에 저장 중…"
+          }
+        },
+        "pt-BR" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Salvando no ClipKitty…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранение в ClipKitty…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在保存到 ClipKitty…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在儲存到 ClipKitty…"
           }
         }
       }

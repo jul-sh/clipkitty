@@ -17,6 +17,10 @@ struct BottomControlBar: View {
 
     @State private var selectedPhoto: PhotosPickerItem?
     @State private var presentation: BarPresentation = .idle
+    @State private var pasteClipboardTask: Task<Void, Never>?
+    @State private var pasteClipboardRequestID: UUID?
+    @State private var importPhotoTask: Task<Void, Never>?
+    @State private var importPhotoRequestID: UUID?
 
     private enum BarPresentation {
         case idle
@@ -109,7 +113,7 @@ struct BottomControlBar: View {
         }
         .onChange(of: selectedPhoto) { _, newItem in
             guard let newItem else { return }
-            Task { await importPhoto(from: newItem) }
+            startImportPhoto(from: newItem)
         }
         .onChange(of: searchFocusRequestID) { _, _ in
             restoreSearchFocusIfNeeded()
@@ -121,6 +125,10 @@ struct BottomControlBar: View {
             withAnimation(.bouncy) {
                 presentation = .idle
             }
+        }
+        .onDisappear {
+            cancelPasteClipboard()
+            cancelImportPhoto()
         }
     }
 
@@ -270,7 +278,7 @@ struct BottomControlBar: View {
                 if !settings.autoAddFromClipboard {
                     Button {
                         withAnimation(.bouncy) { presentation = .idle }
-                        Task { await pasteClipboard() }
+                        startPasteClipboard()
                     } label: {
                         Image(systemName: "doc.on.clipboard")
                             .font(.body.weight(.medium))
@@ -376,57 +384,183 @@ struct BottomControlBar: View {
 
     // MARK: - Paste clipboard
 
-    private func pasteClipboard() async {
-        guard let content = container.clipboardService.readCurrentClipboard() else {
-            // Explain the no-op: otherwise tapping the button with an empty
-            // pasteboard just silently adds nothing.
-            haptics.fire(.destructive)
-            appState.showToast(.clipboardEmpty)
+    private func startPasteClipboard() {
+        cancelPasteClipboard()
+        let requestID = UUID()
+        let pasteboardGeneration = container.clipboardService.pasteboardChangeCount
+        pasteClipboardRequestID = requestID
+        let task = Task { @MainActor in
+            await pasteClipboard(
+                requestID: requestID,
+                generation: pasteboardGeneration
+            )
+        }
+        pasteClipboardTask = task
+        guard appState.registerForegroundTask(id: requestID, task: task) else {
+            cancelPasteClipboard()
+            return
+        }
+    }
+
+    private func pasteClipboard(requestID: UUID, generation: Int) async {
+        defer { finishPasteClipboard(requestID: requestID) }
+        guard isCurrentPasteClipboardRequest(requestID) else { return }
+
+        let readResult = await container.clipboardService
+            .readCurrentClipboardForAutomaticIngest()
+        guard isCurrentPasteClipboardRequest(requestID) else { return }
+        guard container.clipboardService.pasteboardChangeCount == generation else {
+            showPasteClipboardFailure(
+                String(localized: "ClipKitty couldn't access this clipboard item. Check Paste permissions or try again.")
+            )
             return
         }
 
-        guard let result = await appState.savePasteboardContent(content) else {
-            haptics.fire(.destructive)
-            appState.showToast(.addFailed(String(localized: "Could not read image data")))
+        let result: Result<String, ClipboardError>
+        switch readResult {
+        case let .content(content):
+            switch content {
+            case let .image(data, analysis):
+                result = await appState.saveImage(
+                    imageData: data,
+                    thumbnail: analysis.thumbnail,
+                    sourceApp: "Pasteboard",
+                    sourceAppBundleId: nil,
+                    isAnimated: analysis.isAnimated
+                )
+            case let .link(url):
+                guard let saveResult = await appState.savePasteboardContent(.link(url)) else {
+                    showPasteClipboardFailure(String(localized: "Could not load item"))
+                    return
+                }
+                result = saveResult
+            case let .text(text):
+                guard let saveResult = await appState.savePasteboardContent(.text(text)) else {
+                    showPasteClipboardFailure(String(localized: "Could not load item"))
+                    return
+                }
+                result = saveResult
+            }
+        case .ignored:
+            showPasteClipboardFailure(
+                String(localized: "This clipboard item is empty, unsupported, protected, or too large to add.")
+            )
+            return
+        case .temporarilyUnavailable:
+            showPasteClipboardFailure(
+                String(localized: "ClipKitty couldn't access this clipboard item. Check Paste permissions or try again.")
+            )
             return
         }
-        handleAddResult(result)
+
+        if case .success = result {
+            container.clipboardService.acknowledgeCurrentPasteboardGeneration(
+                ifUnchangedFrom: generation
+            )
+            appState.refreshFeed()
+        }
+        guard isCurrentPasteClipboardRequest(requestID) else { return }
+        presentAddResult(result)
+    }
+
+    private func isCurrentPasteClipboardRequest(_ requestID: UUID) -> Bool {
+        !Task.isCancelled && pasteClipboardRequestID == requestID
+    }
+
+    private func showPasteClipboardFailure(_ message: String) {
+        haptics.fire(.destructive)
+        appState.showToast(.addFailed(message))
+    }
+
+    private func cancelPasteClipboard() {
+        pasteClipboardRequestID = nil
+        pasteClipboardTask?.cancel()
+        pasteClipboardTask = nil
+    }
+
+    private func finishPasteClipboard(requestID: UUID) {
+        appState.finishForegroundTask(id: requestID)
+        guard pasteClipboardRequestID == requestID else { return }
+        pasteClipboardRequestID = nil
+        pasteClipboardTask = nil
     }
 
     // MARK: - Import photo
 
-    private func importPhoto(from item: PhotosPickerItem) async {
-        defer { selectedPhoto = nil }
+    private func startImportPhoto(from item: PhotosPickerItem) {
+        importPhotoRequestID = nil
+        importPhotoTask?.cancel()
+        importPhotoTask = nil
+
+        let requestID = UUID()
+        importPhotoRequestID = requestID
+        let task = Task { @MainActor in
+            await importPhoto(from: item, requestID: requestID)
+        }
+        importPhotoTask = task
+        guard appState.registerForegroundTask(id: requestID, task: task) else {
+            cancelImportPhoto()
+            return
+        }
+    }
+
+    private func importPhoto(from item: PhotosPickerItem, requestID: UUID) async {
+        defer { finishImportPhoto(requestID: requestID) }
+        guard isCurrentImportPhotoRequest(requestID) else { return }
 
         guard let data = try? await item.loadTransferable(type: Data.self) else {
+            guard isCurrentImportPhotoRequest(requestID) else { return }
             appState.showToast(.addFailed(String(localized: "Could not load photo")))
             return
         }
+        guard isCurrentImportPhotoRequest(requestID) else { return }
 
-        let thumbnail: Data? = {
-            guard let image = UIImage(data: data) else { return nil }
-            return image.preparingThumbnail(of: CGSize(width: 200, height: 200))?.jpegData(
-                compressionQuality: 0.7
-            )
-        }()
+        guard let analysis = await PhotoImportImagePreparer.prepare(data) else {
+            guard isCurrentImportPhotoRequest(requestID) else { return }
+            appState.showToast(.addFailed(String(localized: "Could not load photo")))
+            return
+        }
+        guard isCurrentImportPhotoRequest(requestID) else { return }
 
         let result = await appState.saveImage(
             imageData: data,
-            thumbnail: thumbnail,
+            thumbnail: analysis.thumbnail,
             sourceApp: "Photos",
             sourceAppBundleId: nil,
-            isAnimated: false
+            isAnimated: analysis.isAnimated
         )
 
-        handleAddResult(result)
+        if case .success = result {
+            appState.refreshFeed()
+        }
+        guard isCurrentImportPhotoRequest(requestID) else { return }
+        presentAddResult(result)
     }
 
-    private func handleAddResult(_ result: Result<String, ClipboardError>) {
+    private func isCurrentImportPhotoRequest(_ requestID: UUID) -> Bool {
+        !Task.isCancelled && importPhotoRequestID == requestID
+    }
+
+    private func cancelImportPhoto() {
+        importPhotoRequestID = nil
+        importPhotoTask?.cancel()
+        importPhotoTask = nil
+        selectedPhoto = nil
+    }
+
+    private func finishImportPhoto(requestID: UUID) {
+        appState.finishForegroundTask(id: requestID)
+        guard importPhotoRequestID == requestID else { return }
+        importPhotoRequestID = nil
+        importPhotoTask = nil
+        selectedPhoto = nil
+    }
+
+    private func presentAddResult(_ result: Result<String, ClipboardError>) {
         switch result {
         case .success:
             haptics.fire(.success)
             appState.showToast(.addSucceeded)
-            appState.refreshFeed()
         case let .failure(error):
             haptics.fire(.destructive)
             appState.showToast(.addFailed(error.localizedDescription))

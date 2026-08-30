@@ -589,6 +589,47 @@
 
         // MARK: - Background runner cancellation
 
+        func testExpirationSealsBeforeDrainAndYieldsMainActorWhileJoiningOpen() async throws {
+            let expiration = iOSBackgroundSyncExpiration()
+            guard case .start = expiration.storeGate.begin() else {
+                return XCTFail("Expected the store gate to begin opening")
+            }
+
+            expiration.cancelAndSeal()
+            guard case .expired = expiration.storeGate.transfer() else {
+                return XCTFail("A sealed background store must not transfer")
+            }
+
+            let startedAt = Date()
+            var heartbeatAt: Date?
+            let fallback = Task.detached {
+                do {
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                } catch {
+                    return
+                }
+                expiration.storeGate.completeFailure()
+            }
+
+            let drain = Task { @MainActor in
+                let heartbeat = Task { @MainActor in
+                    heartbeatAt = Date()
+                    expiration.storeGate.completeFailure()
+                }
+                await expiration.drainAfterSeal()
+                await heartbeat.value
+            }
+            await drain.value
+            fallback.cancel()
+
+            let heartbeatDelay = try XCTUnwrap(heartbeatAt).timeIntervalSince(startedAt)
+            XCTAssertLessThan(
+                heartbeatDelay,
+                0.5,
+                "The exact-store drain blocked the main actor instead of yielding"
+            )
+        }
+
         func testForegroundStoreClaimRejectsHeadlessOpenUntilReleased() async {
             var startCount = 0
             let runner = iOSBackgroundSyncRunner {
@@ -597,7 +638,7 @@
             }
             let claimID = UUID()
 
-            runner.claimForegroundStore(claimID)
+            await runner.claimForegroundStore(claimID)
             let rejected = await runner.performScheduledSync()
             XCTAssertEqual(rejected, .failed)
             XCTAssertEqual(startCount, 0)
@@ -626,7 +667,7 @@
                 startCount == 1
             }
 
-            runner.cancelInFlightSync()
+            await runner.cancelInFlightSync()
             let secondWake = Task { @MainActor in
                 await runner.performRemoteNotificationSync()
             }

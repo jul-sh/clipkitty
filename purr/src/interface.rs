@@ -706,6 +706,59 @@ pub struct ClipboardItem {
     pub content: ClipboardContent,
 }
 
+/// Expected all-or-nothing rejection reasons for a bounded outbound transfer.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
+pub enum TransferFetchRejection {
+    TooManyItems,
+    DuplicateItemId { item_id: String },
+    MissingItem { item_id: String },
+    TextTooLarge { item_id: String },
+    ImageTooLarge { item_id: String },
+    AggregateTooLarge,
+}
+
+/// One bounded transfer payload together with an opaque snapshot token.
+///
+/// The token identifies the exact database payload used to fulfill the drag.
+/// Callers must pass it back to `delete_transferred_items_if_unchanged` rather
+/// than deleting by stable item ID alone: sync can replace an item's content
+/// under the same ID while a third-party drop is in flight.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct TransferItemSnapshot {
+    pub item: ClipboardItem,
+    pub deletion_token: String,
+}
+
+/// Compare-and-delete input produced from a successfully delivered transfer.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TransferDeletionCandidate {
+    pub item_id: String,
+    pub deletion_token: String,
+}
+
+/// Result of conditional transfer deletion.
+///
+/// Each matching candidate is committed atomically and independently in input
+/// order. Missing items and items whose payload changed are retained, not
+/// treated as infrastructure failures. Both arrays preserve the input order.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ConditionalTransferDeleteOutcome {
+    pub deleted_item_ids: Vec<String>,
+    pub retained_item_ids: Vec<String>,
+}
+
+/// Typed result for bounded transfer loading. Infrastructure/database failures
+/// remain `ClipKittyError`; expected selection and size rejections are values.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum TransferFetchOutcome {
+    Success {
+        snapshots: Vec<TransferItemSnapshot>,
+    },
+    Rejected {
+        reason: TransferFetchRejection,
+    },
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // SYNC TYPES (exposed to Swift for SyncEngine)
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -649,7 +649,7 @@ jobs:
             -derivedDataPath DerivedData \
             -resultBundlePath TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO \
-            -only-testing:ClipKittyiOSTests/DockedKeyboardInsetTests
+            -only-testing:ClipKittyiOSTests
 
       - name: Upload Test Results
         if: always()

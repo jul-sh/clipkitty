@@ -1101,6 +1101,10 @@ let project = Project(
                 "Tests/iOSTests/**",
                 "Tests/TestSupport/**",
                 "Tests/ShortcutContractTests/**",
+                // Compile the share-provider boundary into the iOS test module
+                // so synthetic NSItemProvider regressions exercise the exact
+                // extension implementation.
+                "Sources/ShareExtension/ShareView.swift",
             ],
             dependencies: [
                 .target(name: "ClipKittyiOS"),

@@ -1,10 +1,14 @@
 import ClipKittyBrowser
 import ClipKittyRust
 import SwiftUI
+import UIKit
 
 struct HomeFeedView: View {
+    @Environment(AppContainer.self) private var container
     @Environment(AppState.self) private var appState
     @Environment(BrowserViewModel.self) private var viewModel
+    @Environment(HapticsClient.self) private var haptics
+    @Environment(iOSSettingsStore.self) private var settings
     @Environment(\.dockedKeyboardInset) private var dockedKeyboardInset
 
     @State private var isSearchActive = false
@@ -13,6 +17,10 @@ struct HomeFeedView: View {
     @State private var showSettings = false
     @State private var searchFocusRequestID = 0
     @State private var feedLayout: FeedLayout = .singleColumn
+    @State private var selection = FeedSelectionState()
+    @State private var showDeleteConfirmation = false
+    @State private var bulkCopyTask: Task<Void, Never>?
+    @State private var bulkCopyRequestID: UUID?
     /// Cards currently drawing an image placeholder; see
     /// `PendingImagePlaceholderCount` and `feedLoadPhase`.
     @State private var pendingImagePlaceholders = 0
@@ -51,25 +59,61 @@ struct HomeFeedView: View {
                         Color.clear.frame(height: 72 + dockedKeyboardInset)
                     }
 
-                BottomControlBar(
-                    isSearchActive: $isSearchActive,
-                    searchFocusRequestID: searchFocusRequestID
-                )
-                .padding(.bottom, dockedKeyboardInset)
+                if selection.isActive {
+                    FeedSelectionActionBar(
+                        selectedItemIDs: orderedSelectedItemIDs,
+                        makeDragPayload: makeExternalDragPayload,
+                        isCopying: isBulkCopying,
+                        onCopy: copySelectedItems,
+                        onDelete: { showDeleteConfirmation = true },
+                        onTransferLimitExceeded: showTransferItemLimitExceeded,
+                        onExternalCopyTransferCompleted: removeTransferredItemsIfEnabled
+                    )
+                    .padding(.bottom, dockedKeyboardInset)
+                } else {
+                    BottomControlBar(
+                        isSearchActive: $isSearchActive,
+                        searchFocusRequestID: searchFocusRequestID
+                    )
+                    .padding(.bottom, dockedKeyboardInset)
+                }
             }
-            .navigationTitle("ClipKitty")
+            .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(item: $previewItemId) { itemId in
                 PreviewScreen(itemId: itemId)
             }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showSettings = true
-                    } label: {
-                        Image(systemName: "gearshape")
+                if selection.isActive {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(String(localized: "Cancel")) {
+                            cancelSelection()
+                        }
                     }
-                    .accessibilityIdentifier("home.settingsButton")
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(
+                            selection.areAllSelected(in: visibleItemIDs)
+                                ? String(localized: "Deselect All")
+                                : String(localized: "Select All")
+                        ) {
+                            toggleAllVisibleItems()
+                        }
+                        .disabled(visibleItemIDs.isEmpty)
+                    }
+                } else {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button(String(localized: "Select")) {
+                            selection.beginSelection()
+                        }
+                        .disabled(filteredRows.isEmpty)
+
+                        Button {
+                            showSettings = true
+                        } label: {
+                            Image(systemName: "gearshape")
+                        }
+                        .accessibilityIdentifier("home.settingsButton")
+                    }
                 }
             }
             .sheet(isPresented: $showSettings) {
@@ -83,12 +127,27 @@ struct HomeFeedView: View {
                     contentRevision: appState.contentRevision
                 )
             }
-            .onChange(of: appState.contentRevision) { _, newValue in
-                viewModel.handlePanelVisibilityChange(true, contentRevision: newValue)
+            .onChange(of: visibleItemIDs) { _, newValue in
+                cancelBulkCopy()
+                selection.reconcile(with: newValue)
             }
             .onChange(of: previewItemId) { oldValue, newValue in
                 guard oldValue != nil, newValue == nil, isSearchActive else { return }
                 searchFocusRequestID += 1
+            }
+            .alert(
+                String(localized: "Delete Selected Items?"),
+                isPresented: $showDeleteConfirmation
+            ) {
+                Button(String(localized: "Delete"), role: .destructive) {
+                    deleteSelectedItems()
+                }
+                Button(String(localized: "Cancel"), role: .cancel) {}
+            } message: {
+                Text(String(localized: "Are you sure you want to delete the selected items?"))
+            }
+            .onDisappear {
+                cancelBulkCopy()
             }
         }
     }
@@ -152,23 +211,17 @@ struct HomeFeedView: View {
             switch feedLayout {
             case .singleColumn:
                 ForEach(filteredRows) { row in
-                    CardView(
-                        row: row,
-                        previewItemId: $previewItemId
-                    )
-                    .onAppear {
-                        viewModel.loadMatchedExcerptsForItems([row.id])
-                    }
+                    feedCard(for: row)
+                        .onAppear {
+                            viewModel.loadMatchedExcerptsForItems([row.id])
+                        }
                 }
 
             case let .packedRows(rowWidth):
                 ForEach(CardRowChunk.pack(filteredRows, rowWidth: rowWidth)) { chunk in
                     JustifiedCardRow {
                         ForEach(chunk.rows) { row in
-                            CardView(
-                                row: row,
-                                previewItemId: $previewItemId
-                            )
+                            feedCard(for: row)
                         }
                     }
                     .onAppear {
@@ -217,6 +270,236 @@ struct HomeFeedView: View {
             if case .symbol(.file) = row.metadata.icon { return false }
             return true
         }
+    }
+
+    private var visibleItemIDs: [String] {
+        filteredRows.map(\.id)
+    }
+
+    private var orderedSelectedItemIDs: [String] {
+        selection.orderedSelectedItemIDs(in: visibleItemIDs)
+    }
+
+    private var navigationTitle: String {
+        guard selection.isActive else { return "ClipKitty" }
+        return String.localizedStringWithFormat(
+            String(localized: "%lld Selected"),
+            Int64(selection.selectedCount)
+        )
+    }
+
+    private func feedCard(for row: DisplayRow) -> some View {
+        CardView(
+            row: row,
+            previewItemId: $previewItemId,
+            isSelectionMode: selection.isActive,
+            isSelected: selection.selectedItemIDs.contains(row.id),
+            onToggleSelection: {
+                cancelBulkCopy()
+                selection.toggleSelection(for: row.id)
+            },
+            onExternalCopyTransferCompleted: removeTransferredItemsIfEnabled
+        )
+    }
+
+    private func toggleAllVisibleItems() {
+        cancelBulkCopy()
+        if selection.areAllSelected(in: visibleItemIDs) {
+            selection.deselectAll()
+        } else {
+            selection.selectAll(in: visibleItemIDs)
+        }
+        haptics.fire(.selection)
+    }
+
+    private func copySelectedItems() {
+        let itemIDs = orderedSelectedItemIDs
+        guard !itemIDs.isEmpty, !isBulkCopying else { return }
+        guard iOSTransferLimits.validateItemCount(itemIDs.count) == nil else {
+            showTransferItemLimitExceeded()
+            return
+        }
+
+        let requestID = UUID()
+        bulkCopyRequestID = requestID
+
+        let task = Task { @MainActor in
+            defer { finishBulkCopy(requestID: requestID) }
+            guard !Task.isCancelled else { return }
+            let result = await container.repository.fetchTransferItems(ids: itemIDs)
+            guard !Task.isCancelled,
+                  selection.isActive,
+                  orderedSelectedItemIDs == itemIDs
+            else { return }
+
+            switch result {
+            case let .success(snapshots):
+                let items = snapshots.map(\.item)
+                guard items.map(\.itemMetadata.itemId) == itemIDs else {
+                    showBulkCopyFailure(String(localized: "Could not load item"))
+                    selection.reconcile(with: visibleItemIDs)
+                    return
+                }
+                let copied = await container.clipboardService.copy(contents: items.map(\.content))
+                guard !Task.isCancelled,
+                      bulkCopyRequestID == requestID,
+                      selection.isActive,
+                      orderedSelectedItemIDs == itemIDs
+                else { return }
+                guard copied else {
+                    showBulkCopyFailure(String(localized: "Could not load item"))
+                    selection.reconcile(with: visibleItemIDs)
+                    return
+                }
+
+                haptics.fire(.copy)
+                appState.showToast(.copied)
+
+            case let .rejected(reason):
+                switch reason {
+                case .tooManyItems:
+                    showTransferItemLimitExceeded()
+                case .textTooLarge, .imageTooLarge, .aggregateTooLarge:
+                    showBulkCopyFailure(
+                        String(localized: "The selected items are too large to copy or drag together.")
+                    )
+                case .duplicateItemId, .missingItem:
+                    showBulkCopyFailure(String(localized: "Could not load item"))
+                    selection.reconcile(with: visibleItemIDs)
+                }
+
+            case .cancelled:
+                return
+
+            case .failure:
+                showBulkCopyFailure(String(localized: "Could not load item"))
+                selection.reconcile(with: visibleItemIDs)
+            }
+        }
+        bulkCopyTask = task
+        guard appState.registerForegroundTask(id: requestID, task: task) else {
+            cancelBulkCopy()
+            return
+        }
+    }
+
+    private func showBulkCopyFailure(_ message: String) {
+        haptics.fire(.destructive)
+        appState.showToast(.addFailed(message))
+    }
+
+    private func deleteSelectedItems() {
+        let itemIDs = orderedSelectedItemIDs
+        cancelBulkCopy()
+        guard viewModel.deleteItems(itemIds: itemIDs) else { return }
+        selection.cancelSelection()
+        haptics.fire(.destructive)
+    }
+
+    @MainActor
+    private func removeTransferredItemsIfEnabled(
+        _ evidence: [ExternalCopyTransferEvidence]
+    ) async {
+        guard settings.deleteAfterSuccessfulExternalDrop, !evidence.isEmpty else { return }
+
+        let itemIDs = evidence.map(\.itemID)
+        guard Set(itemIDs).count == itemIDs.count,
+              evidence.allSatisfy({ !$0.deletionToken.isEmpty })
+        else {
+            appState.refreshFeed()
+            return
+        }
+
+        let candidates = evidence.map {
+            TransferDeletionCandidate(
+                itemId: $0.itemID,
+                deletionToken: $0.deletionToken
+            )
+        }
+        let deletion = await container.repository.deleteTransferredItemsIfUnchanged(
+            candidates: candidates
+        )
+        // The conditional mutation can commit one or more candidates before
+        // lease expiration cancels this follow-up (and a later candidate can
+        // still fail). Reconcile the authoritative store outcome first; only
+        // outgoing-view selection state is cancellation-gated below.
+        appState.refreshFeed()
+        guard !Task.isCancelled else { return }
+
+        cancelBulkCopy()
+        switch deletion {
+        case let .success(outcome):
+            selection.deselect(itemIDs: outcome.deletedItemIds)
+            if selection.selectedCount == 0 {
+                selection.cancelSelection()
+            }
+        case .failure:
+            // A synced batch can have committed an earlier candidate before a
+            // later infrastructure failure. Re-read instead of guessing which
+            // IDs remain; the database is authoritative.
+            break
+        }
+    }
+
+    private var isBulkCopying: Bool {
+        bulkCopyTask != nil
+    }
+
+    private func cancelSelection() {
+        cancelBulkCopy()
+        selection.cancelSelection()
+    }
+
+    private func cancelBulkCopy() {
+        bulkCopyRequestID = nil
+        bulkCopyTask?.cancel()
+        bulkCopyTask = nil
+    }
+
+    private func finishBulkCopy(requestID: UUID) {
+        appState.finishForegroundTask(id: requestID)
+        guard bulkCopyRequestID == requestID else { return }
+        bulkCopyRequestID = nil
+        bulkCopyTask = nil
+    }
+
+    private func showTransferItemLimitExceeded() {
+        haptics.fire(.destructive)
+        let message = String.localizedStringWithFormat(
+            String(localized: "Copy or drag up to %lld items at a time."),
+            Int64(iOSTransferLimits.maximumItemCount)
+        )
+        appState.showToast(.addFailed(message))
+    }
+
+    @MainActor
+    private func makeExternalDragPayload(itemIDs: [String]) -> ExternalCopyDragPayload {
+        var iconsByItemID: [String: ItemIcon] = [:]
+        for row in filteredRows where iconsByItemID[row.id] == nil {
+            iconsByItemID[row.id] = row.metadata.icon
+        }
+        let descriptors = itemIDs.compactMap { itemID in
+            iconsByItemID[itemID].map {
+                ExternalCopyDragItemDescriptor(itemID: itemID, icon: $0)
+            }
+        }
+        guard descriptors.count == itemIDs.count else {
+            return ExternalCopyDragPayload(items: [])
+        }
+
+        let repository = container.repository
+        return ExternalCopyDragPayload(
+            descriptors: descriptors,
+            // Multi-item drag uses the UIKit delegate path, so its lazy store
+            // fetch can remain available after a full-screen external drop.
+            // A denied UIKit reservation is intentionally non-fatal: providers
+            // still work while the foreground store remains available and any
+            // failed transfer retains its source item.
+            externalTransferLease: appState.beginExternalTransfer(),
+            fetchSnapshot: { id in
+                await repository.fetchTransferSnapshot(id: id)
+            }
+        )
     }
 
     private var loadingView: some View {

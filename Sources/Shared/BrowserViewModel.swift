@@ -574,38 +574,56 @@ public final class BrowserViewModel {
         deleteItem(itemId: itemId)
     }
 
-    public func deleteItem(itemId: String) {
+    @discardableResult
+    public func deleteItem(itemId: String) -> Bool {
+        deleteItems(itemIds: [itemId])
+    }
+
+    /// Starts one undoable delete transaction for the supplied item IDs.
+    /// IDs are de-duplicated without changing their order so persistence and
+    /// tests observe the same deterministic sequence the caller supplied.
+    @discardableResult
+    public func deleteItems(itemIds: [String]) -> Bool {
+        var seenItemIds = Set<String>()
+        let uniqueItemIds = itemIds.filter { itemId in
+            !itemId.isEmpty && seenItemIds.insert(itemId).inserted
+        }
+        guard !uniqueItemIds.isEmpty else { return false }
+
         switch mutationState {
         case var .deleting(.pending(prev)):
-            guard !prev.deletedItemIds.contains(itemId) else { return }
+            let alreadyPendingItemIds = Set(prev.deletedItemIds)
+            let newItemIds = uniqueItemIds.filter { !alreadyPendingItemIds.contains($0) }
+            guard !newItemIds.isEmpty else { return false }
             pendingDeleteTask?.cancel()
             cancelPreviewWork()
-            prev.deletedItemIds.append(itemId)
+            prev.deletedItemIds.append(contentsOf: newItemIds)
             mutationState = .deleting(.pending(prev))
-            applyOptimisticDelete(itemId: itemId)
+            applyOptimisticDelete(itemIds: newItemIds)
             showDeleteUndoNotification(count: prev.deletedItemIds.count)
             scheduleDeleteCommit()
-            return
+            return true
         case .idle, .failed:
             break
         case .saving, .deleting(.committing), .tagging, .clearing:
-            return
+            return false
         }
 
         let contentSnapshot = displayedContent
         let selectionSnapshot = selectionState
         cancelPreviewWork()
         let transaction = DeleteTransaction(
-            deletedItemIds: [itemId],
+            deletedItemIds: uniqueItemIds,
             contentSnapshot: contentSnapshot,
             selectionSnapshot: selectionSnapshot,
             queryGeneration: queryGeneration
         )
         mutationState = .deleting(.pending(transaction))
 
-        applyOptimisticDelete(itemId: itemId)
-        showDeleteUndoNotification(count: 1)
+        applyOptimisticDelete(itemIds: uniqueItemIds)
+        showDeleteUndoNotification(count: uniqueItemIds.count)
         scheduleDeleteCommit()
+        return true
     }
 
     private func scheduleDeleteCommit() {
@@ -1792,22 +1810,31 @@ public final class BrowserViewModel {
         }
     }
 
-    private func applyOptimisticDelete(itemId: String) {
-        discardEdit(for: itemId)
+    private func applyOptimisticDelete(itemIds: [String]) {
+        let deletedItemIds = Set(itemIds)
+        for itemId in deletedItemIds {
+            discardEdit(for: itemId)
+            resolvedMatchedExcerptsByItemId.removeValue(forKey: itemId)
+            previewPayloadsByItemId.removeValue(forKey: itemId)
+            prefetchCache.removeValue(forKey: itemId)
+        }
+
         guard let response = currentResponse else { return }
-        let filteredItems = response.items.filter { $0.itemMetadata.itemId != itemId }
-        resolvedMatchedExcerptsByItemId.removeValue(forKey: itemId)
-        previewPayloadsByItemId.removeValue(forKey: itemId)
-        prefetchCache.removeValue(forKey: itemId)
-        let deletedSelectedItem = selectedItemId == itemId
-        let nextSelection = deletedSelectedItem ? nextSelectionAfterDelete(deleting: itemId) : nil
+        let filteredItems = response.items.filter { !deletedItemIds.contains($0.itemMetadata.itemId) }
+        let matchedItemCount = response.items.count - filteredItems.count
+        let deletedSelectedItem = selectedItemId.map(deletedItemIds.contains) ?? false
+        let nextSelection = deletedSelectedItem
+            ? nextSelectionAfterDelete(deleting: deletedItemIds)
+            : nil
+        let filteredFirstPreviewPayload: PreviewPayload? =
+            if let payload = response.firstPreviewPayload,
+            deletedItemIds.contains(payload.item.itemMetadata.itemId) { nil }
+            else { response.firstPreviewPayload }
         updateDisplayedResponse(BrowserSearchResponse(
             request: response.request,
             items: filteredItems,
-            firstPreviewPayload: response.firstPreviewPayload?.item.itemMetadata.itemId == itemId
-                ? nil
-                : response.firstPreviewPayload,
-            totalCount: max(0, response.totalCount - 1)
+            firstPreviewPayload: filteredFirstPreviewPayload,
+            totalCount: max(0, response.totalCount - matchedItemCount)
         ))
 
         if let nextSelection {
@@ -1876,13 +1903,23 @@ public final class BrowserViewModel {
         refreshCurrentRequestAfterMutation(discardSelectedPayload: true)
     }
 
-    private func nextSelectionAfterDelete(deleting _: String) -> String? {
+    private func nextSelectionAfterDelete(deleting deletedItemIds: Set<String>) -> String? {
         guard let currentIndex = selectedIndex else { return nil }
+
         if currentIndex + 1 < itemCount {
-            return itemIdentifier(at: currentIndex + 1)
+            for index in (currentIndex + 1) ..< itemCount {
+                if let itemId = itemIdentifier(at: index), !deletedItemIds.contains(itemId) {
+                    return itemId
+                }
+            }
         }
+
         if currentIndex > 0 {
-            return itemIdentifier(at: currentIndex - 1)
+            for index in stride(from: currentIndex - 1, through: 0, by: -1) {
+                if let itemId = itemIdentifier(at: index), !deletedItemIds.contains(itemId) {
+                    return itemId
+                }
+            }
         }
         return nil
     }
@@ -1995,7 +2032,8 @@ public final class BrowserViewModel {
     private func responseHidingDeletedItems(_ response: BrowserSearchResponse, deletedItemIds: [String]) -> BrowserSearchResponse {
         let idSet = Set(deletedItemIds)
         let filteredItems = response.items.filter { !idSet.contains($0.itemMetadata.itemId) }
-        guard filteredItems.count < response.items.count else { return response }
+        let matchedItemCount = response.items.count - filteredItems.count
+        guard matchedItemCount > 0 else { return response }
 
         let filteredFirstPreviewPayload: PreviewPayload? =
             if let preview = response.firstPreviewPayload,
@@ -2006,7 +2044,7 @@ public final class BrowserViewModel {
             request: response.request,
             items: filteredItems,
             firstPreviewPayload: filteredFirstPreviewPayload,
-            totalCount: max(0, response.totalCount - idSet.count)
+            totalCount: max(0, response.totalCount - matchedItemCount)
         )
     }
 

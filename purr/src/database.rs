@@ -4,9 +4,10 @@
 //! Uses r2d2 connection pooling to allow concurrent reads without mutex blocking.
 
 use crate::interface::{
-    BaselineExcerpt, ClipboardContent, ContentTypeFilter, FileEntry, FilePreviewSnapshot,
-    FileStatus, FileTextPreviewSnapshot, ItemIcon, ItemMetadata, ItemTag, LinkMetadataState,
-    ListPresentationProfile,
+    BaselineExcerpt, ClipboardContent, ClipboardItem, ConditionalTransferDeleteOutcome,
+    ContentTypeFilter, FileEntry, FilePreviewSnapshot, FileStatus, FileTextPreviewSnapshot,
+    ItemIcon, ItemMetadata, ItemTag, LinkMetadataState, ListPresentationProfile,
+    TransferDeletionCandidate, TransferFetchRejection, TransferItemSnapshot,
 };
 use crate::models::StoredItem;
 use crate::search::{generate_preview_for_profile, SNIPPET_CONTEXT_CHARS};
@@ -15,6 +16,8 @@ use parking_lot::RwLock;
 use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::params;
+use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use thiserror::Error;
 
@@ -60,6 +63,34 @@ const GENERATED_ITEM_ID_SQL: &str = r#"lower(
     substr(hex(randomblob(2)),2) || '-' ||
     hex(randomblob(6))
 )"#;
+
+/// Resource ceilings applied before full clipboard payloads are materialized.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct TransferFetchLimits {
+    pub(crate) maximum_item_count: usize,
+    pub(crate) maximum_text_byte_count: u64,
+    pub(crate) maximum_image_byte_count: u64,
+    pub(crate) maximum_aggregate_byte_count: u64,
+}
+
+pub(crate) enum DatabaseTransferFetchOutcome {
+    Accepted(Vec<TransferItemSnapshot>),
+    Rejected(TransferFetchRejection),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TransferPayloadFootprint {
+    text_byte_count: u64,
+    image_byte_count: u64,
+}
+
+const TRANSFER_DELETION_TOKEN_VERSION: &str = "v1";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TransferDeletionTokenFootprint {
+    text_byte_count: u64,
+    image_byte_count: u64,
+}
 
 /// Intermediate row with raw content prefix; excerpt formatting is deferred to caller.
 struct RawRowMetadata {
@@ -1376,6 +1407,564 @@ impl Database {
         }
 
         let conn = self.get_conn()?;
+        Self::fetch_items_by_item_ids_on_connection(&conn, item_ids)
+    }
+
+    /// Validate an outbound bulk transfer using SQL byte lengths before any full
+    /// text or image payload is read into Rust memory. Accepted requests are then
+    /// hydrated from the same read transaction, so validation and loading observe
+    /// one database snapshot.
+    pub(crate) fn fetch_items_for_transfer(
+        &self,
+        item_ids: &[String],
+        limits: TransferFetchLimits,
+    ) -> DatabaseResult<DatabaseTransferFetchOutcome> {
+        if item_ids.is_empty() {
+            return Ok(DatabaseTransferFetchOutcome::Accepted(Vec::new()));
+        }
+        if item_ids.len() > limits.maximum_item_count {
+            return Ok(DatabaseTransferFetchOutcome::Rejected(
+                TransferFetchRejection::TooManyItems,
+            ));
+        }
+
+        let mut seen = HashSet::with_capacity(item_ids.len());
+        for item_id in item_ids {
+            if !seen.insert(item_id.as_str()) {
+                return Ok(DatabaseTransferFetchOutcome::Rejected(
+                    TransferFetchRejection::DuplicateItemId {
+                        item_id: item_id.clone(),
+                    },
+                ));
+            }
+        }
+
+        let conn = self.get_conn()?;
+        let transaction = conn.unchecked_transaction()?;
+        let footprints = Self::fetch_transfer_footprints(&transaction, item_ids)?;
+        if let Some(rejection) = Self::validate_transfer_footprints(item_ids, &footprints, limits) {
+            return Ok(DatabaseTransferFetchOutcome::Rejected(rejection));
+        }
+
+        let items = Self::fetch_transfer_items_on_connection(&transaction, item_ids)?;
+        transaction.commit()?;
+        Ok(DatabaseTransferFetchOutcome::Accepted(items))
+    }
+
+    /// Atomically delete only transfer payloads that still match the opaque
+    /// tokens minted by `fetch_items_for_transfer`.
+    ///
+    /// The immediate transaction takes SQLite's writer reservation before any
+    /// comparison is made. A concurrent writer therefore cannot replace an item
+    /// between the fingerprint check and the `DELETE`. Missing, malformed, or
+    /// changed candidates fail closed and are reported as retained.
+    #[cfg(any(test, not(feature = "sync")))]
+    pub(crate) fn delete_transfer_items_if_unchanged(
+        &self,
+        candidates: &[TransferDeletionCandidate],
+        limits: TransferFetchLimits,
+    ) -> DatabaseResult<ConditionalTransferDeleteOutcome> {
+        self.delete_transfer_items_if_unchanged_with(candidates, limits, |_, _| Ok(()))
+    }
+
+    /// Conditional transfer deletion with a callback that participates in the
+    /// same immediate transaction immediately before each matching row is
+    /// deleted. The sync-aware store uses this to persist its tombstone first
+    /// without creating a separately committed state.
+    pub(crate) fn delete_transfer_items_if_unchanged_with<E, F>(
+        &self,
+        candidates: &[TransferDeletionCandidate],
+        limits: TransferFetchLimits,
+        mut before_delete: F,
+    ) -> Result<ConditionalTransferDeleteOutcome, E>
+    where
+        E: From<DatabaseError>,
+        F: FnMut(&rusqlite::Connection, &str) -> Result<(), E>,
+    {
+        if candidates.is_empty() {
+            return Ok(ConditionalTransferDeleteOutcome {
+                deleted_item_ids: Vec::new(),
+                retained_item_ids: Vec::new(),
+            });
+        }
+
+        let mut conn = self.get_conn().map_err(E::from)?;
+        let transaction = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(DatabaseError::from)
+            .map_err(E::from)?;
+        let matching_item_ids = Self::matching_transfer_deletion_item_ids_on_connection(
+            &transaction,
+            candidates,
+            limits,
+        )
+        .map_err(E::from)?;
+        let matching_item_id_set: HashSet<&str> =
+            matching_item_ids.iter().map(String::as_str).collect();
+
+        let mut deleted_item_ids = Vec::new();
+        let mut retained_item_ids = Vec::new();
+        for candidate in candidates {
+            if !matching_item_id_set.contains(candidate.item_id.as_str()) {
+                retained_item_ids.push(candidate.item_id.clone());
+                continue;
+            }
+
+            before_delete(&transaction, &candidate.item_id)?;
+            let deleted = transaction
+                .execute("DELETE FROM items WHERE item_id = ?1", [&candidate.item_id])
+                .map_err(DatabaseError::from)
+                .map_err(E::from)?;
+            if deleted != 1 {
+                // The tombstone callback has already run inside this transaction.
+                // Fail the whole transaction rather than committing sync deletion
+                // state for a read-model row that was not removed.
+                return Err(E::from(DatabaseError::InconsistentData(format!(
+                    "transfer item {} matched its token but deleted {deleted} rows",
+                    candidate.item_id
+                ))));
+            }
+
+            #[cfg(feature = "sync")]
+            Self::enqueue_transfer_index_delete(&transaction, &candidate.item_id)
+                .map_err(E::from)?;
+            deleted_item_ids.push(candidate.item_id.clone());
+        }
+
+        transaction
+            .commit()
+            .map_err(DatabaseError::from)
+            .map_err(E::from)?;
+        Ok(ConditionalTransferDeleteOutcome {
+            deleted_item_ids,
+            retained_item_ids,
+        })
+    }
+
+    /// Return the candidates that match the current transfer projection without
+    /// mutating it. The store uses this under its mutation lock to emit sync
+    /// tombstones before calling the final atomic compare-and-delete operation.
+    pub(crate) fn matching_transfer_deletion_item_ids(
+        &self,
+        candidates: &[TransferDeletionCandidate],
+        limits: TransferFetchLimits,
+    ) -> DatabaseResult<Vec<String>> {
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.get_conn()?;
+        let transaction = conn.unchecked_transaction()?;
+        let matching_item_ids = Self::matching_transfer_deletion_item_ids_on_connection(
+            &transaction,
+            candidates,
+            limits,
+        )?;
+        transaction.commit()?;
+        Ok(matching_item_ids)
+    }
+
+    fn matching_transfer_deletion_item_ids_on_connection(
+        conn: &rusqlite::Connection,
+        candidates: &[TransferDeletionCandidate],
+        limits: TransferFetchLimits,
+    ) -> DatabaseResult<Vec<String>> {
+        let candidate_ids: Vec<String> = candidates
+            .iter()
+            .map(|candidate| candidate.item_id.clone())
+            .collect();
+        let footprints = Self::fetch_transfer_footprints(conn, &candidate_ids)?;
+
+        // Only materialize candidates whose declared byte counts still match
+        // SQLite's cheap length preflight. A changed item that became enormous
+        // is retained without loading its new payload into memory.
+        let mut aggregate_byte_count = 0_u64;
+        let mut hydratable_ids = Vec::with_capacity(candidates.len());
+        let mut hydratable_item_ids = HashSet::with_capacity(candidates.len());
+        for candidate in candidates {
+            if !hydratable_item_ids.insert(candidate.item_id.as_str()) {
+                continue;
+            }
+            let Some(token_footprint) =
+                Self::parse_transfer_deletion_token(&candidate.deletion_token)
+            else {
+                continue;
+            };
+            let Some(current_footprint) = footprints.get(&candidate.item_id) else {
+                continue;
+            };
+            if token_footprint.text_byte_count != current_footprint.text_byte_count
+                || token_footprint.image_byte_count != current_footprint.image_byte_count
+                || token_footprint.text_byte_count > limits.maximum_text_byte_count
+                || token_footprint.image_byte_count > limits.maximum_image_byte_count
+            {
+                continue;
+            }
+
+            let Some(candidate_byte_count) = token_footprint
+                .text_byte_count
+                .checked_add(token_footprint.image_byte_count)
+            else {
+                continue;
+            };
+            let Some(new_aggregate_byte_count) =
+                aggregate_byte_count.checked_add(candidate_byte_count)
+            else {
+                continue;
+            };
+            if new_aggregate_byte_count > limits.maximum_aggregate_byte_count {
+                continue;
+            }
+            aggregate_byte_count = new_aggregate_byte_count;
+            hydratable_ids.push(candidate.item_id.clone());
+        }
+
+        let current_snapshots = Self::fetch_transfer_items_on_connection(conn, &hydratable_ids)?;
+        let current_tokens: HashMap<String, String> = current_snapshots
+            .into_iter()
+            .map(|snapshot| (snapshot.item.item_metadata.item_id, snapshot.deletion_token))
+            .collect();
+
+        Ok(candidates
+            .iter()
+            .filter(|candidate| {
+                current_tokens
+                    .get(&candidate.item_id)
+                    .is_some_and(|token| token == &candidate.deletion_token)
+            })
+            .map(|candidate| candidate.item_id.clone())
+            .collect())
+    }
+
+    #[cfg(feature = "sync")]
+    fn enqueue_transfer_index_delete(
+        conn: &rusqlite::Connection,
+        item_id: &str,
+    ) -> DatabaseResult<()> {
+        use purr_sync::types::FLAG_INDEX_DIRTY;
+
+        let now = Utc::now().timestamp();
+        conn.execute(
+            r#"INSERT INTO sync_index_queue (queue_key, operation, item_id, updated_at)
+               VALUES (?1, 'delete', ?1, ?2)
+               ON CONFLICT(queue_key) DO UPDATE SET
+                 operation = excluded.operation,
+                 item_id = excluded.item_id,
+                 updated_at = excluded.updated_at"#,
+            params![item_id, now],
+        )?;
+        conn.execute(
+            r#"INSERT INTO sync_dirty_flags (flag_name, flag_value, updated_at)
+               VALUES (?1, 1, ?2)
+               ON CONFLICT(flag_name) DO UPDATE SET
+                 flag_value = excluded.flag_value,
+                 updated_at = excluded.updated_at"#,
+            params![FLAG_INDEX_DIRTY, now],
+        )?;
+        Ok(())
+    }
+
+    fn validate_transfer_footprints(
+        item_ids: &[String],
+        footprints: &HashMap<String, TransferPayloadFootprint>,
+        limits: TransferFetchLimits,
+    ) -> Option<TransferFetchRejection> {
+        let mut aggregate_byte_count = 0_u64;
+        for item_id in item_ids {
+            let Some(footprint) = footprints.get(item_id) else {
+                return Some(TransferFetchRejection::MissingItem {
+                    item_id: item_id.clone(),
+                });
+            };
+
+            if footprint.text_byte_count > limits.maximum_text_byte_count {
+                return Some(TransferFetchRejection::TextTooLarge {
+                    item_id: item_id.clone(),
+                });
+            }
+            if footprint.image_byte_count > limits.maximum_image_byte_count {
+                return Some(TransferFetchRejection::ImageTooLarge {
+                    item_id: item_id.clone(),
+                });
+            }
+
+            for byte_count in [footprint.text_byte_count, footprint.image_byte_count] {
+                aggregate_byte_count = match aggregate_byte_count.checked_add(byte_count) {
+                    Some(total) if total <= limits.maximum_aggregate_byte_count => total,
+                    _ => return Some(TransferFetchRejection::AggregateTooLarge),
+                };
+            }
+        }
+        None
+    }
+
+    fn fetch_transfer_footprints(
+        conn: &rusqlite::Connection,
+        item_ids: &[String],
+    ) -> DatabaseResult<HashMap<String, TransferPayloadFootprint>> {
+        let placeholders = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        // Files transfer as the first filename (or their display name when no
+        // child row exists). `CAST(... AS BLOB)` makes SQLite's `length` report
+        // UTF-8 bytes instead of Unicode scalar count for all textual payloads.
+        let sql = format!(
+            r#"SELECT i.item_id,
+                      i.contentType,
+                      length(CAST(
+                        CASE WHEN i.contentType = 'file' THEN COALESCE(
+                          (SELECT f.filename
+                             FROM file_items f
+                            WHERE f.itemId = i.id
+                            ORDER BY f.ordinal
+                            LIMIT 1),
+                          i.content
+                        ) ELSE i.content END
+                      AS BLOB)) AS textByteCount,
+                      CASE WHEN i.contentType = 'image'
+                           THEN length(img.data)
+                           ELSE 0
+                       END AS imageByteCount
+                 FROM items i
+            LEFT JOIN image_items img ON img.itemId = i.id
+                WHERE i.item_id IN ({})"#,
+            placeholders
+        );
+        let params: Vec<rusqlite::types::Value> =
+            item_ids.iter().map(|id| id.clone().into()).collect();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+                row.get::<_, Option<i64>>(3)?,
+            ))
+        })?;
+
+        let mut footprints = HashMap::with_capacity(item_ids.len());
+        for row in rows {
+            let (item_id, content_type, raw_text_byte_count, raw_image_byte_count) = row?;
+            let raw_text_byte_count = raw_text_byte_count.ok_or_else(|| {
+                DatabaseError::InconsistentData(format!(
+                    "{content_type} item {item_id} is missing its transfer text payload"
+                ))
+            })?;
+            let raw_image_byte_count = raw_image_byte_count.ok_or_else(|| {
+                DatabaseError::InconsistentData(format!(
+                    "{content_type} item {item_id} is missing its transfer image payload"
+                ))
+            })?;
+            let text_byte_count = u64::try_from(raw_text_byte_count).map_err(|_| {
+                DatabaseError::InconsistentData(format!(
+                    "{content_type} item {item_id} has a negative transfer text length"
+                ))
+            })?;
+            let image_byte_count = u64::try_from(raw_image_byte_count).map_err(|_| {
+                DatabaseError::InconsistentData(format!(
+                    "{content_type} item {item_id} has a negative transfer image length"
+                ))
+            })?;
+            footprints.insert(
+                item_id,
+                TransferPayloadFootprint {
+                    text_byte_count,
+                    image_byte_count,
+                },
+            );
+        }
+        Ok(footprints)
+    }
+
+    /// Hydrate only the bytes used by pasteboard/drag encoders. In particular,
+    /// thumbnails, link metadata, source strings, bookmarks, paths, previews,
+    /// and all file rows after the first filename never cross the FFI boundary.
+    fn fetch_transfer_items_on_connection(
+        conn: &rusqlite::Connection,
+        item_ids: &[String],
+    ) -> DatabaseResult<Vec<TransferItemSnapshot>> {
+        if item_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            r#"SELECT i.item_id,
+                      i.contentType,
+                      CASE WHEN i.contentType = 'file' THEN COALESCE(
+                        (SELECT f.filename
+                           FROM file_items f
+                          WHERE f.itemId = i.id
+                          ORDER BY f.ordinal
+                          LIMIT 1),
+                        i.content
+                      ) ELSE i.content END AS transferText,
+                      i.colorRgba,
+                      CASE WHEN i.contentType = 'image' THEN img.data ELSE NULL END,
+                      CASE WHEN i.contentType = 'image' THEN img.is_animated ELSE NULL END
+                 FROM items i
+            LEFT JOIN image_items img ON img.itemId = i.id
+                WHERE i.item_id IN ({})"#,
+            placeholders
+        );
+        let params: Vec<rusqlite::types::Value> =
+            item_ids.iter().map(|id| id.clone().into()).collect();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<u32>>(3)?,
+                row.get::<_, Option<Vec<u8>>>(4)?,
+                row.get::<_, Option<i32>>(5)?,
+            ))
+        })?;
+
+        let mut items_by_id = HashMap::with_capacity(item_ids.len());
+        for row in rows {
+            let (item_id, content_type, transfer_text, color_rgba, image_data, is_animated) = row?;
+            let content = match content_type.as_str() {
+                "color" => ClipboardContent::Color {
+                    value: transfer_text,
+                },
+                "link" => ClipboardContent::Link {
+                    url: transfer_text,
+                    metadata_state: LinkMetadataState::Pending,
+                },
+                "image" => ClipboardContent::Image {
+                    data: image_data.ok_or_else(|| {
+                        DatabaseError::InconsistentData(format!(
+                            "image item {item_id} is missing its image payload"
+                        ))
+                    })?,
+                    description: transfer_text,
+                    is_animated: is_animated.ok_or_else(|| {
+                        DatabaseError::InconsistentData(format!(
+                            "image item {item_id} is missing its animation flag"
+                        ))
+                    })? != 0,
+                },
+                "file" => ClipboardContent::File {
+                    display_name: transfer_text.clone(),
+                    files: vec![FileEntry {
+                        path: String::new(),
+                        filename: transfer_text,
+                        file_size: 0,
+                        uti: "public.data".to_string(),
+                        bookmark_data: Vec::new(),
+                        file_status: FileStatus::Available,
+                        preview: FilePreviewSnapshot::not_captured(),
+                    }],
+                },
+                _ => ClipboardContent::Text {
+                    value: transfer_text,
+                },
+            };
+            let icon = ItemIcon::from_database(&content_type, color_rgba, None);
+            let item = ClipboardItem {
+                item_metadata: ItemMetadata {
+                    item_id: item_id.clone(),
+                    icon,
+                    source_app: None,
+                    source_app_bundle_id: None,
+                    timestamp_unix: 0,
+                    tags: Vec::new(),
+                },
+                content,
+            };
+            let deletion_token = Self::transfer_deletion_token(&item);
+            items_by_id.insert(
+                item_id,
+                TransferItemSnapshot {
+                    item,
+                    deletion_token,
+                },
+            );
+        }
+
+        let mut ordered_items = Vec::with_capacity(item_ids.len());
+        for item_id in item_ids {
+            let item = items_by_id.remove(item_id).ok_or_else(|| {
+                DatabaseError::InconsistentData(format!(
+                    "transfer item {item_id} disappeared inside its read transaction"
+                ))
+            })?;
+            ordered_items.push(item);
+        }
+        Ok(ordered_items)
+    }
+
+    fn transfer_deletion_token(item: &ClipboardItem) -> String {
+        let mut hasher = Sha256::new();
+        Self::hash_transfer_component(&mut hasher, b"clipkitty-transfer-deletion-token");
+        Self::hash_transfer_component(&mut hasher, item.item_metadata.item_id.as_bytes());
+
+        let (kind, text, image_data, is_animated) = match &item.content {
+            ClipboardContent::Text { value } => (b"text".as_slice(), value.as_str(), None, false),
+            ClipboardContent::Color { value } => (b"color".as_slice(), value.as_str(), None, false),
+            ClipboardContent::Link { url, .. } => (b"link".as_slice(), url.as_str(), None, false),
+            ClipboardContent::Image {
+                data,
+                description,
+                is_animated,
+            } => (
+                b"image".as_slice(),
+                description.as_str(),
+                Some(data.as_slice()),
+                *is_animated,
+            ),
+            ClipboardContent::File {
+                display_name,
+                files,
+            } => {
+                let filename = files
+                    .first()
+                    .map(|file| file.filename.as_str())
+                    .unwrap_or(display_name.as_str());
+                (b"file".as_slice(), filename, None, false)
+            }
+        };
+
+        Self::hash_transfer_component(&mut hasher, kind);
+        Self::hash_transfer_component(&mut hasher, text.as_bytes());
+        Self::hash_transfer_component(&mut hasher, image_data.unwrap_or_default());
+        Self::hash_transfer_component(&mut hasher, &[u8::from(is_animated)]);
+
+        let image_byte_count = image_data.map(|data| data.len() as u64).unwrap_or(0);
+        format!(
+            "{TRANSFER_DELETION_TOKEN_VERSION}:{}:{}:{:x}",
+            text.len(),
+            image_byte_count,
+            hasher.finalize()
+        )
+    }
+
+    fn hash_transfer_component(hasher: &mut Sha256, bytes: &[u8]) {
+        hasher.update((bytes.len() as u64).to_be_bytes());
+        hasher.update(bytes);
+    }
+
+    fn parse_transfer_deletion_token(token: &str) -> Option<TransferDeletionTokenFootprint> {
+        let mut parts = token.split(':');
+        if parts.next()? != TRANSFER_DELETION_TOKEN_VERSION {
+            return None;
+        }
+        let text_byte_count = parts.next()?.parse().ok()?;
+        let image_byte_count = parts.next()?.parse().ok()?;
+        let digest = parts.next()?;
+        if parts.next().is_some()
+            || digest.len() != 64
+            || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return None;
+        }
+        Some(TransferDeletionTokenFootprint {
+            text_byte_count,
+            image_byte_count,
+        })
+    }
+
+    fn fetch_items_by_item_ids_on_connection(
+        conn: &rusqlite::Connection,
+        item_ids: &[String],
+    ) -> DatabaseResult<Vec<StoredItem>> {
         let placeholders = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
             "SELECT id, contentType, contentHash, content, timestamp, sourceApp, sourceAppBundleId, thumbnail, colorRgba, item_id FROM items WHERE item_id IN ({})",
@@ -1713,6 +2302,400 @@ impl Database {
 mod tests {
     use super::*;
     use tempfile::NamedTempFile;
+
+    fn transfer_limits(
+        maximum_item_count: usize,
+        maximum_text_byte_count: u64,
+        maximum_image_byte_count: u64,
+        maximum_aggregate_byte_count: u64,
+    ) -> TransferFetchLimits {
+        TransferFetchLimits {
+            maximum_item_count,
+            maximum_text_byte_count,
+            maximum_image_byte_count,
+            maximum_aggregate_byte_count,
+        }
+    }
+
+    fn insert_text(db: &Database, value: &str) -> String {
+        let item = StoredItem::new_text(value.to_string(), None, None);
+        let item_id = item.item_id.clone();
+        db.insert_item(&item).unwrap();
+        item_id
+    }
+
+    #[test]
+    fn transfer_fetch_hydrates_only_after_preflight_and_preserves_requested_order() {
+        let db = Database::open_in_memory().unwrap();
+        let first_id = insert_text(&db, "first");
+        let second_id = insert_text(&db, "second");
+        let requested = vec![second_id.clone(), first_id.clone()];
+
+        let outcome = db
+            .fetch_items_for_transfer(&requested, transfer_limits(50, 10, 50, 50))
+            .unwrap();
+        let DatabaseTransferFetchOutcome::Accepted(items) = outcome else {
+            panic!("expected accepted transfer fetch");
+        };
+
+        assert_eq!(
+            items
+                .iter()
+                .map(|snapshot| snapshot.item.item_metadata.item_id.as_str())
+                .collect::<Vec<_>>(),
+            [second_id.as_str(), first_id.as_str()]
+        );
+    }
+
+    #[test]
+    fn transfer_fetch_rejects_duplicate_missing_and_excess_item_ids_atomically() {
+        let db = Database::open_in_memory().unwrap();
+        let item_id = insert_text(&db, "present");
+        let limits = transfer_limits(2, 100, 100, 100);
+
+        let duplicate = db
+            .fetch_items_for_transfer(&[item_id.clone(), item_id.clone()], limits)
+            .unwrap();
+        assert!(matches!(
+            duplicate,
+            DatabaseTransferFetchOutcome::Rejected(TransferFetchRejection::DuplicateItemId { .. })
+        ));
+
+        let missing = db
+            .fetch_items_for_transfer(&[item_id.clone(), "missing".to_string()], limits)
+            .unwrap();
+        assert!(matches!(
+            missing,
+            DatabaseTransferFetchOutcome::Rejected(TransferFetchRejection::MissingItem { item_id })
+                if item_id == "missing"
+        ));
+
+        let too_many = db
+            .fetch_items_for_transfer(
+                &[item_id, "missing-1".to_string(), "missing-2".to_string()],
+                limits,
+            )
+            .unwrap();
+        assert!(matches!(
+            too_many,
+            DatabaseTransferFetchOutcome::Rejected(TransferFetchRejection::TooManyItems)
+        ));
+    }
+
+    #[test]
+    fn transfer_fetch_rejects_oversized_text_before_attempting_to_hydrate_it() {
+        let db = Database::open_in_memory().unwrap();
+        let item_id = insert_text(&db, "safe");
+        let conn = db.get_conn().unwrap();
+        // Invalid UTF-8 would make `row_to_base_item` fail if the full `content`
+        // column were read. Its byte length can still be rejected safely first.
+        conn.execute(
+            "UPDATE items SET content = X'FFFFFFFF' WHERE item_id = ?1",
+            [&item_id],
+        )
+        .unwrap();
+        drop(conn);
+
+        let outcome = db
+            .fetch_items_for_transfer(
+                std::slice::from_ref(&item_id),
+                transfer_limits(50, 3, 50, 50),
+            )
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            DatabaseTransferFetchOutcome::Rejected(TransferFetchRejection::TextTooLarge {
+                item_id: rejected_id
+            }) if rejected_id == item_id
+        ));
+    }
+
+    #[test]
+    fn transfer_fetch_applies_image_and_aggregate_limits() {
+        let db = Database::open_in_memory().unwrap();
+        let image = StoredItem::new_image_with_thumbnail(
+            vec![1, 2, 3, 4],
+            Some(vec![9; 100]),
+            None,
+            None,
+            false,
+        );
+        let image_id = image.item_id.clone();
+        db.insert_item(&image).unwrap();
+
+        let accepted = db
+            .fetch_items_for_transfer(
+                std::slice::from_ref(&image_id),
+                transfer_limits(50, 100, 100, 9),
+            )
+            .unwrap();
+        let DatabaseTransferFetchOutcome::Accepted(items) = accepted else {
+            panic!("thumbnail bytes must not enter the transfer projection");
+        };
+        assert!(matches!(
+            items[0].item.item_metadata.icon,
+            ItemIcon::Symbol {
+                icon_type: crate::interface::IconType::Image
+            }
+        ));
+
+        let oversized_image = db
+            .fetch_items_for_transfer(
+                std::slice::from_ref(&image_id),
+                transfer_limits(50, 100, 3, 100),
+            )
+            .unwrap();
+        assert!(matches!(
+            oversized_image,
+            DatabaseTransferFetchOutcome::Rejected(TransferFetchRejection::ImageTooLarge { .. })
+        ));
+
+        let text_id = insert_text(&db, "ab");
+        let aggregate = db
+            .fetch_items_for_transfer(&[image_id, text_id], transfer_limits(50, 100, 100, 5))
+            .unwrap();
+        assert!(matches!(
+            aggregate,
+            DatabaseTransferFetchOutcome::Rejected(TransferFetchRejection::AggregateTooLarge)
+        ));
+    }
+
+    #[test]
+    fn transfer_fetch_projects_only_first_filename_not_file_child_payloads() {
+        let db = Database::open_in_memory().unwrap();
+        let file = StoredItem::new_files(
+            vec![
+                crate::interface::NewFileInput {
+                    path: "/private/large-first".to_string(),
+                    filename: "first.txt".to_string(),
+                    file_size: 1_000_000,
+                    uti: "public.text".to_string(),
+                    bookmark_data: vec![7; 128],
+                    preview: FilePreviewSnapshot::Image {
+                        preview_data: vec![8; 128],
+                    },
+                },
+                crate::interface::NewFileInput {
+                    path: "/private/large-second".to_string(),
+                    filename: "second.txt".to_string(),
+                    file_size: 1_000_000,
+                    uti: "public.text".to_string(),
+                    bookmark_data: vec![9; 128],
+                    preview: FilePreviewSnapshot::Image {
+                        preview_data: vec![10; 128],
+                    },
+                },
+            ],
+            None,
+            None,
+        );
+        let file_id = file.item_id.clone();
+        db.insert_item(&file).unwrap();
+
+        let outcome = db
+            .fetch_items_for_transfer(
+                std::slice::from_ref(&file_id),
+                transfer_limits(50, 9, 100, 9),
+            )
+            .unwrap();
+        let DatabaseTransferFetchOutcome::Accepted(items) = outcome else {
+            panic!("only the nine-byte first filename should count");
+        };
+        let ClipboardContent::File { files, .. } = &items[0].item.content else {
+            panic!("expected file transfer content");
+        };
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].filename, "first.txt");
+        assert!(files[0].path.is_empty());
+        assert!(files[0].bookmark_data.is_empty());
+        assert!(matches!(
+            files[0].preview,
+            FilePreviewSnapshot::Unavailable { .. }
+        ));
+    }
+
+    #[test]
+    fn conditional_transfer_delete_retains_changed_and_missing_items_in_input_order() {
+        let db = Database::open_in_memory().unwrap();
+        let unchanged_id = insert_text(&db, "unchanged");
+        let changed_id = insert_text(&db, "before-edit");
+        let requested = vec![unchanged_id.clone(), changed_id.clone()];
+        let DatabaseTransferFetchOutcome::Accepted(snapshots) = db
+            .fetch_items_for_transfer(&requested, transfer_limits(50, 100, 100, 200))
+            .unwrap()
+        else {
+            panic!("expected transfer snapshots");
+        };
+
+        let changed_row_id = db.fetch_row_id_by_item_id(&changed_id).unwrap().unwrap();
+        db.update_text_item(changed_row_id, "after--edit", "new-content-hash")
+            .unwrap();
+
+        let candidates = vec![
+            TransferDeletionCandidate {
+                item_id: unchanged_id.clone(),
+                deletion_token: snapshots[0].deletion_token.clone(),
+            },
+            TransferDeletionCandidate {
+                item_id: "missing".to_string(),
+                deletion_token: snapshots[0].deletion_token.clone(),
+            },
+            TransferDeletionCandidate {
+                item_id: changed_id.clone(),
+                deletion_token: snapshots[1].deletion_token.clone(),
+            },
+        ];
+        let outcome = db
+            .delete_transfer_items_if_unchanged(&candidates, transfer_limits(50, 100, 100, 200))
+            .unwrap();
+
+        assert_eq!(outcome.deleted_item_ids, [unchanged_id.clone()]);
+        assert_eq!(
+            outcome.retained_item_ids,
+            ["missing".to_string(), changed_id.clone()]
+        );
+        assert!(db
+            .fetch_items_by_item_ids(&[unchanged_id])
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            db.fetch_items_by_item_ids(&[changed_id])
+                .unwrap()
+                .first()
+                .unwrap()
+                .content
+                .text_content(),
+            "after--edit"
+        );
+    }
+
+    #[test]
+    fn transfer_token_detects_same_length_payload_replacement() {
+        let db = Database::open_in_memory().unwrap();
+        let item_id = insert_text(&db, "alpha");
+        let DatabaseTransferFetchOutcome::Accepted(snapshots) = db
+            .fetch_items_for_transfer(
+                std::slice::from_ref(&item_id),
+                transfer_limits(50, 100, 100, 100),
+            )
+            .unwrap()
+        else {
+            panic!("expected transfer snapshot");
+        };
+        let candidate = TransferDeletionCandidate {
+            item_id: item_id.clone(),
+            deletion_token: snapshots[0].deletion_token.clone(),
+        };
+
+        let row_id = db.fetch_row_id_by_item_id(&item_id).unwrap().unwrap();
+        db.update_text_item(row_id, "omega", "replacement-hash")
+            .unwrap();
+        let outcome = db
+            .delete_transfer_items_if_unchanged(&[candidate], transfer_limits(50, 100, 100, 100))
+            .unwrap();
+
+        assert!(outcome.deleted_item_ids.is_empty());
+        assert_eq!(outcome.retained_item_ids, [item_id.clone()]);
+        assert_eq!(db.fetch_items_by_item_ids(&[item_id]).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn malformed_transfer_token_fails_closed_without_loading_payload() {
+        let db = Database::open_in_memory().unwrap();
+        let item_id = insert_text(&db, "safe");
+        let conn = db.get_conn().unwrap();
+        conn.execute(
+            "UPDATE items SET content = X'FFFFFFFF' WHERE item_id = ?1",
+            [&item_id],
+        )
+        .unwrap();
+        drop(conn);
+
+        let outcome = db
+            .delete_transfer_items_if_unchanged(
+                &[TransferDeletionCandidate {
+                    item_id: item_id.clone(),
+                    deletion_token: "not-a-transfer-token".to_string(),
+                }],
+                transfer_limits(50, 100, 100, 100),
+            )
+            .unwrap();
+
+        assert!(outcome.deleted_item_ids.is_empty());
+        assert_eq!(outcome.retained_item_ids, [item_id]);
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn conditional_delete_and_index_repair_intent_rollback_together() {
+        let db = Database::open_in_memory().unwrap();
+        let item_id = insert_text(&db, "must survive rollback");
+        let DatabaseTransferFetchOutcome::Accepted(snapshots) = db
+            .fetch_items_for_transfer(
+                std::slice::from_ref(&item_id),
+                transfer_limits(50, 100, 100, 100),
+            )
+            .unwrap()
+        else {
+            panic!("expected transfer snapshot");
+        };
+        let conn = db.get_conn().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TRIGGER abort_transfer_index_delete
+            BEFORE INSERT ON sync_index_queue
+            WHEN NEW.operation = 'delete'
+            BEGIN
+                SELECT RAISE(ABORT, 'forced transfer index queue failure');
+            END;
+            "#,
+        )
+        .unwrap();
+        drop(conn);
+
+        let result = db.delete_transfer_items_if_unchanged(
+            &[TransferDeletionCandidate {
+                item_id: item_id.clone(),
+                deletion_token: snapshots[0].deletion_token.clone(),
+            }],
+            transfer_limits(50, 100, 100, 100),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(db.fetch_items_by_item_ids(&[item_id]).unwrap().len(), 1);
+        let sync = purr_sync::store::SyncStore::new(&db.pool().unwrap());
+        assert_eq!(sync.count_index_queue_entries().unwrap(), 0);
+    }
+
+    #[test]
+    fn transfer_aggregate_validation_rejects_integer_overflow() {
+        let item_ids = vec!["first".to_string(), "second".to_string()];
+        let footprints = HashMap::from([
+            (
+                item_ids[0].clone(),
+                TransferPayloadFootprint {
+                    text_byte_count: 0,
+                    image_byte_count: u64::MAX,
+                },
+            ),
+            (
+                item_ids[1].clone(),
+                TransferPayloadFootprint {
+                    text_byte_count: 0,
+                    image_byte_count: 1,
+                },
+            ),
+        ]);
+
+        assert_eq!(
+            Database::validate_transfer_footprints(
+                &item_ids,
+                &footprints,
+                transfer_limits(50, u64::MAX, u64::MAX, u64::MAX),
+            ),
+            Some(TransferFetchRejection::AggregateTooLarge)
+        );
+    }
 
     #[test]
     fn pool_is_eager_and_terminal_close_releases_it() {

@@ -7,6 +7,10 @@ import UIKit
 struct CardView: View {
     let row: DisplayRow
     @Binding var previewItemId: String?
+    let isSelectionMode: Bool
+    let isSelected: Bool
+    let onToggleSelection: () -> Void
+    let onExternalCopyTransferCompleted: @MainActor ([ExternalCopyTransferEvidence]) async -> Void
 
     @Environment(AppContainer.self) private var container
     @Environment(BrowserViewModel.self) private var viewModel
@@ -15,6 +19,25 @@ struct CardView: View {
     @Environment(iOSSettingsStore.self) private var settings
 
     @State private var isShareLoading = false
+    @State private var shareTask: Task<Void, Never>?
+    @State private var shareRequestID: UUID?
+    @State private var hostedPendingImagePlaceholders = 0
+
+    init(
+        row: DisplayRow,
+        previewItemId: Binding<String?>,
+        isSelectionMode: Bool = false,
+        isSelected: Bool = false,
+        onToggleSelection: @escaping () -> Void = {},
+        onExternalCopyTransferCompleted: @escaping @MainActor ([ExternalCopyTransferEvidence]) async -> Void = { _ in }
+    ) {
+        self.row = row
+        _previewItemId = previewItemId
+        self.isSelectionMode = isSelectionMode
+        self.isSelected = isSelected
+        self.onToggleSelection = onToggleSelection
+        self.onExternalCopyTransferCompleted = onExternalCopyTransferCompleted
+    }
 
     /// Sans-serif card font honouring the user's typeface preference.
     private func sansFont(size: CGFloat, weight: Font.Weight? = nil) -> Font {
@@ -51,8 +74,49 @@ struct CardView: View {
     }
 
     var body: some View {
+        if isSelectionMode {
+            selectableCard
+        } else {
+            // A full-screen destination can background ClipKitty before it
+            // asks the item provider for promised data. Always use the managed
+            // interaction so the foreground store remains available through
+            // UIKit's terminal transfer callback. Destructive follow-up is
+            // still independently guarded by the opt-in setting in Home.
+            ExternalCopyDragHost(
+                makePayload: makeManagedDragPayload,
+                onExternalCopyTransferCompleted: onExternalCopyTransferCompleted,
+                accessibilityDragName: accessibilityCardLabel
+            ) {
+                standardInteractiveCard
+                    // A UIHostingController begins a new SwiftUI environment
+                    // root. Re-inject the values used by nested rich previews.
+                    .environment(container)
+                    .environment(viewModel)
+                    .environment(appState)
+                    .environment(haptics)
+                    .environment(settings)
+                    // Preferences do not cross a UIHostingController
+                    // boundary. Bridge the image-placeholder count back into
+                    // this card so the feed never advertises a settled frame
+                    // while an image placeholder is still visible.
+                    .onPreferenceChange(PendingImagePlaceholderCount.self) { count in
+                        hostedPendingImagePlaceholders = count
+                    }
+            }
+            .preference(
+                key: PendingImagePlaceholderCount.self,
+                value: hostedPendingImagePlaceholders
+            )
+            .onDisappear {
+                cancelShare()
+            }
+        }
+    }
+
+    private var cardSurface: some View {
         VStack(alignment: .leading, spacing: 10) {
             metadataLine
+                .padding(.trailing, isSelectionMode ? 28 : 0)
             contentPreview
         }
         .cardSurface()
@@ -62,21 +126,68 @@ struct CardView: View {
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityCardLabel)
-        .accessibilityHint(String(localized: "Double tap to copy"))
-        .accessibilityAddTraits(.isButton)
-        .onTapGesture {
-            viewModel.copyOnlyItem(itemId: metadata.itemId)
-        }
-        .contextMenu { contextMenuActions }
-        .onDrag {
-            let storeClient = container.storeClient
-            return DragItemProvider.make(itemId: metadata.itemId) { id in
-                await storeClient.fetchItem(id: id)
-            }
-        }
     }
 
-    // MARK: - Metadata line
+    private var standardInteractiveCard: some View {
+        cardSurface
+            .accessibilityHint(String(localized: "Double tap to copy"))
+            .accessibilityAddTraits(.isButton)
+            .onTapGesture {
+                viewModel.copyOnlyItem(itemId: metadata.itemId)
+            }
+            .contextMenu { contextMenuActions }
+    }
+
+    private var selectableCard: some View {
+        cardSurface
+            .overlay(alignment: .topTrailing) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                    .padding(10)
+                    .accessibilityHidden(true)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: CardSurface.cornerRadius, style: .continuous)
+                    .strokeBorder(
+                        isSelected ? Color.accentColor : Color.clear,
+                        lineWidth: 2
+                    )
+                    .allowsHitTesting(false)
+            }
+            .accessibilityHint(
+                isSelected
+                    ? String(localized: "Double tap to deselect")
+                    : String(localized: "Double tap to select")
+            )
+            .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+            .onTapGesture {
+                onToggleSelection()
+                haptics.fire(.selection)
+            }
+    }
+
+    private func makeManagedDragPayload() -> ExternalCopyDragPayload {
+        makeDragPayload(externalTransferLease: appState.beginExternalTransfer())
+    }
+
+    private func makeDragPayload(
+        externalTransferLease: AppExternalTransferLease?
+    ) -> ExternalCopyDragPayload {
+        let repository = container.repository
+        return ExternalCopyDragPayload(
+            descriptors: [
+                ExternalCopyDragItemDescriptor(
+                    itemID: metadata.itemId,
+                    icon: metadata.icon
+                ),
+            ],
+            externalTransferLease: externalTransferLease,
+            fetchSnapshot: { id in
+                await repository.fetchTransferSnapshot(id: id)
+            }
+        )
+    }
 
     private var metadataLine: some View {
         HStack(spacing: 6) {
@@ -295,15 +406,54 @@ struct CardView: View {
     // MARK: - Share
 
     private func shareItem() {
+        cancelShare()
+        let requestID = UUID()
+        shareRequestID = requestID
         isShareLoading = true
-        Task {
-            defer { isShareLoading = false }
-            guard let item = await container.storeClient.fetchItem(id: metadata.itemId) else {
+        let task = Task { @MainActor in
+            defer { finishShare(requestID: requestID) }
+            guard !Task.isCancelled else { return }
+            guard let item = await container.repository.fetchTransferItem(id: metadata.itemId) else {
+                guard isCurrentShare(requestID: requestID) else { return }
                 appState.showToast(.addFailed(String(localized: "Could not load item")))
                 return
             }
-            SharePresenter.present(item: item)
+            guard isCurrentShare(requestID: requestID) else { return }
+            guard let payload = await SharePresenter.prepare(item: item) else {
+                guard isCurrentShare(requestID: requestID) else { return }
+                appState.showToast(.addFailed(String(localized: "Could not load item")))
+                return
+            }
+            guard isCurrentShare(requestID: requestID) else { return }
+            SharePresenter.present(payload: payload)
         }
+        shareTask = task
+        guard appState.registerForegroundTask(id: requestID, task: task) else {
+            cancelShare()
+            return
+        }
+    }
+
+    @MainActor
+    private func isCurrentShare(requestID: UUID) -> Bool {
+        !Task.isCancelled && shareRequestID == requestID
+    }
+
+    @MainActor
+    private func cancelShare() {
+        shareRequestID = nil
+        shareTask?.cancel()
+        shareTask = nil
+        isShareLoading = false
+    }
+
+    @MainActor
+    private func finishShare(requestID: UUID) {
+        appState.finishForegroundTask(id: requestID)
+        guard shareRequestID == requestID else { return }
+        shareRequestID = nil
+        shareTask = nil
+        isShareLoading = false
     }
 
     // MARK: - Helpers
@@ -379,6 +529,7 @@ private struct CardImagePreview: View {
     let thumbnailBytes: Data
 
     @Environment(AppContainer.self) private var container
+    @Environment(AppState.self) private var appState
 
     @State private var fullImageBytes: Data?
 
@@ -404,16 +555,27 @@ private struct CardImagePreview: View {
         }
         .task(id: itemId) {
             guard fullImageBytes == nil else { return }
-            // Registered with ImageLoadActivity so the feed's settled signal
-            // spans the whole pipeline: this fetch, then the decode it kicks
-            // off in DecodedImageView.
-            ImageLoadActivity.shared.begin()
-            defer { ImageLoadActivity.shared.end() }
-            let storeClient = container.storeClient
-            guard let item = await storeClient.fetchItem(id: itemId) else { return }
-            guard !Task.isCancelled else { return }
-            if case let .image(data, _, _) = item.content {
-                fullImageBytes = data
+            let requestID = UUID()
+            let task = Task { @MainActor in
+                defer { appState.finishForegroundTask(id: requestID) }
+                guard !Task.isCancelled else { return }
+                // Registered with ImageLoadActivity so the feed's settled
+                // signal spans the whole pipeline: this fetch, then the decode
+                // it kicks off in DecodedImageView.
+                ImageLoadActivity.shared.begin()
+                defer { ImageLoadActivity.shared.end() }
+                let storeClient = container.storeClient
+                guard let item = await storeClient.fetchItem(id: itemId) else { return }
+                guard !Task.isCancelled else { return }
+                if case let .image(data, _, _) = item.content {
+                    fullImageBytes = data
+                }
+            }
+            guard appState.registerForegroundTask(id: requestID, task: task) else { return }
+            await withTaskCancellationHandler {
+                await task.value
+            } onCancel: {
+                task.cancel()
             }
         }
     }
@@ -438,6 +600,7 @@ private struct CardLinkPreview: View {
     let monoFont: (CGFloat, Font.Weight?) -> Font
 
     @Environment(AppContainer.self) private var container
+    @Environment(AppState.self) private var appState
 
     @State private var metadataState: LinkMetadataState = .pending
 
@@ -492,12 +655,23 @@ private struct CardLinkPreview: View {
             // The card already renders host + URL immediately; this fills in the
             // title/image when the persisted item carries loaded metadata.
             guard case .pending = metadataState else { return }
-            ImageLoadActivity.shared.begin()
-            defer { ImageLoadActivity.shared.end() }
-            guard let item = await container.storeClient.fetchItem(id: itemId) else { return }
-            guard !Task.isCancelled else { return }
-            if case let .link(_, state) = item.content {
-                metadataState = state
+            let requestID = UUID()
+            let task = Task { @MainActor in
+                defer { appState.finishForegroundTask(id: requestID) }
+                guard !Task.isCancelled else { return }
+                ImageLoadActivity.shared.begin()
+                defer { ImageLoadActivity.shared.end() }
+                guard let item = await container.storeClient.fetchItem(id: itemId) else { return }
+                guard !Task.isCancelled else { return }
+                if case let .link(_, state) = item.content {
+                    metadataState = state
+                }
+            }
+            guard appState.registerForegroundTask(id: requestID, task: task) else { return }
+            await withTaskCancellationHandler {
+                await task.value
+            } onCancel: {
+                task.cancel()
             }
         }
     }

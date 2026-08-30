@@ -8,6 +8,14 @@ public enum RepositorySearchOutcome {
     case failure(ClipboardError)
 }
 
+/// Typed result of the store's bounded, all-or-nothing transfer preflight.
+public enum RepositoryTransferFetchOutcome {
+    case success([TransferItemSnapshot])
+    case rejected(TransferFetchRejection)
+    case cancelled
+    case failure(ClipboardError)
+}
+
 public protocol ClipboardSearchOperation: AnyObject {
     func cancel()
     func awaitOutcome() async -> RepositorySearchOutcome
@@ -54,6 +62,36 @@ public func runRepositoryOperation<T: Sendable>(
     }
 }
 
+/// Runs a synchronous Rust operation away from the caller's executor while
+/// preserving structured cancellation at the repository boundary.
+///
+/// Cancelling the parent marks the detached operation cancelled. The operation
+/// checks before and after the synchronous FFI call, and the parent still awaits
+/// its completion so admitted Rust store work cannot outlive suspension teardown.
+public func runCancellableRepositoryOperation<T: Sendable>(
+    _ operation: String,
+    on store: ClipKittyRust.ClipboardStore,
+    body: @escaping @Sendable (ClipKittyRust.ClipboardStore) throws -> T
+) async -> Result<T, ClipboardError> {
+    let task = Task.detached(priority: .userInitiated) {
+        try Task.checkCancellation()
+        let result = try body(store)
+        try Task.checkCancellation()
+        return result
+    }
+
+    do {
+        let result = try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        return .success(result)
+    } catch {
+        return .failure(.databaseOperationFailed(operation: operation, underlying: error))
+    }
+}
+
 public final class ClipboardRepository: @unchecked Sendable {
     public let store: ClipKittyRust.ClipboardStore
 
@@ -75,13 +113,84 @@ public final class ClipboardRepository: @unchecked Sendable {
     }
 
     public func fetchItem(id: String) async -> ClipboardItem? {
-        let result = await runRepositoryOperation("fetchItem", on: store) { store in
-            try store.fetchByIds(itemIds: [id])
-        }
+        let result = await fetchItems(ids: [id])
         if case let .success(items) = result {
             return items.first
         }
         return nil
+    }
+
+    /// Fetches clips in the caller's requested order with one store read.
+    ///
+    /// Unlike ``fetchItem(id:)``, this keeps database failures distinct from
+    /// missing item identifiers. Bulk UI actions use that distinction to
+    /// avoid replacing the system clipboard with only a partial selection.
+    public func fetchItems(ids: [String]) async -> Result<[ClipboardItem], ClipboardError> {
+        guard !ids.isEmpty else { return .success([]) }
+        return await runRepositoryOperation("fetchItems", on: store) { store in
+            try store.fetchByIds(itemIds: ids)
+        }
+    }
+
+    /// Fetches a bounded, complete transfer batch in requested order.
+    ///
+    /// Rust rejects more than 50 IDs, duplicates, missing clips, text payloads
+    /// over 10 MiB, image payloads over 50 MiB, and aggregate payloads over
+    /// 50 MiB before hydrating any accepted database payload.
+    public func fetchTransferItems(ids: [String]) async -> RepositoryTransferFetchOutcome {
+        guard !ids.isEmpty else { return .success([]) }
+        let result = await runCancellableRepositoryOperation(
+            "fetchTransferItems",
+            on: store
+        ) { store in
+            try store.fetchItemsForTransfer(itemIds: ids)
+        }
+        switch result {
+        case let .success(.success(snapshots)):
+            return .success(snapshots)
+        case let .success(.rejected(reason)):
+            return .rejected(reason)
+        case let .failure(error):
+            if case let .databaseOperationFailed(_, underlying) = error,
+               underlying is CancellationError
+            {
+                return .cancelled
+            }
+            return .failure(error)
+        }
+    }
+
+    /// Single-item bounded lookup for lazy drag item providers.
+    public func fetchTransferItem(id: String) async -> ClipboardItem? {
+        let snapshot = await fetchTransferSnapshot(id: id)
+        return snapshot?.item
+    }
+
+    /// Single-item transfer payload plus the token required for conditional
+    /// post-drop deletion.
+    public func fetchTransferSnapshot(id: String) async -> TransferItemSnapshot? {
+        let outcome = await fetchTransferItems(ids: [id])
+        if case let .success(snapshots) = outcome {
+            return snapshots.first
+        }
+        return nil
+    }
+
+    /// Atomically delete only clips that still match the exact outbound
+    /// snapshots delivered to another app.
+    ///
+    /// This operation intentionally joins and reports admitted Rust work even
+    /// when its calling Swift task is cancelled: once a mutation begins, callers
+    /// must receive the authoritative deleted/retained outcome.
+    public func deleteTransferredItemsIfUnchanged(
+        candidates: [TransferDeletionCandidate]
+    ) async -> Result<ConditionalTransferDeleteOutcome, ClipboardError> {
+        await runRepositoryOperation(
+            "deleteTransferredItemsIfUnchanged",
+            on: store
+        ) { store in
+            try store.deleteTransferredItemsIfUnchanged(candidates: candidates)
+        }
     }
 
     public func resolveMatchedExcerpts(requests: [MatchedExcerptRequest]) async -> [MatchedExcerptResolution] {

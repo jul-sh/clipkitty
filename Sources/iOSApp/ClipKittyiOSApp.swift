@@ -69,9 +69,9 @@ final class AppBackgroundTaskLease {
         onExpiration: @escaping @MainActor @Sendable () -> Void
     ) -> AppBackgroundTaskReservation {
         let lease = AppBackgroundTaskLease(endTask: client.end)
-        let identifier = client.begin(name) {
+        let identifier = client.begin(name) { [weak lease] in
             onExpiration()
-            lease.end()
+            lease?.end()
         }
         switch lease.install(identifier) {
         case .granted:
@@ -112,6 +112,13 @@ final class AppBackgroundTaskLease {
             break
         }
     }
+
+    isolated deinit {
+        // UIKit retains its expiration closure until the reservation ends.
+        // The closure captures this lease weakly, so dropping the final owner
+        // can deterministically release an otherwise-abandoned reservation.
+        end()
+    }
 }
 
 final class AppBackgroundTaskCancellation: @unchecked Sendable {
@@ -119,6 +126,7 @@ final class AppBackgroundTaskCancellation: @unchecked Sendable {
         case waiting
         case installed(@Sendable () -> Void)
         case cancelled
+        case completed
     }
 
     private let lock = NSLock()
@@ -133,6 +141,8 @@ final class AppBackgroundTaskCancellation: @unchecked Sendable {
             action = nil
         case .cancelled:
             action = cancel
+        case .completed:
+            action = nil
         case .installed:
             preconditionFailure("background cancellation installed more than once")
         }
@@ -152,9 +162,172 @@ final class AppBackgroundTaskCancellation: @unchecked Sendable {
             action = cancel
         case .cancelled:
             action = nil
+        case .completed:
+            action = nil
         }
         lock.unlock()
         action?()
+    }
+
+    /// Clears an installed cancellation action after its work has completed.
+    /// This also breaks any task/lifetime retention chain owned by that action.
+    func complete() {
+        lock.lock()
+        state = .completed
+        lock.unlock()
+    }
+}
+
+/// A small async latch used to make foreground-owned work joinable from the
+/// terminal suspension path without retaining the UI object that owns it.
+final class AppSessionWorkCompletion: @unchecked Sendable {
+    private enum State {
+        case pending([CheckedContinuation<Void, Never>])
+        case finished
+    }
+
+    private let lock = NSLock()
+    private var state: State = .pending([])
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            switch state {
+            case var .pending(waiters):
+                waiters.append(continuation)
+                state = .pending(waiters)
+                lock.unlock()
+            case .finished:
+                lock.unlock()
+                continuation.resume()
+            }
+        }
+    }
+
+    func finish() {
+        let waiters: [CheckedContinuation<Void, Never>]
+        lock.lock()
+        switch state {
+        case let .pending(pendingWaiters):
+            waiters = pendingWaiters
+            state = .finished
+        case .finished:
+            waiters = []
+        }
+        lock.unlock()
+
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+}
+
+/// Bridges the possible synchronous-expiration edge of
+/// `beginBackgroundTask` to a lease that is created only after UIKit returns a
+/// valid identifier.
+@MainActor
+private final class AppExternalTransferExpirationRelay {
+    private var didExpire = false
+    private var handler: (@MainActor @Sendable () -> Void)?
+
+    func install(_ handler: @escaping @MainActor @Sendable () -> Void) {
+        precondition(self.handler == nil, "expiration handler installed more than once")
+        if didExpire {
+            handler()
+        } else {
+            self.handler = handler
+        }
+    }
+
+    func expire() {
+        guard !didExpire else { return }
+        didExpire = true
+        let handler = handler
+        self.handler = nil
+        handler?()
+    }
+}
+
+/// Keeps the foreground store available while UIKit lazily asks an external
+/// drag source for its promised data. The lease is completed by every terminal
+/// drag path and is also fail-closed by UIKit background-task expiration.
+@MainActor
+final class AppExternalTransferLease {
+    private enum State {
+        case active
+        case expired
+        case finished
+    }
+
+    private let id: UUID
+    private let completion: AppSessionWorkCompletion
+    private let backgroundLease: AppBackgroundTaskLease
+    private let onFinish: @MainActor @Sendable (UUID) -> Void
+    private var state = State.active
+    private var expirationHandler: (@MainActor @Sendable () -> Void)?
+    private var expirationRequiresCleanup = false
+
+    fileprivate init(
+        id: UUID,
+        completion: AppSessionWorkCompletion,
+        backgroundLease: AppBackgroundTaskLease,
+        onFinish: @escaping @MainActor @Sendable (UUID) -> Void
+    ) {
+        self.id = id
+        self.completion = completion
+        self.backgroundLease = backgroundLease
+        self.onFinish = onFinish
+    }
+
+    func installExpirationHandler(
+        _ handler: @escaping @MainActor @Sendable () -> Void,
+        requiresCleanup: Bool = false
+    ) {
+        switch state {
+        case .active:
+            precondition(expirationHandler == nil, "expiration handler installed more than once")
+            expirationHandler = handler
+            expirationRequiresCleanup = requiresCleanup
+        case .expired, .finished:
+            // Expiration can win before the drag payload finishes wiring its
+            // provider cancellation. Apply the cancellation immediately.
+            handler()
+        }
+    }
+
+    func expire() {
+        guard case .active = state else { return }
+        state = .expired
+        let handler = expirationHandler
+        expirationHandler = nil
+        // UIKit has revoked our execution reservation. End it immediately,
+        // but keep the AppState latch pending: terminal store suspension must
+        // still wait for the payload to cancel and join every admitted fetch.
+        backgroundLease.end()
+        handler?()
+        // A bare lease has no payload-owned work to drain. Payload lifetimes
+        // explicitly opt in to retaining the AppState latch through async
+        // cleanup; this preserves the fail-closed early-expiration path before
+        // a payload has finished wiring itself.
+        if !expirationRequiresCleanup {
+            finish()
+        }
+    }
+
+    func finish() {
+        if case .finished = state { return }
+        state = .finished
+        expirationHandler = nil
+        expirationRequiresCleanup = false
+        backgroundLease.end()
+        completion.finish()
+        onFinish(id)
+    }
+
+    isolated deinit {
+        // A disappearing interaction must never strand terminal suspension if
+        // UIKit tears its delegate down without another terminal callback.
+        finish()
     }
 }
 
@@ -345,12 +518,26 @@ enum AppStoreSuspensionWork {
         lease: AppBackgroundTaskLease,
         drain: Task<Void, Never>
     )
+    case unprotected(drain: Task<Void, Never>)
+}
+
+enum AppStateSuspensionWork {
     case quiescent
+    case awaiting(Task<Void, Never>)
 }
 
 private enum AppStoreOpenAttemptResult {
     case completed(Result<StoreSession, AppContainer.BootstrapError>)
     case rejected
+}
+
+enum AppResumeRetryPolicy {
+    static let delaysInMilliseconds = [100, 250, 500]
+
+    static func delay(forAttempt attempt: Int) -> Duration? {
+        guard delaysInMilliseconds.indices.contains(attempt) else { return nil }
+        return .milliseconds(delaysInMilliseconds[attempt])
+    }
 }
 
 /// A suspended state never carries an AppSession, so it cannot retain or
@@ -397,11 +584,24 @@ private enum LaunchPresentation {
 @MainActor
 @Observable
 final class AppState {
+    typealias ImageDescriptionUpdate = @MainActor (String) async -> Result<Bool, ClipboardError>
+
     private let container: AppContainer
+    private let imageDescriptionUpdate: ImageDescriptionUpdate
     let viewModel: BrowserViewModel
 
     var toast: ToastState = .hidden
     var contentRevision: Int = 0
+
+    @ObservationIgnored private var isForegroundVisible = false
+    @ObservationIgnored private var acceptsSessionWork = true
+    @ObservationIgnored private var pasteboardMonitor: iOSPasteboardMonitor?
+    @ObservationIgnored private var pendingShareTask: Task<Void, Never>?
+    @ObservationIgnored private var maintenanceTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingImageDescriptionItemIDs: [String] = []
+    @ObservationIgnored private var imageDescriptionWorker: Task<Void, Never>?
+    @ObservationIgnored private var foregroundTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var externalTransferTasks: [UUID: Task<Void, Never>] = [:]
 
     /// A transient snackbar request plus presentation identity. The request
     /// structurally owns its action only when it is actionable.
@@ -410,19 +610,23 @@ final class AppState {
         case visible(id: UUID, request: NotificationRequest)
     }
 
-    init(container: AppContainer) {
+    init(
+        container: AppContainer,
+        imageDescriptionUpdate: ImageDescriptionUpdate? = nil
+    ) {
         self.container = container
+        self.imageDescriptionUpdate = imageDescriptionUpdate ?? { itemID in
+            await container.imageDescriptionUpdater.update(itemId: itemID)
+        }
 
         // Use a box to capture toast callback — wired after init via the box
         let toastBox = ToastCallbackBox()
+        let clipboardCopyBox = ClipboardCopyCallbackBox()
         let clipboardService = container.clipboardService
-        let haptics = container.haptics
         let settings = container.settings
 
         let copyItem: (String, ClipboardContent) -> Void = { _, content in
-            clipboardService.copy(content: content)
-            haptics.fire(.copy)
-            toastBox.show?(ToastMessage.copied.notificationRequest)
+            clipboardCopyBox.copy?(content)
         }
 
         viewModel = BrowserViewModel(
@@ -446,6 +650,41 @@ final class AppState {
         toastBox.dismiss = { [weak self] in
             self?.dismissToast()
         }
+        clipboardCopyBox.copy = { [weak self] content in
+            self?.copyToPasteboard(content)
+        }
+
+        pasteboardMonitor = iOSPasteboardMonitor(
+            isEnabled: { settings.autoAddFromClipboard },
+            changeCount: { clipboardService.pasteboardChangeCount },
+            acknowledgedChangeCount: { settings.lastIngestedPasteboardChangeCount },
+            ingest: { [weak self] generation in
+                guard let self else { return .handled }
+                return await self.autoAddFromClipboard(generation: generation)
+            }
+        )
+    }
+
+    /// Prepares image copies away from the main actor and keeps the resulting
+    /// pasteboard mutation scoped to this foreground store session. Text and
+    /// links take the same path but skip detached preparation internally.
+    func copyToPasteboard(_ content: ClipboardContent) {
+        let taskID = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.finishForegroundTask(id: taskID) }
+
+            let copied = await self.container.clipboardService.copy(content: content)
+            guard !Task.isCancelled, self.acceptsSessionWork else { return }
+            if copied {
+                self.container.haptics.fire(.copy)
+                self.showToast(.copied)
+            } else {
+                self.container.haptics.fire(.destructive)
+                self.showToast(.addFailed(String(localized: "Could not load item")))
+            }
+        }
+        _ = registerForegroundTask(id: taskID, task: task)
     }
 
     func showToast(_ message: ToastMessage) {
@@ -483,11 +722,26 @@ final class AppState {
 
     func refreshFeed() {
         contentRevision += 1
+        // A successful background-owned follow-up may still invalidate the
+        // feed after terminal suspension revoked UI producers. Preserve that
+        // revision for the next fresh/visible presentation without starting a
+        // BrowserViewModel search against the outgoing store.
+        guard acceptsSessionWork, isForegroundVisible else { return }
         viewModel.handlePanelVisibilityChange(true, contentRevision: contentRevision)
     }
 
     func restoreVisibleFeedAfterForegroundActivation() {
         viewModel.handlePanelVisibilityChange(true, contentRevision: contentRevision)
+    }
+
+    func beginForegroundActivity(runLaunchMaintenance: Bool = false) {
+        guard acceptsSessionWork else { return }
+        isForegroundVisible = true
+        pasteboardMonitor?.sceneBecameActive()
+        schedulePendingShareProcessing()
+        if runLaunchMaintenance {
+            scheduleLaunchMaintenance()
+        }
     }
 
     func saveImage(
@@ -504,44 +758,227 @@ final class AppState {
             sourceAppBundleId: sourceAppBundleId,
             isAnimated: isAnimated
         )
-        scheduleImageDescriptionUpdate(after: result, imageData: imageData)
+        // Caller cancellation can mean only that the initiating view
+        // disappeared while this non-cancellable repository write committed.
+        // Keep committed-image maintenance alive for the current foreground
+        // session; terminal suspension independently revokes session work.
+        scheduleImageDescriptionUpdate(after: result)
         return result
     }
 
     private func scheduleImageDescriptionUpdate(
-        after result: Result<String, ClipboardError>,
-        imageData: Data
+        after result: Result<String, ClipboardError>
     ) {
-        guard case let .success(itemId) = result, !itemId.isEmpty else { return }
+        guard acceptsSessionWork,
+              case let .success(itemId) = result,
+              !itemId.isEmpty
+        else { return }
 
-        Task { [weak self] in
+        pendingImageDescriptionItemIDs.append(itemId)
+        startImageDescriptionWorkerIfNeeded()
+    }
+
+    private func startImageDescriptionWorkerIfNeeded() {
+        guard acceptsSessionWork,
+              imageDescriptionWorker == nil,
+              !pendingImageDescriptionItemIDs.isEmpty
+        else { return }
+
+        let task = Task { @MainActor [weak self] in
             guard let self else { return }
-            let update = await self.container.imageDescriptionUpdater.update(itemId: itemId, imageData: imageData)
+            defer { self.imageDescriptionWorker = nil }
+            await self.processImageDescriptionQueue()
+        }
+        imageDescriptionWorker = task
+    }
+
+    private func processImageDescriptionQueue() async {
+        while acceptsSessionWork,
+              !Task.isCancelled,
+              !pendingImageDescriptionItemIDs.isEmpty
+        {
+            let itemID = pendingImageDescriptionItemIDs.removeFirst()
+            let update = await imageDescriptionUpdate(itemID)
             if case .success(true) = update {
-                self.refreshFeed()
+                // The repository update is authoritative even if terminal
+                // cancellation became observable while it was in flight.
+                // `refreshFeed()` records the revision without starting browser
+                // work for an outgoing or hidden session.
+                refreshFeed()
             }
+            // Loop admission checks cancellation before fetching the next
+            // persisted image. At most one Vision request is ever in flight.
         }
     }
 
-    func ingestPendingAndClipboard() async {
-        let added = await processPendingShareItems()
-        if added > 0 { refreshFeed() }
-        await autoAddFromClipboard()
+    private func schedulePendingShareProcessing() {
+        guard acceptsSessionWork, pendingShareTask == nil else { return }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let added = await self.processPendingShareItems()
+            self.pendingShareTask = nil
+            if added > 0 {
+                // Queue items were durably persisted before they were
+                // acknowledged. Preserve that model invalidation even when
+                // suspension cancelled the producer during its final await.
+                self.refreshFeed()
+            }
+        }
+        pendingShareTask = task
+    }
+
+    private func scheduleLaunchMaintenance() {
+        guard acceptsSessionWork, maintenanceTask == nil else { return }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.container.pruneToStorageLimit()
+            // Pruning can commit after the first visible search has already
+            // completed, and repository work reports its authoritative result
+            // even when terminal cancellation arrived while it was in flight.
+            // Preserve the invalidation in both cases; `refreshFeed()` defers
+            // BrowserViewModel work when this session is no longer visible.
+            self.refreshFeed()
+            self.maintenanceTask = nil
+        }
+        maintenanceTask = task
+    }
+
+    /// Registers UI work that is valid only while this foreground session owns
+    /// the store. Terminal suspension cancels and joins the exact task before
+    /// store admission is sealed.
+    @discardableResult
+    func registerForegroundTask(id: UUID, task: Task<Void, Never>) -> Bool {
+        guard acceptsSessionWork else {
+            task.cancel()
+            return false
+        }
+        precondition(foregroundTasks[id] == nil, "foreground task registered twice")
+        foregroundTasks[id] = task
+        return true
+    }
+
+    func finishForegroundTask(id: UUID) {
+        foregroundTasks[id] = nil
+    }
+
+    /// Begins a bounded UIKit background reservation for one external drag.
+    /// Its join task does not retain the returned lease, so interaction teardown
+    /// can deinitialize the lease and release suspension even if UIKit omits a
+    /// later callback.
+    func beginExternalTransfer() -> AppExternalTransferLease? {
+        beginExternalTransfer(backgroundTaskClient: .live)
+    }
+
+    func beginExternalTransfer(
+        backgroundTaskClient: AppBackgroundTaskClient
+    ) -> AppExternalTransferLease? {
+        guard acceptsSessionWork else { return nil }
+
+        let expirationRelay = AppExternalTransferExpirationRelay()
+        let reservation = AppBackgroundTaskLease.acquire(
+            named: "ClipKitty External Drag Transfer",
+            client: backgroundTaskClient,
+            onExpiration: {
+                expirationRelay.expire()
+            }
+        )
+        guard case let .granted(backgroundLease) = reservation,
+              acceptsSessionWork
+        else {
+            if case let .granted(backgroundLease) = reservation {
+                backgroundLease.end()
+            }
+            return nil
+        }
+
+        let id = UUID()
+        let completion = AppSessionWorkCompletion()
+        let waiter = Task {
+            await completion.wait()
+        }
+        let lease = AppExternalTransferLease(
+            id: id,
+            completion: completion,
+            backgroundLease: backgroundLease,
+            onFinish: { [weak self] id in
+                self?.externalTransferTasks[id] = nil
+            }
+        )
+        externalTransferTasks[id] = waiter
+        expirationRelay.install { [weak lease] in
+            lease?.expire()
+        }
+        return lease
     }
 
     @discardableResult
-    func prepareForSuspension() -> BrowserSuspensionWork {
-        let mutation = viewModel.prepareForSuspension()
+    func prepareForSuspension() -> AppStateSuspensionWork {
+        isForegroundVisible = false
+        acceptsSessionWork = false
+        var tasks: [Task<Void, Never>] = []
+
+        switch pasteboardMonitor?.stop() ?? .quiescent {
+        case .quiescent:
+            break
+        case let .awaiting(task):
+            tasks.append(task)
+        }
+
+        if let pendingShareTask {
+            pendingShareTask.cancel()
+            tasks.append(pendingShareTask)
+        }
+        if let maintenanceTask {
+            maintenanceTask.cancel()
+            tasks.append(maintenanceTask)
+        }
+        // The FIFO stores only IDs; release all work that has not begun before
+        // joining the one serial fetch/Vision worker.
+        pendingImageDescriptionItemIDs.removeAll(keepingCapacity: false)
+        if let imageDescriptionWorker {
+            imageDescriptionWorker.cancel()
+            tasks.append(imageDescriptionWorker)
+        }
+        for task in foregroundTasks.values {
+            task.cancel()
+            tasks.append(task)
+        }
+        // External item-provider loads are the exception to foreground-only
+        // work: UIKit intentionally requests their data after a full-screen
+        // cross-app drop backgrounds the source. Their own background leases
+        // bound the wait and cancel providers on expiration.
+        tasks.append(contentsOf: externalTransferTasks.values)
+
+        switch viewModel.prepareForSuspension() {
+        case .quiescent:
+            break
+        case let .awaiting(task):
+            tasks.append(task)
+        }
+
         toast = .hidden
-        return mutation
+        guard !tasks.isEmpty else { return .quiescent }
+        return .awaiting(Task { @MainActor in
+            for task in tasks {
+                await task.value
+            }
+        })
     }
 
     func processPendingShareItems() async -> Int {
-        let pending = PendingShareQueue.loadAll()
+        let loadTask = Task.detached(priority: .utility) {
+            PendingShareQueue.loadAll()
+        }
+        let pending = await withTaskCancellationHandler {
+            await loadTask.value
+        } onCancel: {
+            loadTask.cancel()
+        }
         guard !pending.isEmpty else { return 0 }
 
         var saved = 0
-        for item in pending {
+        pendingItems: for item in pending {
+            guard acceptsSessionWork, !Task.isCancelled else { break }
             let sourceApp = "Share Sheet"
 
             let result: Result<String, ClipboardError>
@@ -558,57 +995,132 @@ final class AppState {
                     sourceApp: sourceApp,
                     sourceAppBundleId: nil
                 )
-            case let .image(imageData, thumbnail):
+            case let .image(imageData, _, _):
+                // App Group files are a persistence boundary, not a trust
+                // boundary. Re-validate the original bytes off-main instead of
+                // trusting queued thumbnail/animation metadata, including for
+                // items written by older extension versions.
+                guard let analysis = await PasteboardImageInspector
+                    .analyzeCancellable(imageData)
+                else {
+                    guard acceptsSessionWork, !Task.isCancelled else {
+                        break pendingItems
+                    }
+                    // A deterministically malformed published item can never
+                    // become valid on retry. Deliberately discard it so every
+                    // activation does not repeatedly parse hostile bytes.
+                    await Task.detached(priority: .utility) {
+                        PendingShareQueue.acknowledge(item)
+                    }.value
+                    continue pendingItems
+                }
+                guard acceptsSessionWork, !Task.isCancelled else {
+                    break pendingItems
+                }
                 result = await saveImage(
                     imageData: imageData,
-                    thumbnail: thumbnail,
+                    thumbnail: analysis.thumbnail,
                     sourceApp: sourceApp,
                     sourceAppBundleId: nil,
-                    isAnimated: false
+                    isAnimated: analysis.isAnimated
                 )
             }
             if case .success = result {
-                PendingShareQueue.acknowledge(item)
+                // Queue scans and full-resolution image reads/removals are file
+                // I/O. Keep them off the main actor while retaining this parent
+                // task so suspension can still join the exact work.
+                await Task.detached(priority: .utility) {
+                    PendingShareQueue.acknowledge(item)
+                }.value
                 saved += 1
             }
         }
         return saved
     }
 
-    func autoAddFromClipboard() async {
-        guard container.settings.autoAddFromClipboard else { return }
+    private func autoAddFromClipboard(
+        generation: Int
+    ) async -> iOSPasteboardIngestAttemptResult {
+        guard acceptsSessionWork,
+              container.settings.autoAddFromClipboard
+        else { return .handled }
 
-        // Reading changeCount does not trigger the paste-consent alert. If the
-        // pasteboard has not changed since we last looked, skip the read so we
-        // don't prompt for "Allow Paste" on every foreground.
-        let changeCount = container.clipboardService.pasteboardChangeCount
-        guard changeCount != container.settings.lastIngestedPasteboardChangeCount else { return }
-
-        guard let content = container.clipboardService.readCurrentClipboard() else {
-            // A denied or unreadable generation should not prompt repeatedly.
-            acknowledgePasteboardGeneration(changeCount)
-            return
+        let clipboardService = container.clipboardService
+        guard generation != container.settings.lastIngestedPasteboardChangeCount else {
+            return .handled
+        }
+        guard clipboardService.pasteboardChangeCount == generation else {
+            return .handled
         }
 
-        guard let result = await savePasteboardContent(content) else {
-            acknowledgePasteboardGeneration(changeCount)
-            return
+        let content: AutomaticPasteboardContent
+        switch await clipboardService.readCurrentClipboardForAutomaticIngest() {
+        case let .content(snapshot):
+            content = snapshot
+        case .ignored:
+            acknowledgePasteboardGeneration(generation)
+            return .handled
+        case .temporarilyUnavailable:
+            // Do not permanently suppress a denied or lazily arriving payload.
+            return .retry
         }
 
+        // Do not associate a snapshot with the wrong generation if another app
+        // rewrites the pasteboard while the value is being materialized.
+        guard clipboardService.pasteboardChangeCount == generation else {
+            return .handled
+        }
+        guard acceptsSessionWork,
+              container.settings.autoAddFromClipboard,
+              !Task.isCancelled
+        else { return .handled }
+
+        let result = await saveAutomaticPasteboardContent(content)
         switch result {
         case .success:
-            acknowledgePasteboardGeneration(changeCount)
+            acknowledgePasteboardGeneration(generation)
+            // A settings change can cancel the monitor immediately after the
+            // store commits. The exact generation is already acknowledged, so
+            // always reconcile that committed item with the visible model.
+            // Suspended sessions retain only the revision and start no search.
             refreshFeed()
+            return .handled
+        case .failure(.imageCompressionFailed):
+            guard !Task.isCancelled else { return .handled }
+            // The provider advertised an image UTI but supplied malformed or
+            // abstract bytes. Deliberately ignore this generation rather than
+            // storing a broken image or repeatedly materializing it.
+            acknowledgePasteboardGeneration(generation)
+            return .handled
         case .failure:
-            // Leave the generation pending so suspension or another transient
-            // store failure retries it with the next fresh session.
-            break
+            // A fresh session or the monitor's bounded retry will try again.
+            return .retry
         }
     }
 
     private func acknowledgePasteboardGeneration(_ generation: Int) {
-        guard container.clipboardService.pasteboardChangeCount == generation else { return }
-        container.settings.lastIngestedPasteboardChangeCount = generation
+        container.clipboardService.acknowledgeCurrentPasteboardGeneration(
+            ifUnchangedFrom: generation
+        )
+    }
+
+    private func saveAutomaticPasteboardContent(
+        _ content: AutomaticPasteboardContent
+    ) async -> Result<String, ClipboardError> {
+        switch content {
+        case let .image(data, analysis):
+            return await saveImage(
+                imageData: data,
+                thumbnail: analysis.thumbnail,
+                sourceApp: "Pasteboard",
+                sourceAppBundleId: nil,
+                isAnimated: analysis.isAnimated
+            )
+        case let .link(url):
+            return await savePasteboardText(url.absoluteString)
+        case let .text(text):
+            return await savePasteboardText(text)
+        }
     }
 
     func savePasteboardContent(
@@ -690,11 +1202,20 @@ private final class ToastCallbackBox {
     var dismiss: (() -> Void)?
 }
 
+/// Captures the browser's synchronous copy callback until AppState is fully
+/// initialized, then routes it into the cancellable async preparation path.
+@MainActor
+private final class ClipboardCopyCallbackBox {
+    var copy: ((ClipboardContent) -> Void)?
+}
+
 // MARK: - App Entry Point
 
 @main
 struct ClipKittyiOSApp: App {
     @State private var launchState: AppLaunchState = .launching
+    @State private var didScheduleLaunchMaintenance = false
+    @State private var resumeRetryAttempt = 0
     @Environment(\.scenePhase) private var scenePhase
 
     #if ENABLE_ICLOUD_SYNC
@@ -761,9 +1282,6 @@ struct ClipKittyiOSApp: App {
             .environment(appState.viewModel)
             .environment(container.settings)
             .environment(container.haptics)
-            .task {
-                await appState.ingestPendingAndClipboard()
-            }
 
         #if ENABLE_ICLOUD_SYNC
             if let coordinator = syncCoordinator {
@@ -827,20 +1345,21 @@ struct ClipKittyiOSApp: App {
     /// superseded open is joined first so two stores never contend for the
     /// same index path.
     private func beginResume(after supersededOpen: Task<Void, Never>? = nil) {
-        guard scenePhase == .active else { return }
+        guard scenePhase != .background else { return }
         let resumeID = UUID()
-        #if ENABLE_ICLOUD_SYNC
-            // Hold foreground path authority through open, ready use, and the
-            // eventual terminal drain. Claiming synchronously drains any
-            // background-launched headless store first.
-            iOSBackgroundSyncRunner.shared.claimForegroundStore(resumeID)
-        #endif
         let customPath = databasePathOverride
         let gate = AppStoreOpenGate()
         let protection: AppResumeBackgroundProtection
         switch AppBackgroundTaskLease.acquire(
             named: "ClipKitty Store Open",
-            onExpiration: { gate.expireAndDrain() }
+            onExpiration: {
+                // Expiration callbacks execute on the main actor. Seal admission
+                // synchronously, then do every wait and Rust drain off-main.
+                gate.seal()
+                Task.detached(priority: .utility) {
+                    gate.expireAndDrain()
+                }
+            }
         ) {
         case let .granted(lease):
             protection = .granted(lease)
@@ -854,6 +1373,11 @@ struct ClipKittyiOSApp: App {
                     lease.end()
                 }
             }
+            #if ENABLE_ICLOUD_SYNC
+                // Deny new headless opens immediately, then join any existing
+                // one off-main before foreground bootstrap touches the store.
+                await iOSBackgroundSyncRunner.shared.claimForegroundStore(resumeID)
+            #endif
             await supersededOpen?.value
 
             // This resume may have been suspended or superseded while it was
@@ -890,12 +1414,10 @@ struct ClipKittyiOSApp: App {
                     gate: gate
                 )
             case .rejected:
-                if case .current = launchState.resumeCallbackDisposition(for: resumeID) {
-                    launchState = .suspended(.resting)
-                }
                 #if ENABLE_ICLOUD_SYNC
                     iOSBackgroundSyncRunner.shared.releaseForegroundStore(resumeID)
                 #endif
+                transitionToRestingAndScheduleResumeRetry(resumeID: resumeID)
             }
         }
 
@@ -916,10 +1438,10 @@ struct ClipKittyiOSApp: App {
         case let .success(storeSession):
             switch launchState.resumeCallbackDisposition(for: resumeID) {
             case .current:
-                guard scenePhase == .active else {
+                guard scenePhase != .background else {
                     // The environment can observe background before its
-                    // onChange callback runs. Do not transfer a store after
-                    // foreground authority has already ended.
+                    // onChange callback runs. `.inactive` remains visible in
+                    // Slide Over and still owns foreground store authority.
                     await Task.detached(priority: .utility) {
                         gate.expireAndDrain()
                     }.value
@@ -937,12 +1459,24 @@ struct ClipKittyiOSApp: App {
                         persistenceClaimID: resumeID
                     )
                     launchState = .ready(session)
-                    Task { await container.pruneToStorageLimit() }
+                    resumeRetryAttempt = 0
+                    let runLaunchMaintenance = !didScheduleLaunchMaintenance
+                    didScheduleLaunchMaintenance = true
+                    session.appState.beginForegroundActivity(
+                        runLaunchMaintenance: runLaunchMaintenance
+                    )
                 case .expired:
+                    // An expiration callback may still be draining this exact
+                    // store. Join it before allowing a retry to open the same
+                    // path, otherwise a rapid foreground transition could
+                    // contend with the outgoing index/database handles.
+                    await Task.detached(priority: .utility) {
+                        gate.expireAndDrain()
+                    }.value
                     #if ENABLE_ICLOUD_SYNC
                         iOSBackgroundSyncRunner.shared.releaseForegroundStore(resumeID)
                     #endif
-                    launchState = .suspended(.resting)
+                    transitionToRestingAndScheduleResumeRetry(resumeID: resumeID)
                 }
             case .superseded:
                 // Backgrounded or replaced mid-open: join the gate's exact
@@ -975,13 +1509,49 @@ struct ClipKittyiOSApp: App {
         case .active:
             handleForegroundActivation()
         case .inactive:
+            // iPad Slide Over can remain `.inactive` while the adjacent app
+            // owns input. The session, pasteboard monitor, and visible-feed
+            // refreshes therefore stay live until an actual `.background`.
+            switch launchState {
+            case .launching, .suspended:
+                handleForegroundActivation()
+            case .ready, .suspending, .resuming, .failed:
+                break
+            }
             #if ENABLE_ICLOUD_SYNC
                 syncCoordinator?.handleScenePhaseChange(.inactive)
             #endif
         case .background:
+            resumeRetryAttempt = 0
             prepareForSuspension()
         @unknown default:
             break
+        }
+    }
+
+    private func transitionToRestingAndScheduleResumeRetry(resumeID: UUID) {
+        guard case .current = launchState.resumeCallbackDisposition(for: resumeID) else {
+            return
+        }
+        launchState = .suspended(.resting)
+
+        guard scenePhase != .background else { return }
+        guard let delay = AppResumeRetryPolicy.delay(forAttempt: resumeRetryAttempt) else {
+            launchState = .failed(
+                String(localized: "ClipKitty couldn't reopen its database. Please relaunch the app.")
+            )
+            return
+        }
+        resumeRetryAttempt += 1
+
+        Task { @MainActor in
+            try? await Task.sleep(for: delay)
+            guard scenePhase != .background,
+                  case .suspended(.resting) = launchState
+            else {
+                return
+            }
+            beginResume()
         }
     }
 
@@ -1009,12 +1579,10 @@ struct ClipKittyiOSApp: App {
 
     private func resumeReadySession(_ session: AppSession) {
         session.appState.restoreVisibleFeedAfterForegroundActivation()
+        session.appState.beginForegroundActivity()
         #if ENABLE_ICLOUD_SYNC
             syncCoordinator?.handleScenePhaseChange(.active)
         #endif
-        Task {
-            await session.appState.ingestPendingAndClipboard()
-        }
     }
 
     private func prepareForSuspension() {
@@ -1023,20 +1591,13 @@ struct ClipKittyiOSApp: App {
             case .launching:
                 launchState = .suspended(.resting)
             case let .resuming(context):
-                // Seal synchronously. If UIKit could not reserve background
-                // time, block this scene transition until the opening attempt
-                // is fully quiescent; otherwise its existing lease owns the
-                // bounded asynchronous drain.
+                // Seal synchronously so no store can transfer after foreground
+                // authority ends. The existing open task owns the off-main join;
+                // the next activation chains its replacement after that task.
                 context.gate.seal()
                 launchState = .suspended(.waitingForSupersededResume(
                     openTask: context.openTask
                 ))
-                switch context.protection {
-                case .granted:
-                    break
-                case .unavailable:
-                    context.gate.expireAndDrain()
-                }
             case .ready, .suspending, .suspended, .failed:
                 break
             }
@@ -1055,8 +1616,9 @@ struct ClipKittyiOSApp: App {
         switch AppBackgroundTaskLease.acquire(
             named: "ClipKitty Suspend",
             onExpiration: {
+                // Reject new work immediately. The retained drain task below is
+                // already responsible for waiting and closing off the main actor.
                 store.beginSuspend()
-                store.prepareForSuspend()
             }
         ) {
         case let .granted(lease):
@@ -1077,11 +1639,24 @@ struct ClipKittyiOSApp: App {
             }
             storeSuspension = .protected(lease: lease, drain: drain)
         case .unavailable:
-            // No assertion means no asynchronous grace period. Finish all file
-            // work before returning from the background scene transition.
-            store.beginSuspend()
-            store.prepareForSuspend()
-            storeSuspension = .quiescent
+            // UIKit granted no additional reservation for the drain itself.
+            // Do not seal before an already-reserved external drag provider has
+            // delivered its promised data; its own background lease bounds this
+            // wait and expires fail-closed. The retained task still keeps every
+            // wait and Rust drain off the lifecycle callback.
+            let drain = Task { @MainActor in
+                switch pendingMutation {
+                case .quiescent:
+                    break
+                case let .awaiting(task):
+                    await task.value
+                }
+                store.beginSuspend()
+                await Task.detached(priority: .utility) {
+                    store.prepareForSuspend()
+                }.value
+            }
+            storeSuspension = .unprotected(drain: drain)
         }
         let suspensionID = UUID()
         Task { @MainActor in
@@ -1106,8 +1681,8 @@ struct ClipKittyiOSApp: App {
         case let .protected(lease, drain):
             await drain.value
             lease.end()
-        case .quiescent:
-            break
+        case let .unprotected(drain):
+            await drain.value
         }
 
         guard case let .suspending(context) = launchState,
@@ -1123,14 +1698,14 @@ struct ClipKittyiOSApp: App {
             )
         #endif
 
-        let shouldResume = scenePhase == .active
+        let shouldResume = scenePhase != .background
         launchState = .suspended(.resting)
         if shouldResume {
             // Return first so this function releases its final AppSession
             // reference before a new store opens on the same path.
             Task { @MainActor in
                 await Task.yield()
-                guard scenePhase == .active else { return }
+                guard scenePhase != .background else { return }
                 handleForegroundActivation()
             }
         }
@@ -1141,7 +1716,7 @@ struct ClipKittyiOSApp: App {
             Image(systemName: "exclamationmark.triangle")
                 .font(.system(size: 48))
                 .foregroundStyle(.secondary)
-            Text("ClipKitty couldn't start")
+            Text(String(localized: "ClipKitty couldn't start"))
                 .font(.title3.weight(.semibold))
             Text(message)
                 .font(.subheadline)

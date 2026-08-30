@@ -1,11 +1,14 @@
 //! ClipboardStore - Thin UniFFI-facing facade over search/save services.
 
-use crate::database::{hydrate_item_metadata_tags, Database};
+use crate::database::{
+    hydrate_item_metadata_tags, Database, DatabaseTransferFetchOutcome, TransferFetchLimits,
+};
 use crate::indexer::{IndexInspection, Indexer};
 use crate::interface::{
-    ClipKittyError, ClipboardItem, ItemQueryFilter, ItemTag, ListPresentationProfile,
-    MatchedExcerptRequest, MatchedExcerptResolution, NewFileInput, PreviewPayload, SearchOutcome,
-    SearchResult, StoreBootstrapPlan,
+    ClipKittyError, ClipboardItem, ConditionalTransferDeleteOutcome, ItemQueryFilter, ItemTag,
+    ListPresentationProfile, MatchedExcerptRequest, MatchedExcerptResolution, NewFileInput,
+    PreviewPayload, SearchOutcome, SearchResult, StoreBootstrapPlan, TransferDeletionCandidate,
+    TransferFetchOutcome,
 };
 #[cfg(feature = "sync")]
 use crate::sync_bridge::{snapshot_from_stored_item_with_bookmark, RealSyncEmitter, SyncEmitter};
@@ -16,6 +19,18 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Once};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
+
+const MAXIMUM_TRANSFER_ITEM_COUNT: usize = 50;
+const MAXIMUM_TRANSFER_TEXT_BYTE_COUNT: u64 = 10 * 1024 * 1024;
+const MAXIMUM_TRANSFER_IMAGE_BYTE_COUNT: u64 = 50 * 1024 * 1024;
+const MAXIMUM_TRANSFER_AGGREGATE_BYTE_COUNT: u64 = 50 * 1024 * 1024;
+
+const TRANSFER_FETCH_LIMITS: TransferFetchLimits = TransferFetchLimits {
+    maximum_item_count: MAXIMUM_TRANSFER_ITEM_COUNT,
+    maximum_text_byte_count: MAXIMUM_TRANSFER_TEXT_BYTE_COUNT,
+    maximum_image_byte_count: MAXIMUM_TRANSFER_IMAGE_BYTE_COUNT,
+    maximum_aggregate_byte_count: MAXIMUM_TRANSFER_AGGREGATE_BYTE_COUNT,
+};
 
 /// Process-owned runtime for store work that must not be abandoned with a caller executor.
 static STORE_RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {
@@ -241,6 +256,10 @@ fn init_rayon() {
 #[derive(uniffi::Object)]
 pub struct ClipboardStore {
     admission: Arc<StoreAdmission>,
+    /// Serializes item/read-model mutations with conditional transfer deletion.
+    /// SQLite provides the final compare-and-delete atomicity; this lock keeps
+    /// sync projection changes and derived-index maintenance in the same order.
+    mutation: Mutex<()>,
     db: Arc<Database>,
     indexer: Arc<Indexer>,
     analysis_cache: Arc<match_presentation::HighlightAnalysisCache>,
@@ -299,6 +318,7 @@ impl ClipboardStore {
 
         Ok(Self {
             admission: StoreAdmission::new(),
+            mutation: Mutex::new(()),
             db: database,
             indexer: Arc::new(indexer),
             analysis_cache: Arc::new(match_presentation::HighlightAnalysisCache::default()),
@@ -358,6 +378,7 @@ impl ClipboardStore {
 
         Ok(Self {
             admission: StoreAdmission::new(),
+            mutation: Mutex::new(()),
             db,
             indexer: Arc::new(indexer),
             analysis_cache: Arc::new(match_presentation::HighlightAnalysisCache::default()),
@@ -466,6 +487,7 @@ impl ClipboardStore {
 
     pub fn rebuild_index(&self) -> Result<(), ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         self.rebuild_index_contents()?;
         #[cfg(feature = "sync")]
         {
@@ -548,6 +570,66 @@ impl ClipboardStore {
             .fetch_row_id_by_item_id(item_id)?
             .ok_or_else(|| ClipKittyError::InvalidInput(format!("item not found: {item_id}")))
     }
+
+    #[cfg(feature = "sync")]
+    fn validate_transfer_deletion_sync_state(
+        &self,
+        item_ids: &[String],
+    ) -> Result<(), ClipKittyError> {
+        use purr_sync::store::{ProjectionState, SyncStore};
+
+        let sync = SyncStore::new(&self.db.pool()?);
+        for item_id in item_ids {
+            match sync.fetch_projection(item_id)?.map(|entry| entry.state) {
+                Some(ProjectionState::PendingMaterialization { .. }) => {
+                    return Err(ClipKittyError::DataInconsistency(format!(
+                        "global item `{item_id}` is pending materialization for transfer deletion"
+                    )));
+                }
+                Some(ProjectionState::Tombstoned { .. }) => {
+                    return Err(ClipKittyError::DataInconsistency(format!(
+                        "global item `{item_id}` is already tombstoned for transfer deletion"
+                    )));
+                }
+                Some(ProjectionState::Materialized { .. }) | None => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn commit_transfer_index_delete(&self, item_id: &str) -> Result<(), ClipKittyError> {
+        let index_result = self
+            .indexer
+            .delete_document(item_id)
+            .and_then(|_| self.indexer.commit());
+
+        #[cfg(feature = "sync")]
+        {
+            if index_result.is_ok() {
+                // The database compare/delete transaction persisted this repair
+                // intent before removing the row. Clear it only after Tantivy's
+                // deletion commit succeeds; errors leave deterministic recovery.
+                use purr_sync::store::SyncStore;
+                use purr_sync::types::FLAG_INDEX_DIRTY;
+
+                if let Ok(pool) = self.db.pool() {
+                    let sync = SyncStore::new(&pool);
+                    if sync.remove_index_queue_entries(&[item_id]).is_ok()
+                        && matches!(sync.count_index_queue_entries(), Ok(0))
+                    {
+                        let _ = sync.set_dirty_flag(FLAG_INDEX_DIRTY, false);
+                    }
+                }
+            }
+            return Ok(());
+        }
+
+        #[cfg(not(feature = "sync"))]
+        {
+            index_result?;
+            Ok(())
+        }
+    }
 }
 
 #[uniffi::export]
@@ -572,6 +654,7 @@ impl ClipboardStore {
         source_app_bundle_id: Option<String>,
     ) -> Result<String, ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         let outcome = save_service::save_text(
             &self.db,
             &self.indexer,
@@ -632,6 +715,118 @@ impl ClipboardStore {
         Ok(items)
     }
 
+    /// Fetch a bounded, all-or-nothing set of clips for an outbound transfer.
+    ///
+    /// The database first validates item count, uniqueness, existence, and UTF-8
+    /// text/image byte sizes without reading full payload columns. Only an
+    /// accepted request is hydrated, in stable requested order, using a
+    /// transfer-light projection that omits thumbnails and unused child data.
+    pub fn fetch_items_for_transfer(
+        &self,
+        item_ids: Vec<String>,
+    ) -> Result<TransferFetchOutcome, ClipKittyError> {
+        let _permit = self.admission.admit()?;
+        let outcome = self
+            .db
+            .fetch_items_for_transfer(&item_ids, TRANSFER_FETCH_LIMITS)?;
+        let snapshots = match outcome {
+            DatabaseTransferFetchOutcome::Accepted(snapshots) => snapshots,
+            DatabaseTransferFetchOutcome::Rejected(reason) => {
+                return Ok(TransferFetchOutcome::Rejected { reason });
+            }
+        };
+        Ok(TransferFetchOutcome::Success { snapshots })
+    }
+
+    /// Delete only clips whose outbound payload still matches the transfer
+    /// snapshots originally handed to the operating system.
+    pub fn delete_transferred_items_if_unchanged(
+        &self,
+        candidates: Vec<TransferDeletionCandidate>,
+    ) -> Result<ConditionalTransferDeleteOutcome, ClipKittyError> {
+        let _permit = self.admission.admit()?;
+        if candidates.len() > MAXIMUM_TRANSFER_ITEM_COUNT {
+            return Err(ClipKittyError::InvalidInput(format!(
+                "at most {MAXIMUM_TRANSFER_ITEM_COUNT} transferred items may be deleted at once"
+            )));
+        }
+
+        let mut candidate_item_ids = std::collections::HashSet::with_capacity(candidates.len());
+        for candidate in &candidates {
+            if candidate.item_id.is_empty() || candidate.deletion_token.is_empty() {
+                return Err(ClipKittyError::InvalidInput(
+                    "transfer deletion candidates require an item ID and token".to_string(),
+                ));
+            }
+            if !candidate_item_ids.insert(candidate.item_id.as_str()) {
+                return Err(ClipKittyError::InvalidInput(format!(
+                    "duplicate transfer deletion candidate: {}",
+                    candidate.item_id
+                )));
+            }
+        }
+
+        let _mutation = self.mutation.lock();
+        let prevalidated_item_ids = self
+            .db
+            .matching_transfer_deletion_item_ids(&candidates, TRANSFER_FETCH_LIMITS)?;
+        #[cfg(feature = "sync")]
+        self.validate_transfer_deletion_sync_state(&prevalidated_item_ids)?;
+        let prevalidated_item_id_set: std::collections::HashSet<&str> =
+            prevalidated_item_ids.iter().map(String::as_str).collect();
+
+        // Preserve the established local mutation ordering while committing each
+        // candidate atomically: revalidate the token, persist its tombstone,
+        // delete the read-model row, and enqueue index repair in one immediate
+        // transaction. Candidates still commit independently, so an earlier
+        // success survives a later candidate's failure.
+        let mut outcome = ConditionalTransferDeleteOutcome {
+            deleted_item_ids: Vec::new(),
+            retained_item_ids: Vec::new(),
+        };
+        for candidate in &candidates {
+            if !prevalidated_item_id_set.contains(candidate.item_id.as_str()) {
+                outcome.retained_item_ids.push(candidate.item_id.clone());
+                continue;
+            }
+
+            #[cfg(feature = "sync")]
+            let deletion = self.db.delete_transfer_items_if_unchanged_with(
+                std::slice::from_ref(candidate),
+                TRANSFER_FETCH_LIMITS,
+                |conn, item_id| {
+                    self.sync_emitter
+                        .emit_item_deleted_on_connection(conn, item_id)
+                },
+            )?;
+            #[cfg(not(feature = "sync"))]
+            let deletion = self.db.delete_transfer_items_if_unchanged(
+                std::slice::from_ref(candidate),
+                TRANSFER_FETCH_LIMITS,
+            )?;
+            if deletion.deleted_item_ids == [candidate.item_id.clone()]
+                && deletion.retained_item_ids.is_empty()
+            {
+                self.commit_transfer_index_delete(&candidate.item_id)?;
+                outcome.deleted_item_ids.push(candidate.item_id.clone());
+            } else if deletion.deleted_item_ids.is_empty()
+                && deletion.retained_item_ids == [candidate.item_id.clone()]
+            {
+                // The in-transaction revalidation is authoritative. A candidate
+                // can become stale after the batch preflight without making the
+                // rest of the request an infrastructure failure.
+                outcome.retained_item_ids.push(candidate.item_id.clone());
+            } else {
+                return Err(ClipKittyError::DataInconsistency(format!(
+                    "transfer item `{}` returned an invalid conditional deletion outcome",
+                    candidate.item_id
+                )));
+            }
+        }
+
+        Ok(outcome)
+    }
+
     pub fn resolve_matched_excerpts(
         &self,
         requests: Vec<MatchedExcerptRequest>,
@@ -656,6 +851,7 @@ impl ClipboardStore {
         source_app_bundle_id: Option<String>,
     ) -> Result<String, ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         let outcome = save_service::save_files(
             &self.db,
             &self.indexer,
@@ -677,6 +873,7 @@ impl ClipboardStore {
         is_animated: bool,
     ) -> Result<String, ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         let outcome = save_service::save_image(
             &self.db,
             &self.indexer,
@@ -699,6 +896,7 @@ impl ClipboardStore {
         image_data: Option<Vec<u8>>,
     ) -> Result<(), ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         let row_id = self.require_row_id(&item_id)?;
         #[allow(unused_variables)]
         let resolved =
@@ -718,6 +916,7 @@ impl ClipboardStore {
         description: String,
     ) -> Result<(), ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         let row_id = self.require_row_id(&item_id)?;
         // Bake in the "Image: " label once, up front, so the sync event and the
         // local store record the identical prefixed description across devices.
@@ -739,6 +938,7 @@ impl ClipboardStore {
 
     pub fn update_text_item(&self, item_id: String, text: String) -> Result<(), ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         let row_id = self.require_row_id(&item_id)?;
         #[cfg(feature = "sync")]
         self.sync_emitter.emit_text_edited(&item_id, &text)?;
@@ -755,6 +955,7 @@ impl ClipboardStore {
 
     pub fn update_timestamp(&self, item_id: String) -> Result<(), ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         let row_id = self.require_row_id(&item_id)?;
         #[allow(unused_variables)]
         let timestamp_unix = match save_service::update_timestamp(&self.db, &self.indexer, row_id)?
@@ -775,6 +976,7 @@ impl ClipboardStore {
 
     pub fn add_tag(&self, item_id: String, tag: ItemTag) -> Result<(), ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         let row_id = self.require_row_id(&item_id)?;
         #[cfg(feature = "sync")]
         self.sync_emitter.emit_bookmark_set(&item_id)?;
@@ -784,6 +986,7 @@ impl ClipboardStore {
 
     pub fn remove_tag(&self, item_id: String, tag: ItemTag) -> Result<(), ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         let row_id = self.require_row_id(&item_id)?;
         #[cfg(feature = "sync")]
         self.sync_emitter.emit_bookmark_cleared(&item_id)?;
@@ -793,6 +996,7 @@ impl ClipboardStore {
 
     pub fn delete_item(&self, item_id: String) -> Result<(), ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         let row_id = self.require_row_id(&item_id)?;
         #[cfg(feature = "sync")]
         self.sync_emitter.emit_item_deleted(&item_id)?;
@@ -802,6 +1006,7 @@ impl ClipboardStore {
 
     pub fn clear(&self) -> Result<(), ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         #[cfg(feature = "sync")]
         for row_id in self.db.fetch_all_item_ids()? {
             if let Some(stable_id) = self.resolve_item_id(row_id)? {
@@ -814,6 +1019,7 @@ impl ClipboardStore {
 
     pub fn prune_to_size(&self, max_bytes: i64, keep_ratio: f64) -> Result<u64, ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         let outcome = save_service::prune_to_size(&self.db, &self.indexer, max_bytes, keep_ratio)?;
 
         #[cfg(feature = "sync")]
@@ -1150,6 +1356,7 @@ impl ClipboardStore {
         snapshot_records: Vec<crate::interface::SyncSnapshotRecord>,
     ) -> Result<crate::interface::SyncDownloadBatchOutcome, ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         use crate::interface::SyncDownloadBatchOutcome;
         use purr_sync::event::ItemEvent;
         use purr_sync::replay;
@@ -1272,6 +1479,7 @@ impl ClipboardStore {
         record: crate::interface::SyncEventRecord,
     ) -> Result<crate::interface::SyncApplyOutcome, ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         use crate::interface::SyncApplyOutcome;
         use purr_sync::event::ItemEvent;
         use purr_sync::replay;
@@ -1328,6 +1536,7 @@ impl ClipboardStore {
         record: crate::interface::SyncSnapshotRecord,
     ) -> Result<bool, ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         use purr_sync::replay;
         use purr_sync::snapshot::ItemSnapshot;
 
@@ -1352,6 +1561,7 @@ impl ClipboardStore {
     /// Run compaction and retention for all items.
     pub fn run_compaction(&self) -> Result<crate::interface::CompactionResult, ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         use crate::interface::CompactionResult;
         use purr_sync::compactor;
 
@@ -1388,6 +1598,7 @@ impl ClipboardStore {
         tail_event_records: Vec<crate::interface::SyncEventRecord>,
     ) -> Result<crate::interface::SyncFullResyncResult, ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         use crate::interface::SyncFullResyncResult;
         use purr_sync::event::ItemEvent;
         use purr_sync::replay;
@@ -1551,6 +1762,7 @@ impl ClipboardStore {
     /// Enqueue every live item for derived search-index catch-up.
     pub fn enqueue_full_index_rebuild(&self) -> Result<u64, ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         use purr_sync::store::SyncStore;
 
         let items = self.db.fetch_all_items()?;
@@ -1566,6 +1778,7 @@ impl ClipboardStore {
         max_items: u32,
     ) -> Result<crate::interface::IndexMaintenanceOutcome, ClipKittyError> {
         let _permit = self.admission.admit()?;
+        let _mutation = self.mutation.lock();
         use crate::interface::IndexMaintenanceOutcome;
         use purr_sync::store::SyncStore;
         use purr_sync::types::{IndexQueueEntry, FLAG_INDEX_DIRTY};
@@ -1699,6 +1912,419 @@ mod tests {
 
         let items = store.fetch_by_ids(vec![id]).unwrap();
         assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn bounded_transfer_fetch_is_ordered_and_rejects_partial_requests() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let first_id = store.save_text("first".into(), None, None).unwrap();
+        let second_id = store.save_text("second".into(), None, None).unwrap();
+
+        let outcome = store
+            .fetch_items_for_transfer(vec![second_id.clone(), first_id.clone()])
+            .unwrap();
+        let TransferFetchOutcome::Success { snapshots } = outcome else {
+            panic!("expected successful bounded transfer fetch");
+        };
+        assert_eq!(
+            snapshots
+                .iter()
+                .map(|snapshot| snapshot.item.item_metadata.item_id.as_str())
+                .collect::<Vec<_>>(),
+            [second_id.as_str(), first_id.as_str()]
+        );
+
+        assert!(matches!(
+            store.fetch_items_for_transfer(vec![first_id.clone(), first_id]),
+            Ok(TransferFetchOutcome::Rejected {
+                reason: crate::interface::TransferFetchRejection::DuplicateItemId { .. }
+            })
+        ));
+        assert!(matches!(
+            store.fetch_items_for_transfer(vec![second_id, "missing".to_string()]),
+            Ok(TransferFetchOutcome::Rejected {
+                reason: crate::interface::TransferFetchRejection::MissingItem { .. }
+            })
+        ));
+
+        let too_many_ids = (0..=MAXIMUM_TRANSFER_ITEM_COUNT)
+            .map(|index| format!("missing-{index}"))
+            .collect();
+        assert!(matches!(
+            store.fetch_items_for_transfer(too_many_ids),
+            Ok(TransferFetchOutcome::Rejected {
+                reason: crate::interface::TransferFetchRejection::TooManyItems
+            })
+        ));
+    }
+
+    #[cfg(feature = "sync")]
+    #[tokio::test]
+    async fn conditional_transfer_delete_emits_only_confirmed_deletions_and_repairs_index() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let unchanged_id = store
+            .save_text("confirmed drop payload".into(), None, None)
+            .unwrap();
+        let changed_id = store
+            .save_text("original drag payload".into(), None, None)
+            .unwrap();
+        let TransferFetchOutcome::Success { snapshots } = store
+            .fetch_items_for_transfer(vec![unchanged_id.clone(), changed_id.clone()])
+            .unwrap()
+        else {
+            panic!("expected transfer snapshots");
+        };
+
+        store
+            .update_text_item(changed_id.clone(), "edited during drag".into())
+            .unwrap();
+        let outcome = store
+            .delete_transferred_items_if_unchanged(vec![
+                TransferDeletionCandidate {
+                    item_id: unchanged_id.clone(),
+                    deletion_token: snapshots[0].deletion_token.clone(),
+                },
+                TransferDeletionCandidate {
+                    item_id: changed_id.clone(),
+                    deletion_token: snapshots[1].deletion_token.clone(),
+                },
+            ])
+            .unwrap();
+
+        assert_eq!(outcome.deleted_item_ids, [unchanged_id.clone()]);
+        assert_eq!(outcome.retained_item_ids, [changed_id.clone()]);
+        assert!(store
+            .fetch_by_ids(vec![unchanged_id.clone()])
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store.fetch_by_ids(vec![changed_id.clone()]).unwrap().len(),
+            1
+        );
+
+        let delete_events: Vec<_> = store
+            .pending_local_events()
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.payload_type == "item_deleted")
+            .collect();
+        assert_eq!(delete_events.len(), 1);
+        assert_eq!(delete_events[0].item_id, unchanged_id);
+
+        let sync = purr_sync::store::SyncStore::new(&store.db.pool().unwrap());
+        assert_eq!(sync.count_index_queue_entries().unwrap(), 0);
+        assert!(!sync
+            .get_dirty_flag(purr_sync::types::FLAG_INDEX_DIRTY)
+            .unwrap());
+
+        let deleted_search = store
+            .search(
+                "confirmed drop payload".to_string(),
+                ListPresentationProfile::CompactRow,
+            )
+            .await
+            .unwrap();
+        assert_eq!(deleted_search.total_count, 0);
+        let retained_search = store
+            .search(
+                "edited during drag".to_string(),
+                ListPresentationProfile::CompactRow,
+            )
+            .await
+            .unwrap();
+        assert_eq!(retained_search.total_count, 1);
+    }
+
+    #[test]
+    fn conditional_transfer_delete_rejects_ambiguous_candidate_batches() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let item_id = store.save_text("payload".into(), None, None).unwrap();
+        let TransferFetchOutcome::Success { snapshots } = store
+            .fetch_items_for_transfer(vec![item_id.clone()])
+            .unwrap()
+        else {
+            panic!("expected transfer snapshot");
+        };
+        let candidate = TransferDeletionCandidate {
+            item_id: item_id.clone(),
+            deletion_token: snapshots[0].deletion_token.clone(),
+        };
+
+        assert!(matches!(
+            store.delete_transferred_items_if_unchanged(vec![candidate.clone(), candidate]),
+            Err(ClipKittyError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            store.delete_transferred_items_if_unchanged(
+                (0..=MAXIMUM_TRANSFER_ITEM_COUNT)
+                    .map(|index| TransferDeletionCandidate {
+                        item_id: format!("item-{index}"),
+                        deletion_token: "token".to_string(),
+                    })
+                    .collect()
+            ),
+            Err(ClipKittyError::InvalidInput(_))
+        ));
+        assert_eq!(store.fetch_by_ids(vec![item_id]).unwrap().len(), 1);
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn conditional_transfer_delete_preflights_batch_before_emitting_any_tombstone() {
+        use purr_sync::store::{ProjectionState, SyncStore};
+        use purr_sync::types::VersionVector;
+
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let first_item_id = store
+            .save_text("first must stay".into(), None, None)
+            .unwrap();
+        let blocked_item_id = store
+            .save_text("blocked must stay".into(), None, None)
+            .unwrap();
+        let TransferFetchOutcome::Success { snapshots } = store
+            .fetch_items_for_transfer(vec![first_item_id.clone(), blocked_item_id.clone()])
+            .unwrap()
+        else {
+            panic!("expected transfer snapshots");
+        };
+        let sync = SyncStore::new(&store.db.pool().unwrap());
+        sync.upsert_projection(
+            &blocked_item_id,
+            &ProjectionState::PendingMaterialization {
+                versions: VersionVector::default(),
+            },
+        )
+        .unwrap();
+
+        let result = store.delete_transferred_items_if_unchanged(
+            snapshots
+                .iter()
+                .map(|snapshot| TransferDeletionCandidate {
+                    item_id: snapshot.item.item_metadata.item_id.clone(),
+                    deletion_token: snapshot.deletion_token.clone(),
+                })
+                .collect(),
+        );
+
+        assert!(matches!(result, Err(ClipKittyError::DataInconsistency(_))));
+        assert_eq!(
+            store
+                .fetch_by_ids(vec![first_item_id, blocked_item_id])
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(store
+            .pending_local_events()
+            .unwrap()
+            .iter()
+            .all(|event| event.payload_type != "item_deleted"));
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn conditional_transfer_delete_pairs_each_tombstone_with_local_deletion() {
+        let store = ClipboardStore::new_in_memory().unwrap();
+        let first_item_id = store
+            .save_text("first deletion completes".into(), None, None)
+            .unwrap();
+        let failing_item_id = store
+            .save_text("second emission fails".into(), None, None)
+            .unwrap();
+        let TransferFetchOutcome::Success { snapshots } = store
+            .fetch_items_for_transfer(vec![first_item_id.clone(), failing_item_id.clone()])
+            .unwrap()
+        else {
+            panic!("expected transfer snapshots");
+        };
+
+        let conn = store.db.get_conn().unwrap();
+        conn.execute_batch(&format!(
+            r#"
+            CREATE TRIGGER abort_second_transfer_tombstone
+            BEFORE INSERT ON sync_events
+            WHEN NEW.item_id = '{failing_item_id}' AND NEW.payload_type = 'item_deleted'
+            BEGIN
+                SELECT RAISE(ABORT, 'forced second tombstone failure');
+            END;
+            "#
+        ))
+        .unwrap();
+        drop(conn);
+
+        let result = store.delete_transferred_items_if_unchanged(
+            snapshots
+                .iter()
+                .map(|snapshot| TransferDeletionCandidate {
+                    item_id: snapshot.item.item_metadata.item_id.clone(),
+                    deletion_token: snapshot.deletion_token.clone(),
+                })
+                .collect(),
+        );
+
+        assert!(result.is_err());
+        assert!(store
+            .fetch_by_ids(vec![first_item_id.clone()])
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store
+                .fetch_by_ids(vec![failing_item_id.clone()])
+                .unwrap()
+                .len(),
+            1
+        );
+        let delete_events: Vec<_> = store
+            .pending_local_events()
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.payload_type == "item_deleted")
+            .collect();
+        assert_eq!(delete_events.len(), 1);
+        assert_eq!(delete_events[0].item_id, first_item_id);
+        assert_ne!(delete_events[0].item_id, failing_item_id);
+    }
+
+    #[cfg(feature = "sync")]
+    #[test]
+    fn conditional_transfer_delete_rolls_back_every_failed_stage_and_remains_retryable() {
+        use purr_sync::store::{ProjectionState, SyncStore};
+        use purr_sync::types::ItemAggregate;
+
+        let failure_stages = [
+            (
+                "event",
+                r#"
+                CREATE TRIGGER fail_transfer_stage
+                BEFORE INSERT ON sync_events
+                WHEN NEW.payload_type = 'item_deleted'
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced transfer event failure');
+                END;
+                "#,
+            ),
+            (
+                "snapshot",
+                r#"
+                CREATE TRIGGER fail_transfer_stage
+                BEFORE UPDATE ON sync_snapshots
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced transfer snapshot failure');
+                END;
+                "#,
+            ),
+            (
+                "projection",
+                r#"
+                CREATE TRIGGER fail_transfer_stage
+                BEFORE UPDATE ON sync_projection
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced transfer projection failure');
+                END;
+                "#,
+            ),
+            (
+                "row delete",
+                r#"
+                CREATE TRIGGER fail_transfer_stage
+                BEFORE DELETE ON items
+                BEGIN
+                    SELECT RAISE(IGNORE);
+                END;
+                "#,
+            ),
+            (
+                "index queue",
+                r#"
+                CREATE TRIGGER fail_transfer_stage
+                BEFORE INSERT ON sync_index_queue
+                WHEN NEW.operation = 'delete'
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced transfer index queue failure');
+                END;
+                "#,
+            ),
+        ];
+
+        for (stage, trigger_sql) in failure_stages {
+            let store = ClipboardStore::new_in_memory().unwrap();
+            let item_id = store
+                .save_text(format!("retry after {stage} failure"), None, None)
+                .unwrap();
+            let TransferFetchOutcome::Success { snapshots } = store
+                .fetch_items_for_transfer(vec![item_id.clone()])
+                .unwrap()
+            else {
+                panic!("expected transfer snapshot for {stage}");
+            };
+            let candidate = TransferDeletionCandidate {
+                item_id: item_id.clone(),
+                deletion_token: snapshots[0].deletion_token.clone(),
+            };
+            let sync = SyncStore::new(&store.db.pool().unwrap());
+            let baseline_events = store.pending_local_events().unwrap();
+            let baseline_snapshot = sync.fetch_snapshot(&item_id).unwrap();
+            let baseline_projection = sync.fetch_projection(&item_id).unwrap();
+
+            let conn = store.db.get_conn().unwrap();
+            conn.execute_batch(trigger_sql).unwrap();
+            drop(conn);
+
+            let result = store.delete_transferred_items_if_unchanged(vec![candidate.clone()]);
+            assert!(result.is_err(), "{stage} failure must abort deletion");
+            assert_eq!(
+                store.fetch_by_ids(vec![item_id.clone()]).unwrap().len(),
+                1,
+                "{stage} failure must retain the source row"
+            );
+            assert_eq!(
+                store.pending_local_events().unwrap(),
+                baseline_events,
+                "{stage} failure must roll back the deletion event"
+            );
+            assert_eq!(
+                sync.fetch_snapshot(&item_id).unwrap(),
+                baseline_snapshot,
+                "{stage} failure must roll back the tombstone snapshot"
+            );
+            assert_eq!(
+                sync.fetch_projection(&item_id).unwrap(),
+                baseline_projection,
+                "{stage} failure must roll back the tombstone projection"
+            );
+            assert_eq!(
+                sync.count_index_queue_entries().unwrap(),
+                0,
+                "{stage} failure must roll back index repair intent"
+            );
+
+            let conn = store.db.get_conn().unwrap();
+            conn.execute_batch("DROP TRIGGER fail_transfer_stage")
+                .unwrap();
+            drop(conn);
+
+            let retry = store
+                .delete_transferred_items_if_unchanged(vec![candidate])
+                .unwrap();
+            assert_eq!(retry.deleted_item_ids, [item_id.clone()], "{stage}");
+            assert!(retry.retained_item_ids.is_empty(), "{stage}");
+            assert!(store
+                .fetch_by_ids(vec![item_id.clone()])
+                .unwrap()
+                .is_empty());
+            assert!(matches!(
+                sync.fetch_snapshot(&item_id)
+                    .unwrap()
+                    .map(|entry| entry.aggregate),
+                Some(ItemAggregate::Tombstoned(_))
+            ));
+            assert!(matches!(
+                sync.fetch_projection(&item_id)
+                    .unwrap()
+                    .map(|entry| entry.state),
+                Some(ProjectionState::Tombstoned { .. })
+            ));
+        }
     }
 
     #[test]

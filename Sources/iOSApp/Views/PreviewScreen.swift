@@ -22,6 +22,9 @@ struct PreviewScreen: View {
     }
 
     @State private var showDeleteConfirmation = false
+    @State private var isShareLoading = false
+    @State private var shareTask: Task<Void, Never>?
+    @State private var shareRequestID: UUID?
 
     #if ENABLE_TEST_FIXTURES
         private let isUITestPreviewDebugEnabled = CommandLine.arguments.contains("--use-simulated-db")
@@ -54,6 +57,9 @@ struct PreviewScreen: View {
             }
             .onAppear {
                 viewModel.select(itemId: itemId, origin: .click)
+            }
+            .onDisappear {
+                cancelShare()
             }
     }
 
@@ -386,15 +392,22 @@ struct PreviewScreen: View {
                     HStack(spacing: 20) {
                         // Left circle: Share
                         Button {
-                            SharePresenter.present(item: item)
+                            shareItem(item)
                         } label: {
-                            Image(systemName: "square.and.arrow.up")
-                                .font(.body.weight(.medium))
-                                .frame(width: 52, height: 52)
-                                .contentShape(Circle())
+                            Group {
+                                if isShareLoading {
+                                    ProgressView()
+                                } else {
+                                    Image(systemName: "square.and.arrow.up")
+                                        .font(.body.weight(.medium))
+                                }
+                            }
+                            .frame(width: 52, height: 52)
+                            .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
                         .glassEffect(.regular.interactive(), in: .circle)
+                        .disabled(isShareLoading)
 
                         // Center capsule: Bookmark, Copy
                         HStack(spacing: 0) {
@@ -409,9 +422,7 @@ struct PreviewScreen: View {
                             .buttonStyle(.plain)
 
                             Button {
-                                container.clipboardService.copy(content: item.content)
-                                haptics.fire(.copy)
-                                appState.showToast(.copied)
+                                appState.copyToPasteboard(item.content)
                             } label: {
                                 Image(systemName: "doc.on.doc")
                                     .font(.body.weight(.medium))
@@ -457,5 +468,50 @@ struct PreviewScreen: View {
             haptics.fire(.selection)
             appState.showToast(.bookmarked)
         }
+    }
+
+    // MARK: - Share
+
+    private func shareItem(_ item: ClipboardItem) {
+        cancelShare()
+        let requestID = UUID()
+        shareRequestID = requestID
+        isShareLoading = true
+
+        let task = Task { @MainActor in
+            defer { finishShare(requestID: requestID) }
+            guard isCurrentShare(requestID: requestID) else { return }
+            guard let payload = await SharePresenter.prepare(item: item) else {
+                guard isCurrentShare(requestID: requestID) else { return }
+                appState.showToast(.addFailed(String(localized: "Could not load item")))
+                return
+            }
+            guard isCurrentShare(requestID: requestID) else { return }
+            SharePresenter.present(payload: payload)
+        }
+        shareTask = task
+        guard appState.registerForegroundTask(id: requestID, task: task) else {
+            cancelShare()
+            return
+        }
+    }
+
+    private func isCurrentShare(requestID: UUID) -> Bool {
+        !Task.isCancelled && shareRequestID == requestID
+    }
+
+    private func cancelShare() {
+        shareRequestID = nil
+        shareTask?.cancel()
+        shareTask = nil
+        isShareLoading = false
+    }
+
+    private func finishShare(requestID: UUID) {
+        appState.finishForegroundTask(id: requestID)
+        guard shareRequestID == requestID else { return }
+        shareRequestID = nil
+        shareTask = nil
+        isShareLoading = false
     }
 }
