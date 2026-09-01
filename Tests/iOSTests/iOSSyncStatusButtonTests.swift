@@ -118,6 +118,49 @@
             )
         }
 
+        /// The toolbar slot is occupied only by states worth interrupting a
+        /// resting feed for: work in flight, or a failure the user may need
+        /// to act on. Idle, synced, off, and unavailable stay hidden.
+        func testOnlyWorkingAndFailedStatesOccupyTheToolbarSlot() {
+            let visible: [(String, SyncEngine.SyncStatus?)] = [
+                ("connecting", .connecting),
+                ("syncing", .syncing(.uploading(.events(count: 3)))),
+                ("error", .error("Upload failed, retrying")),
+                ("temporarilyUnavailable", .temporarilyUnavailable),
+            ]
+            for (name, status) in visible {
+                let presentation = iOSSyncStatusPresentation(syncEnabled: true, status: status)
+                XCTAssertTrue(presentation.isVisible, "\(name) should occupy the slot")
+            }
+
+            let hidden: [(String, SyncEngine.SyncStatus?)] = [
+                ("idle", .idle),
+                ("synced", .synced(lastSync: Date())),
+                ("unavailable", .unavailable),
+            ]
+            for (name, status) in hidden {
+                let presentation = iOSSyncStatusPresentation(syncEnabled: true, status: status)
+                XCTAssertFalse(presentation.isVisible, "\(name) should be hidden")
+            }
+        }
+
+        /// A disabled sync setting hides the control regardless of any status
+        /// a still-running coordinator reports.
+        func testDisabledSyncHidesTheControl() {
+            let presentation = iOSSyncStatusPresentation(
+                syncEnabled: false,
+                status: .syncing(.uploading(.events(count: 3)))
+            )
+            XCTAssertFalse(presentation.isVisible)
+        }
+
+        /// A suspended session drops the coordinator from the environment; the
+        /// resulting nil status must not leave a stranded spinner behind.
+        func testMissingCoordinatorHidesTheControl() {
+            let presentation = iOSSyncStatusPresentation(syncEnabled: true, status: nil)
+            XCTAssertFalse(presentation.isVisible)
+        }
+
         func testFailureStatesAreStaticAndExposeAnActionableReason() {
             let cases: [(SyncEngine.SyncStatus, String)] = [
                 (.error("Upload failed, retrying"), "Upload failed, retrying"),
