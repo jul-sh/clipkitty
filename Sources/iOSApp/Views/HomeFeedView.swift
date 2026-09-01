@@ -313,13 +313,18 @@ struct HomeFeedView: View {
                 SyncStatusButton()
             }
         #endif
-        ToolbarItemGroup(placement: .topBarTrailing) {
+        // Separate ToolbarItems, not a ToolbarItemGroup: a group shares one
+        // Liquid Glass capsule, and these two are unrelated actions that read
+        // better as their own bubbles.
+        ToolbarItem(placement: .topBarTrailing) {
             Button(String(localized: "Select")) {
                 selection.beginSelection()
             }
             .disabled(filteredRows.isEmpty)
             .accessibilityIdentifier("home.selectButton")
-
+        }
+        ToolbarSpacer(.fixed, placement: .topBarTrailing)
+        ToolbarItem(placement: .topBarTrailing) {
             Button {
                 showSettings = true
             } label: {

@@ -58,6 +58,8 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         // Set the UI language for this locale
         app.launchArguments += ["-AppleLanguages", "(\(locale!))"]
         app.launchArguments += ["-AppleLocale", locale]
+        // Marketing captures must show the feed, not first-launch onboarding.
+        app.launchArguments += ["-iOSHasCompletedOnboarding", "YES"]
         app.launch()
 
         // Let the feed mount and the visible cards kick off their image
