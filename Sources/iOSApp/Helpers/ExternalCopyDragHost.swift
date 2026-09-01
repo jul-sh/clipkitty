@@ -11,23 +11,17 @@ import UIKit
 struct ExternalCopyDragHost<Content: View>: UIViewControllerRepresentable {
     let content: Content
     let makePayload: ExternalCopyDragInteractionDelegate.PayloadFactory
-    let onExternalCopyTransferCompleted: ExternalCopyDragInteractionDelegate.Completion
 
     init(
         makePayload: @escaping ExternalCopyDragInteractionDelegate.PayloadFactory,
-        onExternalCopyTransferCompleted: @escaping ExternalCopyDragInteractionDelegate.Completion,
         @ViewBuilder content: () -> Content
     ) {
         self.makePayload = makePayload
-        self.onExternalCopyTransferCompleted = onExternalCopyTransferCompleted
         self.content = content()
     }
 
     func makeCoordinator() -> ExternalCopyDragInteractionDelegate {
-        ExternalCopyDragInteractionDelegate(
-            makePayload: makePayload,
-            onExternalCopyTransferCompleted: onExternalCopyTransferCompleted
-        )
+        ExternalCopyDragInteractionDelegate(makePayload: makePayload)
     }
 
     func makeUIViewController(context: Context) -> UIHostingController<Content> {
@@ -43,7 +37,6 @@ struct ExternalCopyDragHost<Content: View>: UIViewControllerRepresentable {
         context: Context
     ) {
         context.coordinator.makePayload = makePayload
-        context.coordinator.onExternalCopyTransferCompleted = onExternalCopyTransferCompleted
         controller.rootView = content
     }
 

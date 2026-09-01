@@ -462,6 +462,7 @@
             coordinator.setSyncEnabled(true)
             coordinator.handleScenePhaseChange(.active)
             coordinator.handleRemoteNotification()
+            coordinator.requestSync()
             let notificationResult = await coordinator.performRemoteNotificationSync()
             await coordinator.prepareForSuspension()
 
@@ -513,6 +514,57 @@
             await firstPreparation.value
             await secondPreparation.value
             XCTAssertEqual(engine.prepareForSuspendCallCount, 1)
+        }
+
+        // MARK: - User-requested sync
+
+        func testRequestSyncWakesEnabledEngineWithoutSchedulingBackgroundWork() {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory(),
+                scheduleBackgroundSync: countBackgroundSchedule
+            )
+            scheduleBackgroundSyncCallCount = 0
+
+            XCTAssertTrue(coordinator.canRequestSync)
+            coordinator.requestSync()
+
+            XCTAssertEqual(latestEngine?.startCallCount, 1)
+            XCTAssertEqual(latestEngine?.handleRemoteNotificationCallCount, 1)
+            XCTAssertEqual(scheduleBackgroundSyncCallCount, 0)
+        }
+
+        func testRequestSyncIsFailClosedWhenDisabled() {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: false,
+                onContentChanged: {},
+                engineFactory: spyFactory()
+            )
+
+            XCTAssertFalse(coordinator.canRequestSync)
+            coordinator.requestSync()
+
+            XCTAssertTrue(createdEngines.isEmpty)
+        }
+
+        func testRequestSyncCannotRestartEngineStoppedBySetting() throws {
+            let coordinator = iOSSyncCoordinator(
+                store: store,
+                enabled: true,
+                onContentChanged: {},
+                engineFactory: spyFactory()
+            )
+            let engine = try XCTUnwrap(latestEngine)
+            coordinator.setSyncEnabled(false)
+
+            XCTAssertFalse(coordinator.canRequestSync)
+            coordinator.requestSync()
+
+            XCTAssertEqual(engine.startCallCount, 0)
+            XCTAssertEqual(engine.handleRemoteNotificationCallCount, 0)
         }
 
         // MARK: - Remote notification

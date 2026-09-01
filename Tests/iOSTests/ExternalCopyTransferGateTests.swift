@@ -48,7 +48,7 @@ final class ExternalCopyTransferGateTests: XCTestCase {
         let payload = ExternalCopyDragPayload(
             itemIDs: ["third", "first", "third", "second", "ignored"],
             policy: policy,
-            fetchSnapshot: { _ in nil }
+            fetchItem: { _ in nil }
         )
 
         XCTAssertEqual(payload.itemIDs, ["third", "first", "second"])
@@ -145,29 +145,6 @@ final class ExternalCopyTransferGateTests: XCTestCase {
                 .unavailable(typeIdentifier: UTType.utf8PlainText.identifier)
             )
         }
-    }
-
-    func testSessionExpiryRequiresTheExactScheduledStateToken() {
-        let scheduled = UUID()
-
-        XCTAssertTrue(
-            ExternalCopyDragSessionExpiryPolicy.shouldExpire(
-                currentToken: scheduled,
-                scheduledToken: scheduled
-            )
-        )
-        XCTAssertFalse(
-            ExternalCopyDragSessionExpiryPolicy.shouldExpire(
-                currentToken: UUID(),
-                scheduledToken: scheduled
-            )
-        )
-        XCTAssertFalse(
-            ExternalCopyDragSessionExpiryPolicy.shouldExpire(
-                currentToken: nil,
-                scheduledToken: scheduled
-            )
-        )
     }
 
     func testTransferBudgetIsSharedAcrossItems() async throws {
@@ -511,13 +488,10 @@ final class ExternalCopyTransferGateTests: XCTestCase {
         let payload = ExternalCopyDragPayload(
             descriptors: [ExternalCopyDragItemDescriptor(itemID: "slow", contentKind: .text)],
             externalTransferLease: lease,
-            fetchSnapshot: { itemID in
+            fetchItem: { itemID in
                 fetchStarted.finish()
                 await releaseFetch.wait()
-                return TransferItemSnapshot(
-                    item: Self.makeTextItem(id: itemID, text: "late"),
-                    deletionToken: "token"
-                )
+                return Self.makeTextItem(id: itemID, text: "late")
             }
         )
         let provider = try XCTUnwrap(payload.items.first?.itemProvider)
@@ -558,13 +532,10 @@ final class ExternalCopyTransferGateTests: XCTestCase {
         let payload = ExternalCopyDragPayload(
             descriptors: [ExternalCopyDragItemDescriptor(itemID: "slow", contentKind: .text)],
             externalTransferLease: lease,
-            fetchSnapshot: { itemID in
+            fetchItem: { itemID in
                 fetchStarted.finish()
                 await releaseFetch.wait()
-                return TransferItemSnapshot(
-                    item: Self.makeTextItem(id: itemID, text: "late"),
-                    deletionToken: "token"
-                )
+                return Self.makeTextItem(id: itemID, text: "late")
             }
         )
         let provider = try XCTUnwrap(payload.items.first?.itemProvider)
@@ -593,56 +564,6 @@ final class ExternalCopyTransferGateTests: XCTestCase {
     }
 
     @MainActor
-    func testExpirationKeepsAppSuspensionPendingForBlockedConditionalDeleteFollowUp() async throws {
-        let appState = try makeAppState(named: "expired-conditional-delete")
-        let identifier = UIBackgroundTaskIdentifier(rawValue: 303)
-        let background = ExternalTransferBackgroundProbe(identifier: identifier)
-        let lease = try XCTUnwrap(
-            appState.beginExternalTransfer(backgroundTaskClient: background.makeClient())
-        )
-        let payload = ExternalCopyDragPayload(
-            itemIDs: [],
-            externalTransferLease: lease,
-            fetchSnapshot: { _ in nil }
-        )
-        let deleteStarted = AppSessionWorkCompletion()
-        let allowDeleteToReturn = AppSessionWorkCompletion()
-        var didReconcileCommittedDelete = false
-        let followUp = ExternalCopyDragFollowUp.start(
-            payload: payload,
-            evidence: [ExternalCopyTransferEvidence(itemID: "item", deletionToken: "token")],
-            completion: { _ in
-                deleteStarted.finish()
-                // Model a conditional delete that was admitted before expiry:
-                // cancellation must not release the terminal store join until
-                // its authoritative result has been reconciled.
-                await allowDeleteToReturn.wait()
-                didReconcileCommittedDelete = true
-            }
-        )
-        await deleteStarted.wait()
-
-        let join = try XCTUnwrap(suspensionJoin(for: appState))
-        var didJoin = false
-        let observer = Task { @MainActor in
-            await join.value
-            didJoin = true
-        }
-        background.expire()
-        XCTAssertEqual(background.endedIdentifiers, [identifier])
-        await Task.yield()
-        XCTAssertFalse(didJoin)
-
-        allowDeleteToReturn.finish()
-        await followUp.value
-        await observer.value
-
-        XCTAssertTrue(didReconcileCommittedDelete)
-        XCTAssertTrue(didJoin)
-        XCTAssertEqual(background.endedIdentifiers, [identifier])
-    }
-
-    @MainActor
     func testImageRepresentationPreservesNativeJPEGBytesAndTruthfulUTI() async throws {
         let jpeg = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2)).jpegData(
             withCompressionQuality: 0.8,
@@ -655,11 +576,8 @@ final class ExternalCopyTransferGateTests: XCTestCase {
             descriptors: [
                 ExternalCopyDragItemDescriptor(itemID: "jpeg", contentKind: .image),
             ],
-            fetchSnapshot: { itemID in
-                TransferItemSnapshot(
-                    item: Self.makeImageItem(id: itemID, data: jpeg),
-                    deletionToken: "jpeg-token"
-                )
+            fetchItem: { itemID in
+                Self.makeImageItem(id: itemID, data: jpeg)
             }
         )
         let provider = try XCTUnwrap(payload.items.first?.itemProvider)
@@ -683,302 +601,15 @@ final class ExternalCopyTransferGateTests: XCTestCase {
         XCTAssertEqual(DragItemProvider.nativeImageTypeIdentifier(for: gif), UTType.gif.identifier)
     }
 
-    func testItemLoadStateRequiresTokenAndSuccessfulPublicRepresentation() {
-        let state = ExternalCopyDragItemLoadState()
-
-        XCTAssertNil(state.completedTransferEvidence(itemID: "item"))
-
-        XCTAssertTrue(state.recordDeletionToken("token"))
-        XCTAssertNil(state.completedTransferEvidence(itemID: "item"))
-        state.recordRepresentationLoad(succeeded: true)
-        XCTAssertEqual(
-            state.completedTransferEvidence(itemID: "item"),
-            ExternalCopyTransferEvidence(itemID: "item", deletionToken: "token")
-        )
-    }
-
-    func testItemLoadStateFailsClosedAfterAnyRequestedRepresentationFails() {
-        let state = ExternalCopyDragItemLoadState()
-
-        XCTAssertTrue(state.recordDeletionToken("token"))
-        state.recordRepresentationLoad(succeeded: true)
-        state.recordRepresentationLoad(succeeded: false)
-
-        XCTAssertNil(state.completedTransferEvidence(itemID: "item"))
-    }
-
-    func testItemLoadStateFailsClosedForMissingOrConflictingDeletionToken() {
-        let missing = ExternalCopyDragItemLoadState()
-        XCTAssertFalse(missing.recordDeletionToken(""))
-        XCTAssertFalse(missing.recordDeletionToken("later-token"))
-        missing.recordRepresentationLoad(succeeded: true)
-        XCTAssertNil(missing.completedTransferEvidence(itemID: "item"))
-
-        let conflicting = ExternalCopyDragItemLoadState()
-        XCTAssertTrue(conflicting.recordDeletionToken("first-token"))
-        XCTAssertFalse(conflicting.recordDeletionToken("different-token"))
-        XCTAssertFalse(conflicting.recordDeletionToken("first-token"))
-        conflicting.recordRepresentationLoad(succeeded: true)
-        XCTAssertNil(conflicting.completedTransferEvidence(itemID: "item"))
-    }
-
-    @MainActor
-    func testManagedPayloadEmitsExactSnapshotEvidenceOnlyAfterPublicLoad() async throws {
-        let payload = ExternalCopyDragPayload(
-            descriptors: [
-                ExternalCopyDragItemDescriptor(itemID: "loaded", contentKind: .text),
-                ExternalCopyDragItemDescriptor(itemID: "not-requested", contentKind: .text),
-            ],
-            fetchSnapshot: { itemID in
-                TransferItemSnapshot(
-                    item: Self.makeTextItem(id: itemID, text: itemID),
-                    deletionToken: "token-\(itemID)"
-                )
-            }
-        )
-        let provider = try XCTUnwrap(payload.items.first?.itemProvider)
-
-        XCTAssertTrue(payload.completedTransferEvidence.isEmpty)
-        _ = try await Self.loadData(
-            from: provider,
-            typeIdentifier: UTType.utf8PlainText.identifier
-        )
-
-        XCTAssertEqual(
-            payload.completedTransferEvidence,
-            [
-                ExternalCopyTransferEvidence(
-                    itemID: "loaded",
-                    deletionToken: "token-loaded"
-                ),
-            ]
-        )
-    }
-
-    @MainActor
-    func testManagedPayloadRejectsEmptySnapshotTokenWithoutEmittingEvidence() async throws {
-        let payload = ExternalCopyDragPayload(
-            descriptors: [
-                ExternalCopyDragItemDescriptor(itemID: "item", contentKind: .text),
-            ],
-            fetchSnapshot: { itemID in
-                TransferItemSnapshot(
-                    item: Self.makeTextItem(id: itemID, text: "text"),
-                    deletionToken: ""
-                )
-            }
-        )
-        let provider = try XCTUnwrap(payload.items.first?.itemProvider)
-
-        do {
-            _ = try await Self.loadData(
-                from: provider,
-                typeIdentifier: UTType.utf8PlainText.identifier
-            )
-            XCTFail("Expected an empty deletion token to make the managed load unavailable")
-        } catch {
-            XCTAssertNotNil(error)
-        }
-        XCTAssertTrue(payload.completedTransferEvidence.isEmpty)
-    }
-
     func testPayloadPreservesItemOrder() {
         let items = ["third", "first", "second"].map { itemID in
             ExternalCopyDragItem(
                 itemID: itemID,
-                itemProvider: NSItemProvider(),
-                loadState: ExternalCopyDragItemLoadState()
+                itemProvider: NSItemProvider()
             )
         }
 
         XCTAssertEqual(ExternalCopyDragPayload(items: items).itemIDs, ["third", "first", "second"])
-    }
-
-    func testExternalCopyCompletesExactlyOnceAfterTransfer() {
-        var gate = ExternalCopyTransferGate()
-        gate.recordEnd(operation: .copy, isOutsideApplicationWindows: true)
-
-        XCTAssertTrue(gate.observeDataTransferCompleted())
-        XCTAssertFalse(gate.observeDataTransferCompleted())
-    }
-
-    func testCopyInsideApplicationRetainsItem() {
-        var gate = ExternalCopyTransferGate()
-        gate.recordEnd(operation: .copy, isOutsideApplicationWindows: false)
-
-        XCTAssertFalse(gate.observeDataTransferCompleted())
-    }
-
-    func testCancelledDragRetainsItem() {
-        var gate = ExternalCopyTransferGate()
-        gate.recordEnd(operation: .cancel, isOutsideApplicationWindows: true)
-
-        XCTAssertFalse(gate.observeDataTransferCompleted())
-    }
-
-    func testForbiddenDragRetainsItem() {
-        var gate = ExternalCopyTransferGate()
-        gate.recordEnd(operation: .forbidden, isOutsideApplicationWindows: true)
-
-        XCTAssertFalse(gate.observeDataTransferCompleted())
-    }
-
-    func testMoveRetainsItemEvenOutsideApplicationGeometry() {
-        var gate = ExternalCopyTransferGate()
-        gate.recordEnd(operation: .move, isOutsideApplicationWindows: true)
-
-        XCTAssertFalse(gate.observeDataTransferCompleted())
-    }
-
-    func testUnknownOperationRetainsItem() {
-        var gate = ExternalCopyTransferGate()
-        gate.recordEnd(operation: .unknown, isOutsideApplicationWindows: true)
-
-        XCTAssertFalse(gate.observeDataTransferCompleted())
-    }
-
-    func testTransferBeforeTerminalResultFailsClosed() {
-        var gate = ExternalCopyTransferGate()
-
-        XCTAssertFalse(gate.observeDataTransferCompleted())
-        gate.recordEnd(operation: .copy, isOutsideApplicationWindows: true)
-        XCTAssertFalse(gate.observeDataTransferCompleted())
-    }
-
-    func testFirstTerminalResultWins() {
-        var gate = ExternalCopyTransferGate()
-        gate.recordEnd(operation: .cancel, isOutsideApplicationWindows: true)
-        gate.recordEnd(operation: .copy, isOutsideApplicationWindows: true)
-
-        XCTAssertFalse(gate.observeDataTransferCompleted())
-    }
-
-    func testUIKitOperationMapping() {
-        XCTAssertEqual(ExternalCopyTransferGate.Operation(.cancel), .cancel)
-        XCTAssertEqual(ExternalCopyTransferGate.Operation(.forbidden), .forbidden)
-        XCTAssertEqual(ExternalCopyTransferGate.Operation(.copy), .copy)
-        XCTAssertEqual(ExternalCopyTransferGate.Operation(.move), .move)
-    }
-
-    func testDropOutsideEveryApplicationWindowIsExternal() {
-        let windows = [
-            ExternalDropWindowGeometry(
-                bounds: CGRect(x: 0, y: 0, width: 400, height: 800),
-                dropLocation: CGPoint(x: 450, y: 200)
-            ),
-            ExternalDropWindowGeometry(
-                bounds: CGRect(x: 0, y: 0, width: 300, height: 500),
-                dropLocation: CGPoint(x: -20, y: 200)
-            ),
-        ]
-
-        XCTAssertTrue(ExternalDropGeometryClassifier.isOutsideApplicationWindows(windows))
-    }
-
-    func testAllBackgroundScenesClassifyFullScreenDropAsExternal() {
-        XCTAssertTrue(
-            ExternalDragScenePolicy.isExternalDestination([
-                .background,
-                .background,
-            ])
-        )
-    }
-
-    func testForegroundWindowsTakePrecedenceOverBackgroundScenes() {
-        XCTAssertFalse(
-            ExternalDragScenePolicy.isExternalDestination([
-                .background,
-                .foreground(windows: [
-                    ExternalDropWindowGeometry(
-                        bounds: CGRect(x: 0, y: 0, width: 400, height: 800),
-                        dropLocation: CGPoint(x: 200, y: 300)
-                    ),
-                ]),
-            ])
-        )
-        XCTAssertTrue(
-            ExternalDragScenePolicy.isExternalDestination([
-                .background,
-                .foreground(windows: [
-                    ExternalDropWindowGeometry(
-                        bounds: CGRect(x: 0, y: 0, width: 400, height: 800),
-                        dropLocation: CGPoint(x: 450, y: 300)
-                    ),
-                ]),
-            ])
-        )
-    }
-
-    func testForegroundSceneWithoutVisibleGeometryFailsClosed() {
-        XCTAssertFalse(
-            ExternalDragScenePolicy.isExternalDestination([
-                .background,
-                .foreground(windows: []),
-            ])
-        )
-    }
-
-    func testAmbiguousOrMissingSceneStateFailsClosed() {
-        let outsideWindow = ExternalDropWindowGeometry(
-            bounds: CGRect(x: 0, y: 0, width: 400, height: 800),
-            dropLocation: CGPoint(x: 450, y: 300)
-        )
-
-        XCTAssertFalse(ExternalDragScenePolicy.isExternalDestination([]))
-        XCTAssertFalse(
-            ExternalDragScenePolicy.isExternalDestination([.background, .unattached])
-        )
-        XCTAssertFalse(
-            ExternalDragScenePolicy.isExternalDestination([.background, .unknown])
-        )
-        XCTAssertFalse(ExternalDragScenePolicy.isExternalDestination([.unattached]))
-        XCTAssertFalse(ExternalDragScenePolicy.isExternalDestination([.unknown]))
-        XCTAssertFalse(
-            ExternalDragScenePolicy.isExternalDestination([
-                .foreground(windows: [outsideWindow]),
-                .unattached,
-            ])
-        )
-        XCTAssertFalse(
-            ExternalDragScenePolicy.isExternalDestination([
-                .foreground(windows: [outsideWindow]),
-                .unknown,
-            ])
-        )
-    }
-
-    func testDropInsideAnyApplicationWindowIsInternal() {
-        let windows = [
-            ExternalDropWindowGeometry(
-                bounds: CGRect(x: 0, y: 0, width: 400, height: 800),
-                dropLocation: CGPoint(x: 450, y: 200)
-            ),
-            ExternalDropWindowGeometry(
-                bounds: CGRect(x: 0, y: 0, width: 300, height: 500),
-                dropLocation: CGPoint(x: 150, y: 200)
-            ),
-        ]
-
-        XCTAssertFalse(ExternalDropGeometryClassifier.isOutsideApplicationWindows(windows))
-    }
-
-    func testMissingWindowGeometryFailsClosed() {
-        XCTAssertFalse(ExternalDropGeometryClassifier.isOutsideApplicationWindows([]))
-    }
-
-    func testNonFiniteWindowLocationsFailClosed() {
-        let windows = [
-            ExternalDropWindowGeometry(
-                bounds: CGRect(x: 0, y: 0, width: 400, height: 800),
-                dropLocation: CGPoint(x: CGFloat.nan, y: 200)
-            ),
-            ExternalDropWindowGeometry(
-                bounds: CGRect(x: 0, y: 0, width: 300, height: 500),
-                dropLocation: CGPoint(x: 500, y: CGFloat.infinity)
-            ),
-        ]
-
-        XCTAssertFalse(ExternalDropGeometryClassifier.isOutsideApplicationWindows(windows))
     }
 
     private static func makeTextItem(id: String, text: String) -> ClipboardItem {

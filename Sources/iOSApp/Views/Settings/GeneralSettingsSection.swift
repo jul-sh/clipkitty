@@ -13,21 +13,6 @@ struct GeneralSettingsSection: View {
                 SyncSettingsRow()
             #endif
             Toggle(String(localized: "Auto-Add from Clipboard"), isOn: $settings.autoAddFromClipboard)
-
-            Toggle(isOn: $settings.deleteAfterSuccessfulExternalDrop) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(String(localized: "Delete After Drag and Drop"))
-                    Text(
-                        String(
-                            localized:
-                            "Deletes a clip from history after it is successfully dropped into another app."
-                        )
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-            }
         }
 
         if !settings.permissionHintDismissed {

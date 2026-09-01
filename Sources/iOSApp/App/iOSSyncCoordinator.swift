@@ -63,6 +63,20 @@
             }
         }
 
+        /// Whether the foreground sync runtime can accept an explicit wake.
+        ///
+        /// This is deliberately derived from the runtime rather than from the
+        /// engine's visible status. Connecting, syncing, retrying, and an
+        /// unavailable engine are all valid wake targets: the engine collapses
+        /// repeated signals into its single pending-wake bit. Disabled,
+        /// stopped, and suspending sessions remain fail-closed.
+        var canRequestSync: Bool {
+            if case .enabled = runtime {
+                return true
+            }
+            return false
+        }
+
         convenience init(
             store: ClipKittyRust.ClipboardStore,
             enabled: Bool,
@@ -161,6 +175,16 @@
                 engine.start()
                 engine.handleRemoteNotification()
             }
+        }
+
+        /// Wake the foreground coordinator for an immediate user-requested
+        /// cycle. `SyncEngine` owns coalescing, so repeated taps cannot create
+        /// parallel cycles. Calling this after sync is disabled or suspension
+        /// begins is a no-op and cannot resurrect a stopped store session.
+        func requestSync() {
+            guard case let .enabled(_, engine) = runtime else { return }
+            engine.start()
+            engine.handleRemoteNotification()
         }
 
         func prepareForSuspension() async {

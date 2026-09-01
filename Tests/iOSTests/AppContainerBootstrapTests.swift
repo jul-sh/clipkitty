@@ -539,7 +539,7 @@ final class AppContainerBootstrapTests: TemporaryDirectoryTestCase {
         var payload: ExternalCopyDragPayload? = ExternalCopyDragPayload(
             itemIDs: [],
             externalTransferLease: lease,
-            fetchSnapshot: { _ in nil }
+            fetchItem: { _ in nil }
         )
         lease = nil
 
@@ -550,115 +550,6 @@ final class AppContainerBootstrapTests: TemporaryDirectoryTestCase {
         await join.value
 
         XCTAssertNil(payload)
-        XCTAssertEqual(backgroundProbe.events, [.ended(identifier)])
-    }
-
-    func testCancellingProviderLoadsKeepsLeaseUntilFollowUpFinishes() async throws {
-        guard case let .success(container) = AppContainer.bootstrap(
-            databasePath: databasePath("external-follow-up-suspension.db")
-        ) else {
-            return XCTFail("Bootstrap failed")
-        }
-        let appState = AppState(container: container)
-        let identifier = UIBackgroundTaskIdentifier(rawValue: 56)
-        let backgroundProbe = AppBackgroundTaskClientProbe(
-            beginBehavior: .returnIdentifier(identifier)
-        )
-        let lease = try XCTUnwrap(
-            appState.beginExternalTransfer(backgroundTaskClient: backgroundProbe.makeClient())
-        )
-        let payload = ExternalCopyDragPayload(
-            itemIDs: [],
-            externalTransferLease: lease,
-            fetchSnapshot: { _ in nil }
-        )
-
-        guard case let .awaiting(join) = appState.prepareForSuspension() else {
-            return XCTFail("The payload's lease must be joined before suspension")
-        }
-        var didJoin = false
-        let observer = Task { @MainActor in
-            await join.value
-            didJoin = true
-        }
-
-        let allowFollowUpToFinish = AppSessionWorkCompletion()
-        var didStartFollowUp = false
-        let evidence = [
-            ExternalCopyTransferEvidence(
-                itemID: "transferred-item",
-                deletionToken: "token"
-            ),
-        ]
-        var receivedEvidence: [ExternalCopyTransferEvidence] = []
-        let followUp = ExternalCopyDragFollowUp.start(
-            payload: payload,
-            evidence: evidence,
-            completion: { completedEvidence in
-                receivedEvidence = completedEvidence
-                didStartFollowUp = true
-                await allowFollowUpToFinish.wait()
-            }
-        )
-        await Task.yield()
-        XCTAssertTrue(didStartFollowUp)
-        XCTAssertFalse(didJoin)
-        XCTAssertEqual(backgroundProbe.events, [])
-
-        allowFollowUpToFinish.finish()
-        await followUp.value
-        await observer.value
-
-        XCTAssertTrue(didJoin)
-        XCTAssertEqual(receivedEvidence, evidence)
-        XCTAssertEqual(backgroundProbe.events, [.ended(identifier)])
-    }
-
-    func testBackgroundExpirationCancelsFollowUpAndReleasesPayloadLease() async throws {
-        guard case let .success(container) = AppContainer.bootstrap(
-            databasePath: databasePath("expired-external-follow-up.db")
-        ) else {
-            return XCTFail("Bootstrap failed")
-        }
-        let appState = AppState(container: container)
-        let identifier = UIBackgroundTaskIdentifier(rawValue: 57)
-        let backgroundProbe = AppBackgroundTaskClientProbe(
-            beginBehavior: .returnIdentifier(identifier)
-        )
-        let lease = try XCTUnwrap(
-            appState.beginExternalTransfer(backgroundTaskClient: backgroundProbe.makeClient())
-        )
-        let payload = ExternalCopyDragPayload(
-            itemIDs: [],
-            externalTransferLease: lease,
-            fetchSnapshot: { _ in nil }
-        )
-
-        guard case let .awaiting(join) = appState.prepareForSuspension() else {
-            return XCTFail("The payload's lease must be joined before suspension")
-        }
-        let followUpStarted = AppSessionWorkCompletion()
-        var didObserveCancellation = false
-        let followUp = ExternalCopyDragFollowUp.start(
-            payload: payload,
-            evidence: [
-                ExternalCopyTransferEvidence(itemID: "item", deletionToken: "token"),
-            ],
-            completion: { _ in
-                followUpStarted.finish()
-                do {
-                    try await Task.sleep(nanoseconds: 30_000_000_000)
-                } catch {
-                    didObserveCancellation = true
-                }
-            }
-        )
-        await followUpStarted.wait()
-        backgroundProbe.expire()
-        await followUp.value
-        await join.value
-
-        XCTAssertTrue(didObserveCancellation)
         XCTAssertEqual(backgroundProbe.events, [.ended(identifier)])
     }
 

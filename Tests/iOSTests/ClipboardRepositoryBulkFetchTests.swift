@@ -37,13 +37,12 @@ final class ClipboardRepositoryBulkFetchTests: TemporaryDirectoryTestCase {
         let secondID = try await savedText("second", repository: repository)
 
         let result = await repository.fetchTransferItems(ids: [secondID, firstID])
-        guard case let .success(snapshots) = result else {
+        guard case let .success(items) = result else {
             return XCTFail("Expected bounded transfer fetch to succeed")
         }
 
-        XCTAssertEqual(snapshots.map(\.item.itemMetadata.itemId), [secondID, firstID])
-        XCTAssertEqual(snapshots.map(\.item.content.textContent), ["second", "first"])
-        XCTAssertTrue(snapshots.allSatisfy { !$0.deletionToken.isEmpty })
+        XCTAssertEqual(items.map(\.itemMetadata.itemId), [secondID, firstID])
+        XCTAssertEqual(items.map(\.content.textContent), ["second", "first"])
     }
 
     func testTransferFetchRejectsDuplicateMissingAndExcessIDsAtomically() async throws {
@@ -97,41 +96,6 @@ final class ClipboardRepositoryBulkFetchTests: TemporaryDirectoryTestCase {
         XCTAssertEqual(name, "testCancellation")
         XCTAssertTrue(underlying is CancellationError)
         await fulfillment(of: [finished], timeout: 2)
-    }
-
-    func testConditionalTransferDeleteRetainsAnItemEditedAfterFetch() async throws {
-        let store = try ClipboardStore(dbPath: databasePath("conditional-transfer-delete.db"))
-        let repository = ClipboardRepository(store: store)
-        let unchangedID = try await savedText("unchanged", repository: repository)
-        let changedID = try await savedText("before edit", repository: repository)
-
-        let fetch = await repository.fetchTransferItems(ids: [unchangedID, changedID])
-        guard case let .success(snapshots) = fetch else {
-            return XCTFail("Expected transfer snapshots")
-        }
-        let update = await repository.updateTextItem(itemId: changedID, text: "after edit")
-        guard case .success = update else {
-            return XCTFail("Expected edit to succeed")
-        }
-
-        let deletion = await repository.deleteTransferredItemsIfUnchanged(
-            candidates: snapshots.map {
-                TransferDeletionCandidate(
-                    itemId: $0.item.itemMetadata.itemId,
-                    deletionToken: $0.deletionToken
-                )
-            }
-        )
-        guard case let .success(outcome) = deletion else {
-            return XCTFail("Expected conditional deletion to succeed")
-        }
-
-        XCTAssertEqual(outcome.deletedItemIds, [unchangedID])
-        XCTAssertEqual(outcome.retainedItemIds, [changedID])
-        let deletedItem = await repository.fetchItem(id: unchangedID)
-        let retainedItem = await repository.fetchItem(id: changedID)
-        XCTAssertNil(deletedItem)
-        XCTAssertEqual(retainedItem?.content.textContent, "after edit")
     }
 
     private func savedText(_ text: String, repository: ClipboardRepository) async throws -> String {

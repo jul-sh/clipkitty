@@ -15,18 +15,6 @@ final class iOSSettingsStore {
         didSet { defaults.set(autoAddFromClipboard, forKey: autoAddFromClipboardKey) }
     }
 
-    /// Whether a clip should be deleted from history after it is successfully
-    /// dropped into another app. Default OFF because this changes a copy-style
-    /// drag into a destructive transfer and must be explicitly opted into.
-    var deleteAfterSuccessfulExternalDrop: Bool {
-        didSet {
-            defaults.set(
-                deleteAfterSuccessfulExternalDrop,
-                forKey: deleteAfterSuccessfulExternalDropKey
-            )
-        }
-    }
-
     /// Whether Shortcuts intents may read clipboard history. Default ON; the
     /// read-intents are gated on this so a privacy-conscious user can turn off
     /// history access for automations while still allowing them to save clips.
@@ -86,7 +74,6 @@ final class iOSSettingsStore {
 
     private let generateLinkPreviewsKey = "iOSGenerateLinkPreviews"
     private let autoAddFromClipboardKey = "iOSAutoAddFromClipboard"
-    private let deleteAfterSuccessfulExternalDropKey = "iOSDeleteAfterSuccessfulExternalDrop"
     private let allowShortcutsReadAccessKey = "allowShortcutsReadAccess"
     private let captureSensitiveClipsKey = "captureSensitiveClips"
     private let maxDatabaseSizeGBKey = "iOSMaxDatabaseSizeGB"
@@ -108,8 +95,6 @@ final class iOSSettingsStore {
 
         generateLinkPreviews = defaults.object(forKey: generateLinkPreviewsKey) as? Bool ?? true
         autoAddFromClipboard = defaults.object(forKey: autoAddFromClipboardKey) as? Bool ?? false
-        deleteAfterSuccessfulExternalDrop =
-            defaults.object(forKey: deleteAfterSuccessfulExternalDropKey) as? Bool ?? false
         allowShortcutsReadAccess = defaults.object(forKey: allowShortcutsReadAccessKey) as? Bool ?? true
         captureSensitiveClips = defaults.object(forKey: captureSensitiveClipsKey) as? Bool ?? false
         maxDatabaseSizeGB = defaults.object(forKey: maxDatabaseSizeGBKey) as? Double ?? 7.0

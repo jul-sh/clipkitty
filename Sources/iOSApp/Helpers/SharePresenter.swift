@@ -44,7 +44,18 @@ enum SharePresenter {
 
     @MainActor
     static func present(payload: PreparedSharePayload) {
-        let activityItems = activityItems(for: payload)
+        present(activityItems: activityItems(for: payload))
+    }
+
+    /// Presents every prepared payload's activity items in one share sheet,
+    /// preserving selection order.
+    @MainActor
+    static func present(payloads: [PreparedSharePayload]) {
+        present(activityItems: payloads.flatMap { activityItems(for: $0) })
+    }
+
+    @MainActor
+    private static func present(activityItems: [Any]) {
         guard !activityItems.isEmpty else { return }
 
         let activityVC = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)

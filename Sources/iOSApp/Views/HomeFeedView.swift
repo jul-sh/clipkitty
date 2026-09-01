@@ -21,6 +21,8 @@ struct HomeFeedView: View {
     @State private var showDeleteConfirmation = false
     @State private var bulkCopyTask: Task<Void, Never>?
     @State private var bulkCopyRequestID: UUID?
+    @State private var bulkShareTask: Task<Void, Never>?
+    @State private var bulkShareRequestID: UUID?
     /// Cards currently drawing an image placeholder; see
     /// `PendingImagePlaceholderCount` and `feedLoadPhase`.
     @State private var pendingImagePlaceholders = 0
@@ -62,12 +64,12 @@ struct HomeFeedView: View {
                 if selection.isActive {
                     FeedSelectionActionBar(
                         selectedItemIDs: orderedSelectedItemIDs,
-                        makeDragPayload: makeExternalDragPayload,
+                        allSelectedAreBookmarked: allSelectedAreBookmarked,
                         isCopying: isBulkCopying,
                         onCopy: copySelectedItems,
-                        onDelete: { showDeleteConfirmation = true },
-                        onTransferLimitExceeded: showTransferItemLimitExceeded,
-                        onExternalCopyTransferCompleted: removeTransferredItemsIfEnabled
+                        onToggleBookmark: toggleBookmarkForSelectedItems,
+                        onShare: shareSelectedItems,
+                        onDelete: { showDeleteConfirmation = true }
                     )
                     .padding(.bottom, dockedKeyboardInset)
                 } else {
@@ -85,35 +87,9 @@ struct HomeFeedView: View {
             }
             .toolbar {
                 if selection.isActive {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button(String(localized: "Cancel")) {
-                            cancelSelection()
-                        }
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button(
-                            selection.areAllSelected(in: visibleItemIDs)
-                                ? String(localized: "Deselect All")
-                                : String(localized: "Select All")
-                        ) {
-                            toggleAllVisibleItems()
-                        }
-                        .disabled(visibleItemIDs.isEmpty)
-                    }
+                    selectionToolbarContent
                 } else {
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        Button(String(localized: "Select")) {
-                            selection.beginSelection()
-                        }
-                        .disabled(filteredRows.isEmpty)
-
-                        Button {
-                            showSettings = true
-                        } label: {
-                            Image(systemName: "gearshape")
-                        }
-                        .accessibilityIdentifier("home.settingsButton")
-                    }
+                    defaultToolbarContent
                 }
             }
             .sheet(isPresented: $showSettings) {
@@ -280,12 +256,77 @@ struct HomeFeedView: View {
         selection.orderedSelectedItemIDs(in: visibleItemIDs)
     }
 
+    /// Whether every selected item already carries the bookmark tag. Only
+    /// visible rows are consulted, matching `orderedSelectedItemIDs`; a
+    /// selection is never non-empty without visible rows to back it.
+    private var allSelectedAreBookmarked: Bool {
+        let selectedIDs = Set(orderedSelectedItemIDs)
+        guard !selectedIDs.isEmpty else { return false }
+        return filteredRows
+            .filter { selectedIDs.contains($0.id) }
+            .allSatisfy { $0.metadata.tags.contains(.bookmark) }
+    }
+
     private var navigationTitle: String {
         guard selection.isActive else { return "ClipKitty" }
         return String.localizedStringWithFormat(
             String(localized: "%lld Selected"),
             Int64(selection.selectedCount)
         )
+    }
+
+    /// Split out of `.toolbar { }` so the type checker evaluates each branch
+    /// separately instead of one combined `if`/`else` builder expression.
+    @ToolbarContentBuilder
+    private var selectionToolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Button(
+                selection.areAllSelected(in: visibleItemIDs)
+                    ? String(localized: "Deselect All")
+                    : String(localized: "Select All")
+            ) {
+                toggleAllVisibleItems()
+            }
+            .disabled(visibleItemIDs.isEmpty)
+            .accessibilityIdentifier("selection.selectAllButton")
+        }
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            Button(String(localized: "Done")) {
+                cancelSelection()
+            }
+            .accessibilityIdentifier("selection.doneButton")
+
+            Button {
+                beginSearchFromSelection()
+            } label: {
+                Image(systemName: "magnifyingglass")
+            }
+            .accessibilityLabel(String(localized: "Search"))
+            .accessibilityIdentifier("selection.searchButton")
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var defaultToolbarContent: some ToolbarContent {
+        #if ENABLE_ICLOUD_SYNC
+            ToolbarItem(placement: .topBarLeading) {
+                SyncStatusButton()
+            }
+        #endif
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            Button(String(localized: "Select")) {
+                selection.beginSelection()
+            }
+            .disabled(filteredRows.isEmpty)
+            .accessibilityIdentifier("home.selectButton")
+
+            Button {
+                showSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+            }
+            .accessibilityIdentifier("home.settingsButton")
+        }
     }
 
     private func feedCard(for row: DisplayRow) -> some View {
@@ -297,8 +338,7 @@ struct HomeFeedView: View {
             onToggleSelection: {
                 cancelBulkCopy()
                 selection.toggleSelection(for: row.id)
-            },
-            onExternalCopyTransferCompleted: removeTransferredItemsIfEnabled
+            }
         )
     }
 
@@ -333,8 +373,7 @@ struct HomeFeedView: View {
             else { return }
 
             switch result {
-            case let .success(snapshots):
-                let items = snapshots.map(\.item)
+            case let .success(items):
                 guard items.map(\.itemMetadata.itemId) == itemIDs else {
                     showBulkCopyFailure(String(localized: "Could not load item"))
                     selection.reconcile(with: visibleItemIDs)
@@ -388,57 +427,116 @@ struct HomeFeedView: View {
         appState.showToast(.addFailed(message))
     }
 
+    /// Bookmarks the whole selection, or removes the bookmark if every
+    /// selected item already carries it. Goes straight through the
+    /// repository rather than `BrowserViewModel`'s single-item tag mutation,
+    /// which single-flights on `mutationState` and would silently drop all
+    /// but the first call in a batch.
+    private func toggleBookmarkForSelectedItems() {
+        let itemIDs = orderedSelectedItemIDs
+        guard !itemIDs.isEmpty else { return }
+        let shouldInclude = !allSelectedAreBookmarked
+
+        Task { @MainActor in
+            for itemID in itemIDs {
+                _ = shouldInclude
+                    ? await container.repository.addTag(itemId: itemID, tag: .bookmark)
+                    : await container.repository.removeTag(itemId: itemID, tag: .bookmark)
+            }
+            appState.refreshFeed()
+        }
+        haptics.fire(.selection)
+        appState.showToast(shouldInclude ? .bookmarked : .unbookmarked)
+    }
+
+    private func shareSelectedItems() {
+        let itemIDs = orderedSelectedItemIDs
+        guard !itemIDs.isEmpty, bulkShareTask == nil else { return }
+        guard iOSTransferLimits.validateItemCount(itemIDs.count) == nil else {
+            showTransferItemLimitExceeded()
+            return
+        }
+
+        let requestID = UUID()
+        bulkShareRequestID = requestID
+
+        let task = Task { @MainActor in
+            defer { finishBulkShare(requestID: requestID) }
+            guard !Task.isCancelled else { return }
+            let result = await container.repository.fetchTransferItems(ids: itemIDs)
+            guard !Task.isCancelled, bulkShareRequestID == requestID else { return }
+
+            switch result {
+            case let .success(items):
+                guard items.map(\.itemMetadata.itemId) == itemIDs else {
+                    showBulkCopyFailure(String(localized: "Could not load item"))
+                    selection.reconcile(with: visibleItemIDs)
+                    return
+                }
+                let payloads = await withTaskGroup(of: (Int, PreparedSharePayload?).self) { group in
+                    for (index, item) in items.enumerated() {
+                        group.addTask { (index, await SharePresenter.prepare(item: item)) }
+                    }
+                    var prepared = [PreparedSharePayload?](repeating: nil, count: items.count)
+                    for await(index, payload) in group {
+                        prepared[index] = payload
+                    }
+                    return prepared.compactMap { $0 }
+                }
+                guard !Task.isCancelled, bulkShareRequestID == requestID else { return }
+                guard !payloads.isEmpty else {
+                    showBulkCopyFailure(String(localized: "Could not load item"))
+                    return
+                }
+                SharePresenter.present(payloads: payloads)
+
+            case let .rejected(reason):
+                switch reason {
+                case .tooManyItems:
+                    showTransferItemLimitExceeded()
+                case .textTooLarge, .imageTooLarge, .aggregateTooLarge:
+                    showBulkCopyFailure(
+                        String(localized: "The selected items are too large to copy or drag together.")
+                    )
+                case .duplicateItemId, .missingItem:
+                    showBulkCopyFailure(String(localized: "Could not load item"))
+                    selection.reconcile(with: visibleItemIDs)
+                }
+
+            case .cancelled:
+                return
+
+            case .failure:
+                showBulkCopyFailure(String(localized: "Could not load item"))
+                selection.reconcile(with: visibleItemIDs)
+            }
+        }
+        bulkShareTask = task
+        guard appState.registerForegroundTask(id: requestID, task: task) else {
+            cancelBulkShare()
+            return
+        }
+    }
+
+    private func cancelBulkShare() {
+        bulkShareRequestID = nil
+        bulkShareTask?.cancel()
+        bulkShareTask = nil
+    }
+
+    private func finishBulkShare(requestID: UUID) {
+        appState.finishForegroundTask(id: requestID)
+        guard bulkShareRequestID == requestID else { return }
+        bulkShareRequestID = nil
+        bulkShareTask = nil
+    }
+
     private func deleteSelectedItems() {
         let itemIDs = orderedSelectedItemIDs
         cancelBulkCopy()
         guard viewModel.deleteItems(itemIds: itemIDs) else { return }
         selection.cancelSelection()
         haptics.fire(.destructive)
-    }
-
-    @MainActor
-    private func removeTransferredItemsIfEnabled(
-        _ evidence: [ExternalCopyTransferEvidence]
-    ) async {
-        guard settings.deleteAfterSuccessfulExternalDrop, !evidence.isEmpty else { return }
-
-        let itemIDs = evidence.map(\.itemID)
-        guard Set(itemIDs).count == itemIDs.count,
-              evidence.allSatisfy({ !$0.deletionToken.isEmpty })
-        else {
-            appState.refreshFeed()
-            return
-        }
-
-        let candidates = evidence.map {
-            TransferDeletionCandidate(
-                itemId: $0.itemID,
-                deletionToken: $0.deletionToken
-            )
-        }
-        let deletion = await container.repository.deleteTransferredItemsIfUnchanged(
-            candidates: candidates
-        )
-        // The conditional mutation can commit one or more candidates before
-        // lease expiration cancels this follow-up (and a later candidate can
-        // still fail). Reconcile the authoritative store outcome first; only
-        // outgoing-view selection state is cancellation-gated below.
-        appState.refreshFeed()
-        guard !Task.isCancelled else { return }
-
-        cancelBulkCopy()
-        switch deletion {
-        case let .success(outcome):
-            selection.deselect(itemIDs: outcome.deletedItemIds)
-            if selection.selectedCount == 0 {
-                selection.cancelSelection()
-            }
-        case .failure:
-            // A synced batch can have committed an earlier candidate before a
-            // later infrastructure failure. Re-read instead of guessing which
-            // IDs remain; the database is authoritative.
-            break
-        }
     }
 
     private var isBulkCopying: Bool {
@@ -448,6 +546,17 @@ struct HomeFeedView: View {
     private func cancelSelection() {
         cancelBulkCopy()
         selection.cancelSelection()
+    }
+
+    /// Selection and search are deliberately separate sessions. Filtering the
+    /// feed reconciles selection against the visible result IDs, so retaining
+    /// selection while opening search would silently discard hidden choices.
+    /// End selection first, then let the newly inserted bottom bar focus its
+    /// search field from `onAppear`.
+    private func beginSearchFromSelection() {
+        cancelSelection()
+        isSearchActive = true
+        searchFocusRequestID += 1
     }
 
     private func cancelBulkCopy() {
@@ -496,8 +605,8 @@ struct HomeFeedView: View {
             // still work while the foreground store remains available and any
             // failed transfer retains its source item.
             externalTransferLease: appState.beginExternalTransfer(),
-            fetchSnapshot: { id in
-                await repository.fetchTransferSnapshot(id: id)
+            fetchItem: { id in
+                await repository.fetchTransferItem(id: id)
             }
         )
     }

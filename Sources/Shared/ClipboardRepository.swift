@@ -10,7 +10,7 @@ public enum RepositorySearchOutcome {
 
 /// Typed result of the store's bounded, all-or-nothing transfer preflight.
 public enum RepositoryTransferFetchOutcome {
-    case success([TransferItemSnapshot])
+    case success([ClipboardItem])
     case rejected(TransferFetchRejection)
     case cancelled
     case failure(ClipboardError)
@@ -146,8 +146,8 @@ public final class ClipboardRepository: @unchecked Sendable {
             try store.fetchItemsForTransfer(itemIds: ids)
         }
         switch result {
-        case let .success(.success(snapshots)):
-            return .success(snapshots)
+        case let .success(.success(items)):
+            return .success(items)
         case let .success(.rejected(reason)):
             return .rejected(reason)
         case let .failure(error):
@@ -162,35 +162,11 @@ public final class ClipboardRepository: @unchecked Sendable {
 
     /// Single-item bounded lookup for lazy drag item providers.
     public func fetchTransferItem(id: String) async -> ClipboardItem? {
-        let snapshot = await fetchTransferSnapshot(id: id)
-        return snapshot?.item
-    }
-
-    /// Single-item transfer payload plus the token required for conditional
-    /// post-drop deletion.
-    public func fetchTransferSnapshot(id: String) async -> TransferItemSnapshot? {
         let outcome = await fetchTransferItems(ids: [id])
-        if case let .success(snapshots) = outcome {
-            return snapshots.first
+        if case let .success(items) = outcome {
+            return items.first
         }
         return nil
-    }
-
-    /// Atomically delete only clips that still match the exact outbound
-    /// snapshots delivered to another app.
-    ///
-    /// This operation intentionally joins and reports admitted Rust work even
-    /// when its calling Swift task is cancelled: once a mutation begins, callers
-    /// must receive the authoritative deleted/retained outcome.
-    public func deleteTransferredItemsIfUnchanged(
-        candidates: [TransferDeletionCandidate]
-    ) async -> Result<ConditionalTransferDeleteOutcome, ClipboardError> {
-        await runRepositoryOperation(
-            "deleteTransferredItemsIfUnchanged",
-            on: store
-        ) { store in
-            try store.deleteTransferredItemsIfUnchanged(candidates: candidates)
-        }
     }
 
     public func resolveMatchedExcerpts(requests: [MatchedExcerptRequest]) async -> [MatchedExcerptResolution] {

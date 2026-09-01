@@ -3,28 +3,52 @@ import SwiftUI
 /// Bottom actions shown while the history feed is in explicit selection mode.
 struct FeedSelectionActionBar: View {
     let selectedItemIDs: [String]
-    let makeDragPayload: @MainActor ([String]) -> ExternalCopyDragPayload
+    /// Whether every selected item already carries the bookmark tag. Drives
+    /// the pin button's icon and toggle direction: bookmarking a mixed
+    /// selection bookmarks the rest, so only a fully-bookmarked selection
+    /// offers to remove it.
+    let allSelectedAreBookmarked: Bool
     let isCopying: Bool
     let onCopy: () -> Void
+    let onToggleBookmark: () -> Void
+    let onShare: () -> Void
     let onDelete: () -> Void
-    let onTransferLimitExceeded: () -> Void
-    let onExternalCopyTransferCompleted: @MainActor ([ExternalCopyTransferEvidence]) async -> Void
 
     var body: some View {
-        GlassEffectContainer(spacing: 20) {
-            HStack(spacing: 20) {
+        GlassEffectContainer(spacing: 0) {
+            HStack(spacing: 0) {
                 copyAction
 
-                dragAction
+                actionButton(
+                    title: allSelectedAreBookmarked
+                        ? String(localized: "Remove Bookmark")
+                        : String(localized: "Bookmark"),
+                    systemImage: allSelectedAreBookmarked ? "bookmark.slash" : "bookmark",
+                    isEnabled: !selectedItemIDs.isEmpty,
+                    identifier: "selection.bookmarkButton",
+                    action: onToggleBookmark
+                )
+
+                actionButton(
+                    title: String(localized: "Share"),
+                    systemImage: "square.and.arrow.up",
+                    isEnabled: !selectedItemIDs.isEmpty,
+                    identifier: "selection.shareButton",
+                    action: onShare
+                )
 
                 actionButton(
                     title: String(localized: "Delete"),
                     systemImage: "trash",
                     role: .destructive,
                     isEnabled: !selectedItemIDs.isEmpty,
+                    identifier: "selection.deleteButton",
                     action: onDelete
                 )
+                .foregroundStyle(.red)
             }
+            .padding(.horizontal, 8)
+            .glassEffect(.regular, in: .capsule)
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 8)
@@ -41,12 +65,12 @@ struct FeedSelectionActionBar: View {
                 }
             }
             .frame(width: 52, height: 52)
-            .contentShape(Circle())
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
         .disabled(selectedItemIDs.isEmpty || isCopying)
         .accessibilityLabel(String(localized: "Copy"))
+        .accessibilityIdentifier("selection.copyButton")
     }
 
     private func actionButton(
@@ -54,61 +78,18 @@ struct FeedSelectionActionBar: View {
         systemImage: String,
         role: ButtonRole? = nil,
         isEnabled: Bool,
+        identifier: String,
         action: @escaping () -> Void
     ) -> some View {
         Button(role: role, action: action) {
             Image(systemName: systemImage)
                 .font(.body.weight(.medium))
                 .frame(width: 52, height: 52)
-                .contentShape(Circle())
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .circle)
         .disabled(!isEnabled)
         .accessibilityLabel(title)
-    }
-
-    private var dragAction: some View {
-        ZStack {
-            Image(systemName: "hand.draw")
-                .font(.body.weight(.medium))
-                .accessibilityHidden(true)
-
-            ExternalCopyDragInteractionView(
-                makePayload: makeSelectedDragPayload,
-                onExternalCopyTransferCompleted: onExternalCopyTransferCompleted,
-                accessibilityName: String(localized: "Drag Selected Items"),
-                accessibilityHint: dragAccessibilityHint
-            )
-            .accessibilityHidden(selectedItemIDs.isEmpty || isCopying)
-        }
-        .frame(width: 52, height: 52)
-        .contentShape(Circle())
-        .glassEffect(.regular.interactive(), in: .circle)
-        .opacity(selectedItemIDs.isEmpty || isCopying ? 0.45 : 1)
-        .allowsHitTesting(!selectedItemIDs.isEmpty && !isCopying)
-    }
-
-    @MainActor
-    private func makeSelectedDragPayload() -> ExternalCopyDragPayload {
-        guard !exceedsTransferItemLimit else {
-            onTransferLimitExceeded()
-            return ExternalCopyDragPayload(items: [])
-        }
-        return makeDragPayload(selectedItemIDs)
-    }
-
-    private var exceedsTransferItemLimit: Bool {
-        selectedItemIDs.count > iOSTransferLimits.maximumItemCount
-    }
-
-    private var dragAccessibilityHint: String {
-        if exceedsTransferItemLimit {
-            return String.localizedStringWithFormat(
-                String(localized: "Select %lld or fewer items to drag."),
-                Int64(iOSTransferLimits.maximumItemCount)
-            )
-        }
-        return String(localized: "Drag the selected items into another app")
+        .accessibilityIdentifier(identifier)
     }
 }

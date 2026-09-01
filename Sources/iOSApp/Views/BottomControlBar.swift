@@ -115,6 +115,9 @@ struct BottomControlBar: View {
             guard let newItem else { return }
             startImportPhoto(from: newItem)
         }
+        .onAppear {
+            restoreSearchFocusIfNeeded()
+        }
         .onChange(of: searchFocusRequestID) { _, _ in
             restoreSearchFocusIfNeeded()
         }

@@ -10,7 +10,6 @@ struct CardView: View {
     let isSelectionMode: Bool
     let isSelected: Bool
     let onToggleSelection: () -> Void
-    let onExternalCopyTransferCompleted: @MainActor ([ExternalCopyTransferEvidence]) async -> Void
 
     @Environment(AppContainer.self) private var container
     @Environment(BrowserViewModel.self) private var viewModel
@@ -28,15 +27,13 @@ struct CardView: View {
         previewItemId: Binding<String?>,
         isSelectionMode: Bool = false,
         isSelected: Bool = false,
-        onToggleSelection: @escaping () -> Void = {},
-        onExternalCopyTransferCompleted: @escaping @MainActor ([ExternalCopyTransferEvidence]) async -> Void = { _ in }
+        onToggleSelection: @escaping () -> Void = {}
     ) {
         self.row = row
         _previewItemId = previewItemId
         self.isSelectionMode = isSelectionMode
         self.isSelected = isSelected
         self.onToggleSelection = onToggleSelection
-        self.onExternalCopyTransferCompleted = onExternalCopyTransferCompleted
     }
 
     /// Sans-serif card font honouring the user's typeface preference.
@@ -79,13 +76,9 @@ struct CardView: View {
         } else {
             // A full-screen destination can background ClipKitty before it
             // asks the item provider for promised data. Always use the managed
-            // interaction so the foreground store remains available through
-            // UIKit's terminal transfer callback. Destructive follow-up is
-            // still independently guarded by the opt-in setting in Home.
-            ExternalCopyDragHost(
-                makePayload: makeManagedDragPayload,
-                onExternalCopyTransferCompleted: onExternalCopyTransferCompleted
-            ) {
+            // interaction so the foreground store remains available while the
+            // drag is in flight.
+            ExternalCopyDragHost(makePayload: makeManagedDragPayload) {
                 standardInteractiveCard
                     // A UIHostingController begins a new SwiftUI environment
                     // root. Re-inject the values used by nested rich previews.
@@ -115,7 +108,6 @@ struct CardView: View {
     private var cardSurface: some View {
         VStack(alignment: .leading, spacing: 10) {
             metadataLine
-                .padding(.trailing, isSelectionMode ? 28 : 0)
             contentPreview
         }
         .cardSurface()
@@ -143,12 +135,16 @@ struct CardView: View {
 
     private var selectableCard: some View {
         cardSurface
-            .overlay(alignment: .topTrailing) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
-                    .padding(10)
-                    .accessibilityHidden(true)
+            .overlay {
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, Color.accentColor)
+                        .font(.title2.weight(.semibold))
+                        .transition(.scale(scale: 0.7).combined(with: .opacity))
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
             }
             .overlay {
                 RoundedRectangle(cornerRadius: CardSurface.cornerRadius, style: .continuous)
@@ -158,6 +154,7 @@ struct CardView: View {
                     )
                     .allowsHitTesting(false)
             }
+            .animation(.snappy, value: isSelected)
             .accessibilityHint(
                 isSelected
                     ? String(localized: "Double tap to deselect")
@@ -186,8 +183,8 @@ struct CardView: View {
                 ),
             ],
             externalTransferLease: externalTransferLease,
-            fetchSnapshot: { id in
-                await repository.fetchTransferSnapshot(id: id)
+            fetchItem: { id in
+                await repository.fetchTransferItem(id: id)
             }
         )
     }
