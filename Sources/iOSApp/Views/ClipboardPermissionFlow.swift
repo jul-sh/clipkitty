@@ -201,7 +201,7 @@ struct HowToAllowPasteSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(alignment: .top, spacing: 12) {
-                Text(String(localized: "How to Allow Paste from Other Apps?"))
+                Text(String(localized: "Always Allow Paste from Other Apps"))
                     .font(.title3.bold())
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
