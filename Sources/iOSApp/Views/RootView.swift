@@ -7,6 +7,7 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppState.self) private var appState
+    @Environment(iOSLifecycleState.self) private var lifecycle
     @Environment(\.dockedKeyboardInset) private var dockedKeyboardInset
     #if ENABLE_ICLOUD_SYNC
         /// Optional on purpose: the coordinator leaves the environment when the
@@ -25,6 +26,14 @@ struct RootView: View {
             // beneath the snackbar overlay so the "Added" toast still draws
             // above the drop chrome.
             .addClipDropTarget()
+            // First launch covers the feed until onboarding finishes. It is a
+            // full-screen cover rather than a separate root branch so the feed
+            // beneath it stays mounted and its first search still runs.
+            .fullScreenCover(isPresented: showOnboarding) {
+                OnboardingScreen {
+                    lifecycle.hasCompletedOnboarding = true
+                }
+            }
             .overlay(alignment: .bottom) {
                 if let item = activeSnackbar {
                     SnackbarOverlay(item: item, onAction: performSnackbarAction)
@@ -36,6 +45,19 @@ struct RootView: View {
             // mutations in `withAnimation`) still animate.
             .animation(.bouncy, value: activeSnackbar)
             .avoidsOnlyDockedKeyboard()
+    }
+
+    /// Onboarding is shown until it completes, and never reopens afterwards.
+    /// The setter only handles the completion direction: the cover has no
+    /// interactive dismissal, so nothing else can lower it.
+    private var showOnboarding: Binding<Bool> {
+        Binding(
+            get: { !lifecycle.hasCompletedOnboarding },
+            set: { isPresented in
+                guard !isPresented else { return }
+                lifecycle.hasCompletedOnboarding = true
+            }
+        )
     }
 
     // MARK: - Snackbar resolution

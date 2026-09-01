@@ -1216,6 +1216,10 @@ struct ClipKittyiOSApp: App {
     @State private var launchState: AppLaunchState = .launching
     @State private var didScheduleLaunchMaintenance = false
     @State private var resumeRetryAttempt = 0
+    /// Owned by the app rather than the container: onboarding state has to
+    /// survive the container teardown that every background/foreground cycle
+    /// performs, so a suspend mid-onboarding does not restart the flow.
+    @State private var lifecycle = iOSLifecycleState()
     @Environment(\.scenePhase) private var scenePhase
 
     #if ENABLE_ICLOUD_SYNC
@@ -1282,6 +1286,7 @@ struct ClipKittyiOSApp: App {
             .environment(appState.viewModel)
             .environment(container.settings)
             .environment(container.haptics)
+            .environment(lifecycle)
 
         #if ENABLE_ICLOUD_SYNC
             if let coordinator = syncCoordinator {
