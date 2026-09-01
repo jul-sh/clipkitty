@@ -29,15 +29,38 @@ public enum PendingShareQueue {
         case metadataTooLarge
     }
 
+    /// Posted in the enqueuing process after an item is durably published, so
+    /// an app session that is already active can drain the queue promptly
+    /// instead of waiting for the next scene activation. Cross-process
+    /// producers (the share extension) still rely on the activation drain;
+    /// their post reaches no observer and is inert.
+    public static let didEnqueueItemNotification = Notification.Name(
+        "com.eviljuliette.clipkitty.pending-share-did-enqueue"
+    )
+
     // MARK: - Item Model
 
-    private enum Manifest: Codable {
-        case text(String)
-        case url(String)
-        case image(isAnimated: Bool)
+    /// On-disk metadata for one queued item. Coded flat so manifests written
+    /// before source attribution existed remain readable.
+    private struct Manifest: Codable {
+        enum Content {
+            case text(String)
+            case url(String)
+            case image(isAnimated: Bool)
+        }
+
+        let content: Content
+        let sourceApp: String?
+        let sourceAppBundleId: String?
 
         private enum CodingKeys: String, CodingKey {
-            case type, text, url, isAnimated
+            case type, text, url, isAnimated, sourceApp, sourceAppBundleId
+        }
+
+        init(content: Content, sourceApp: String?, sourceAppBundleId: String?) {
+            self.content = content
+            self.sourceApp = sourceApp
+            self.sourceAppBundleId = sourceAppBundleId
         }
 
         init(from decoder: Decoder) throws {
@@ -45,14 +68,14 @@ public enum PendingShareQueue {
             let type = try container.decode(String.self, forKey: .type)
             switch type {
             case "text":
-                self = try .text(container.decode(String.self, forKey: .text))
+                content = try .text(container.decode(String.self, forKey: .text))
             case "url":
-                self = try .url(container.decode(String.self, forKey: .url))
+                content = try .url(container.decode(String.self, forKey: .url))
             case "image":
                 // Queues written before animation metadata was added remain
                 // readable. The main app validates the actual bytes again and
                 // treats this value as advisory defense-in-depth metadata.
-                self = try .image(
+                content = try .image(
                     isAnimated: container.decodeIfPresent(
                         Bool.self,
                         forKey: .isAnimated
@@ -65,11 +88,13 @@ public enum PendingShareQueue {
                     debugDescription: "Unknown pending item type: \(type)"
                 )
             }
+            sourceApp = try container.decodeIfPresent(String.self, forKey: .sourceApp)
+            sourceAppBundleId = try container.decodeIfPresent(String.self, forKey: .sourceAppBundleId)
         }
 
         func encode(to encoder: Encoder) throws {
             var container = encoder.container(keyedBy: CodingKeys.self)
-            switch self {
+            switch content {
             case let .text(text):
                 try container.encode("text", forKey: .type)
                 try container.encode(text, forKey: .text)
@@ -80,6 +105,8 @@ public enum PendingShareQueue {
                 try container.encode("image", forKey: .type)
                 try container.encode(isAnimated, forKey: .isAnimated)
             }
+            try container.encodeIfPresent(sourceApp, forKey: .sourceApp)
+            try container.encodeIfPresent(sourceAppBundleId, forKey: .sourceAppBundleId)
         }
     }
 
@@ -88,6 +115,11 @@ public enum PendingShareQueue {
     public struct PendingItem: Sendable {
         public let id: UUID
         public let payload: Payload
+        /// Attribution supplied by the producer (for example the Shortcuts
+        /// intents). Nil for items written by older producers or by the share
+        /// extension, which the app attributes itself when persisting.
+        public let sourceApp: String?
+        public let sourceAppBundleId: String?
     }
 
     public enum Payload: Sendable {
@@ -100,6 +132,8 @@ public enum PendingShareQueue {
 
     public static func enqueueText(
         _ text: String,
+        sourceApp: String? = nil,
+        sourceAppBundleId: String? = nil,
         in baseDirectory: URL? = nil
     ) throws {
         guard text.utf8.count <= Limits.maximumTextByteCount else {
@@ -108,11 +142,16 @@ public enum PendingShareQueue {
         guard serializedStringManifestFits(text) else {
             throw EnqueueError.metadataTooLarge
         }
-        try writeManifest(.text(text), in: baseDirectory)
+        try writeManifest(
+            Manifest(content: .text(text), sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleId),
+            in: baseDirectory
+        )
     }
 
     public static func enqueueURL(
         _ url: String,
+        sourceApp: String? = nil,
+        sourceAppBundleId: String? = nil,
         in baseDirectory: URL? = nil
     ) throws {
         guard url.utf8.count <= Limits.maximumTextByteCount else {
@@ -121,13 +160,18 @@ public enum PendingShareQueue {
         guard serializedStringManifestFits(url) else {
             throw EnqueueError.metadataTooLarge
         }
-        try writeManifest(.url(url), in: baseDirectory)
+        try writeManifest(
+            Manifest(content: .url(url), sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleId),
+            in: baseDirectory
+        )
     }
 
     public static func enqueueImage(
         imageData: Data,
         thumbnail: Data?,
         isAnimated: Bool = false,
+        sourceApp: String? = nil,
+        sourceAppBundleId: String? = nil,
         in baseDirectory: URL? = nil
     ) throws {
         guard imageData.count <= Limits.maximumImageByteCount,
@@ -142,7 +186,11 @@ public enum PendingShareQueue {
             throw EnqueueError.aggregateTooLarge
         }
 
-        let manifestData = try encodedManifest(.image(isAnimated: isAnimated))
+        let manifestData = try encodedManifest(Manifest(
+            content: .image(isAnimated: isAnimated),
+            sourceApp: sourceApp,
+            sourceAppBundleId: sourceAppBundleId
+        ))
         try publishItem(in: baseDirectory) { directory in
             try writeProtected(
                 manifestData,
@@ -199,7 +247,7 @@ public enum PendingShareQueue {
 
             let payload: Payload
             let payloadByteCount: Int
-            switch manifest {
+            switch manifest.content {
             case let .text(text):
                 let textByteCount = text.utf8.count
                 guard textByteCount <= Limits.maximumTextByteCount,
@@ -239,7 +287,12 @@ public enum PendingShareQueue {
                 payloadByteCount = imageData.count + (thumbnail?.count ?? 0)
             }
 
-            results.append(PendingItem(id: itemID, payload: payload))
+            results.append(PendingItem(
+                id: itemID,
+                payload: payload,
+                sourceApp: manifest.sourceApp,
+                sourceAppBundleId: manifest.sourceAppBundleId
+            ))
             batchPayloadByteCount += payloadByteCount
         }
 
@@ -344,6 +397,7 @@ public enum PendingShareQueue {
             try? fileManager.removeItem(at: stagingDirectory)
             throw error
         }
+        NotificationCenter.default.post(name: didEnqueueItemNotification, object: nil)
     }
 
     private static func writeManifest(_ manifest: Manifest, in baseDirectory: URL?) throws {
@@ -366,8 +420,9 @@ public enum PendingShareQueue {
     /// rejecting that expansion first keeps the encoder itself inside the same
     /// bounded memory envelope as the file writer.
     private static func serializedStringManifestFits(_ value: String) -> Bool {
-        // Covers JSON punctuation, both keys, and their type discriminators.
-        var byteCount = 128
+        // Covers JSON punctuation, every key, the type discriminator, and
+        // short producer-supplied source attribution strings.
+        var byteCount = 256
         for scalar in value.unicodeScalars {
             let codePoint = scalar.value
             let scalarByteCount: Int

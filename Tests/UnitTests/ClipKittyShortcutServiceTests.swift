@@ -1,3 +1,4 @@
+import ClipKittyCore
 import ClipKittyRust
 @testable import ClipKittyShortcuts
 import ClipKittyStore
@@ -11,7 +12,7 @@ final class ClipKittyShortcutServiceTests: TemporaryDirectoryTestCase {
         switch saved {
         case let .inserted(id):
             XCTAssertFalse(id.isEmpty)
-        case .duplicate:
+        case .duplicate, .queued:
             XCTFail("First save should insert a new clip")
         }
 
@@ -26,7 +27,7 @@ final class ClipKittyShortcutServiceTests: TemporaryDirectoryTestCase {
         let savedAgain = try await service.saveText("same clip")
 
         switch savedAgain {
-        case .inserted:
+        case .inserted, .queued:
             XCTFail("Duplicate save should not report a new clip")
         case .duplicate:
             break
@@ -72,6 +73,109 @@ final class ClipKittyShortcutServiceTests: TemporaryDirectoryTestCase {
 
         let values = try await service.searchText(query: "existing", limit: 1)
         XCTAssertEqual(values, ["existing app repository"])
+    }
+
+    func testSaveTextQueuesDurablyWhileStoreSuspended() async throws {
+        let service = ClipKittyShortcutService(
+            sessionProvider: { .suspended },
+            imageDescriptionGenerator: { _ in nil },
+            pendingShareDirectory: temporaryDirectory
+        )
+
+        let saved = try await service.saveText("queued while suspended")
+
+        XCTAssertEqual(saved, .queued)
+        let pending = PendingShareQueue.loadAll(in: temporaryDirectory)
+        XCTAssertEqual(pending.count, 1)
+        guard case let .text(text) = pending.first?.payload else {
+            return XCTFail("Expected a queued text payload")
+        }
+        XCTAssertEqual(text, "queued while suspended")
+        XCTAssertEqual(pending.first?.sourceApp, "Shortcuts")
+        XCTAssertEqual(pending.first?.sourceAppBundleId, "com.apple.shortcuts")
+    }
+
+    func testSaveTextQueuesDurablyBeforeFirstStoreOpen() async throws {
+        let service = ClipKittyShortcutService(
+            sessionProvider: { .unopened },
+            imageDescriptionGenerator: { _ in nil },
+            pendingShareDirectory: temporaryDirectory
+        )
+
+        let saved = try await service.saveText("queued before first open")
+
+        XCTAssertEqual(saved, .queued)
+        XCTAssertEqual(PendingShareQueue.loadAll(in: temporaryDirectory).count, 1)
+    }
+
+    func testQueuedSavePostsEnqueueNotification() async throws {
+        let posted = XCTNSNotificationExpectation(
+            name: PendingShareQueue.didEnqueueItemNotification
+        )
+        let service = ClipKittyShortcutService(
+            sessionProvider: { .suspended },
+            imageDescriptionGenerator: { _ in nil },
+            pendingShareDirectory: temporaryDirectory
+        )
+
+        _ = try await service.saveText("nudges the drain")
+
+        await fulfillment(of: [posted], timeout: 2)
+    }
+
+    func testSaveClipboardImageQueuesWhileStoreSuspended() async throws {
+        let pasteboardClient = ShortcutPasteboardClient(read: {
+            .content(.image(data: Data([0x10]), thumbnail: nil, isAnimated: true))
+        })
+        let service = ClipKittyShortcutService(
+            sessionProvider: { .suspended },
+            pasteboardClient: pasteboardClient,
+            imageDescriptionGenerator: { _ in nil },
+            pendingShareDirectory: temporaryDirectory
+        )
+
+        let saved = try await service.saveCurrentClipboard()
+
+        XCTAssertEqual(saved, .queued)
+        let pending = PendingShareQueue.loadAll(in: temporaryDirectory)
+        guard case let .image(data, _, isAnimated) = pending.first?.payload else {
+            return XCTFail("Expected a queued image payload")
+        }
+        XCTAssertEqual(data, Data([0x10]))
+        XCTAssertTrue(isAnimated)
+    }
+
+    func testRecentTextFailsWhileStoreSuspended() async {
+        let service = ClipKittyShortcutService(
+            sessionProvider: { .suspended },
+            imageDescriptionGenerator: { _ in nil },
+            pendingShareDirectory: temporaryDirectory
+        )
+
+        do {
+            _ = try await service.fetchRecentText(limit: 1)
+            XCTFail("Expected a suspended store to fail reads")
+        } catch ClipKittyShortcutError.databaseOpenFailed("ClipKitty is suspended.") {
+            return
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
+    func testRecentTextOpensStandaloneStoreBeforeFirstOpen() async throws {
+        let path = databasePath()
+        let writer = ClipKittyShortcutService(databasePath: path)
+        _ = try await writer.saveText("visible to standalone reads")
+
+        let service = ClipKittyShortcutService(
+            sessionProvider: { .unopened },
+            imageDescriptionGenerator: { _ in nil },
+            standaloneDatabasePathProvider: { path },
+            pendingShareDirectory: temporaryDirectory
+        )
+
+        let recent = try await service.fetchRecentText(limit: 1)
+        XCTAssertEqual(recent, ["visible to standalone reads"])
     }
 
     func testSaveCurrentClipboardImageGeneratesDescription() async throws {

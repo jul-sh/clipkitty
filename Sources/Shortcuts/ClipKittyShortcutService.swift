@@ -13,6 +13,17 @@ protocol ClipKittyShortcutServicing: Sendable {
 
 public enum ClipKittyShortcutStoreAvailability: Sendable {
     case ready(StoreSession)
+    /// No foreground session has opened a store in this app process yet (for
+    /// example a background launch that only runs an intent). Reads may open
+    /// the database directly, matching out-of-process behavior; saves must use
+    /// the durable pending queue because a foreground bootstrap can begin at
+    /// any moment and must never contend with another open on the same path.
+    case unopened
+    /// The foreground store was deliberately released for suspension (or its
+    /// container was deallocated). Its teardown may still be draining, so
+    /// nothing may open the database: saves go to the durable pending queue
+    /// and reads fail until the next foreground session.
+    case suspended
     case unavailable(String)
 }
 
@@ -121,6 +132,9 @@ enum ShortcutReadAccessGate {
 enum ShortcutSavedClip: Equatable {
     case inserted(id: String)
     case duplicate
+    /// Durably written to the pending share queue; the app ingests it the
+    /// next time it runs with an open store.
+    case queued
 }
 
 private enum ShortcutStoreSource {
@@ -128,8 +142,24 @@ private enum ShortcutStoreSource {
     case databasePath(@Sendable () throws -> String)
 }
 
+/// Where a save intent lands: the open store, or the durable pending share
+/// queue that the app drains on its next foreground activation.
+private enum ShortcutSaveDestination {
+    case store(StoreSession)
+    case pendingQueue
+}
+
+/// Attribution recorded on clips saved through the Shortcuts intents, whether
+/// they are written to the store directly or ingested later from the queue.
+private enum ShortcutSaveAttribution {
+    static let sourceApp = "Shortcuts"
+    static let sourceAppBundleId = "com.apple.shortcuts"
+}
+
 final class ClipKittyShortcutService: ClipKittyShortcutServicing {
     private let storeSource: ShortcutStoreSource
+    private let standaloneDatabasePathProvider: @Sendable () throws -> String
+    private let pendingShareDirectory: URL?
     private let pasteboardClient: ShortcutPasteboardClient
     private let imageDescriptionGenerator: @Sendable (Data) async -> String?
 
@@ -143,6 +173,8 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
         }
     ) {
         storeSource = .databasePath(databasePathProvider)
+        standaloneDatabasePathProvider = databasePathProvider
+        pendingShareDirectory = nil
         self.pasteboardClient = pasteboardClient
         self.imageDescriptionGenerator = imageDescriptionGenerator
     }
@@ -152,9 +184,15 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
         pasteboardClient: ShortcutPasteboardClient = .live,
         imageDescriptionGenerator: @escaping @Sendable (Data) async -> String? = { data in
             await ImageDescriptionGenerator.generateDescription(from: data)
-        }
+        },
+        standaloneDatabasePathProvider: @escaping @Sendable () throws -> String = {
+            try ShortcutDatabasePath.resolve()
+        },
+        pendingShareDirectory: URL? = nil
     ) {
         storeSource = .appSession(sessionProvider)
+        self.standaloneDatabasePathProvider = standaloneDatabasePathProvider
+        self.pendingShareDirectory = pendingShareDirectory
         self.pasteboardClient = pasteboardClient
         self.imageDescriptionGenerator = imageDescriptionGenerator
     }
@@ -178,13 +216,25 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
             throw ClipKittyShortcutError.emptyText
         }
 
-        let access = try await makeStoreAccess()
-        let result = await access.repository.saveText(
-            text: text,
-            sourceApp: "Shortcuts",
-            sourceAppBundleId: "com.apple.shortcuts"
-        )
-        return try savedClip(from: result)
+        switch try await makeSaveDestination() {
+        case let .store(session):
+            let result = await session.repository.saveText(
+                text: text,
+                sourceApp: ShortcutSaveAttribution.sourceApp,
+                sourceAppBundleId: ShortcutSaveAttribution.sourceAppBundleId
+            )
+            return try savedClip(from: result)
+        case .pendingQueue:
+            try enqueueDurably {
+                try PendingShareQueue.enqueueText(
+                    text,
+                    sourceApp: ShortcutSaveAttribution.sourceApp,
+                    sourceAppBundleId: ShortcutSaveAttribution.sourceAppBundleId,
+                    in: pendingShareDirectory
+                )
+            }
+            return .queued
+        }
     }
 
     func saveCurrentClipboard() async throws -> ShortcutSavedClip {
@@ -212,21 +262,38 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
         case let .text(text):
             return try await saveText(text)
         case let .image(data, thumbnail, isAnimated):
-            let access = try await makeStoreAccess()
-            let result = await access.repository.saveImage(
-                imageData: data,
-                thumbnail: thumbnail,
-                sourceApp: "Shortcuts",
-                sourceAppBundleId: "com.apple.shortcuts",
-                isAnimated: isAnimated
-            )
-            if case let .success(itemId) = result, !itemId.isEmpty {
-                _ = await ImageDescriptionUpdater(
-                    repository: access.repository,
-                    generator: imageDescriptionGenerator
-                ).update(itemId: itemId, imageData: data)
+            switch try await makeSaveDestination() {
+            case let .store(session):
+                let result = await session.repository.saveImage(
+                    imageData: data,
+                    thumbnail: thumbnail,
+                    sourceApp: ShortcutSaveAttribution.sourceApp,
+                    sourceAppBundleId: ShortcutSaveAttribution.sourceAppBundleId,
+                    isAnimated: isAnimated
+                )
+                if case let .success(itemId) = result, !itemId.isEmpty {
+                    _ = await ImageDescriptionUpdater(
+                        repository: session.repository,
+                        generator: imageDescriptionGenerator
+                    ).update(itemId: itemId, imageData: data)
+                }
+                return try savedClip(from: result)
+            case .pendingQueue:
+                // The ingest path re-validates the raw bytes and derives its
+                // own thumbnail and description, so only the original data and
+                // animation hint travel through the queue.
+                try enqueueDurably {
+                    try PendingShareQueue.enqueueImage(
+                        imageData: data,
+                        thumbnail: nil,
+                        isAnimated: isAnimated,
+                        sourceApp: ShortcutSaveAttribution.sourceApp,
+                        sourceAppBundleId: ShortcutSaveAttribution.sourceAppBundleId,
+                        in: pendingShareDirectory
+                    )
+                }
+                return .queued
             }
-            return try savedClip(from: result)
         }
     }
 
@@ -277,11 +344,54 @@ final class ClipKittyShortcutService: ClipKittyShortcutServicing {
             switch await provider() {
             case let .ready(session):
                 return session
+            case .unopened:
+                // No foreground session has ever owned the store in this
+                // process, so a direct open behaves exactly like the
+                // out-of-process Shortcuts path.
+                return try makeStandaloneSession(
+                    databasePathProvider: standaloneDatabasePathProvider
+                )
+            case .suspended:
+                throw ClipKittyShortcutError.databaseOpenFailed("ClipKitty is suspended.")
             case let .unavailable(reason):
                 throw ClipKittyShortcutError.databaseOpenFailed(reason)
             }
         case let .databasePath(databasePathProvider):
             return try makeStandaloneSession(databasePathProvider: databasePathProvider)
+        }
+    }
+
+    /// Saves prefer the foreground session's store but degrade to the durable
+    /// pending queue whenever the app process holds no open store: unlike
+    /// reads, a save has a contention-free destination that survives until the
+    /// next activation drains it.
+    private func makeSaveDestination() async throws -> ShortcutSaveDestination {
+        switch storeSource {
+        case let .appSession(provider):
+            switch await provider() {
+            case let .ready(session):
+                return .store(session)
+            case .unopened, .suspended:
+                return .pendingQueue
+            case let .unavailable(reason):
+                throw ClipKittyShortcutError.databaseOpenFailed(reason)
+            }
+        case let .databasePath(databasePathProvider):
+            return try .store(makeStandaloneSession(databasePathProvider: databasePathProvider))
+        }
+    }
+
+    private func enqueueDurably(_ enqueue: () throws -> Void) throws {
+        do {
+            try enqueue()
+        } catch is PendingShareQueue.EnqueueError {
+            throw ClipKittyShortcutError.operationFailed(
+                "The item is too large for ClipKitty to save."
+            )
+        } catch {
+            throw ClipKittyShortcutError.operationFailed(
+                "Could not save the item for ClipKitty: \(error.localizedDescription)"
+            )
         }
     }
 

@@ -597,6 +597,8 @@ final class AppState {
     @ObservationIgnored private var acceptsSessionWork = true
     @ObservationIgnored private var pasteboardMonitor: iOSPasteboardMonitor?
     @ObservationIgnored private var pendingShareTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingShareNudgeObserver: Task<Void, Never>?
+    @ObservationIgnored private var pendingShareRerunRequested = false
     @ObservationIgnored private var maintenanceTask: Task<Void, Never>?
     @ObservationIgnored private var pendingImageDescriptionItemIDs: [String] = []
     @ObservationIgnored private var imageDescriptionWorker: Task<Void, Never>?
@@ -739,6 +741,7 @@ final class AppState {
         isForegroundVisible = true
         pasteboardMonitor?.sceneBecameActive()
         schedulePendingShareProcessing()
+        startPendingShareNudgeObserverIfNeeded()
         if runLaunchMaintenance {
             scheduleLaunchMaintenance()
         }
@@ -812,7 +815,15 @@ final class AppState {
     }
 
     private func schedulePendingShareProcessing() {
-        guard acceptsSessionWork, pendingShareTask == nil else { return }
+        guard acceptsSessionWork else { return }
+        if pendingShareTask != nil {
+            // A drain is already running and may have finished its directory
+            // scan before this request's item was published. Run once more
+            // when it completes so an in-process enqueue is never stranded
+            // until the next activation.
+            pendingShareRerunRequested = true
+            return
+        }
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             let added = await self.processPendingShareItems()
@@ -823,8 +834,29 @@ final class AppState {
                 // suspension cancelled the producer during its final await.
                 self.refreshFeed()
             }
+            if self.pendingShareRerunRequested {
+                self.pendingShareRerunRequested = false
+                self.schedulePendingShareProcessing()
+            }
         }
         pendingShareTask = task
+    }
+
+    /// While this session is foreground, an in-process producer (the
+    /// Shortcuts intents saving into the pending queue because the store was
+    /// not ready when they ran) nudges an immediate drain instead of leaving
+    /// the item invisible until the next scene activation.
+    private func startPendingShareNudgeObserverIfNeeded() {
+        guard acceptsSessionWork, pendingShareNudgeObserver == nil else { return }
+        pendingShareNudgeObserver = Task { @MainActor [weak self] in
+            let nudges = NotificationCenter.default.notifications(
+                named: PendingShareQueue.didEnqueueItemNotification
+            )
+            for await _ in nudges {
+                guard let self else { return }
+                self.schedulePendingShareProcessing()
+            }
+        }
     }
 
     private func scheduleLaunchMaintenance() {
@@ -928,6 +960,12 @@ final class AppState {
             pendingShareTask.cancel()
             tasks.append(pendingShareTask)
         }
+        pendingShareRerunRequested = false
+        if let pendingShareNudgeObserver {
+            pendingShareNudgeObserver.cancel()
+            tasks.append(pendingShareNudgeObserver)
+            self.pendingShareNudgeObserver = nil
+        }
         if let maintenanceTask {
             maintenanceTask.cancel()
             tasks.append(maintenanceTask)
@@ -979,7 +1017,11 @@ final class AppState {
         var saved = 0
         pendingItems: for item in pending {
             guard acceptsSessionWork, !Task.isCancelled else { break }
-            let sourceApp = "Share Sheet"
+            // Producers that attribute their own items (the Shortcuts
+            // intents) carry that attribution through the queue; everything
+            // else came from the share extension.
+            let sourceApp = item.sourceApp ?? "Share Sheet"
+            let sourceAppBundleId = item.sourceAppBundleId
 
             let result: Result<String, ClipboardError>
             switch item.payload {
@@ -987,13 +1029,13 @@ final class AppState {
                 result = await container.repository.saveText(
                     text: text,
                     sourceApp: sourceApp,
-                    sourceAppBundleId: nil
+                    sourceAppBundleId: sourceAppBundleId
                 )
             case let .url(url):
                 result = await container.repository.saveText(
                     text: url,
                     sourceApp: sourceApp,
-                    sourceAppBundleId: nil
+                    sourceAppBundleId: sourceAppBundleId
                 )
             case let .image(imageData, _, _):
                 // App Group files are a persistence boundary, not a trust
@@ -1021,7 +1063,7 @@ final class AppState {
                     imageData: imageData,
                     thumbnail: analysis.thumbnail,
                     sourceApp: sourceApp,
-                    sourceAppBundleId: nil,
+                    sourceAppBundleId: sourceAppBundleId,
                     isAnimated: analysis.isAnimated
                 )
             }
@@ -1229,6 +1271,14 @@ struct ClipKittyiOSApp: App {
 
     init() {
         FontManager.registerFonts()
+        // In the app process the shortcut runtime must never fall back to the
+        // library default of opening the database directly for saves: a
+        // foreground bootstrap can begin at any moment (a clipboard intent
+        // even forces one) and would contend with that open. Install the
+        // process-wide baseline before any intent can run: saves queue
+        // durably, reads keep the out-of-process behavior until the first
+        // foreground session owns the store.
+        ClipKittyShortcutRuntime.useStoreProvider { .unopened }
         ClipKittyAppShortcuts.updateAppShortcutParameters()
     }
 
@@ -1320,7 +1370,7 @@ struct ClipKittyiOSApp: App {
     private func makeSession(container: AppContainer, persistenceClaimID: UUID) -> AppSession {
         ClipKittyShortcutRuntime.useStoreProvider { [weak container] in
             guard let container else {
-                return .unavailable("ClipKitty is suspended.")
+                return .suspended
             }
             return container.shortcutStoreAvailability()
         }
@@ -1611,10 +1661,11 @@ struct ClipKittyiOSApp: App {
 
         let store = session.container.store
 
-        // Revoke UI and shortcut producers synchronously.
+        // Revoke UI and shortcut producers synchronously. Shortcut saves
+        // degrade to the durable pending queue while suspended.
         let pendingMutation = session.appState.prepareForSuspension()
         ClipKittyShortcutRuntime.useStoreProvider {
-            .unavailable("ClipKitty is suspended.")
+            .suspended
         }
 
         let storeSuspension: AppStoreSuspensionWork
