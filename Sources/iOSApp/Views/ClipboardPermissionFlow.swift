@@ -82,6 +82,7 @@ struct ClipboardPermissionCard: View {
 /// the flow this way to land the user back on the finishing step.
 struct SaveAutomaticallySheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppContainer.self) private var container
     @Environment(iOSSettingsStore.self) private var settings
 
     let resumeInDoneState: Bool
@@ -108,6 +109,7 @@ struct SaveAutomaticallySheet: View {
 
             VStack(spacing: 12) {
                 Button {
+                    requestPasteAccessOnce()
                     showHowTo = true
                 } label: {
                     Text(String(localized: "Allow Paste from Other Apps"))
@@ -143,6 +145,20 @@ struct SaveAutomaticallySheet: View {
                 // Dismissing this sheet takes the stacked how-to sheet with it.
                 dismiss()
             }
+        }
+    }
+
+    /// One real pasteboard read so iOS registers ClipKitty as an app that
+    /// pastes: the "Paste from Other Apps" row only exists on the app's
+    /// Settings page after at least one actual paste-access request, and the
+    /// app-settings deep link only lands on ClipKitty's page once the app has
+    /// a page to land on. If the permission is still "Ask" the system prompt
+    /// appears over this sheet — the same beat as Paste's flow — and the
+    /// read's value is discarded either way.
+    private func requestPasteAccessOnce() {
+        let clipboardService = container.clipboardService
+        Task { @MainActor in
+            _ = await clipboardService.readCurrentClipboardForAutomaticIngest()
         }
     }
 }

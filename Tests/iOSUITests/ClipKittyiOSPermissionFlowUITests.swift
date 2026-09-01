@@ -10,6 +10,12 @@ final class ClipKittyiOSPermissionFlowUITests: XCTestCase {
         continueAfterFailure = false
         databaseDirectory = try makeTestDatabaseDirectory()
 
+        // Tapping "Allow Paste from Other Apps" performs one real pasteboard
+        // read so iOS registers ClipKitty's paste-access request. Seed the
+        // simulator pasteboard from the runner (writes never prompt) so that
+        // read has content to request regardless of host clipboard sync.
+        UIPasteboard.general.string = "ClipKitty permission flow test"
+
         app = XCUIApplication()
         // The card renders inside the feed, so the feed needs content.
         app.launchEnvironment["CLIPKITTY_SCREENSHOT_DB"] = databaseDirectory
@@ -26,6 +32,20 @@ final class ClipKittyiOSPermissionFlowUITests: XCTestCase {
             "-iOSPermissionHintDismissed", "<false/>",
         ]
         app.launch()
+
+        // A failed prior run can leave the persisted resume flag set, which
+        // auto-presents the flow's finishing step over the feed on launch.
+        // Close it so every test starts from the bare feed; both taps clear
+        // the flag. (The flag can't be overridden via launch arguments — the
+        // argument domain would also pin it across the in-test suspension
+        // cycle the resume feature exists for.)
+        let closeButton = app.buttons["permissionFlow.closeButton"]
+        if closeButton.waitForExistence(timeout: 2) {
+            closeButton.tap()
+            let laterButton = app.buttons["permissionFlow.laterButton"]
+            XCTAssertTrue(laterButton.waitForExistence(timeout: 5))
+            laterButton.tap()
+        }
     }
 
     override func tearDownWithError() throws {
@@ -48,6 +68,7 @@ final class ClipKittyiOSPermissionFlowUITests: XCTestCase {
         XCTAssertTrue(app.buttons["permissionFlow.laterButton"].exists)
         attachScreenshot(named: "save-automatically-sheet")
         allowButton.tap()
+        resolvePastePromptIfShown()
 
         let openSettingsButton = app.buttons["permissionFlow.openSettingsButton"]
         XCTAssertTrue(openSettingsButton.waitForExistence(timeout: 5), "How-to sheet should stack on top")
@@ -75,12 +96,24 @@ final class ClipKittyiOSPermissionFlowUITests: XCTestCase {
         let allowButton = app.buttons["permissionFlow.allowButton"]
         XCTAssertTrue(allowButton.waitForExistence(timeout: 5))
         allowButton.tap()
+        resolvePastePromptIfShown()
 
         let openSettingsButton = app.buttons["permissionFlow.openSettingsButton"]
         XCTAssertTrue(openSettingsButton.waitForExistence(timeout: 5))
         openSettingsButton.tap()
 
-        // The Settings app takes over; come back to finish the flow.
+        // On a device, the paste-access request the flow just made gives
+        // ClipKitty a page in the Settings app and the deep link lands on it,
+        // showing the "Paste from Other Apps" row. The simulator auto-allows
+        // pasteboard reads without ever prompting, so the page never
+        // registers here and only the handoff itself can be asserted.
+        let settingsApp = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        XCTAssertTrue(
+            settingsApp.wait(for: .runningForeground, timeout: 10),
+            "Open Settings should hand off to the Settings app"
+        )
+
+        // Come back to finish the flow.
         app.activate()
 
         let doneButton = app.buttons["permissionFlow.doneButton"]
@@ -105,6 +138,25 @@ final class ClipKittyiOSPermissionFlowUITests: XCTestCase {
         app.buttons["home.permissionCardDismiss"].tap()
 
         XCTAssertTrue(card.waitForNonExistence(timeout: 5), "✕ should hide the card")
+    }
+
+    /// Answers the system paste-consent prompt that tapping "Allow Paste from
+    /// Other Apps" now raises. "Don't Allow" on purpose: the flow's Settings
+    /// row must register from the attempt alone, matching a wary user, and
+    /// either answer leaves the permission at "Ask". The prompt is system UI,
+    /// so it may surface under SpringBoard rather than the app.
+    private func resolvePastePromptIfShown() {
+        let dontAllow = NSPredicate(
+            format: "label BEGINSWITH 'Don' AND label CONTAINS 'Allow Paste'"
+        )
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        for host in [app!, springboard] {
+            let button = host.buttons.matching(dontAllow).firstMatch
+            if button.waitForExistence(timeout: 3) {
+                button.tap()
+                return
+            }
+        }
     }
 
     private func attachScreenshot(named name: String) {
