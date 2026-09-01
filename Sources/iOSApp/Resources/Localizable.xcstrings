@@ -10383,6 +10383,146 @@
         }
       }
     },
+    "Enable Later in Settings" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Später in den Einstellungen aktivieren" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Enable Later in Settings" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Activar más tarde en Ajustes" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Activer plus tard dans Réglages" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "後で設定で有効にする" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "나중에 설정에서 활성화" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Ativar depois nos Ajustes" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Включить позже в Настройках" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "稍后在“设置”中启用" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "稍後在「設定」中啟用" } }
+      }
+    },
+    "How to Allow Paste from Other Apps?" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Wie erlaube ich „Einsetzen aus anderen Apps“?" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "How to Allow Paste from Other Apps?" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "¿Cómo permitir «Pegar desde otras apps»?" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Comment autoriser « Coller depuis d’autres apps » ?" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "「ほかのAppからペースト」を許可するには？" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "‘다른 앱에서 붙여넣기’를 허용하려면?" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Como permitir “Colar de Outros Apps”?" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Как разрешить «Вставку из других приложений»?" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "如何允许“从其他 App 粘贴”？" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "如何允許「從其他 App 貼上」？" } }
+      }
+    },
+    "Open Settings and tap “Paste from Other Apps”" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Öffne die Einstellungen und tippe auf „Einsetzen aus anderen Apps“" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open Settings and tap “Paste from Other Apps”" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Abre Ajustes y toca «Pegar desde otras apps»" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Ouvrez Réglages et touchez « Coller depuis d’autres apps »" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "「設定」を開いて「ほかのAppからペースト」をタップ" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "설정을 열고 ‘다른 앱에서 붙여넣기’를 탭하세요" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Abra os Ajustes e toque em “Colar de Outros Apps”" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Откройте Настройки и коснитесь «Вставка из других приложений»" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开“设置”并轻点“从其他 App 粘贴”" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "打開「設定」並輕點「從其他 App 貼上」" } }
+      }
+    },
+    "Select “Allow”" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Wähle „Erlauben“" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Select “Allow”" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Selecciona «Permitir»" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Sélectionnez « Autoriser »" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "「許可」を選択" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "‘허용’을 선택하세요" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Selecione “Permitir”" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Выберите «Разрешить»" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "选择“允许”" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "選擇「允許」" } }
+      }
+    },
+    "Open Settings" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Einstellungen öffnen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open Settings" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Abrir Ajustes" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Ouvrir Réglages" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "設定を開く" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "설정 열기" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Abrir Ajustes" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Открыть Настройки" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开“设置”" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "打開「設定」" } }
+      }
+    },
+    "Do you want to allow this?" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Möchtest du dies erlauben?" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Do you want to allow this?" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "¿Quieres permitirlo?" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Voulez-vous l’autoriser ?" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "許可しますか？" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "허용하겠습니까?" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Deseja permitir?" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Разрешить это действие?" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "要允许吗？" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "要允許嗎？" } }
+      }
+    },
+    "Allow Paste" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Einsetzen erlauben" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Allow Paste" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Permitir pegar" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Autoriser le collage" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ペーストを許可" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "붙여넣기 허용" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Permitir Colar" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Разрешить вставку" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "允许粘贴" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "允許貼上" } }
+      }
+    },
+    "Allow Paste from Other Apps" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Einsetzen aus anderen Apps erlauben" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Allow Paste from Other Apps" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Permitir pegar desde otras apps" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Autoriser le collage depuis d’autres apps" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ほかのAppからのペーストを許可" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "다른 앱에서 붙여넣기 허용" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Permitir Colar de Outros Apps" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Разрешить вставку из других приложений" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "允许从其他 App 粘贴" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "允許從其他 App 貼上" } }
+      }
+    },
+    "Paste from Other Apps" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Einsetzen aus anderen Apps" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Paste from Other Apps" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Pegar desde otras apps" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Coller depuis d’autres apps" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ほかのAppからペースト" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "다른 앱에서 붙여넣기" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Colar de Outros Apps" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Вставка из других приложений" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "从其他 App 粘贴" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "從其他 App 貼上" } }
+      }
+    },
+    "Ask" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Fragen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Ask" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Preguntar" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Demander" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "確認" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "확인" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Perguntar" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Спрашивать" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "询问" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "詢問" } }
+      }
+    },
     "Save Automatically" : {
       "localizations" : {
         "de" : { "stringUnit" : { "state" : "translated", "value" : "Automatisch sichern" } },
@@ -10439,20 +10579,6 @@
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "「ClipKitty」想要從任何 App 貼上" } }
       }
     },
-    "Do you want to allow this?" : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Möchtest du das erlauben?" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Do you want to allow this?" } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "¿Quieres permitirlo?" } },
-        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Voulez-vous l’autoriser ?" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "これを許可しますか？" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이를 허용하겠습니까?" } },
-        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Deseja permitir?" } },
-        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Разрешить это?" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "你想要允许吗？" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "你想要允許嗎？" } }
-      }
-    },
     "Don’t Allow Paste" : {
       "localizations" : {
         "de" : { "stringUnit" : { "state" : "translated", "value" : "Einfügen nicht erlauben" } },
@@ -10465,20 +10591,6 @@
         "ru" : { "stringUnit" : { "state" : "translated", "value" : "Не разрешать вставку" } },
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "不允许粘贴" } },
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "不允許貼上" } }
-      }
-    },
-    "Allow Paste" : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Einfügen erlauben" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Allow Paste" } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Permitir pegar" } },
-        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Autoriser à coller" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ペーストを許可" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "붙여넣기 허용" } },
-        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Permitir Colar" } },
-        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Разрешить вставку" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "允许粘贴" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "允許貼上" } }
       }
     },
     "Allow ClipKitty to save content from your clipboard automatically so you don’t get asked every time it needs access." : {
@@ -10495,104 +10607,6 @@
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "允許 ClipKitty 自動儲存剪貼簿內容，無需每次取用時確認。" } }
       }
     },
-    "Allow Paste from Other Apps" : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Einfügen aus anderen Apps erlauben" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Allow Paste from Other Apps" } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Permitir pegar desde otras apps" } },
-        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Autoriser à coller depuis d’autres apps" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ほかのアプリからのペーストを許可" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "다른 앱에서 붙여넣기 허용" } },
-        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Permitir Colar de Outros Apps" } },
-        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Разрешить вставку из других приложений" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "允许从其他 App 粘贴" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "允許從其他 App 貼上" } }
-      }
-    },
-    "Enable Later in Settings" : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Später in den Einstellungen aktivieren" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Enable Later in Settings" } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Activar más tarde en Ajustes" } },
-        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Activer plus tard dans Réglages" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "あとで設定で有効にする" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "나중에 설정에서 활성화" } },
-        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Ativar Depois nos Ajustes" } },
-        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Включить позже в Настройках" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "稍后在设置中启用" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "稍後在設定中啟用" } }
-      }
-    },
-    "How to Allow Paste from Other Apps?" : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "So erlaubst du das Einfügen aus anderen Apps" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "How to Allow Paste from Other Apps?" } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "¿Cómo permitir pegar desde otras apps?" } },
-        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Comment autoriser à coller depuis d’autres apps ?" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ほかのアプリからのペーストを許可するには" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "다른 앱에서 붙여넣기를 허용하는 방법" } },
-        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Como Permitir Colar de Outros Apps?" } },
-        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Как разрешить вставку из других приложений?" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "如何允许从其他 App 粘贴？" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "如何允許從其他 App 貼上？" } }
-      }
-    },
-    "Open Settings and tap “Paste from Other Apps”" : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Öffne die Einstellungen und tippe auf „Aus anderen Apps einfügen“" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open Settings and tap “Paste from Other Apps”" } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Abre Ajustes y toca “Pegar desde otras apps”" } },
-        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Ouvrez Réglages et touchez « Coller depuis d’autres apps »" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "設定を開いて「ほかのアプリからペースト」をタップ" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "설정을 열고 “다른 앱에서 붙여넣기”를 탭하세요" } },
-        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Abra os Ajustes e toque em “Colar de Outros Apps”" } },
-        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Откройте Настройки и коснитесь «Вставка из других приложений»" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开设置，轻点“从其他 App 粘贴”" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "打開設定，點一下「從其他 App 貼上」" } }
-      }
-    },
-    "Select “Allow”" : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Wähle „Erlauben“" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Select “Allow”" } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Selecciona “Permitir”" } },
-        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Sélectionnez « Autoriser »" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "「許可」を選択" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "“허용”을 선택하세요" } },
-        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Selecione “Permitir”" } },
-        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Выберите «Разрешить»" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "选择“允许”" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "選擇「允許」" } }
-      }
-    },
-    "Open Settings" : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Einstellungen öffnen" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open Settings" } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Abrir Ajustes" } },
-        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Ouvrir Réglages" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "設定を開く" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "설정 열기" } },
-        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Abrir Ajustes" } },
-        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Открыть Настройки" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开设置" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "打開設定" } }
-      }
-    },
-    "Close" : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Schließen" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Close" } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Cerrar" } },
-        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Fermer" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "閉じる" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "닫기" } },
-        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Fechar" } },
-        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Закрыть" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "关闭" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "關閉" } }
-      }
-    },
     "Allow ClipKitty to Access" : {
       "localizations" : {
         "de" : { "stringUnit" : { "state" : "translated", "value" : "Zugriff erlauben für ClipKitty" } },
@@ -10607,44 +10621,16 @@
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "允許 ClipKitty 取用" } }
       }
     },
-    "Paste from Other Apps" : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Aus anderen Apps einfügen" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Paste from Other Apps" } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Pegar desde otras apps" } },
-        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Coller depuis d’autres apps" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ほかのアプリからペースト" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "다른 앱에서 붙여넣기" } },
-        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Colar de Outros Apps" } },
-        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Вставка из других приложений" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "从其他 App 粘贴" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "從其他 App 貼上" } }
-      }
-    },
-    "Ask" : {
-      "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Fragen" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Ask" } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "Preguntar" } },
-        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Demander" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "確認" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "묻기" } },
-        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Perguntar" } },
-        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Спрашивать" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "询问" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "詢問" } }
-      }
-    },
     "Deny" : {
       "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Verweigern" } },
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Nicht erlauben" } },
         "en" : { "stringUnit" : { "state" : "translated", "value" : "Deny" } },
         "es" : { "stringUnit" : { "state" : "translated", "value" : "Denegar" } },
         "fr" : { "stringUnit" : { "state" : "translated", "value" : "Refuser" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "拒否" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "許可しない" } },
         "ko" : { "stringUnit" : { "state" : "translated", "value" : "거부" } },
         "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Negar" } },
-        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Запрещать" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Запретить" } },
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "拒绝" } },
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "拒絕" } }
       }

@@ -506,6 +506,10 @@ struct AppResumeContext {
     let gate: AppStoreOpenGate
     let protection: AppResumeBackgroundProtection
     let openTask: Task<Void, Never>
+    /// The warm session presented while the store opens. Its container's
+    /// deferred store is attached by this resume's open task, or revoked when
+    /// the resume is superseded or suspended first.
+    let session: AppSession
 }
 
 enum AppResumeBackgroundProtection {
@@ -570,9 +574,12 @@ enum AppLaunchState {
     }
 }
 
-/// What the window actually renders, derived from ``AppLaunchState``. The
-/// outgoing session remains visible only while its terminal drain runs; a
-/// rebootstrapped session gets a fresh view-tree identity.
+/// What the window actually renders, derived from ``AppLaunchState``. A
+/// resuming session presents warm — rendering the persisted last feed while
+/// its store opens — and keeps its view-tree identity through store
+/// attachment. The outgoing session remains visible only while its terminal
+/// drain runs; the spinner survives solely for the transitional
+/// launching/suspended frames.
 private enum LaunchPresentation {
     case spinner
     case session(AppSession)
@@ -597,6 +604,8 @@ final class AppState {
     @ObservationIgnored private var acceptsSessionWork = true
     @ObservationIgnored private var pasteboardMonitor: iOSPasteboardMonitor?
     @ObservationIgnored private var pendingShareTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingShareNudgeObserver: Task<Void, Never>?
+    @ObservationIgnored private var pendingShareRerunRequested = false
     @ObservationIgnored private var maintenanceTask: Task<Void, Never>?
     @ObservationIgnored private var pendingImageDescriptionItemIDs: [String] = []
     @ObservationIgnored private var imageDescriptionWorker: Task<Void, Never>?
@@ -739,6 +748,7 @@ final class AppState {
         isForegroundVisible = true
         pasteboardMonitor?.sceneBecameActive()
         schedulePendingShareProcessing()
+        startPendingShareNudgeObserverIfNeeded()
         if runLaunchMaintenance {
             scheduleLaunchMaintenance()
         }
@@ -812,7 +822,15 @@ final class AppState {
     }
 
     private func schedulePendingShareProcessing() {
-        guard acceptsSessionWork, pendingShareTask == nil else { return }
+        guard acceptsSessionWork else { return }
+        if pendingShareTask != nil {
+            // A drain is already running and may have finished its directory
+            // scan before this request's item was published. Run once more
+            // when it completes so an in-process enqueue is never stranded
+            // until the next activation.
+            pendingShareRerunRequested = true
+            return
+        }
         let task = Task { @MainActor [weak self] in
             guard let self else { return }
             let added = await self.processPendingShareItems()
@@ -823,8 +841,29 @@ final class AppState {
                 // suspension cancelled the producer during its final await.
                 self.refreshFeed()
             }
+            if self.pendingShareRerunRequested {
+                self.pendingShareRerunRequested = false
+                self.schedulePendingShareProcessing()
+            }
         }
         pendingShareTask = task
+    }
+
+    /// While this session is foreground, an in-process producer (the
+    /// Shortcuts intents saving into the pending queue because the store was
+    /// not ready when they ran) nudges an immediate drain instead of leaving
+    /// the item invisible until the next scene activation.
+    private func startPendingShareNudgeObserverIfNeeded() {
+        guard acceptsSessionWork, pendingShareNudgeObserver == nil else { return }
+        pendingShareNudgeObserver = Task { @MainActor [weak self] in
+            let nudges = NotificationCenter.default.notifications(
+                named: PendingShareQueue.didEnqueueItemNotification
+            )
+            for await _ in nudges {
+                guard let self else { return }
+                self.schedulePendingShareProcessing()
+            }
+        }
     }
 
     private func scheduleLaunchMaintenance() {
@@ -928,6 +967,12 @@ final class AppState {
             pendingShareTask.cancel()
             tasks.append(pendingShareTask)
         }
+        pendingShareRerunRequested = false
+        if let pendingShareNudgeObserver {
+            pendingShareNudgeObserver.cancel()
+            tasks.append(pendingShareNudgeObserver)
+            self.pendingShareNudgeObserver = nil
+        }
         if let maintenanceTask {
             maintenanceTask.cancel()
             tasks.append(maintenanceTask)
@@ -979,7 +1024,11 @@ final class AppState {
         var saved = 0
         pendingItems: for item in pending {
             guard acceptsSessionWork, !Task.isCancelled else { break }
-            let sourceApp = "Share Sheet"
+            // Producers that attribute their own items (the Shortcuts
+            // intents) carry that attribution through the queue; everything
+            // else came from the share extension.
+            let sourceApp = item.sourceApp ?? "Share Sheet"
+            let sourceAppBundleId = item.sourceAppBundleId
 
             let result: Result<String, ClipboardError>
             switch item.payload {
@@ -987,13 +1036,13 @@ final class AppState {
                 result = await container.repository.saveText(
                     text: text,
                     sourceApp: sourceApp,
-                    sourceAppBundleId: nil
+                    sourceAppBundleId: sourceAppBundleId
                 )
             case let .url(url):
                 result = await container.repository.saveText(
                     text: url,
                     sourceApp: sourceApp,
-                    sourceAppBundleId: nil
+                    sourceAppBundleId: sourceAppBundleId
                 )
             case let .image(imageData, _, _):
                 // App Group files are a persistence boundary, not a trust
@@ -1021,7 +1070,7 @@ final class AppState {
                     imageData: imageData,
                     thumbnail: analysis.thumbnail,
                     sourceApp: sourceApp,
-                    sourceAppBundleId: nil,
+                    sourceAppBundleId: sourceAppBundleId,
                     isAnimated: analysis.isAnimated
                 )
             }
@@ -1225,6 +1274,14 @@ struct ClipKittyiOSApp: App {
 
     init() {
         FontManager.registerFonts()
+        // In the app process the shortcut runtime must never fall back to the
+        // library default of opening the database directly for saves: a
+        // foreground bootstrap can begin at any moment (a clipboard intent
+        // even forces one) and would contend with that open. Install the
+        // process-wide baseline before any intent can run: saves queue
+        // durably, reads keep the out-of-process behavior until the first
+        // foreground session owns the store.
+        ClipKittyShortcutRuntime.useStoreProvider { .unopened }
         ClipKittyAppShortcuts.updateAppShortcutParameters()
     }
 
@@ -1264,7 +1321,9 @@ struct ClipKittyiOSApp: App {
             return .session(session)
         case let .suspending(context):
             return .session(context.session)
-        case .suspended, .resuming:
+        case let .resuming(context):
+            return .session(context.session)
+        case .suspended:
             return .spinner
         case let .failed(message):
             return .failure(message)
@@ -1284,12 +1343,12 @@ struct ClipKittyiOSApp: App {
             .environment(container.haptics)
 
         #if ENABLE_ICLOUD_SYNC
-            if let coordinator = syncCoordinator {
-                base
-                    .environment(coordinator)
-            } else {
-                base
-            }
+            // Injected as an optional so the view structure is identical
+            // before and after the coordinator exists. A conditional branch
+            // here would reset the feed's view state when the coordinator
+            // arrives at store attachment.
+            base
+                .environment(syncCoordinator)
         #else
             base
         #endif
@@ -1310,30 +1369,23 @@ struct ClipKittyiOSApp: App {
         beginResume()
     }
 
-    /// Wires the service graph around a freshly-bootstrapped container: the
-    /// shortcut runtime, the UI coordinator, and (when enabled) iCloud sync.
-    private func makeSession(container: AppContainer, persistenceClaimID: UUID) -> AppSession {
+    /// Wires the service graph around a warm container whose store is still
+    /// opening: the shortcut runtime and the UI coordinator start immediately;
+    /// their store-bound work awaits the deferred open.
+    private func makeWarmSession(persistenceClaimID: UUID) -> AppSession {
+        // Screenshot fixture runs must render only their injected database,
+        // never a snapshot persisted by an earlier run.
+        let feedSnapshotting: iOSFeedSnapshotting = databasePathOverride == nil
+            ? .enabled(initial: iOSFeedSnapshotStore.load())
+            : .disabled
+        let container = AppContainer.assembleWarm(feedSnapshotting: feedSnapshotting)
         ClipKittyShortcutRuntime.useStoreProvider { [weak container] in
             guard let container else {
-                return .unavailable("ClipKitty is suspended.")
+                return .suspended
             }
             return container.shortcutStoreAvailability()
         }
         let appState = AppState(container: container)
-        #if ENABLE_ICLOUD_SYNC
-            let coordinator = iOSSyncCoordinator(
-                store: container.store,
-                enabled: container.settings.syncEnabled,
-                onContentChanged: { [weak appState] in
-                    appState?.refreshFeed()
-                }
-            )
-            syncCoordinator = coordinator
-            iOSRemoteNotificationBridge.shared.bind(coordinator: coordinator)
-            if container.settings.syncEnabled {
-                coordinator.handleScenePhaseChange(.active)
-            }
-        #endif
         return AppSession(
             persistenceClaimID: persistenceClaimID,
             container: container,
@@ -1341,13 +1393,44 @@ struct ClipKittyiOSApp: App {
         )
     }
 
-    /// Opens a fresh store for cold launch or after terminal suspension. A
-    /// superseded open is joined first so two stores never contend for the
-    /// same index path.
+    /// Resolves a warm session's deferred store and wires the services that
+    /// need the open store itself (iCloud sync, when enabled).
+    private func attachStore(_ storeSession: StoreSession, to session: AppSession) {
+        session.container.attach(storeSession)
+        #if ENABLE_ICLOUD_SYNC
+            let coordinator = iOSSyncCoordinator(
+                store: storeSession.store,
+                enabled: session.container.settings.syncEnabled,
+                onContentChanged: { [weak appState = session.appState] in
+                    appState?.refreshFeed()
+                }
+            )
+            syncCoordinator = coordinator
+            iOSRemoteNotificationBridge.shared.bind(coordinator: coordinator)
+            if session.container.settings.syncEnabled {
+                coordinator.handleScenePhaseChange(.active)
+            }
+        #endif
+    }
+
+    /// Retires a session whose store never attached: pending store work fails
+    /// closed and the session's producers are revoked. The returned join is
+    /// deliberately not awaited — no store admission depends on it, and the
+    /// open gate independently drains any store the open still constructs.
+    private func retireWarmSession(_ session: AppSession) {
+        session.container.revokeStore()
+        _ = session.appState.prepareForSuspension()
+    }
+
+    /// Opens a fresh store for cold launch or after terminal suspension,
+    /// presenting a warm session over the persisted last feed while the open
+    /// runs. A superseded open is joined first so two stores never contend
+    /// for the same index path.
     private func beginResume(after supersededOpen: Task<Void, Never>? = nil) {
         guard scenePhase != .background else { return }
         let resumeID = UUID()
         let customPath = databasePathOverride
+        let session = makeWarmSession(persistenceClaimID: resumeID)
         let gate = AppStoreOpenGate()
         let protection: AppResumeBackgroundProtection
         switch AppBackgroundTaskLease.acquire(
@@ -1417,6 +1500,9 @@ struct ClipKittyiOSApp: App {
                 #if ENABLE_ICLOUD_SYNC
                     iOSBackgroundSyncRunner.shared.releaseForegroundStore(resumeID)
                 #endif
+                if case let .current(context) = launchState.resumeCallbackDisposition(for: resumeID) {
+                    retireWarmSession(context.session)
+                }
                 transitionToRestingAndScheduleResumeRetry(resumeID: resumeID)
             }
         }
@@ -1425,8 +1511,14 @@ struct ClipKittyiOSApp: App {
             id: resumeID,
             gate: gate,
             protection: protection,
-            openTask: openTask
+            openTask: openTask,
+            session: session
         ))
+        let runLaunchMaintenance = !didScheduleLaunchMaintenance
+        didScheduleLaunchMaintenance = true
+        session.appState.beginForegroundActivity(
+            runLaunchMaintenance: runLaunchMaintenance
+        )
     }
 
     private func handleResumeOpenOutcome(
@@ -1437,11 +1529,12 @@ struct ClipKittyiOSApp: App {
         switch outcome {
         case let .success(storeSession):
             switch launchState.resumeCallbackDisposition(for: resumeID) {
-            case .current:
+            case let .current(context):
                 guard scenePhase != .background else {
                     // The environment can observe background before its
                     // onChange callback runs. `.inactive` remains visible in
                     // Slide Over and still owns foreground store authority.
+                    retireWarmSession(context.session)
                     await Task.detached(priority: .utility) {
                         gate.expireAndDrain()
                     }.value
@@ -1453,23 +1546,19 @@ struct ClipKittyiOSApp: App {
                 }
                 switch gate.transfer() {
                 case .available:
-                    let container = AppContainer.assemble(storeSession: storeSession)
-                    let session = makeSession(
-                        container: container,
-                        persistenceClaimID: resumeID
-                    )
-                    launchState = .ready(session)
+                    attachStore(storeSession, to: context.session)
+                    launchState = .ready(context.session)
                     resumeRetryAttempt = 0
-                    let runLaunchMaintenance = !didScheduleLaunchMaintenance
-                    didScheduleLaunchMaintenance = true
-                    session.appState.beginForegroundActivity(
-                        runLaunchMaintenance: runLaunchMaintenance
-                    )
+                    // The warm feed rendered from the persisted snapshot;
+                    // reconcile it against the live store now that searches
+                    // can run.
+                    context.session.appState.refreshFeed()
                 case .expired:
                     // An expiration callback may still be draining this exact
                     // store. Join it before allowing a retry to open the same
                     // path, otherwise a rapid foreground transition could
                     // contend with the outgoing index/database handles.
+                    retireWarmSession(context.session)
                     await Task.detached(priority: .utility) {
                         gate.expireAndDrain()
                     }.value
@@ -1479,8 +1568,10 @@ struct ClipKittyiOSApp: App {
                     transitionToRestingAndScheduleResumeRetry(resumeID: resumeID)
                 }
             case .superseded:
-                // Backgrounded or replaced mid-open: join the gate's exact
-                // store before the next resume's chained open can proceed.
+                // Backgrounded or replaced mid-open: the warm session was
+                // retired by whichever transition superseded this resume.
+                // Join the gate's exact store before the next resume's
+                // chained open can proceed.
                 await Task.detached(priority: .utility) {
                     gate.expireAndDrain()
                 }.value
@@ -1496,7 +1587,8 @@ struct ClipKittyiOSApp: App {
                 iOSBackgroundSyncRunner.shared.releaseForegroundStore(resumeID)
             #endif
             switch launchState.resumeCallbackDisposition(for: resumeID) {
-            case .current:
+            case let .current(context):
+                retireWarmSession(context.session)
                 launchState = .failed(error.localizedDescription)
             case .superseded:
                 break
@@ -1594,6 +1686,9 @@ struct ClipKittyiOSApp: App {
                 // Seal synchronously so no store can transfer after foreground
                 // authority ends. The existing open task owns the off-main join;
                 // the next activation chains its replacement after that task.
+                // The warm session's deferred store is revoked the same way so
+                // none of its pending work can outwait the sealed open.
+                retireWarmSession(context.session)
                 context.gate.seal()
                 launchState = .suspended(.waitingForSupersededResume(
                     openTask: context.openTask
@@ -1604,12 +1699,21 @@ struct ClipKittyiOSApp: App {
             return
         }
 
-        let store = session.container.store
+        guard let store = session.container.attachedStore else {
+            // A ready session always has an attached store; degrade to a
+            // storeless teardown rather than trapping if that invariant is
+            // ever violated.
+            _ = session.appState.prepareForSuspension()
+            ClipKittyShortcutRuntime.useStoreProvider { .suspended }
+            launchState = .suspended(.resting)
+            return
+        }
 
-        // Revoke UI and shortcut producers synchronously.
+        // Revoke UI and shortcut producers synchronously. Shortcut saves
+        // degrade to the durable pending queue while suspended.
         let pendingMutation = session.appState.prepareForSuspension()
         ClipKittyShortcutRuntime.useStoreProvider {
-            .unavailable("ClipKitty is suspended.")
+            .suspended
         }
 
         let storeSuspension: AppStoreSuspensionWork

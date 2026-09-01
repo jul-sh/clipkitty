@@ -32,15 +32,34 @@ enum ShortcutPasteboardRead {
     case unsupported(String)
 }
 
+#if os(iOS)
+    /// Whether the app is frontmost and active. `UIPasteboard` only returns
+    /// content to the active app, so a clipboard intent running anywhere else
+    /// must continue into the foreground before reading.
+    @MainActor
+    enum ShortcutForegroundGate {
+        static var isApplicationActive: Bool {
+            UIApplication.shared.applicationState == .active
+        }
+    }
+#endif
+
 @MainActor
 enum ShortcutPasteboard {
-    static func read() -> ShortcutPasteboardRead {
+    static func read() async -> ShortcutPasteboardRead {
         #if os(macOS)
-            readMacPasteboard()
+            return readMacPasteboard()
         #elseif os(iOS)
-            readIOSPasteboard()
+            // An intent that just continued into the foreground can observe a
+            // brief `.inactive` while the transition settles. Reading during
+            // that window silently returns nothing, which would misreport a
+            // populated clipboard as empty, so wait it out (bounded).
+            for _ in 0 ..< 40 where !ShortcutForegroundGate.isApplicationActive {
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            return readIOSPasteboard()
         #else
-            .unsupported("ClipKitty Shortcuts support is available on macOS and iOS.")
+            return .unsupported("ClipKitty Shortcuts support is available on macOS and iOS.")
         #endif
     }
 

@@ -1,4 +1,5 @@
 import AppIntents
+import ClipKittyCore
 @testable import ClipKittyShortcuts
 import XCTest
 
@@ -67,6 +68,51 @@ final class ShortcutIntentContractTests: ShortcutIntentTestCase {
         }
     }
 
+    func testSaveTextIntentQueuesWhileStoreSuspended() async throws {
+        let service = ClipKittyShortcutService(
+            sessionProvider: { .suspended },
+            imageDescriptionGenerator: { _ in nil },
+            pendingShareDirectory: temporaryDirectory
+        )
+        let intent = SaveTextToClipKittyIntent()
+        intent.text = "queued through intent"
+
+        let result = try await withShortcutService(service) {
+            try await intent.perform()
+        }
+
+        XCTAssertEqual(result.value, "queued through intent")
+        let pending = PendingShareQueue.loadAll(in: temporaryDirectory)
+        XCTAssertEqual(pending.count, 1)
+        guard case let .text(text) = pending.first?.payload else {
+            return XCTFail("Expected a queued text payload")
+        }
+        XCTAssertEqual(text, "queued through intent")
+    }
+
+    func testSaveClipboardIntentQueuesWhileStoreSuspended() async throws {
+        let service = ClipKittyShortcutService(
+            sessionProvider: { .suspended },
+            pasteboardClient: ShortcutPasteboardClient(read: {
+                .content(.text("clipboard queued through intent"))
+            }),
+            imageDescriptionGenerator: { _ in nil },
+            pendingShareDirectory: temporaryDirectory
+        )
+        let intent = SaveClipboardToClipKittyIntent()
+
+        let result = try await withShortcutService(service) {
+            try await intent.perform()
+        }
+
+        XCTAssertEqual(result.value, "Saved to ClipKitty")
+        let pending = PendingShareQueue.loadAll(in: temporaryDirectory)
+        guard case let .text(text) = pending.first?.payload else {
+            return XCTFail("Expected a queued text payload")
+        }
+        XCTAssertEqual(text, "clipboard queued through intent")
+    }
+
     func testSearchTextIntentReturnsMatchingValues() async throws {
         let service = makeService()
         _ = try await service.saveText("intent alpha")
@@ -104,5 +150,5 @@ final class ShortcutIntentContractTests: ShortcutIntentTestCase {
 }
 
 private func requireStringValueWithDialog(
-    _ result: some IntentResult & ReturnsValue<String> & ProvidesDialog
+    _: some IntentResult & ReturnsValue<String> & ProvidesDialog
 ) {}

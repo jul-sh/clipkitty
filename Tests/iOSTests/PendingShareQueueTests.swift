@@ -20,6 +20,27 @@ final class PendingShareQueueTests: TemporaryDirectoryTestCase {
         XCTAssertTrue(PendingShareQueue.loadAll(in: temporaryDirectory).isEmpty)
     }
 
+    func testSourceAttributionRoundTrips() throws {
+        try PendingShareQueue.enqueueText(
+            "from a shortcut",
+            sourceApp: "Shortcuts",
+            sourceAppBundleId: "com.apple.shortcuts",
+            in: temporaryDirectory
+        )
+
+        let pending = try XCTUnwrap(PendingShareQueue.loadAll(in: temporaryDirectory).first)
+        XCTAssertEqual(pending.sourceApp, "Shortcuts")
+        XCTAssertEqual(pending.sourceAppBundleId, "com.apple.shortcuts")
+    }
+
+    func testItemsWithoutSourceAttributionRemainReadable() throws {
+        try PendingShareQueue.enqueueText("from share sheet", in: temporaryDirectory)
+
+        let pending = try XCTUnwrap(PendingShareQueue.loadAll(in: temporaryDirectory).first)
+        XCTAssertNil(pending.sourceApp)
+        XCTAssertNil(pending.sourceAppBundleId)
+    }
+
     func testImageRoundTripsThumbnailAndData() throws {
         let imageData = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x01])
         let thumbnail = Data([0x01, 0x02])

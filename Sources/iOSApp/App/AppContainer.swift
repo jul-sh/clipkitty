@@ -7,40 +7,81 @@ import Foundation
 import os
 
 /// Owns all app-scoped services for the current foreground session.
+///
+/// A container is assembled warm — before its store has opened — so the real
+/// view tree can render the persisted last feed immediately. Repository work
+/// awaits the deferred store; `attach` resolves it once the open completes,
+/// and `revokeStore` fails it closed when the session is retired first.
 @MainActor
 @Observable
 final class AppContainer {
+    private enum StoreAttachment {
+        case pending
+        case attached(StoreSession)
+        case revoked
+    }
+
     private nonisolated static let logger = Logger(subsystem: "com.clipkitty", category: "iOSBootstrap")
 
-    let storeSession: StoreSession
+    @ObservationIgnored private var attachment: StoreAttachment = .pending
+    @ObservationIgnored private let storeHandle: DeferredStoreHandle
+    let repository: ClipboardRepository
     let imageDescriptionUpdater: ImageDescriptionUpdater
     let storeClient: iOSBrowserStoreClient
     let clipboardService: iOSClipboardService
     let settings: iOSSettingsStore
     let haptics: HapticsClient
 
-    var store: ClipKittyRust.ClipboardStore {
-        storeSession.store
+    var attachedStoreSession: StoreSession? {
+        if case let .attached(storeSession) = attachment { return storeSession }
+        return nil
     }
 
-    var repository: ClipboardRepository {
-        storeSession.repository
+    var attachedStore: ClipKittyRust.ClipboardStore? {
+        attachedStoreSession?.store
     }
 
     private init(
-        storeSession: StoreSession,
+        storeHandle: DeferredStoreHandle,
+        repository: ClipboardRepository,
         imageDescriptionUpdater: ImageDescriptionUpdater,
         storeClient: iOSBrowserStoreClient,
         clipboardService: iOSClipboardService,
         settings: iOSSettingsStore,
         haptics: HapticsClient
     ) {
-        self.storeSession = storeSession
+        self.storeHandle = storeHandle
+        self.repository = repository
         self.imageDescriptionUpdater = imageDescriptionUpdater
         self.storeClient = storeClient
         self.clipboardService = clipboardService
         self.settings = settings
         self.haptics = haptics
+    }
+
+    /// Resolves the deferred store for every service assembled around it.
+    func attach(_ storeSession: StoreSession) {
+        switch attachment {
+        case .pending:
+            attachment = .attached(storeSession)
+            storeHandle.fulfill(storeSession.store)
+        case .attached, .revoked:
+            preconditionFailure("store attached to a container that already resolved")
+        }
+    }
+
+    /// Retires a warm container whose open was superseded or suspended before
+    /// completing. Pending repository work fails instead of waiting forever.
+    func revokeStore() {
+        switch attachment {
+        case .pending:
+            attachment = .revoked
+            storeHandle.revoke()
+        case .attached, .revoked:
+            // An attached session's teardown is governed by the store drain;
+            // a revoked container is already terminal.
+            break
+        }
     }
 
     static func bootstrap(databasePath customPath: String? = nil) -> Result<AppContainer, BootstrapError> {
@@ -104,27 +145,40 @@ final class AppContainer {
     }
 
     /// The cheap, main-actor half of bootstrap: wires the service graph
-    /// around an already-opened store.
-    static func assemble(storeSession: StoreSession) -> AppContainer {
-        let repository = storeSession.repository
+    /// around a store that is still opening. Every service works through the
+    /// deferred repository, so nothing here blocks on the open.
+    static func assembleWarm(
+        feedSnapshotting: iOSFeedSnapshotting
+    ) -> AppContainer {
+        let storeHandle = DeferredStoreHandle()
+        let repository = ClipboardRepository(deferredStore: storeHandle)
         let previewLoader = PreviewLoader(repository: repository)
         let imageDescriptionUpdater = ImageDescriptionUpdater(repository: repository)
         let storeClient = iOSBrowserStoreClient(
             repository: repository,
-            previewLoader: previewLoader
+            previewLoader: previewLoader,
+            feedSnapshotting: feedSnapshotting
         )
         let settings = iOSSettingsStore()
         let clipboardService = iOSClipboardService(settings: settings)
         let haptics = HapticsClient()
 
         return AppContainer(
-            storeSession: storeSession,
+            storeHandle: storeHandle,
+            repository: repository,
             imageDescriptionUpdater: imageDescriptionUpdater,
             storeClient: storeClient,
             clipboardService: clipboardService,
             settings: settings,
             haptics: haptics
         )
+    }
+
+    /// Wires the service graph around an already-opened store.
+    static func assemble(storeSession: StoreSession) -> AppContainer {
+        let container = assembleWarm(feedSnapshotting: .disabled)
+        container.attach(storeSession)
+        return container
     }
 
     enum BootstrapError: LocalizedError {
@@ -142,11 +196,17 @@ final class AppContainer {
     }
 
     func shortcutStoreAvailability() -> ClipKittyShortcutStoreAvailability {
-        .ready(storeSession)
-    }
-
-    func prepareForSuspension() {
-        store.prepareForSuspend()
+        switch attachment {
+        case .pending:
+            // Matches cold-launch semantics: a foreground open is (or may
+            // soon be) in flight, so saves queue durably and reads keep the
+            // out-of-process behavior.
+            return .unopened
+        case let .attached(storeSession):
+            return .ready(storeSession)
+        case .revoked:
+            return .suspended
+        }
     }
 
     /// Prune the database to the user's storage limit, removing oldest items

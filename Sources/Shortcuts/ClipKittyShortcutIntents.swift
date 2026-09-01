@@ -25,11 +25,24 @@
     public struct SaveClipboardToClipKittyIntent: AppIntent {
         public static var title: LocalizedStringResource = "Save Clipboard to ClipKitty"
         public static var description: IntentDescription? = "Save the current text or image clipboard item into ClipKitty."
-        public static var openAppWhenRun = false
+        #if os(iOS)
+            /// `UIPasteboard` returns content only to the frontmost, active
+            /// app, so a background run (Spotlight, Siri, an automation) would
+            /// silently read an empty clipboard. Declare the dynamic
+            /// foreground mode and continue into the app before reading.
+            public static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
+        #else
+            public static var openAppWhenRun = false
+        #endif
 
         public init() {}
 
         public func perform() async throws -> some IntentResult & ReturnsValue<String> & ProvidesDialog {
+            #if os(iOS)
+                if await !ShortcutForegroundGate.isApplicationActive {
+                    try await continueInForeground(alwaysConfirm: false)
+                }
+            #endif
             let saved = try await ClipKittyShortcutRuntime.makeService().saveCurrentClipboard()
             return .result(
                 value: ShortcutIntentResult.value(for: saved),
@@ -76,7 +89,7 @@
     private enum ShortcutIntentResult {
         static func dialog(for saved: ShortcutSavedClip) -> IntentDialog {
             switch saved {
-            case .inserted:
+            case .inserted, .queued:
                 return "Saved to ClipKitty."
             case .duplicate:
                 return "Already in ClipKitty."
@@ -89,6 +102,8 @@
                 return id
             case .duplicate:
                 return "Already in ClipKitty"
+            case .queued:
+                return "Saved to ClipKitty"
             }
         }
     }
