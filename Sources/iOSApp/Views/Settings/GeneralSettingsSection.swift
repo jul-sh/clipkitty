@@ -1,9 +1,7 @@
 import SwiftUI
-import UIKit
 
 struct GeneralSettingsSection: View {
     @Environment(iOSSettingsStore.self) private var settings
-    @Environment(\.openURL) private var openURL
 
     var body: some View {
         @Bindable var settings = settings
@@ -14,38 +12,5 @@ struct GeneralSettingsSection: View {
             #endif
             Toggle(String(localized: "Auto-Add from Clipboard"), isOn: $settings.autoAddFromClipboard)
         }
-
-        if !settings.permissionHintDismissed {
-            Section(String(localized: "Permissions")) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(String(localized: "To streamline operations, you can allow ClipKitty to always read the clipboard."))
-                        .foregroundStyle(.primary)
-
-                    Text(String(localized: "Open ClipKitty in the Settings app, tap \"Paste from Other Apps\", then choose \"Allow\"."))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .fixedSize(horizontal: false, vertical: true)
-
-                Button {
-                    openAppSettings()
-                } label: {
-                    Label(String(localized: "Open ClipKitty Settings"), systemImage: "gearshape")
-                }
-
-                Button(role: .cancel) {
-                    withAnimation(.bouncy) {
-                        settings.permissionHintDismissed = true
-                    }
-                } label: {
-                    Label(String(localized: "Dismiss"), systemImage: "xmark")
-                }
-            }
-        }
-    }
-
-    private func openAppSettings() {
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        openURL(url)
     }
 }

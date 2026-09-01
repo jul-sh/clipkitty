@@ -15,6 +15,8 @@ struct HomeFeedView: View {
     @State private var previewItemId: String?
     @State private var hasAppeared = false
     @State private var showSettings = false
+    @State private var showPermissionFlow = false
+    @State private var permissionFlowResumesInDoneState = false
     @State private var searchFocusRequestID = 0
     @State private var feedLayout: FeedLayout = .singleColumn
     @State private var selection = FeedSelectionState()
@@ -95,9 +97,27 @@ struct HomeFeedView: View {
             .sheet(isPresented: $showSettings) {
                 SettingsScreen()
             }
+            .sheet(isPresented: $showPermissionFlow) {
+                SaveAutomaticallySheet(resumeInDoneState: permissionFlowResumesInDoneState)
+            }
+            .onChange(of: showPermissionFlow) { _, isPresented in
+                if !isPresented {
+                    permissionFlowResumesInDoneState = false
+                }
+            }
             .onAppear {
                 guard !hasAppeared else { return }
                 hasAppeared = true
+                // A trip to the Settings app from the permission flow comes
+                // back through a rebootstrapped session with all sheets gone;
+                // pick the flow back up on its finishing step.
+                if settings.permissionFlowResumePending {
+                    settings.permissionFlowResumePending = false
+                    if !settings.permissionHintDismissed {
+                        permissionFlowResumesInDoneState = true
+                        showPermissionFlow = true
+                    }
+                }
                 viewModel.onAppear(
                     initialSearchQuery: "",
                     contentRevision: appState.contentRevision
@@ -184,6 +204,12 @@ struct HomeFeedView: View {
 
     private var feedRows: some View {
         LazyVStack(spacing: Self.feedRowSpacing) {
+            if !settings.permissionHintDismissed, !selection.isActive {
+                ClipboardPermissionCard {
+                    showPermissionFlow = true
+                }
+            }
+
             switch feedLayout {
             case .singleColumn:
                 ForEach(filteredRows) { row in

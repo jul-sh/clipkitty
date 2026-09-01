@@ -41,7 +41,8 @@ final class iOSSettingsStore {
         didSet { defaults.set(previewFontPreference.rawValue, forKey: previewFontPreferenceKey) }
     }
 
-    /// Whether the user has dismissed the clipboard-permission hint in Settings.
+    /// Whether the user has dismissed the clipboard-permission card in the
+    /// home feed (or finished its allow-access flow).
     var permissionHintDismissed: Bool {
         didSet { defaults.set(permissionHintDismissed, forKey: permissionHintDismissedKey) }
     }
@@ -57,6 +58,18 @@ final class iOSSettingsStore {
             didSet { defaults.set(syncEnabled, forKey: syncEnabledKey) }
         }
     #endif
+
+    // MARK: - Permission flow state
+
+    /// Set when the user heads to the Settings app from the clipboard-
+    /// permission flow. Leaving for Settings suspends ClipKitty, and the
+    /// resumed session starts with fresh view state, so the sheet the user
+    /// left is gone on return; the home feed consumes this flag to re-present
+    /// the flow's finishing "Done" step. State, not a user-facing preference.
+    @ObservationIgnored
+    var permissionFlowResumePending: Bool {
+        didSet { defaults.set(permissionFlowResumePending, forKey: permissionFlowResumePendingKey) }
+    }
 
     // MARK: - Pasteboard ingest state
 
@@ -80,6 +93,7 @@ final class iOSSettingsStore {
     private let fontPreferenceKey = "iOSFontPreference"
     private let previewFontPreferenceKey = "iOSPreviewFontPreference"
     private let permissionHintDismissedKey = "iOSPermissionHintDismissed"
+    private let permissionFlowResumePendingKey = "iOSPermissionFlowResumePending"
     private let lastIngestedPasteboardChangeCountKey = "iOSLastIngestedPasteboardChangeCount"
     #if ENABLE_ICLOUD_SYNC
         private let syncEnabledKey = "iOSSyncEnabled"
@@ -103,6 +117,7 @@ final class iOSSettingsStore {
         previewFontPreference = defaults.string(forKey: previewFontPreferenceKey)
             .flatMap(PreviewFontPreference.init(rawValue:)) ?? .coding
         permissionHintDismissed = defaults.object(forKey: permissionHintDismissedKey) as? Bool ?? false
+        permissionFlowResumePending = defaults.object(forKey: permissionFlowResumePendingKey) as? Bool ?? false
         lastIngestedPasteboardChangeCount = defaults.object(forKey: lastIngestedPasteboardChangeCountKey) as? Int ?? 0
 
         #if ENABLE_ICLOUD_SYNC
