@@ -87,6 +87,7 @@ struct SaveAutomaticallySheet: View {
 
     let resumeInDoneState: Bool
     @State private var showHowTo: Bool
+    @State private var isRequestingAccess = false
 
     init(resumeInDoneState: Bool = false) {
         self.resumeInDoneState = resumeInDoneState
@@ -109,8 +110,13 @@ struct SaveAutomaticallySheet: View {
 
             VStack(spacing: 12) {
                 Button {
-                    requestPasteAccessOnce()
-                    showHowTo = true
+                    guard !isRequestingAccess else { return }
+                    isRequestingAccess = true
+                    Task {
+                        await requestPasteAccessOnce()
+                        isRequestingAccess = false
+                        showHowTo = true
+                    }
                 } label: {
                     Text(String(localized: "Allow Paste from Other Apps"))
                         .font(.body.weight(.semibold))
@@ -153,13 +159,15 @@ struct SaveAutomaticallySheet: View {
     /// Settings page after at least one actual paste-access request, and the
     /// app-settings deep link only lands on ClipKitty's page once the app has
     /// a page to land on. If the permission is still "Ask" the system prompt
-    /// appears over this sheet — the same beat as Paste's flow — and the
-    /// read's value is discarded either way.
-    private func requestPasteAccessOnce() {
-        let clipboardService = container.clipboardService
-        Task { @MainActor in
-            _ = await clipboardService.readCurrentClipboardForAutomaticIngest()
-        }
+    /// appears over this sheet, and the read's value is discarded either way.
+    ///
+    /// Awaited so the how-to sheet only presents after the prompt is
+    /// answered: the prompt draws above sheets, and stacking it over the
+    /// how-to guidance made "Allow Paste" — a single-paste consent — read as
+    /// the finish line. When no prompt appears the read resolves immediately
+    /// and the sheet follows without a visible pause.
+    private func requestPasteAccessOnce() async {
+        _ = await container.clipboardService.readCurrentClipboardForAutomaticIngest()
     }
 }
 
@@ -223,6 +231,11 @@ struct HowToAllowPasteSheet: View {
                     text: String(localized: "Select “Allow”"),
                     isActive: pageIndex == 1
                 )
+
+                Text(String(localized: "“Allow Paste” in the popup covers one paste at a time — pick “Allow” in Settings so you’re never asked again."))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             TabView(selection: $pageIndex) {

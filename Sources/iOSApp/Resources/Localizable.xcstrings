@@ -10662,6 +10662,20 @@
         "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "允许" } },
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "允許" } }
       }
+    },
+    "“Allow Paste” in the popup covers one paste at a time — pick “Allow” in Settings so you’re never asked again." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "„Einfügen erlauben“ im Dialog gilt nur für ein einzelnes Einfügen – wähle „Erlauben“ in den Einstellungen, damit du nie wieder gefragt wirst." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "“Allow Paste” in the popup covers one paste at a time — pick “Allow” in Settings so you’re never asked again." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "“Permitir pegar” en el aviso solo cubre un pegado — elige “Permitir” en Ajustes para que no se te pregunte más." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "« Autoriser à coller » dans l’alerte ne vaut que pour un seul collage — choisissez « Autoriser » dans Réglages pour ne plus jamais être sollicité." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ポップアップの「ペーストを許可」は1回のペーストにのみ有効です。設定で「許可」を選ぶと、今後確認されなくなります。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "팝업의 “붙여넣기 허용”은 한 번의 붙여넣기에만 적용됩니다. 설정에서 “허용”을 선택하면 다시 묻지 않습니다." } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "“Permitir Colar” no aviso vale para uma colagem por vez — escolha “Permitir” nos Ajustes para nunca mais ser perguntado." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "«Разрешить вставку» во всплывающем окне действует только на одну вставку — выберите «Разрешать» в Настройках, чтобы вопросы больше не появлялись." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "弹窗中的“允许粘贴”仅对单次粘贴有效——在设置中选择“允许”后将不再询问。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "彈窗中的「允許貼上」僅對單次貼上有效——在設定中選擇「允許」後將不再詢問。" } }
+      }
     }
   },
   "version" : "1.0"
