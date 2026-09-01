@@ -342,21 +342,34 @@ public struct DeleteTransaction {
     let queryGeneration: Int
 }
 
+/// One tag change applied to one or more items. A multi-item selection is
+/// tagged as a single transaction so the batch settles — and can fail —
+/// atomically, rather than as N transactions the single-flight guard would
+/// drop all but the first of.
 public struct TagMutationTransaction {
     let id: UUID
-    public let itemId: String
+    /// Every item the transaction targets, in the order the caller supplied.
+    public let itemIds: [String]
     public let tag: ItemTag
     public let shouldInclude: Bool
+
+    init(
+        itemIds: [String],
+        tag: ItemTag,
+        shouldInclude: Bool
+    ) {
+        id = UUID()
+        self.itemIds = itemIds
+        self.tag = tag
+        self.shouldInclude = shouldInclude
+    }
 
     init(
         itemId: String,
         tag: ItemTag,
         shouldInclude: Bool
     ) {
-        id = UUID()
-        self.itemId = itemId
-        self.tag = tag
-        self.shouldInclude = shouldInclude
+        self.init(itemIds: [itemId], tag: tag, shouldInclude: shouldInclude)
     }
 }
 

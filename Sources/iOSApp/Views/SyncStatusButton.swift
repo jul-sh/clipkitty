@@ -58,6 +58,19 @@
             }
         }
 
+        /// Whether the toolbar shows the control at all. Sync is ambient: a
+        /// resting spinner is chrome the user cannot act on, so the slot is
+        /// occupied only while work is actually in flight. Failures stay
+        /// visible because they are the one state the user may need to see.
+        var isVisible: Bool {
+            switch phase {
+            case .connecting, .syncing, .error, .temporarilyUnavailable:
+                return true
+            case .off, .idle, .synced, .unavailable:
+                return false
+            }
+        }
+
         func accessibilityValue(
             now: Date = Date(),
             locale: Locale = .current
@@ -98,8 +111,9 @@
     /// Top-toolbar-ready iCloud status and manual sync control.
     ///
     /// The navigation toolbar supplies the circular Liquid Glass material. The
-    /// control deliberately remains in the hierarchy while sync is off so the
-    /// leading slot is stable and VoiceOver can report why it is unavailable.
+    /// control appears only while sync is working or has something the user
+    /// needs to see (see `isVisible`), so a resting feed carries no idle
+    /// spinner in its leading slot.
     struct SyncStatusButton: View {
         @Environment(iOSSettingsStore.self) private var settings
         @Environment(iOSSyncCoordinator.self) private var syncCoordinator: iOSSyncCoordinator?
@@ -113,11 +127,13 @@
             let canRequestSync = settings.syncEnabled &&
                 (syncCoordinator?.canRequestSync ?? false)
 
-            if canRequestSync {
-                button(presentation: presentation, canRequestSync: true)
-                    .accessibilityHint(String(localized: "Sync now"))
-            } else {
-                button(presentation: presentation, canRequestSync: false)
+            if presentation.isVisible {
+                if canRequestSync {
+                    button(presentation: presentation, canRequestSync: true)
+                        .accessibilityHint(String(localized: "Sync now"))
+                } else {
+                    button(presentation: presentation, canRequestSync: false)
+                }
             }
         }
 
