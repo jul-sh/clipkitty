@@ -92,20 +92,253 @@ public func runCancellableRepositoryOperation<T: Sendable>(
     }
 }
 
+/// Fails deferred-store operations once their pending open has been revoked
+/// (the owning session suspended before the store finished opening).
+public struct StoreUnavailableError: Error {}
+
+/// Thread-safe handle for a store that a warm-booted session is still opening.
+/// Repository operations await it instead of failing during the brief open
+/// window; revocation resolves every waiter so suspension can never strand a
+/// joined task behind an open that will not complete.
+public final class DeferredStoreHandle: @unchecked Sendable {
+    private enum State {
+        case pending([CheckedContinuation<ClipKittyRust.ClipboardStore?, Never>])
+        case available(ClipKittyRust.ClipboardStore)
+        case revoked
+    }
+
+    private let lock = NSLock()
+    private var state: State = .pending([])
+
+    public init() {}
+
+    /// The open store, or nil while the open is pending or after revocation.
+    public var availableStore: ClipKittyRust.ClipboardStore? {
+        lock.lock()
+        defer { lock.unlock() }
+        if case let .available(store) = state { return store }
+        return nil
+    }
+
+    /// Waits for the open to resolve. Returns nil once the handle is revoked.
+    public func awaitStore() async -> ClipKittyRust.ClipboardStore? {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            switch state {
+            case var .pending(waiters):
+                waiters.append(continuation)
+                state = .pending(waiters)
+                lock.unlock()
+            case let .available(store):
+                lock.unlock()
+                continuation.resume(returning: store)
+            case .revoked:
+                lock.unlock()
+                continuation.resume(returning: nil)
+            }
+        }
+    }
+
+    public func fulfill(_ store: ClipKittyRust.ClipboardStore) {
+        let waiters: [CheckedContinuation<ClipKittyRust.ClipboardStore?, Never>]
+        lock.lock()
+        switch state {
+        case let .pending(pendingWaiters):
+            waiters = pendingWaiters
+            state = .available(store)
+        case .revoked:
+            // The owning session was retired while its open was in flight.
+            // The store's lifecycle is governed by the open gate's drain;
+            // this handle stays unavailable.
+            waiters = []
+        case .available:
+            lock.unlock()
+            preconditionFailure("deferred store fulfilled more than once")
+        }
+        lock.unlock()
+
+        for waiter in waiters {
+            waiter.resume(returning: store)
+        }
+    }
+
+    public func revoke() {
+        let waiters: [CheckedContinuation<ClipKittyRust.ClipboardStore?, Never>]
+        lock.lock()
+        switch state {
+        case let .pending(pendingWaiters):
+            waiters = pendingWaiters
+        case .available, .revoked:
+            waiters = []
+        }
+        state = .revoked
+        lock.unlock()
+
+        for waiter in waiters {
+            waiter.resume(returning: nil)
+        }
+    }
+}
+
+/// Defers search admission until a pending store open resolves, while keeping
+/// the operation cancellable from any thread during the wait.
+private final class DeferredClipboardSearchOperation: ClipboardSearchOperation, @unchecked Sendable {
+    private enum State {
+        case waiting
+        case cancelledWhileWaiting
+        case running(ClipKittyRust.SearchOperation)
+        case finished
+    }
+
+    private let handle: DeferredStoreHandle
+    private let query: String
+    private let filter: ItemQueryFilter
+    private let presentation: ListPresentationProfile
+    private let lock = NSLock()
+    private var state: State = .waiting
+
+    init(
+        handle: DeferredStoreHandle,
+        query: String,
+        filter: ItemQueryFilter,
+        presentation: ListPresentationProfile
+    ) {
+        self.handle = handle
+        self.query = query
+        self.filter = filter
+        self.presentation = presentation
+    }
+
+    func cancel() {
+        lock.lock()
+        switch state {
+        case .waiting:
+            state = .cancelledWhileWaiting
+            lock.unlock()
+        case let .running(operation):
+            lock.unlock()
+            operation.cancel()
+        case .cancelledWhileWaiting, .finished:
+            lock.unlock()
+        }
+    }
+
+    func awaitOutcome() async -> RepositorySearchOutcome {
+        guard let store = await handle.awaitStore() else {
+            lock.lock()
+            state = .finished
+            lock.unlock()
+            return .cancelled
+        }
+
+        lock.lock()
+        switch state {
+        case .cancelledWhileWaiting:
+            state = .finished
+            lock.unlock()
+            return .cancelled
+        case .waiting:
+            let operation = store.startSearch(
+                query: query,
+                filter: filter,
+                presentation: presentation
+            )
+            state = .running(operation)
+            lock.unlock()
+            let outcome = await RustClipboardSearchOperation(operation: operation).awaitOutcome()
+            lock.lock()
+            state = .finished
+            lock.unlock()
+            return outcome
+        case .running, .finished:
+            lock.unlock()
+            preconditionFailure("deferred search awaited more than once")
+        }
+    }
+}
+
 public final class ClipboardRepository: @unchecked Sendable {
-    public let store: ClipKittyRust.ClipboardStore
+    private enum StoreAccess: @unchecked Sendable {
+        case immediate(ClipKittyRust.ClipboardStore)
+        case deferred(DeferredStoreHandle)
+    }
+
+    private let access: StoreAccess
 
     public init(store: ClipKittyRust.ClipboardStore) {
-        self.store = store
+        access = .immediate(store)
+    }
+
+    /// A repository whose store is still opening. Operations await the open
+    /// and fail (or report cancellation) once the handle is revoked.
+    public init(deferredStore handle: DeferredStoreHandle) {
+        access = .deferred(handle)
+    }
+
+    /// The open store, or nil while a deferred open is pending or revoked.
+    public var store: ClipKittyRust.ClipboardStore? {
+        switch access {
+        case let .immediate(store):
+            return store
+        case let .deferred(handle):
+            return handle.availableStore
+        }
+    }
+
+    private func resolveStore() async -> ClipKittyRust.ClipboardStore? {
+        switch access {
+        case let .immediate(store):
+            return store
+        case let .deferred(handle):
+            return await handle.awaitStore()
+        }
+    }
+
+    private func run<T: Sendable>(
+        _ operation: String,
+        body: @escaping @Sendable (ClipKittyRust.ClipboardStore) throws -> T
+    ) async -> Result<T, ClipboardError> {
+        guard let store = await resolveStore() else {
+            return .failure(.databaseOperationFailed(
+                operation: operation,
+                underlying: StoreUnavailableError()
+            ))
+        }
+        return await runRepositoryOperation(operation, on: store, body: body)
+    }
+
+    private func runCancellable<T: Sendable>(
+        _ operation: String,
+        body: @escaping @Sendable (ClipKittyRust.ClipboardStore) throws -> T
+    ) async -> Result<T, ClipboardError> {
+        guard let store = await resolveStore() else {
+            return .failure(.databaseOperationFailed(
+                operation: operation,
+                underlying: StoreUnavailableError()
+            ))
+        }
+        return await runCancellableRepositoryOperation(operation, on: store, body: body)
     }
 
     public func databaseSize() async -> Result<Int64, ClipboardError> {
-        await runRepositoryOperation("databaseSize", on: store) { $0.databaseSize() }
+        await run("databaseSize") { $0.databaseSize() }
     }
 
     public func startSearch(query: String, filter: ItemQueryFilter, presentation: ListPresentationProfile) -> ClipboardSearchOperation {
-        let operation = store.startSearch(query: query, filter: filter, presentation: presentation)
-        return RustClipboardSearchOperation(operation: operation)
+        if let store {
+            return RustClipboardSearchOperation(
+                operation: store.startSearch(query: query, filter: filter, presentation: presentation)
+            )
+        }
+        guard case let .deferred(handle) = access else {
+            preconditionFailure("immediate repository lost its store")
+        }
+        return DeferredClipboardSearchOperation(
+            handle: handle,
+            query: query,
+            filter: filter,
+            presentation: presentation
+        )
     }
 
     public func search(query: String, filter: ItemQueryFilter, presentation: ListPresentationProfile) async -> RepositorySearchOutcome {
@@ -127,7 +360,7 @@ public final class ClipboardRepository: @unchecked Sendable {
     /// avoid replacing the system clipboard with only a partial selection.
     public func fetchItems(ids: [String]) async -> Result<[ClipboardItem], ClipboardError> {
         guard !ids.isEmpty else { return .success([]) }
-        return await runRepositoryOperation("fetchItems", on: store) { store in
+        return await run("fetchItems") { store in
             try store.fetchByIds(itemIds: ids)
         }
     }
@@ -139,10 +372,7 @@ public final class ClipboardRepository: @unchecked Sendable {
     /// 50 MiB before hydrating any accepted database payload.
     public func fetchTransferItems(ids: [String]) async -> RepositoryTransferFetchOutcome {
         guard !ids.isEmpty else { return .success([]) }
-        let result = await runCancellableRepositoryOperation(
-            "fetchTransferItems",
-            on: store
-        ) { store in
+        let result = await runCancellable("fetchTransferItems") { store in
             try store.fetchItemsForTransfer(itemIds: ids)
         }
         switch result {
@@ -170,7 +400,7 @@ public final class ClipboardRepository: @unchecked Sendable {
     }
 
     public func resolveMatchedExcerpts(requests: [MatchedExcerptRequest]) async -> [MatchedExcerptResolution] {
-        let result = await runRepositoryOperation("resolveMatchedExcerpts", on: store) { store in
+        let result = await run("resolveMatchedExcerpts") { store in
             try store.resolveMatchedExcerpts(requests: requests)
         }
         if case let .success(resolutions) = result {
@@ -180,7 +410,7 @@ public final class ClipboardRepository: @unchecked Sendable {
     }
 
     public func loadPreviewPayload(itemId: String, query: String) async -> PreviewPayload? {
-        let result = await runRepositoryOperation("loadPreviewPayload", on: store) { store in
+        let result = await run("loadPreviewPayload") { store in
             try store.loadPreviewPayload(itemId: itemId, query: query)
         }
         if case let .success(payload) = result {
@@ -194,7 +424,7 @@ public final class ClipboardRepository: @unchecked Sendable {
         sourceApp: String?,
         sourceAppBundleId: String?
     ) async -> Result<String, ClipboardError> {
-        await runRepositoryOperation("saveText", on: store) { store in
+        await run("saveText") { store in
             try store.saveText(
                 text: text,
                 sourceApp: sourceApp,
@@ -210,7 +440,7 @@ public final class ClipboardRepository: @unchecked Sendable {
         sourceAppBundleId: String?,
         isAnimated: Bool
     ) async -> Result<String, ClipboardError> {
-        await runRepositoryOperation("saveImage", on: store) { store in
+        await run("saveImage") { store in
             try store.saveImage(
                 imageData: imageData,
                 thumbnail: thumbnail,
@@ -226,7 +456,7 @@ public final class ClipboardRepository: @unchecked Sendable {
         sourceApp: String?,
         sourceAppBundleId: String?
     ) async -> Result<String, ClipboardError> {
-        await runRepositoryOperation("saveFiles", on: store) { store in
+        await run("saveFiles") { store in
             try store.saveFiles(
                 files: files,
                 sourceApp: sourceApp,
@@ -236,7 +466,7 @@ public final class ClipboardRepository: @unchecked Sendable {
     }
 
     public func updateTextItem(itemId: String, text: String) async -> Result<Void, ClipboardError> {
-        await runRepositoryOperation("updateTextItem", on: store) { store in
+        await run("updateTextItem") { store in
             try store.updateTextItem(itemId: itemId, text: text)
         }
     }
@@ -247,7 +477,7 @@ public final class ClipboardRepository: @unchecked Sendable {
         description: String?,
         imageData: Data?
     ) async -> Result<Void, ClipboardError> {
-        await runRepositoryOperation("updateLinkMetadata", on: store) { store in
+        await run("updateLinkMetadata") { store in
             try store.updateLinkMetadata(
                 itemId: itemId,
                 title: title,
@@ -258,37 +488,37 @@ public final class ClipboardRepository: @unchecked Sendable {
     }
 
     public func updateImageDescription(itemId: String, description: String) async -> Result<Void, ClipboardError> {
-        await runRepositoryOperation("updateImageDescription", on: store) { store in
+        await run("updateImageDescription") { store in
             try store.updateImageDescription(itemId: itemId, description: description)
         }
     }
 
     public func updateTimestamp(itemId: String) async -> Result<Void, ClipboardError> {
-        await runRepositoryOperation("updateTimestamp", on: store) { store in
+        await run("updateTimestamp") { store in
             try store.updateTimestamp(itemId: itemId)
         }
     }
 
     public func addTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError> {
-        await runRepositoryOperation("addTag", on: store) { store in
+        await run("addTag") { store in
             try store.addTag(itemId: itemId, tag: tag)
         }
     }
 
     public func removeTag(itemId: String, tag: ItemTag) async -> Result<Void, ClipboardError> {
-        await runRepositoryOperation("removeTag", on: store) { store in
+        await run("removeTag") { store in
             try store.removeTag(itemId: itemId, tag: tag)
         }
     }
 
     public func delete(itemId: String) async -> Result<Void, ClipboardError> {
-        await runRepositoryOperation("deleteItem", on: store) { store in
+        await run("deleteItem") { store in
             try store.deleteItem(itemId: itemId)
         }
     }
 
     public func clear() async -> Result<Void, ClipboardError> {
-        await runRepositoryOperation("clear", on: store) { store in
+        await run("clear") { store in
             try store.clear()
         }
     }
@@ -297,7 +527,7 @@ public final class ClipboardRepository: @unchecked Sendable {
     /// over the limit, prunes down to `keepRatio` of it so the store isn't
     /// re-pruned on every new item.
     public func pruneToSize(maxBytes: Int64, keepRatio: Double = 0.8) async -> Result<UInt64, ClipboardError> {
-        await runRepositoryOperation("pruneToSize", on: store) { store in
+        await run("pruneToSize") { store in
             try store.pruneToSize(maxBytes: maxBytes, keepRatio: keepRatio)
         }
     }

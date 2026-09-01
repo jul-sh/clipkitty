@@ -703,6 +703,7 @@ final class AppContainerBootstrapTests: TemporaryDirectoryTestCase {
         }
     }
 
+    @MainActor
     func testSupersededResumeCallbackCannotClaimNewerResume() {
         let oldID = UUID()
         let newID = UUID()
@@ -718,11 +719,19 @@ final class AppContainerBootstrapTests: TemporaryDirectoryTestCase {
             break
         }
 
+        let container = AppContainer.assembleWarm(feedSnapshotting: .disabled)
+        defer { container.revokeStore() }
+        let warmSession = AppSession(
+            persistenceClaimID: newID,
+            container: container,
+            appState: AppState(container: container)
+        )
         state = .resuming(AppResumeContext(
             id: newID,
             gate: AppStoreOpenGate(),
             protection: .unavailable,
-            openTask: Task<Void, Never> {}
+            openTask: Task<Void, Never> {},
+            session: warmSession
         ))
         switch state.resumeCallbackDisposition(for: oldID) {
         case .current:
