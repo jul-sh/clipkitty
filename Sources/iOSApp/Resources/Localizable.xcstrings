@@ -255,7 +255,16 @@
     },
     "Capture Sensitive Clips" : {
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture Sensitive Clips" } }
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Sensible Einträge erfassen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Capture Sensitive Clips" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Capturar elementos sensibles" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Capturer les éléments sensibles" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "機密項目を保存" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "민감한 항목 저장" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Capturar Itens Sensíveis" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Сохранять конфиденциальные элементы" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "保存敏感项目" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "儲存敏感項目" } }
       }
     },
     "Allow Shortcuts to Read History" : {
@@ -288,17 +297,44 @@
     },
     "When off, clips that an app marks as sensitive (such as passwords and one-time codes from a password manager) are not saved to history. Turn this on only if you want those clips captured too." : {
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "When off, clips that an app marks as sensitive (such as passwords and one-time codes from a password manager) are not saved to history. Turn this on only if you want those clips captured too." } }
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Wenn deaktiviert, werden Einträge, die eine App als sensibel markiert (etwa Passwörter und Einmalcodes aus einem Passwortmanager), nicht im Verlauf gesichert. Aktiviere dies nur, wenn auch solche Einträge erfasst werden sollen." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "When off, clips that an app marks as sensitive (such as passwords and one-time codes from a password manager) are not saved to history. Turn this on only if you want those clips captured too." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Si está desactivado, los elementos que una app marca como sensibles (como contraseñas y códigos de un solo uso de un gestor de contraseñas) no se guardan en el historial. Actívalo solo si quieres capturar también esos elementos." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Lorsque cette option est désactivée, les éléments qu’une app marque comme sensibles (tels que mots de passe et codes à usage unique d’un gestionnaire de mots de passe) ne sont pas enregistrés dans l’historique. Activez-la uniquement si vous souhaitez capturer aussi ces éléments." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "オフの場合、アプリが機密としてマークした項目（パスワードマネージャーのパスワードやワンタイムコードなど）は履歴に保存されません。これらの項目も保存したい場合のみオンにしてください。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "끄면 앱이 민감하다고 표시한 항목(비밀번호 관리자의 비밀번호, 일회용 코드 등)은 기록에 저장되지 않습니다. 이러한 항목도 저장하려는 경우에만 켜세요." } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Quando desativado, itens marcados como sensíveis por um app (como senhas e códigos de uso único de um gerenciador de senhas) não são salvos no histórico. Ative apenas se quiser capturar esses itens também." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Если выключено, элементы, которые приложение помечает как конфиденциальные (например, пароли и одноразовые коды из менеджера паролей), не сохраняются в истории. Включайте только если хотите сохранять и такие элементы." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "关闭时，被 App 标记为敏感的项目（例如密码管理器中的密码和一次性验证码）不会保存到历史记录。仅当你也想保存这些项目时才开启。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "關閉時，被 App 標記為敏感的項目（例如密碼管理器中的密碼和一次性驗證碼）不會儲存到記錄中。僅在你也想儲存這些項目時才開啟。" } }
       }
     },
     "Lets Shortcuts and automations read your clipboard history." : {
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Lets Shortcuts and automations read your clipboard history." } }
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Erlaubt Kurzbefehlen und Automationen, deinen Zwischenablage-Verlauf zu lesen." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Lets Shortcuts and automations read your clipboard history." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Permite que Atajos y las automatizaciones lean tu historial del portapapeles." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Permet à Raccourcis et aux automatisations de lire l’historique de votre presse-papiers." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ショートカットやオートメーションによるクリップボード履歴の読み取りを許可します。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "단축어와 자동화가 클립보드 기록을 읽을 수 있도록 합니다." } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Permite que os Atalhos e as automações leiam seu histórico da área de transferência." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Позволяет Быстрым командам и автоматизациям читать историю буфера обмена." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "允许快捷指令和自动化读取剪贴板历史记录。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "允許捷徑和自動化操作讀取剪貼簿記錄。" } }
       }
     },
     "Saves clips marked sensitive by apps, such as passwords and codes." : {
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Saves clips marked sensitive by apps, such as passwords and codes." } }
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Sichert Einträge, die Apps als sensibel markieren, etwa Passwörter und Codes." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Saves clips marked sensitive by apps, such as passwords and codes." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Guarda elementos que las apps marcan como sensibles, como contraseñas y códigos." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Enregistre les éléments que les apps marquent comme sensibles, tels que mots de passe et codes." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "パスワードやコードなど、アプリが機密としてマークした項目を保存します。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "비밀번호나 코드처럼 앱이 민감하다고 표시한 항목을 저장합니다." } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Salva itens marcados como sensíveis pelos apps, como senhas e códigos." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Сохраняет элементы, помеченные приложениями как конфиденциальные, например пароли и коды." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "保存被 App 标记为敏感的项目，例如密码和验证码。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "儲存被 App 標記為敏感的項目，例如密碼和驗證碼。" } }
       }
     },
     "Advanced" : {
@@ -4213,7 +4249,16 @@
     },
     "Behavior" : {
       "localizations" : {
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "Behavior" } }
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Verhalten" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Behavior" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Comportamiento" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Comportement" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "動作" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "동작" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Comportamento" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Поведение" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "行为" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "行為" } }
       }
     },
     "Generate Link Previews" : {
@@ -10397,18 +10442,18 @@
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "稍後在「設定」中啟用" } }
       }
     },
-    "How to Allow Paste from Other Apps?" : {
+    "Always Allow Paste from Other Apps" : {
       "localizations" : {
-        "de" : { "stringUnit" : { "state" : "translated", "value" : "Wie erlaube ich „Einsetzen aus anderen Apps“?" } },
-        "en" : { "stringUnit" : { "state" : "translated", "value" : "How to Allow Paste from Other Apps?" } },
-        "es" : { "stringUnit" : { "state" : "translated", "value" : "¿Cómo permitir «Pegar desde otras apps»?" } },
-        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Comment autoriser « Coller depuis d’autres apps » ?" } },
-        "ja" : { "stringUnit" : { "state" : "translated", "value" : "「ほかのAppからペースト」を許可するには？" } },
-        "ko" : { "stringUnit" : { "state" : "translated", "value" : "‘다른 앱에서 붙여넣기’를 허용하려면?" } },
-        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Como permitir “Colar de Outros Apps”?" } },
-        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Как разрешить «Вставку из других приложений»?" } },
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "如何允许“从其他 App 粘贴”？" } },
-        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "如何允許「從其他 App 貼上」？" } }
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Einfügen aus anderen Apps immer erlauben" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Always Allow Paste from Other Apps" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Permitir pegar siempre desde otras apps" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Toujours autoriser à coller depuis d’autres apps" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ほかのアプリからのペーストを常に許可" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "다른 앱에서 붙여넣기 항상 허용" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Sempre Permitir Colar de Outros Apps" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Всегда разрешать вставку из других приложений" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "始终允许从其他 App 粘贴" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "一律允許從其他 App 貼上" } }
       }
     },
     "Open Settings and tap “Paste from Other Apps”" : {
