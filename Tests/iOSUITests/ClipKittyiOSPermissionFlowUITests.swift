@@ -131,6 +131,28 @@ final class ClipKittyiOSPermissionFlowUITests: XCTestCase {
         )
     }
 
+    func testCardShowsOnEmptyFeed() {
+        // Relaunch against a directory with no database: the app starts with
+        // an empty history, exactly the state a fresh install lands in.
+        app.terminate()
+        let emptyDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("clipkitty-permission-empty-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: emptyDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: emptyDirectory) }
+        app.launchEnvironment["CLIPKITTY_SCREENSHOT_DB"] = emptyDirectory
+            .appendingPathComponent("history.sqlite").path
+        app.launch()
+
+        XCTAssertTrue(
+            app.buttons["home.permissionCard"].waitForExistence(timeout: 15),
+            "The card should top the empty feed too — first-run users are who it's for"
+        )
+        XCTAssertTrue(
+            app.staticTexts["No items yet"].waitForExistence(timeout: 5),
+            "The empty state should render beneath the card"
+        )
+    }
+
     func testDismissHidesCard() {
         let card = app.buttons["home.permissionCard"]
         XCTAssertTrue(card.waitForExistence(timeout: 15))

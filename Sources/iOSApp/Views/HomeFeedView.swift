@@ -168,7 +168,7 @@ struct HomeFeedView: View {
 
         case .loaded:
             if filteredRows.isEmpty {
-                emptyStateView
+                emptyFeed
             } else {
                 scrollableFeed
             }
@@ -202,12 +202,38 @@ struct HomeFeedView: View {
         }
     }
 
+    /// Whether the clipboard-permission card tops the feed. Hidden during
+    /// selection: the card is not selectable and would sit above the
+    /// checkable clips.
+    private var showsPermissionCard: Bool {
+        !settings.permissionHintDismissed && !selection.isActive
+    }
+
+    private var permissionCard: some View {
+        ClipboardPermissionCard {
+            showPermissionFlow = true
+        }
+    }
+
+    /// The loaded-but-empty screen. The permission card still tops it — a
+    /// fresh install has no clips yet, and that first-run user is exactly who
+    /// the card is for — except while a search or filter is active, where
+    /// "no results" is the whole story.
+    private var emptyFeed: some View {
+        VStack(spacing: 0) {
+            if showsPermissionCard, !isSearchOrFilterActive {
+                permissionCard
+                    .padding(.horizontal, Self.feedGutter)
+                    .padding(.top, Self.feedRowSpacing / 2)
+            }
+            emptyStateView
+        }
+    }
+
     private var feedRows: some View {
         LazyVStack(spacing: Self.feedRowSpacing) {
-            if !settings.permissionHintDismissed, !selection.isActive {
-                ClipboardPermissionCard {
-                    showPermissionFlow = true
-                }
+            if showsPermissionCard {
+                permissionCard
             }
 
             switch feedLayout {
