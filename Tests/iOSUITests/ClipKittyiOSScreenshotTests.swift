@@ -58,12 +58,11 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         // Set the UI language for this locale
         app.launchArguments += ["-AppleLanguages", "(\(locale!))"]
         app.launchArguments += ["-AppleLocale", locale]
-        // Marketing captures must show the feed, not first-launch onboarding.
-        app.launchArguments += ["-iOSHasCompletedOnboarding", "YES"]
-        // Nor the clipboard-permission card that tops the feed until the user
-        // dismisses it or finishes its allow-access flow. The plist literal
-        // matters: a bare "YES" reaches the argument domain as a string, and
-        // the settings store's `object(forKey:) as? Bool` read ignores it.
+        // Marketing captures must not show the clipboard-permission card that
+        // tops the feed until the user dismisses it or finishes its
+        // allow-access flow. The plist literal matters: a bare "YES" reaches
+        // the argument domain as a string, and the settings store's
+        // `object(forKey:) as? Bool` read ignores it.
         app.launchArguments += ["-iOSPermissionHintDismissed", "<true/>"]
         app.launch()
 

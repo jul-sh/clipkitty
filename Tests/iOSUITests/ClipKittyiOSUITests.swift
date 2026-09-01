@@ -13,9 +13,6 @@ final class ClipKittyiOSUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
         app = XCUIApplication()
-        // First-launch onboarding otherwise covers the feed these tests
-        // drive; a clean install is exactly the state CI runs in.
-        app.launchArguments += ["-iOSHasCompletedOnboarding", "YES"]
         app.launch()
 
         // Wait for the app to finish bootstrapping

@@ -17,9 +17,6 @@ final class ClipKittyiOSSelectionUITests: XCTestCase {
             "-AppleLocale", "en_US",
             "-iOSAutoAddFromClipboard", "NO",
             "-iOSSyncEnabled", "NO",
-            // First-launch onboarding otherwise covers the feed these tests
-            // drive; a clean install is exactly the state CI runs in.
-            "-iOSHasCompletedOnboarding", "YES",
         ]
         app.launch()
 
