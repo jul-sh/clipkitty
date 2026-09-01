@@ -58,6 +58,17 @@ public final class BrowserViewModel {
             }
         }
 
+        /// Whether a search that predates a just-committed mutation could still
+        /// land and overwrite an optimistic update.
+        var isInFlight: Bool {
+            switch self {
+            case .idle:
+                return false
+            case .debouncing, .running:
+                return true
+            }
+        }
+
         mutating func cancel() {
             switch self {
             case .idle:
@@ -937,6 +948,10 @@ public final class BrowserViewModel {
             refreshCurrentRequestAfterMutation()
             return .failed
         }
+    }
+
+    private var hasSearchInFlight: Bool {
+        searchExecution.isInFlight
     }
 
     private func refreshCurrentRequestAfterMutation(discardSelectedPayload: Bool = false) {
@@ -1941,7 +1956,7 @@ public final class BrowserViewModel {
         case let .tagging(mutation):
             return responseApplyingTagMutation(
                 response,
-                itemId: mutation.itemId,
+                itemIds: Set(mutation.itemIds),
                 tag: mutation.tag,
                 shouldInclude: mutation.shouldInclude
             )
@@ -2013,7 +2028,7 @@ public final class BrowserViewModel {
             )
         case let .deleting(.pending(transaction)), let .deleting(.committing(transaction)):
             return transaction.deletedItemIds.contains(itemId) ? nil : item
-        case let .tagging(transaction) where transaction.itemId == itemId:
+        case let .tagging(transaction) where transaction.itemIds.contains(itemId):
             return ClipboardItem(
                 itemMetadata: applyingTagMutation(
                     to: item.itemMetadata,
@@ -2049,61 +2064,106 @@ public final class BrowserViewModel {
     }
 
     private func mutateItemTag(itemId: String, tag: ItemTag, shouldInclude: Bool) {
+        mutateItemTags(itemIds: [itemId], tag: tag, shouldInclude: shouldInclude)
+    }
+
+    /// Applies one tag change to a whole selection as a single transaction.
+    ///
+    /// The rows are updated in place rather than re-queried: a tag change does
+    /// not reorder or refilter the feed (except under a matching tag filter,
+    /// which the optimistic update handles), so restarting the search would
+    /// only discard the caches and the scroll position for no gain.
+    public func setTag(
+        _ tag: ItemTag,
+        onItems itemIds: [String],
+        shouldInclude: Bool
+    ) {
+        guard !itemIds.isEmpty else { return }
+        mutateItemTags(itemIds: itemIds, tag: tag, shouldInclude: shouldInclude)
+    }
+
+    private func mutateItemTags(itemIds: [String], tag: ItemTag, shouldInclude: Bool) {
         switch mutationState {
         case .idle, .failed:
             break
         case .saving, .deleting, .tagging, .clearing:
             return
         }
+        guard !itemIds.isEmpty else { return }
 
         cancelPreviewWork()
         let transaction = TagMutationTransaction(
-            itemId: itemId,
+            itemIds: itemIds,
             tag: tag,
             shouldInclude: shouldInclude
         )
+        // A search already running when this write starts was issued against
+        // pre-mutation content. `responseApplyingPendingMutations` keeps it from
+        // reverting the tag while the mutation is in flight, but once the
+        // mutation settles that protection is gone — so such a race requires an
+        // authoritative re-query on completion. With no search in flight there
+        // is nothing to fence, and the rows can stand as optimistically updated.
+        let requiresAuthoritativeRefresh = hasSearchInFlight
         mutationState = .tagging(transaction)
-        applyOptimisticTagMutation(itemId: itemId, tag: tag, shouldInclude: shouldInclude)
+        applyOptimisticTagMutation(itemIds: Set(itemIds), tag: tag, shouldInclude: shouldInclude)
 
         mutationExecution = .running(Task { [weak self] in
             guard let self else { return }
-            let result: Result<Void, ClipboardError> = shouldInclude
-                ? await self.client.addTag(itemId: itemId, tag: tag)
-                : await self.client.removeTag(itemId: itemId, tag: tag)
+            var result: Result<Void, ClipboardError> = .success(())
+            for itemId in itemIds {
+                let itemResult: Result<Void, ClipboardError> = shouldInclude
+                    ? await self.client.addTag(itemId: itemId, tag: tag)
+                    : await self.client.removeTag(itemId: itemId, tag: tag)
+                // The first failure decides the transaction: the remaining
+                // writes are abandoned and the whole batch reports failure, so
+                // the optimistic update is reconciled against the store rather
+                // than leaving a partially-applied selection on screen.
+                if case .failure = itemResult {
+                    result = itemResult
+                    break
+                }
+            }
 
             await MainActor.run {
                 self.mutationExecution = .idle
                 guard case let .tagging(current) = self.mutationState,
                       current.id == transaction.id
                 else { return }
-                let discardSelectedPayload: Bool
                 switch result {
                 case .success:
                     self.mutationState = .idle
-                    discardSelectedPayload = false
+                    if requiresAuthoritativeRefresh || self.hasSearchInFlight {
+                        self.refreshCurrentRequestAfterMutation()
+                    } else {
+                        // Nothing can overwrite the optimistic update, and it
+                        // already matches what the store holds. Re-querying
+                        // would rebuild identical rows at the cost of the
+                        // feed's caches and the user's scroll position.
+                        self.rebuildDisplayedRows()
+                    }
                 case let .failure(error):
+                    // The optimistic update is now a lie. Reload from the store
+                    // so the rows reflect what was actually written.
                     self.mutationState = .failed(ActionFailure(message: error.localizedDescription))
-                    discardSelectedPayload = true
+                    self.refreshCurrentRequestAfterMutation(discardSelectedPayload: true)
                 }
-                self.refreshCurrentRequestAfterMutation(
-                    discardSelectedPayload: discardSelectedPayload
-                )
             }
         })
     }
 
-    private func applyOptimisticTagMutation(itemId: String, tag: ItemTag, shouldInclude: Bool) {
+    private func applyOptimisticTagMutation(itemIds: Set<String>, tag: ItemTag, shouldInclude: Bool) {
         guard let response = currentResponse else { return }
         let updatedResponse = responseApplyingTagMutation(
             response,
-            itemId: itemId,
+            itemIds: itemIds,
             tag: tag,
             shouldInclude: shouldInclude
         )
         updateDisplayedResponse(updatedResponse)
 
         if let selectedItemState {
-            let updatedMetadata = selectedItemState.item.itemMetadata.itemId == itemId
+            let itemId = selectedItemState.item.itemMetadata.itemId
+            let updatedMetadata = itemIds.contains(itemId)
                 ? applyingTagMutation(to: selectedItemState.item.itemMetadata, tag: tag, shouldInclude: shouldInclude)
                 : selectedItemState.item.itemMetadata
 
@@ -2115,7 +2175,7 @@ public final class BrowserViewModel {
                 if let firstItemId = updatedResponse.items.first?.itemMetadata.itemId {
                     select(itemId: firstItemId, origin: .automatic)
                 }
-            } else if selectedItemState.item.itemMetadata.itemId == itemId {
+            } else if itemIds.contains(itemId) {
                 let updatedItem = ClipboardItem(itemMetadata: updatedMetadata, content: selectedItemState.item.content)
                 previewPayloadsByItemId[itemId] = PreviewPayload(
                     item: updatedItem,
@@ -2129,7 +2189,8 @@ public final class BrowserViewModel {
             }
         }
 
-        if let cachedItem = prefetchCache[itemId] {
+        for itemId in itemIds {
+            guard let cachedItem = prefetchCache[itemId] else { continue }
             let updatedMetadata = applyingTagMutation(to: cachedItem.itemMetadata, tag: tag, shouldInclude: shouldInclude)
             prefetchCache[itemId] = ClipboardItem(itemMetadata: updatedMetadata, content: cachedItem.content)
         }
@@ -2138,12 +2199,12 @@ public final class BrowserViewModel {
 
     private func responseApplyingTagMutation(
         _ response: BrowserSearchResponse,
-        itemId: String,
+        itemIds: Set<String>,
         tag: ItemTag,
         shouldInclude: Bool
     ) -> BrowserSearchResponse {
         let updatedItems = response.items.compactMap { itemMatch -> ItemMatch? in
-            let isTarget = itemMatch.itemMetadata.itemId == itemId
+            let isTarget = itemIds.contains(itemMatch.itemMetadata.itemId)
             let updatedMetadata = isTarget
                 ? applyingTagMutation(to: itemMatch.itemMetadata, tag: tag, shouldInclude: shouldInclude)
                 : itemMatch.itemMetadata
@@ -2162,7 +2223,8 @@ public final class BrowserViewModel {
         }
 
         let updatedFirstPreviewPayload = response.firstPreviewPayload.flatMap { payload -> PreviewPayload? in
-            guard payload.item.itemMetadata.itemId == itemId else { return payload }
+            let itemId = payload.item.itemMetadata.itemId
+            guard itemIds.contains(itemId) else { return payload }
             let updatedMetadata = applyingTagMutation(
                 to: payload.item.itemMetadata,
                 tag: tag,

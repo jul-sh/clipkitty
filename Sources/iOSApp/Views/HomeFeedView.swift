@@ -433,23 +433,19 @@ struct HomeFeedView: View {
     }
 
     /// Bookmarks the whole selection, or removes the bookmark if every
-    /// selected item already carries it. Goes straight through the
-    /// repository rather than `BrowserViewModel`'s single-item tag mutation,
-    /// which single-flights on `mutationState` and would silently drop all
-    /// but the first call in a batch.
+    /// selected item already carries it.
+    ///
+    /// Goes through the view model's batch tag mutation, which applies the
+    /// whole selection as one transaction and updates the affected rows in
+    /// place. Writing to the repository directly and then calling
+    /// `refreshFeed()` would restart the search, discarding the feed's caches
+    /// and scrolling the user back to the top for what is only a tag change.
     private func toggleBookmarkForSelectedItems() {
         let itemIDs = orderedSelectedItemIDs
         guard !itemIDs.isEmpty else { return }
         let shouldInclude = !allSelectedAreBookmarked
 
-        Task { @MainActor in
-            for itemID in itemIDs {
-                _ = shouldInclude
-                    ? await container.repository.addTag(itemId: itemID, tag: .bookmark)
-                    : await container.repository.removeTag(itemId: itemID, tag: .bookmark)
-            }
-            appState.refreshFeed()
-        }
+        viewModel.setTag(.bookmark, onItems: itemIDs, shouldInclude: shouldInclude)
         haptics.fire(.selection)
         appState.showToast(shouldInclude ? .bookmarked : .unbookmarked)
     }

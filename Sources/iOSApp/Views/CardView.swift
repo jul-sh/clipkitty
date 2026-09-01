@@ -135,16 +135,16 @@ struct CardView: View {
 
     private var selectableCard: some View {
         cardSurface
-            .overlay {
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .symbolRenderingMode(.palette)
-                        .foregroundStyle(.white, Color.accentColor)
-                        .font(.title2.weight(.semibold))
-                        .transition(.scale(scale: 0.7).combined(with: .opacity))
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                }
+            // Every selectable card carries the indicator in its top-trailing
+            // corner, hollow until chosen, matching the Mac browser: an
+            // unselected card should still advertise that it can be picked,
+            // and the marker must not sit over the card's content.
+            .overlay(alignment: .topTrailing) {
+                selectionIndicator
+                    .font(.title2.weight(.semibold))
+                    .padding(12)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
             .overlay {
                 RoundedRectangle(cornerRadius: CardSurface.cornerRadius, style: .continuous)
@@ -165,6 +165,22 @@ struct CardView: View {
                 onToggleSelection()
                 haptics.fire(.selection)
             }
+    }
+
+    /// The selection marker: a hollow ring while unselected, a filled
+    /// checkmark once chosen. Both states occupy the same box so the card's
+    /// corner does not shift as the selection toggles.
+    @ViewBuilder
+    private var selectionIndicator: some View {
+        if isSelected {
+            Image(systemName: "checkmark.circle.fill")
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(.white, Color.accentColor)
+                .transition(.scale(scale: 0.7).combined(with: .opacity))
+        } else {
+            Image(systemName: "circle")
+                .foregroundStyle(.secondary)
+        }
     }
 
     private func makeManagedDragPayload() -> ExternalCopyDragPayload {

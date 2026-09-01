@@ -321,6 +321,100 @@ final class BrowserMutationTests: XCTestCase {
         XCTAssertTrue(viewModel.contentState.items.first?.itemMetadata.tags.contains(.bookmark) == true)
     }
 
+    /// A multi-item selection tags every item it names, in one transaction.
+    /// The single-flight guard on `mutationState` would otherwise drop all but
+    /// the first if these were issued as separate mutations.
+    func testBatchTagAppliesToEveryNamedItem() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [
+                makeMatch(id: "1", excerpt: "one"),
+                makeMatch(id: "2", excerpt: "two"),
+                makeMatch(id: "3", excerpt: "three"),
+            ],
+            firstPreviewPayload: nil,
+            totalCount: 3
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.setTag(.bookmark, onItems: ["1", "3"], shouldInclude: true)
+
+        let tagged = viewModel.contentState.items.filter {
+            $0.itemMetadata.tags.contains(.bookmark)
+        }.map(\.itemMetadata.itemId)
+        XCTAssertEqual(tagged, ["1", "3"], "Only the named items should be tagged")
+    }
+
+    /// Tagging updates the visible rows in place. Restarting the search would
+    /// discard the feed's caches and scroll the user back to the top for what
+    /// is only a tag change, so the batch mutation must not re-query.
+    func testBatchTagDoesNotRestartTheSearch() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one"), makeMatch(id: "2", excerpt: "two")],
+            firstPreviewPayload: nil,
+            totalCount: 2
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+        let searchesBeforeTagging = client.startedSearchRequests.count
+
+        viewModel.setTag(.bookmark, onItems: ["1", "2"], shouldInclude: true)
+
+        XCTAssertEqual(
+            client.startedSearchRequests.count,
+            searchesBeforeTagging,
+            "Applying a tag must not issue a fresh search"
+        )
+    }
+
+    /// An empty selection is a no-op rather than an empty transaction that
+    /// would occupy the single-flight slot for no work.
+    func testBatchTagWithNoItemsDoesNothing() async {
+        let client = MockBrowserStoreClient()
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .all),
+            items: [makeMatch(id: "1", excerpt: "one")],
+            firstPreviewPayload: nil,
+            totalCount: 1
+        ))
+
+        let viewModel = BrowserViewModel(
+            client: client,
+            onSelect: { _, _ in },
+            onCopyOnly: { _, _ in },
+            onDismiss: {}
+        )
+
+        viewModel.onAppear(initialSearchQuery: "")
+        await flushMainActor()
+
+        viewModel.setTag(.bookmark, onItems: [], shouldInclude: true)
+
+        XCTAssertFalse(
+            viewModel.contentState.items.contains { $0.itemMetadata.tags.contains(.bookmark) }
+        )
+    }
+
     func testTagMutationFailureRollsBackState() async {
         let client = MockBrowserStoreClient()
         client.addTagResult = .failure(.databaseOperationFailed(
