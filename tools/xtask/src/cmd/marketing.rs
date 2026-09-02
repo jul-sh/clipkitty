@@ -781,7 +781,7 @@ fn run_screenshot_xcodebuild(
             "-test-timeouts-enabled",
             "YES",
             "-maximum-test-execution-time-allowance",
-            "300",
+            "420",
         ])
         .arg("-derivedDataPath")
         .arg(repo.join(plan.derived_data).as_std_path())
