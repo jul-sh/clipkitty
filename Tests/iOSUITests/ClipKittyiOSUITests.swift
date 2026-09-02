@@ -16,9 +16,9 @@ final class ClipKittyiOSUITests: XCTestCase {
         app.launch()
 
         // Wait for the app to finish bootstrapping
-        let settingsButton = app.buttons["home.settingsButton"]
+        let overflowButton = app.buttons["home.overflowMenuButton"]
         XCTAssertTrue(
-            settingsButton.waitForExistence(timeout: 10),
+            overflowButton.waitForExistence(timeout: 10),
             "App should finish launching and show the Library"
         )
     }
@@ -27,7 +27,7 @@ final class ClipKittyiOSUITests: XCTestCase {
 
     func testLibraryIsShownByDefault() {
         XCTAssertTrue(app.navigationBars["ClipKitty"].exists, "Library should be visible on launch")
-        XCTAssertTrue(app.buttons["home.settingsButton"].isHittable)
+        XCTAssertTrue(app.buttons["home.overflowMenuButton"].isHittable)
     }
 
     func testOpenSettings() {
@@ -46,7 +46,7 @@ final class ClipKittyiOSUITests: XCTestCase {
             "Settings sheet should dismiss"
         )
         XCTAssertTrue(
-            app.buttons["home.settingsButton"].waitForExistence(timeout: 5),
+            app.buttons["home.overflowMenuButton"].waitForExistence(timeout: 5),
             "Library should be visible after dismissing Settings"
         )
     }
@@ -146,9 +146,13 @@ final class ClipKittyiOSUITests: XCTestCase {
     // MARK: - Settings Helpers
 
     private func openSettings() {
-        let settingsButton = app.buttons["home.settingsButton"]
-        XCTAssertTrue(settingsButton.waitForExistence(timeout: 5), "Settings button should exist")
-        settingsButton.tap()
+        let overflowButton = app.buttons["home.overflowMenuButton"]
+        XCTAssertTrue(overflowButton.waitForExistence(timeout: 5), "Overflow menu button should exist")
+        overflowButton.tap()
+
+        let settingsItem = app.buttons["home.settingsMenuItem"]
+        XCTAssertTrue(settingsItem.waitForExistence(timeout: 5), "Settings menu item should exist")
+        settingsItem.tap()
 
         XCTAssertTrue(
             app.navigationBars["Settings"].waitForExistence(timeout: 5),

@@ -20,13 +20,24 @@ final class ClipKittyiOSSelectionUITests: XCTestCase {
         ]
         app.launch()
 
-        let selectButton = app.buttons["home.selectButton"]
-        XCTAssertTrue(selectButton.waitForExistence(timeout: 15))
-        expectation(
-            for: NSPredicate(format: "enabled == true"),
-            evaluatedWith: selectButton
-        )
-        waitForExpectations(timeout: 15)
+        XCTAssertTrue(app.buttons["home.overflowMenuButton"].waitForExistence(timeout: 15))
+
+        // The overflow button itself is never disabled — only its Select
+        // menu item is, while the feed still has no rows. Wait for a card to
+        // land before opening the menu, or Select can be tapped while still
+        // disabled and the tap silently does nothing.
+        let firstCard = app.scrollViews.firstMatch.buttons.firstMatch
+        XCTAssertTrue(firstCard.waitForExistence(timeout: 15))
+    }
+
+    /// Opens the overflow menu and taps its Select item. The menu closes
+    /// itself after the tap, matching how the rest of the suite treats
+    /// selection entry as a single interaction.
+    private func beginSelection() {
+        app.buttons["home.overflowMenuButton"].tap()
+        let selectItem = app.buttons["home.selectMenuItem"]
+        XCTAssertTrue(selectItem.waitForExistence(timeout: 5))
+        selectItem.tap()
     }
 
     override func tearDownWithError() throws {
@@ -38,12 +49,11 @@ final class ClipKittyiOSSelectionUITests: XCTestCase {
         databaseDirectory = nil
     }
 
-    func testSelectionControlsActionsAndSearchHandoff() {
-        app.buttons["home.selectButton"].tap()
+    func testSelectionControlsActions() {
+        beginSelection()
 
         XCTAssertTrue(app.buttons["selection.selectAllButton"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["selection.doneButton"].exists)
-        XCTAssertTrue(app.buttons["selection.searchButton"].exists)
         XCTAssertTrue(app.navigationBars["0 Selected"].exists)
 
         let firstCard = app.scrollViews.firstMatch.buttons.firstMatch
@@ -56,13 +66,10 @@ final class ClipKittyiOSSelectionUITests: XCTestCase {
         XCTAssertTrue(app.buttons["selection.copyButton"].isHittable)
         XCTAssertTrue(app.buttons["selection.deleteButton"].isHittable)
 
-        app.buttons["selection.searchButton"].tap()
+        app.buttons["selection.doneButton"].tap()
 
-        let searchField = app.textFields["bottomBar.searchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["ClipKitty"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["selection.doneButton"].exists)
-        XCTAssertTrue(app.navigationBars["ClipKitty"].exists)
     }
 
     private func makeTestDatabaseDirectory() throws -> URL {

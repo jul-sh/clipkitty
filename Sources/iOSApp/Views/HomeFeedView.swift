@@ -342,19 +342,11 @@ struct HomeFeedView: View {
             .disabled(visibleItemIDs.isEmpty)
             .accessibilityIdentifier("selection.selectAllButton")
         }
-        ToolbarItemGroup(placement: .topBarTrailing) {
+        ToolbarItem(placement: .topBarTrailing) {
             Button(String(localized: "Done")) {
                 cancelSelection()
             }
             .accessibilityIdentifier("selection.doneButton")
-
-            Button {
-                beginSearchFromSelection()
-            } label: {
-                Image(systemName: "magnifyingglass")
-            }
-            .accessibilityLabel(String(localized: "Search"))
-            .accessibilityIdentifier("selection.searchButton")
         }
     }
 
@@ -365,24 +357,26 @@ struct HomeFeedView: View {
                 SyncStatusButton()
             }
         #endif
-        // Separate ToolbarItems, not a ToolbarItemGroup: a group shares one
-        // Liquid Glass capsule, and these two are unrelated actions that read
-        // better as their own bubbles.
         ToolbarItem(placement: .topBarTrailing) {
-            Button(String(localized: "Select")) {
-                selection.beginSelection()
-            }
-            .disabled(filteredRows.isEmpty)
-            .accessibilityIdentifier("home.selectButton")
-        }
-        ToolbarSpacer(.fixed, placement: .topBarTrailing)
-        ToolbarItem(placement: .topBarTrailing) {
-            Button {
-                showSettings = true
+            Menu {
+                Button {
+                    selection.beginSelection()
+                } label: {
+                    Label(String(localized: "Select"), systemImage: "checkmark.circle")
+                }
+                .disabled(filteredRows.isEmpty)
+                .accessibilityIdentifier("home.selectMenuItem")
+
+                Button {
+                    showSettings = true
+                } label: {
+                    Label(String(localized: "Settings"), systemImage: "gearshape")
+                }
+                .accessibilityIdentifier("home.settingsMenuItem")
             } label: {
-                Image(systemName: "gearshape")
+                Image(systemName: "ellipsis.circle")
             }
-            .accessibilityIdentifier("home.settingsButton")
+            .accessibilityIdentifier("home.overflowMenuButton")
         }
     }
 
@@ -599,17 +593,6 @@ struct HomeFeedView: View {
     private func cancelSelection() {
         cancelBulkCopy()
         selection.cancelSelection()
-    }
-
-    /// Selection and search are deliberately separate sessions. Filtering the
-    /// feed reconciles selection against the visible result IDs, so retaining
-    /// selection while opening search would silently discard hidden choices.
-    /// End selection first, then let the newly inserted bottom bar focus its
-    /// search field from `onAppear`.
-    private func beginSearchFromSelection() {
-        cancelSelection()
-        isSearchActive = true
-        searchFocusRequestID += 1
     }
 
     private func cancelBulkCopy() {
