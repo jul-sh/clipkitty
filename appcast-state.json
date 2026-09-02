@@ -1,8 +1,8 @@
 {
   "beta": {
-    "version": "1.13.1499",
-    "build_number": "1499",
-    "url": "https://github.com/jul-sh/clipkitty/releases/download/v1.13.1499-beta/ClipKitty.dmg"
+    "version": "1.13.1500",
+    "build_number": "1500",
+    "url": "https://github.com/jul-sh/clipkitty/releases/download/v1.13.1500-beta/ClipKitty.dmg"
   },
   "stable": {
     "version": "1.13.1482",
