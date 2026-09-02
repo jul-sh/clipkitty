@@ -126,7 +126,7 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         sleep(1)
 
         let imagesFilter = app.buttons["bottomBar.filterOption.images"]
-        XCTAssertTrue(imagesFilter.waitForExistence(timeout: 3),
+        XCTAssertTrue(imagesFilter.waitForExistence(timeout: 5),
                       "bottomBar.filterOption.images not found for locale \(locale!)")
         imagesFilter.tap()
         // Filtering down to images surfaces a screenful of image cards
@@ -178,7 +178,7 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         filterPill.tap()
         sleep(1)
         let allFilter = app.buttons["bottomBar.filterOption.all"]
-        XCTAssertTrue(allFilter.waitForExistence(timeout: 3),
+        XCTAssertTrue(allFilter.waitForExistence(timeout: 5),
                       "bottomBar.filterOption.all not found for locale \(locale!)")
         allFilter.tap()
         sleep(1)

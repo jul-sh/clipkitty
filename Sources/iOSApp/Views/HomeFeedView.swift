@@ -344,7 +344,9 @@ struct HomeFeedView: View {
         }
         ToolbarItem(placement: .topBarTrailing) {
             Button(String(localized: "Done")) {
-                cancelSelection()
+                withAnimation(.bouncy) {
+                    cancelSelection()
+                }
             }
             .accessibilityIdentifier("selection.doneButton")
         }
@@ -360,7 +362,9 @@ struct HomeFeedView: View {
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 Button {
-                    selection.beginSelection()
+                    withAnimation(.bouncy) {
+                        selection.beginSelection()
+                    }
                 } label: {
                     Label(String(localized: "Select"), systemImage: "checkmark.circle")
                 }
