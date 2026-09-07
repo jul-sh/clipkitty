@@ -197,7 +197,7 @@ jobs:
           for name in SPARKLE_EDDSA_KEY HOMEBREW_TAP_TOKEN; do
             value="${!name:-}"
             if [ -z "$value" ]; then
-              echo "::error::${name} is missing or empty in envtap.json."
+              echo "::error::${name} is missing or empty in tap.env."
               exit 1
             fi
             masked="${value//%/%25}"

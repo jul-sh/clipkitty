@@ -204,7 +204,7 @@ jobs:
             local name="$1" value masked delimiter
             value="${!name-}"
             if [ -z "$value" ]; then
-              echo "::error::${name} is missing or empty in envtap.json."
+              echo "::error::${name} is missing or empty in tap.env."
               exit 1
             fi
             masked="${value//%/%25}"
@@ -249,7 +249,7 @@ jobs:
             local name="$1" value masked delimiter
             value="${!name-}"
             if [ -z "$value" ]; then
-              echo "::error::${name} is missing or empty in envtap.json."
+              echo "::error::${name} is missing or empty in tap.env."
               exit 1
             fi
             masked="${value//%/%25}"
@@ -651,7 +651,7 @@ jobs:
           for name in APPSTORE_KEY_ID APPSTORE_ISSUER_ID APPSTORE_KEY_BASE64; do
             value="${!name-}"
             if [ -z "$value" ]; then
-              echo "::error::${name} is missing or empty in envtap.json."
+              echo "::error::${name} is missing or empty in tap.env."
               exit 1
             fi
             masked="${value//%/%25}"
@@ -1646,7 +1646,7 @@ jobs:
             local name="$1" value masked delimiter
             value="${!name-}"
             if [ -z "$value" ]; then
-              echo "::error::${name} is missing or empty in envtap.json."
+              echo "::error::${name} is missing or empty in tap.env."
               exit 1
             fi
             masked="${value//%/%25}"
@@ -1696,7 +1696,7 @@ jobs:
             local name="$1" value masked delimiter
             value="${!name-}"
             if [ -z "$value" ]; then
-              echo "::error::${name} is missing or empty in envtap.json."
+              echo "::error::${name} is missing or empty in tap.env."
               exit 1
             fi
             masked="${value//%/%25}"
@@ -1852,7 +1852,7 @@ jobs:
             local name="$1" value masked delimiter
             value="${!name-}"
             if [ -z "$value" ]; then
-              echo "::error::${name} is missing or empty in envtap.json."
+              echo "::error::${name} is missing or empty in tap.env."
               exit 1
             fi
             masked="${value//%/%25}"

@@ -10,17 +10,17 @@
         ]
       },
       "locked": {
-        "lastModified": 1786650809,
-        "narHash": "sha256-NkWfxWmK6wM4DUodAd0q2KTs7S6MyxdHUae9Xg4gAWg=",
+        "lastModified": 1788798360,
+        "narHash": "sha256-b2RE5vVET9njTWHxOeWSAQp/XOM9LGlnirgvjuMPpDs=",
         "owner": "jul-sh",
         "repo": "envtap",
-        "rev": "d7c83ff5e1eb44b98aa06fe11acc7746c10eb5c8",
+        "rev": "488896d21d65da17826e98b3ec8988bb81a5ceee",
         "type": "github"
       },
       "original": {
         "owner": "jul-sh",
         "repo": "envtap",
-        "rev": "d7c83ff5e1eb44b98aa06fe11acc7746c10eb5c8",
+        "rev": "488896d21d65da17826e98b3ec8988bb81a5ceee",
         "type": "github"
       }
     },

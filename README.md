@@ -105,12 +105,12 @@ nix build .#clipkitty-sparkle
 nix build .#clipkitty-hardened
 ```
 
-Release commands read their secrets from the encrypted `envtap.json`. Unlock
+Release commands read their secrets from the encrypted `tap.env`. Unlock
 them with your passkey:
 
 ```bash
 nix develop
-envtap auth login
+envtap login
 envtap run -- make release-dmg
 ```
 

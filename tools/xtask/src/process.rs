@@ -308,19 +308,6 @@ fn format_status(status: ExitStatus) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn xcode_sanitization_removes_nix_developer_directory() {
-        let reporter = Reporter::new(false);
-        let runner = Runner::new(&reporter, "/usr/bin/true").sanitize_for_xcode();
-
-        assert!(runner.env_remove.iter().any(|key| key == "DEVELOPER_DIR"));
-    }
-}
-
 fn shell_quote(arg: &str) -> String {
     if arg.is_empty() {
         return "''".to_string();
@@ -383,5 +370,13 @@ mod tests {
         let rendered = error.to_string();
         assert!(rendered.contains("<redacted>"));
         assert!(!rendered.contains(SECRET));
+    }
+
+    #[test]
+    fn xcode_sanitization_removes_nix_developer_directory() {
+        let reporter = Reporter::new(false);
+        let runner = Runner::new(&reporter, "/usr/bin/true").sanitize_for_xcode();
+
+        assert!(runner.env_remove.iter().any(|key| key == "DEVELOPER_DIR"));
     }
 }
