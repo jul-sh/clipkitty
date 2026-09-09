@@ -105,13 +105,15 @@ nix build .#clipkitty-sparkle
 nix build .#clipkitty-hardened
 ```
 
-Release commands read their secrets from the encrypted `tap.env`. Unlock
-them with your passkey:
+Release commands read their secrets from `secrets.env`, encrypted with
+[SOPS](https://github.com/getsops/sops) to the keys in `.sops.yaml`. Your key
+comes from your passkey through Keytap:
 
 ```bash
 nix develop
-envtap login
-envtap run -- make release-dmg
+keytap remember clipkitty
+export SOPS_AGE_KEY_CMD='keytap reveal clipkitty --as age'
+sops exec-env secrets.env 'make release-dmg'
 ```
 
 Run `make help` for the complete automation surface. Building requires macOS 15+, Xcode with Swift 6.2+, and Nix with flakes enabled.

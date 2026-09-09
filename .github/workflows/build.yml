@@ -190,42 +190,15 @@ jobs:
       - name: Install CI tools from Nix
         run: |
           # Install tools from flake-locked nixpkgs (pinned via flake.lock)
-          nix profile install --no-update-lock-file .#envtap
+          nix profile install --no-update-lock-file --inputs-from . nixpkgs#sops
           nix profile install --no-update-lock-file .#tuist
           tuist version
 
       - name: Read Developer ID certificate inputs
         id: developer-id-certificate
-        run: |
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
-          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
-          emit() {
-            local name="$1" value masked delimiter
-            value="${!name-}"
-            if [ -z "$value" ]; then
-              echo "::error::${name} is missing or empty in tap.env."
-              exit 1
-            fi
-            masked="${value//%/%25}"
-            masked="${masked//$'\r'/%0D}"
-            masked="${masked//$'\n'/%0A}"
-            printf '::add-mask::%s\n' "$masked"
-            delimiter="ENVTAP_$(uuidgen | tr -d '-')"
-            while printf '%s\n' "$value" | grep -Fqx -- "$delimiter"; do
-              delimiter="ENVTAP_$(uuidgen | tr -d '-')"
-            done
-            {
-              printf '%s<<%s\n' "$name" "$delimiter"
-              printf '%s\n' "$value"
-              printf '%s\n' "$delimiter"
-            } >> "$GITHUB_OUTPUT"
-          }
-          emit MACOS_P12_BASE64
-          emit MACOS_P12_PASSWORD
-          ENVTAP
+        run: sops exec-env secrets.env 'scripts/ci-secret-outputs.sh MACOS_P12_BASE64 MACOS_P12_PASSWORD'
         env:
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Setup Swift
         uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
@@ -241,36 +214,9 @@ jobs:
 
       - name: Read Apple Development certificate inputs
         id: apple-development-certificate
-        run: |
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
-          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
-          emit() {
-            local name="$1" value masked delimiter
-            value="${!name-}"
-            if [ -z "$value" ]; then
-              echo "::error::${name} is missing or empty in tap.env."
-              exit 1
-            fi
-            masked="${value//%/%25}"
-            masked="${masked//$'\r'/%0D}"
-            masked="${masked//$'\n'/%0A}"
-            printf '::add-mask::%s\n' "$masked"
-            delimiter="ENVTAP_$(uuidgen | tr -d '-')"
-            while printf '%s\n' "$value" | grep -Fqx -- "$delimiter"; do
-              delimiter="ENVTAP_$(uuidgen | tr -d '-')"
-            done
-            {
-              printf '%s<<%s\n' "$name" "$delimiter"
-              printf '%s\n' "$value"
-              printf '%s\n' "$delimiter"
-            } >> "$GITHUB_OUTPUT"
-          }
-          emit MAC_DEV_P12_BASE64
-          emit MAC_DEV_P12_PASSWORD
-          ENVTAP
+        run: sops exec-env secrets.env 'scripts/ci-secret-outputs.sh MAC_DEV_P12_BASE64 MAC_DEV_P12_PASSWORD'
         env:
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Install Apple Development Certificate
         uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
@@ -424,21 +370,17 @@ jobs:
       - name: Build and Sign DMG
         timeout-minutes: 30
         run: |
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
-          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
+          sops exec-env secrets.env 'bash -euo pipefail' <<'SECRETS'
           make release-dmg
           codesign --force --sign "Developer ID Application" ClipKitty.dmg
-          ENVTAP
+          SECRETS
         env:
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       # 2. Notarize with Apple
       - name: Notarize DMG
         run: |
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
-          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
+          sops exec-env secrets.env 'bash -euo pipefail' <<'SECRETS'
           umask 077
           AUTH_DIR="$(mktemp -d "$RUNNER_TEMP/clipkitty-notary.XXXXXX")"
           AUTH_KEY="$AUTH_DIR/AuthKey.p8"
@@ -461,15 +403,13 @@ jobs:
               --issuer "$NOTARY_ISSUER_ID" || true
             exit 1
           fi
-          ENVTAP
+          SECRETS
         env:
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Notarize Hardened ZIP
         run: |
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
-          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
+          sops exec-env secrets.env 'bash -euo pipefail' <<'SECRETS'
           umask 077
           AUTH_DIR="$(mktemp -d "$RUNNER_TEMP/clipkitty-notary.XXXXXX")"
           AUTH_KEY="$AUTH_DIR/AuthKey.p8"
@@ -492,9 +432,9 @@ jobs:
               --issuer "$NOTARY_ISSUER_ID" || true
             exit 1
           fi
-          ENVTAP
+          SECRETS
         env:
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       # 3. Staple Notarization (Required for offline Gatekeeper approval)
       #    Apple's CDN can occasionally lag behind even after "Accepted" status.
@@ -630,7 +570,7 @@ jobs:
 
       - name: Install CI tools from Nix
         run: |
-          nix profile install --no-update-lock-file .#envtap
+          nix profile install --no-update-lock-file --inputs-from . nixpkgs#sops
           nix profile install --no-update-lock-file .#tuist
           tuist version
 
@@ -645,13 +585,11 @@ jobs:
       - name: Build iOS App (AppStore)
         timeout-minutes: 20
         run: |
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
-          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
+          sops exec-env secrets.env 'bash -euo pipefail' <<'SECRETS'
           for name in APPSTORE_KEY_ID APPSTORE_ISSUER_ID APPSTORE_KEY_BASE64; do
             value="${!name-}"
             if [ -z "$value" ]; then
-              echo "::error::${name} is missing or empty in tap.env."
+              echo "::error::${name} is missing or empty in secrets.env."
               exit 1
             fi
             masked="${value//%/%25}"
@@ -677,9 +615,9 @@ jobs:
             MARKETING_VERSION="$VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             CODE_SIGNING_ALLOWED=NO
-          ENVTAP
+          SECRETS
         env:
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
   # Runs the iOS unit suite on the same iPad simulator used for App Store
   # captures. Keeping this on pull requests makes layout-policy regressions
@@ -1523,7 +1461,7 @@ jobs:
 
       - name: Install Sparkle publishing tools
         run: |
-          nix profile install --no-update-lock-file .#envtap
+          nix profile install --no-update-lock-file --inputs-from . nixpkgs#sops
           make install-sparkle-cli
 
       - name: Download and verify released archive
@@ -1559,11 +1497,9 @@ jobs:
       - name: Publish verified Sparkle appcast
         env:
           GH_TOKEN: ${{ github.token }}
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
         run: |
           set -euo pipefail
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
 
           RELEASE_ARCHIVE="${RUNNER_TEMP}/appcast-release-archive/ClipKitty.dmg"
           WORKTREE="${RUNNER_TEMP}/gh-pages-appcast"
@@ -1597,11 +1533,12 @@ jobs:
           APPCAST_OUTPUT="$(pwd)/appcast.xml"
           (
             cd "$GITHUB_WORKSPACE"
-            ENVTAP_IDENTITY="$envtap_identity" envtap run -- make release-appcast-generate \
+            export APPCAST_STATE APPCAST_OUTPUT RELEASE_ARCHIVE
+            APPCAST_CHANNEL="${{ needs.version.outputs.channel }}" sops exec-env secrets.env 'make release-appcast-generate \
               STATE_PATH="$APPCAST_STATE" \
               OUTPUT_PATH="$APPCAST_OUTPUT" \
-              CHANNEL="${{ needs.version.outputs.channel }}" \
-              ARCHIVE_PATH="$RELEASE_ARCHIVE"
+              CHANNEL="$APPCAST_CHANNEL" \
+              ARCHIVE_PATH="$RELEASE_ARCHIVE"'
           )
 
           xmllint --noout appcast.xml
@@ -1631,43 +1568,16 @@ jobs:
 
       - name: Install CI tools from Nix
         run: |
-          nix profile install --no-update-lock-file .#envtap
+          nix profile install --no-update-lock-file --inputs-from . nixpkgs#sops
           nix profile install --no-update-lock-file .#tuist
           nix profile install --no-update-lock-file .#asc
           tuist version
 
       - name: Read App Store installer certificate inputs
         id: app-store-installer-certificate
-        run: |
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
-          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
-          emit() {
-            local name="$1" value masked delimiter
-            value="${!name-}"
-            if [ -z "$value" ]; then
-              echo "::error::${name} is missing or empty in tap.env."
-              exit 1
-            fi
-            masked="${value//%/%25}"
-            masked="${masked//$'\r'/%0D}"
-            masked="${masked//$'\n'/%0A}"
-            printf '::add-mask::%s\n' "$masked"
-            delimiter="ENVTAP_$(uuidgen | tr -d '-')"
-            while printf '%s\n' "$value" | grep -Fqx -- "$delimiter"; do
-              delimiter="ENVTAP_$(uuidgen | tr -d '-')"
-            done
-            {
-              printf '%s<<%s\n' "$name" "$delimiter"
-              printf '%s\n' "$value"
-              printf '%s\n' "$delimiter"
-            } >> "$GITHUB_OUTPUT"
-          }
-          emit APPSTORE_CERT_BASE64
-          emit P12_PASSWORD
-          ENVTAP
+        run: sops exec-env secrets.env 'scripts/ci-secret-outputs.sh APPSTORE_CERT_BASE64 P12_PASSWORD'
         env:
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Setup Swift
         uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
@@ -1688,36 +1598,9 @@ jobs:
 
       - name: Read App Store application certificate inputs
         id: app-store-application-certificate
-        run: |
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
-          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
-          emit() {
-            local name="$1" value masked delimiter
-            value="${!name-}"
-            if [ -z "$value" ]; then
-              echo "::error::${name} is missing or empty in tap.env."
-              exit 1
-            fi
-            masked="${value//%/%25}"
-            masked="${masked//$'\r'/%0D}"
-            masked="${masked//$'\n'/%0A}"
-            printf '::add-mask::%s\n' "$masked"
-            delimiter="ENVTAP_$(uuidgen | tr -d '-')"
-            while printf '%s\n' "$value" | grep -Fqx -- "$delimiter"; do
-              delimiter="ENVTAP_$(uuidgen | tr -d '-')"
-            done
-            {
-              printf '%s<<%s\n' "$name" "$delimiter"
-              printf '%s\n' "$value"
-              printf '%s\n' "$delimiter"
-            } >> "$GITHUB_OUTPUT"
-          }
-          emit APPSTORE_APP_CERT_BASE64
-          emit P12_PASSWORD
-          ENVTAP
+        run: sops exec-env secrets.env 'scripts/ci-secret-outputs.sh APPSTORE_APP_CERT_BASE64 P12_PASSWORD'
         env:
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Install App Store Application Certificate
         uses: apple-actions/import-codesign-certs@63fff01cd422d4b7b855d40ca1e9d34d2de9427d # v3
@@ -1765,14 +1648,13 @@ jobs:
 
       - name: Build and Publish to App Store Connect
         run: |
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
           unset TOOLCHAINS
           VERSION=$(make release-version FIELD=version)
           COMMIT_COUNT=$(make release-version FIELD=build-number)
-          ENVTAP_IDENTITY="$envtap_identity" envtap run -- make release-macos-appstore VERSION="$VERSION" BUILD_NUMBER="$COMMIT_COUNT"
+          export VERSION COMMIT_COUNT
+          sops exec-env secrets.env 'make release-macos-appstore VERSION="$VERSION" BUILD_NUMBER="$COMMIT_COUNT"'
         env:
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
           CLIPKITTY_SIGNING_EXTERNAL: "1"
           # The ASC API intermittently takes >30s per request; a metadata
           # PATCH timing out after the binary upload leaves the run
@@ -1837,43 +1719,16 @@ jobs:
 
       - name: Install CI tools from Nix
         run: |
-          nix profile install --no-update-lock-file .#envtap
+          nix profile install --no-update-lock-file --inputs-from . nixpkgs#sops
           nix profile install --no-update-lock-file .#tuist
           nix profile install --no-update-lock-file .#asc
           tuist version
 
       - name: Read iOS distribution certificate inputs
         id: ios-distribution-certificate
-        run: |
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
-          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
-          emit() {
-            local name="$1" value masked delimiter
-            value="${!name-}"
-            if [ -z "$value" ]; then
-              echo "::error::${name} is missing or empty in tap.env."
-              exit 1
-            fi
-            masked="${value//%/%25}"
-            masked="${masked//$'\r'/%0D}"
-            masked="${masked//$'\n'/%0A}"
-            printf '::add-mask::%s\n' "$masked"
-            delimiter="ENVTAP_$(uuidgen | tr -d '-')"
-            while printf '%s\n' "$value" | grep -Fqx -- "$delimiter"; do
-              delimiter="ENVTAP_$(uuidgen | tr -d '-')"
-            done
-            {
-              printf '%s<<%s\n' "$name" "$delimiter"
-              printf '%s\n' "$value"
-              printf '%s\n' "$delimiter"
-            } >> "$GITHUB_OUTPUT"
-          }
-          emit IOS_DIST_CERT_BASE64
-          emit IOS_DIST_P12_PASSWORD
-          ENVTAP
+        run: sops exec-env secrets.env 'scripts/ci-secret-outputs.sh IOS_DIST_CERT_BASE64 IOS_DIST_P12_PASSWORD'
         env:
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Setup Swift
         uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a # v2
@@ -1901,9 +1756,7 @@ jobs:
 
       - name: Install iOS Provisioning Profiles
         run: |
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
-          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
+          sops exec-env secrets.env 'bash -euo pipefail' <<'SECRETS'
           umask 077
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$PROFILE_DIR"
@@ -1911,9 +1764,9 @@ jobs:
             | base64 --decode > "$PROFILE_DIR/clipkitty-ios.mobileprovision"
           printf '%s' "$IOS_SHARE_PROFILE_BASE64" \
             | base64 --decode > "$PROFILE_DIR/clipkitty-share.mobileprovision"
-          ENVTAP
+          SECRETS
         env:
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
 
       # actions/upload-artifact@v4 strips the common path prefix (here the
       # `marketing-ios/` / `marketing-ipad/` roots), so each artifact holds
@@ -1971,14 +1824,13 @@ jobs:
 
       - name: Build and Publish iOS to App Store Connect
         run: |
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
           unset TOOLCHAINS
           VERSION=$(make release-version FIELD=version)
           COMMIT_COUNT=$(make release-version FIELD=build-number)
-          ENVTAP_IDENTITY="$envtap_identity" envtap run -- make release-ios-appstore VERSION="$VERSION" BUILD_NUMBER="$COMMIT_COUNT"
+          export VERSION COMMIT_COUNT
+          sops exec-env secrets.env 'make release-ios-appstore VERSION="$VERSION" BUILD_NUMBER="$COMMIT_COUNT"'
         env:
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
           # See the macOS publish step: ASC requests can exceed asc's
           # default timeout, and a failed publish can't be rerun once the
           # binary for this build number has been uploaded.

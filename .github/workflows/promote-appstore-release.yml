@@ -182,22 +182,20 @@ jobs:
       - name: Install release publishing tools
         if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         run: |
-          nix profile install --no-update-lock-file .#envtap
+          nix profile install --no-update-lock-file --inputs-from . nixpkgs#sops
           make install-sparkle-cli
 
       - name: Validate publication credentials
         if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         env:
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
         run: |
           set -euo pipefail
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
-          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail <<'ENVTAP'
+          sops exec-env secrets.env 'bash -euo pipefail' <<'SECRETS'
           for name in SPARKLE_EDDSA_KEY HOMEBREW_TAP_TOKEN; do
             value="${!name:-}"
             if [ -z "$value" ]; then
-              echo "::error::${name} is missing or empty in tap.env."
+              echo "::error::${name} is missing or empty in secrets.env."
               exit 1
             fi
             masked="${value//%/%25}"
@@ -205,18 +203,16 @@ jobs:
             masked="${masked//$'\n'/%0A}"
             printf '::add-mask::%s\n' "$masked"
           done
-          ENVTAP
+          SECRETS
 
       - name: Validate Sparkle signing identity
         if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         shell: bash
         env:
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
           VERSION: ${{ steps.app-store.outputs.version }}
         run: |
           set -euo pipefail
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
 
           VERIFY_DIR="$(mktemp -d)"
           APPCAST_FILE="$(mktemp)"
@@ -276,7 +272,7 @@ jobs:
           PY
           )"
           GENERATED_SIGNATURE="$(
-            ENVTAP_IDENTITY="$envtap_identity" envtap run -- sh -c 'test -n "$SPARKLE_EDDSA_KEY" && printf "%s" "$SPARKLE_EDDSA_KEY"' \
+            sops exec-env "$GITHUB_WORKSPACE/secrets.env" 'test -n "$SPARKLE_EDDSA_KEY" && printf "%s" "$SPARKLE_EDDSA_KEY"' \
               | /tmp/sparkle/bin/sign_update --ed-key-file - -p "$BETA_ARCHIVE"
           )"
           if [ -z "$GENERATED_SIGNATURE" ] || [ "$GENERATED_SIGNATURE" != "$EXPECTED_SIGNATURE" ]; then
@@ -288,21 +284,20 @@ jobs:
         if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         shell: bash
         env:
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
           VERSION: ${{ steps.app-store.outputs.version }}
         run: |
           set -euo pipefail
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
 
           TAP_DIR="$(mktemp -d)"
           trap 'rm -rf "$TAP_DIR"' EXIT
-          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail -c '
+          export TAP_DIR
+          sops exec-env "$GITHUB_WORKSPACE/secrets.env" '
             test -n "$HOMEBREW_TAP_TOKEN"
             git clone --depth 1 \
               "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/jul-sh/homebrew-clipkitty.git" \
-              "$1"
-          ' _ "$TAP_DIR"
+              "$TAP_DIR"
+          '
           git -C "$TAP_DIR" config user.name "github-actions[bot]"
           git -C "$TAP_DIR" config user.email "github-actions[bot]@users.noreply.github.com"
           git -C "$TAP_DIR" commit --allow-empty -m "Verify Homebrew write access"
@@ -540,12 +535,10 @@ jobs:
         if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         shell: bash
         env:
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
           VERSION: ${{ steps.app-store.outputs.version }}
         run: |
           set -euo pipefail
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
 
           BUILD_NUMBER="${VERSION##*.}"
           STABLE_TAG="v${VERSION}"
@@ -608,11 +601,12 @@ jobs:
           APPCAST_OUTPUT="$(pwd)/appcast.xml"
           (
             cd "$GITHUB_WORKSPACE"
-            ENVTAP_IDENTITY="$envtap_identity" envtap run -- make release-appcast-generate \
+            export APPCAST_STATE APPCAST_OUTPUT STABLE_ARCHIVE
+            APPCAST_CHANNEL="stable" sops exec-env secrets.env 'make release-appcast-generate \
               STATE_PATH="$APPCAST_STATE" \
               OUTPUT_PATH="$APPCAST_OUTPUT" \
-              CHANNEL="stable" \
-              ARCHIVE_PATH="$STABLE_ARCHIVE"
+              CHANNEL="$APPCAST_CHANNEL" \
+              ARCHIVE_PATH="$STABLE_ARCHIVE"'
           )
 
           xmllint --noout appcast.xml
@@ -629,12 +623,10 @@ jobs:
         if: steps.promotion.outputs.state == 'ready' || steps.promotion.outputs.state == 'reconcile_existing'
         shell: bash
         env:
-          ENVTAP_IDENTITY: ${{ secrets.ENVTAP_IDENTITY }}
+          SOPS_AGE_KEY: ${{ secrets.AGE_SECRET_KEY }}
           VERSION: ${{ steps.app-store.outputs.version }}
         run: |
           set -euo pipefail
-          envtap_identity="${ENVTAP_IDENTITY:?}"
-          unset ENVTAP_IDENTITY
 
           STABLE_TAG="v${VERSION}"
           BETA_TAG="v${VERSION}-beta"
@@ -660,12 +652,13 @@ jobs:
           fi
           SHA256="$(shasum -a 256 "$STABLE_ARCHIVE" | cut -d' ' -f1)"
 
-          ENVTAP_IDENTITY="$envtap_identity" envtap run -- bash -euo pipefail -c '
+          export TAP_DIR
+          sops exec-env "$GITHUB_WORKSPACE/secrets.env" '
             test -n "$HOMEBREW_TAP_TOKEN"
             git clone \
               "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/jul-sh/homebrew-clipkitty.git" \
-              "$1"
-          ' _ "$TAP_DIR"
+              "$TAP_DIR"
+          '
           cd "$TAP_DIR"
 
           CASK_PATH="Casks/clipkitty.rb"
