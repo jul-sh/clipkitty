@@ -6,7 +6,7 @@
     rust-overlay.url = "github:oxalica/rust-overlay/cc80954a95f6f356c303ed9f08d0b63ca86216ac";
     flake-utils.url = "github:numtide/flake-utils/11707dc2f618dd54ca8739b309ec4fc024de578b";
     keytap = {
-      url = "github:jul-sh/keytap/ac002207b13e3a28431843aa64f48327a0275f5e";
+      url = "github:jul-sh/keytap/52461595eec5cbc46a05de281697c8bc3c301f45";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.flake-utils.follows = "flake-utils";
     };
