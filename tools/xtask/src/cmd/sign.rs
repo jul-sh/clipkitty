@@ -7,13 +7,13 @@ use std::env;
 use std::fs;
 
 use anyhow::{anyhow, Result};
-use base64::Engine;
 use camino::{Utf8Path, Utf8PathBuf};
 use tempfile::NamedTempFile;
 use uuid::Uuid;
 
 use crate::apple::{self, CodesignArgs};
 use crate::cmd::build;
+use crate::environment;
 use crate::model::{MacVariant, SetupAction};
 use crate::output::Reporter;
 use crate::process::Runner;
@@ -37,19 +37,27 @@ pub(crate) struct SignAppRequest {
     pub build_version: ResolvedVersion,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SignableMacVariant {
     Hardened,
     SparkleRelease,
-    AppStore,
+    AppStore { provisioning_profile: Utf8PathBuf },
 }
 
 impl SignableMacVariant {
-    fn build_variant(self) -> MacVariant {
+    fn build_variant(&self) -> MacVariant {
         match self {
             Self::Hardened => MacVariant::Hardened,
             Self::SparkleRelease => MacVariant::SparkleRelease,
-            Self::AppStore => MacVariant::AppStore,
+            Self::AppStore { .. } => MacVariant::AppStore,
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Hardened => "Hardened",
+            Self::SparkleRelease => "SparkleRelease",
+            Self::AppStore { .. } => "AppStore",
         }
     }
 }
@@ -68,11 +76,7 @@ enum SigningPlan {
     AppStore {
         identity: String,
         entitlements: Utf8PathBuf,
-        /// Path to a `.provisionprofile` to embed before signing. Read once
-        /// from $PROVISIONING_PROFILE at planning time; `None` means the
-        /// caller expects the bundle to already carry one from an earlier
-        /// step (CI flow).
-        provisioning_profile: Option<Utf8PathBuf>,
+        provisioning_profile: Utf8PathBuf,
     },
 }
 
@@ -90,7 +94,7 @@ fn developer_id_identity() -> String {
     env::var("SIGNING_IDENTITY").unwrap_or_else(|_| "Developer ID Application".to_string())
 }
 
-fn signing_plan(repo: &RepoRoot, target: SignableMacVariant) -> SigningPlan {
+fn signing_plan(repo: &RepoRoot, target: &SignableMacVariant) -> SigningPlan {
     match target {
         SignableMacVariant::Hardened => SigningPlan::Hardened {
             identity: developer_id_identity(),
@@ -100,14 +104,13 @@ fn signing_plan(repo: &RepoRoot, target: SignableMacVariant) -> SigningPlan {
             identity: developer_id_identity(),
             entitlements: repo.join("Sources/MacApp/ClipKitty.sparkle.entitlements"),
         },
-        SignableMacVariant::AppStore => SigningPlan::AppStore {
+        SignableMacVariant::AppStore {
+            provisioning_profile,
+        } => SigningPlan::AppStore {
             identity: env::var("APPSTORE_SIGNING_IDENTITY")
                 .unwrap_or_else(|_| "3rd Party Mac Developer Application".to_string()),
             entitlements: repo.join("Sources/MacApp/ClipKitty.appstore.entitlements"),
-            provisioning_profile: env::var("PROVISIONING_PROFILE")
-                .ok()
-                .filter(|p| !p.is_empty())
-                .map(Utf8PathBuf::from),
+            provisioning_profile: provisioning_profile.clone(),
         },
     }
 }
@@ -118,8 +121,9 @@ pub(crate) fn sign_app(
     dry_run: bool,
     reporter: &Reporter,
 ) -> Result<()> {
-    let plan = signing_plan(repo, request.target);
+    let plan = signing_plan(repo, &request.target);
     let variant = request.target.build_variant();
+    let target = request.target.label();
 
     if dry_run {
         match &plan {
@@ -127,28 +131,21 @@ pub(crate) fn sign_app(
                 identity,
                 entitlements,
             } => reporter.info(&format!(
-                "[dry-run] would build + sign {:?} with identity `{identity}` using entitlements {entitlements}",
-                request.target,
+                "[dry-run] would build + sign {target} with identity `{identity}` using entitlements {entitlements}",
             )),
             SigningPlan::SparkleRelease {
                 identity,
                 entitlements,
             } => reporter.info(&format!(
-                "[dry-run] would build + sign {:?} with identity `{identity}` using entitlements {entitlements} and embed the Developer ID provisioning profile",
-                request.target,
+                "[dry-run] would build + sign {target} with identity `{identity}` using entitlements {entitlements} and embed the Developer ID provisioning profile",
             )),
             SigningPlan::AppStore {
                 identity,
                 entitlements,
                 provisioning_profile,
             } => {
-                let profile = match provisioning_profile {
-                    Some(p) => format!(" (embedding profile {p})"),
-                    None => String::new(),
-                };
                 reporter.info(&format!(
-                    "[dry-run] would build + sign {:?} with identity `{identity}` using entitlements {entitlements}{profile}",
-                    request.target
+                    "[dry-run] would build + sign {target} with identity `{identity}` using entitlements {entitlements} (embedding profile {provisioning_profile})",
                 ));
             }
         }
@@ -183,8 +180,7 @@ pub(crate) fn sign_app(
             entitlements,
         } => {
             reporter.info(&format!(
-                "Signing {APP_NAME} ({:?}) with '{identity}'...",
-                request.target
+                "Signing {APP_NAME} ({target}) with '{identity}'...",
             ));
             codesign_developer_id(reporter, identity, entitlements, &app_path)?;
         }
@@ -192,10 +188,9 @@ pub(crate) fn sign_app(
             identity,
             entitlements,
         } => {
-            embed_developer_id_profile(repo, &app_path, reporter)?;
+            embed_developer_id_profile(&app_path)?;
             reporter.info(&format!(
-                "Signing {APP_NAME} ({:?}) with '{identity}'...",
-                request.target
+                "Signing {APP_NAME} ({target}) with '{identity}'...",
             ));
             codesign_developer_id(reporter, identity, entitlements, &app_path)?;
         }
@@ -204,15 +199,12 @@ pub(crate) fn sign_app(
             entitlements,
             provisioning_profile,
         } => {
-            if let Some(src) = provisioning_profile {
-                reporter.info("Embedding provisioning profile...");
-                let dst = app_path.join("Contents/embedded.provisionprofile");
-                fs::copy(src.as_std_path(), dst.as_std_path())
-                    .map_err(|e| anyhow!("copying provisioning profile: {e}"))?;
-            }
+            reporter.info("Embedding provisioning profile...");
+            let dst = app_path.join("Contents/embedded.provisionprofile");
+            fs::copy(provisioning_profile.as_std_path(), dst.as_std_path())
+                .map_err(|e| anyhow!("copying provisioning profile: {e}"))?;
             reporter.info(&format!(
-                "Signing {APP_NAME} ({:?}) with '{identity}'...",
-                request.target
+                "Signing {APP_NAME} ({target}) with '{identity}'...",
             ));
             apple::codesign(
                 reporter,
@@ -247,17 +239,8 @@ fn codesign_developer_id(
     )
 }
 
-fn embed_developer_id_profile(
-    repo: &RepoRoot,
-    app_path: &Utf8PathBuf,
-    reporter: &Reporter,
-) -> Result<()> {
-    let profile_bytes = if let Ok(path) = env::var("DEVELOPER_ID_PROVISIONING_PROFILE") {
-        fs::read(&path)
-            .map_err(|err| anyhow!("reading DEVELOPER_ID_PROVISIONING_PROFILE `{path}`: {err}"))?
-    } else {
-        decode_secret_base64(repo, "DEVELOPER_ID_PROVISION_PROFILE_BASE64", reporter)?
-    };
+fn embed_developer_id_profile(app_path: &Utf8PathBuf) -> Result<()> {
+    let profile_bytes = environment::required_base64("DEVELOPER_ID_PROVISION_PROFILE_BASE64")?;
     let destination = app_path.join("Contents/embedded.provisionprofile");
     fs::write(destination.as_std_path(), profile_bytes)
         .map_err(|err| anyhow!("writing embedded Developer ID provisioning profile: {err}"))?;
@@ -266,12 +249,7 @@ fn embed_developer_id_profile(
 
 const APP_NAME: &str = "ClipKitty";
 
-pub(crate) fn setup(
-    repo: &RepoRoot,
-    request: &SetupRequest,
-    dry_run: bool,
-    reporter: &Reporter,
-) -> Result<()> {
+pub(crate) fn setup(request: &SetupRequest, dry_run: bool, reporter: &Reporter) -> Result<()> {
     if dry_run {
         let verb = match request.action {
             SetupAction::Init => "set up",
@@ -285,18 +263,18 @@ pub(crate) fn setup(
     }
 
     match (request.flow, request.action) {
-        (SetupFlow::AppStore, SetupAction::Init) => setup_appstore(repo, reporter),
+        (SetupFlow::AppStore, SetupAction::Init) => setup_appstore(reporter),
         (SetupFlow::AppStore, SetupAction::Teardown) => {
             delete_temp_keychain(&appstore_keychain_path()?, reporter)
         }
-        (SetupFlow::Dev, SetupAction::Init) => setup_dev(repo, reporter),
+        (SetupFlow::Dev, SetupAction::Init) => setup_dev(reporter),
         (SetupFlow::Dev, SetupAction::Teardown) => {
             delete_temp_keychain(&dev_keychain_path()?, reporter)
         }
     }
 }
 
-fn setup_appstore(repo: &RepoRoot, reporter: &Reporter) -> Result<()> {
+fn setup_appstore(reporter: &Reporter) -> Result<()> {
     if env::var("CLIPKITTY_SIGNING_EXTERNAL").is_ok_and(|v| v == "1") {
         reporter.info("CLIPKITTY_SIGNING_EXTERNAL=1 — trusting externally installed certificates");
         return Ok(());
@@ -316,18 +294,9 @@ fn setup_appstore(repo: &RepoRoot, reporter: &Reporter) -> Result<()> {
     }
 
     let keychain_password = random_password();
-    let app_cert = temp_p12_secret(
-        repo,
-        "APPSTORE_APP_CERT_BASE64",
-        "P12_PASSWORD",
-        "appstore-app",
-    )?;
-    let installer_cert = temp_p12_secret(
-        repo,
-        "APPSTORE_CERT_BASE64",
-        "P12_PASSWORD",
-        "appstore-installer",
-    )?;
+    let app_cert = temp_p12_secret("APPSTORE_APP_CERT_BASE64", "P12_PASSWORD", "appstore-app")?;
+    let installer_cert =
+        temp_p12_secret("APPSTORE_CERT_BASE64", "P12_PASSWORD", "appstore-installer")?;
 
     create_unlocked_temp_keychain(&keychain_path, &keychain_password, reporter)?;
     ensure_wwdr_certificate(reporter)?;
@@ -349,7 +318,7 @@ fn setup_appstore(repo: &RepoRoot, reporter: &Reporter) -> Result<()> {
     Ok(())
 }
 
-fn setup_dev(repo: &RepoRoot, reporter: &Reporter) -> Result<()> {
+fn setup_dev(reporter: &Reporter) -> Result<()> {
     let keychain_path = dev_keychain_path()?;
     delete_temp_keychain(&keychain_path, reporter)?;
     purge_stale_temp_keychains(reporter)?;
@@ -363,18 +332,8 @@ fn setup_dev(repo: &RepoRoot, reporter: &Reporter) -> Result<()> {
     }
 
     let keychain_password = random_password();
-    let dev_id = temp_p12_secret(
-        repo,
-        "MACOS_P12_BASE64",
-        "MACOS_P12_PASSWORD",
-        "developer-id",
-    )?;
-    let apple_dev = temp_p12_secret(
-        repo,
-        "MAC_DEV_P12_BASE64",
-        "MAC_DEV_P12_PASSWORD",
-        "apple-dev",
-    )?;
+    let dev_id = temp_p12_secret("MACOS_P12_BASE64", "MACOS_P12_PASSWORD", "developer-id")?;
+    let apple_dev = temp_p12_secret("MAC_DEV_P12_BASE64", "MAC_DEV_P12_PASSWORD", "apple-dev")?;
 
     create_unlocked_temp_keychain(&keychain_path, &keychain_password, reporter)?;
     import_certificate(&keychain_path, &dev_id, true, reporter)?;
@@ -420,7 +379,7 @@ fn create_unlocked_temp_keychain(
     delete_temp_keychain(path, reporter)?;
     Runner::new(reporter, "security")
         .args(["create-keychain", "-p"])
-        .arg(password)
+        .sensitive_arg(password)
         .arg(path.as_std_path())
         .run()?;
     Runner::new(reporter, "security")
@@ -429,7 +388,7 @@ fn create_unlocked_temp_keychain(
         .run()?;
     Runner::new(reporter, "security")
         .args(["unlock-keychain", "-p"])
-        .arg(password)
+        .sensitive_arg(password)
         .arg(path.as_std_path())
         .run()
 }
@@ -510,41 +469,13 @@ struct ImportedP12 {
     password: String,
 }
 
-fn temp_p12_secret(
-    repo: &RepoRoot,
-    base64_secret: &str,
-    password_secret: &str,
-    stem: &str,
-) -> Result<ImportedP12> {
-    let reporter = crate::output::Reporter::new(false);
-    let cert_bytes = decode_secret_base64(repo, base64_secret, &reporter)?;
-    let password = secret_text(repo, password_secret, &reporter)?;
+fn temp_p12_secret(base64_secret: &str, password_secret: &str, stem: &str) -> Result<ImportedP12> {
+    let cert_bytes = environment::required_base64(base64_secret)?;
+    let password = environment::required(password_secret)?;
     let file = NamedTempFile::new().map_err(|err| anyhow!("creating temp {stem} cert: {err}"))?;
     fs::write(file.path(), cert_bytes)
         .map_err(|err| anyhow!("writing temporary {stem} certificate: {err}"))?;
     Ok(ImportedP12 { file, password })
-}
-
-fn decode_secret_base64(repo: &RepoRoot, name: &str, reporter: &Reporter) -> Result<Vec<u8>> {
-    let bytes =
-        crate::cmd::secrets::read_secret(&repo.join(format!("secrets/{name}.age")), reporter)?;
-    let text =
-        String::from_utf8(bytes).map_err(|err| anyhow!("{name} secret is not UTF-8: {err}"))?;
-    // Some secrets are line-wrapped base64 (standard `base64` CLI output wraps
-    // at column 76). The standard engine rejects internal whitespace, so strip
-    // it all before decoding.
-    let cleaned: String = text.chars().filter(|c| !c.is_whitespace()).collect();
-    base64::engine::general_purpose::STANDARD
-        .decode(&cleaned)
-        .map_err(|err| anyhow!("decoding {name}: {err}"))
-}
-
-fn secret_text(repo: &RepoRoot, name: &str, reporter: &Reporter) -> Result<String> {
-    let bytes =
-        crate::cmd::secrets::read_secret(&repo.join(format!("secrets/{name}.age")), reporter)?;
-    String::from_utf8(bytes)
-        .map(|text| text.trim().to_string())
-        .map_err(|err| anyhow!("{name} secret is not UTF-8: {err}"))
 }
 
 fn import_certificate(
@@ -559,7 +490,7 @@ fn import_certificate(
         .arg("-k")
         .arg(keychain_path.as_std_path())
         .arg("-P")
-        .arg(&imported.password)
+        .sensitive_arg(&imported.password)
         .args(["-T", "/usr/bin/codesign"]);
     if allow_productbuild {
         runner = runner.arg("-T").arg("/usr/bin/productbuild");
@@ -644,7 +575,7 @@ fn set_partition_list(
         .args(["set-key-partition-list", "-S"])
         .arg(services)
         .args(["-s", "-k"])
-        .arg(keychain_password)
+        .sensitive_arg(keychain_password)
         .arg(keychain_path.as_std_path())
         .run()
 }

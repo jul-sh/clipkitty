@@ -13,7 +13,7 @@ endif
 
 XTASK := $(NIX_RUN) cargo run --quiet -p xtask --
 
-.PHONY: help check workspace install-hooks install-sparkle-cli app-hardened app-app-store release-dmg release-macos-appstore release-ios-appstore release-version release-appcast-generate release-appcast-update screenshots-macos screenshots-ios screenshots-ipad intro-video site-icon site-landing-page secrets-asc-auth shell
+.PHONY: help check workspace install-hooks install-sparkle-cli app-hardened app-app-store release-dmg release-macos-appstore release-ios-appstore release-version release-appcast-generate release-appcast-update screenshots-macos screenshots-ios screenshots-ipad intro-video site-icon site-landing-page shell
 
 help: ## Show the supported automation entry points.
 	@awk 'BEGIN {FS = ":.*## "; printf "\nClipKitty automation entry points\n\n"} /^[a-zA-Z0-9_.-]+:.*## / { printf "  %-26s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -77,6 +77,3 @@ site-icon: ## Render the public icon to build/site/icon.png.
 
 site-landing-page: ## Render site/templates/index.html with README content to stdout.
 	@$(XTASK) site render landing-page
-
-secrets-asc-auth: guard-FIELD ## Resolve one ASC auth field. Use FIELD=key-id|issuer-id|private-key-b64
-	@$(XTASK) secrets asc-auth "$(FIELD)"

@@ -3,9 +3,9 @@
 use clap::Parser;
 use xtask::cli::{
     AppArgs, AppTarget, AppcastCmd, Cli, EnvCmd, InstallTarget, MarketingCmd, ReleaseCmd,
-    ScreenshotPlatform, SecretsCmd, SiteCmd, SiteRenderTarget, TopLevel,
+    ScreenshotPlatform, SiteCmd, SiteRenderTarget, TopLevel,
 };
-use xtask::model::{AscAuthField, ReleaseChannel};
+use xtask::model::ReleaseChannel;
 
 #[test]
 fn parses_check() {
@@ -135,21 +135,6 @@ fn parses_marketing_commands() {
 }
 
 #[test]
-fn parses_secrets_asc_auth() {
-    for (input, expected) in [
-        ("key-id", AscAuthField::KeyId),
-        ("issuer-id", AscAuthField::IssuerId),
-        ("private-key-b64", AscAuthField::PrivateKeyB64),
-    ] {
-        let cli = Cli::parse_from(["clipkitty", "secrets", "asc-auth", input]);
-        let TopLevel::Secrets(SecretsCmd::AscAuth(args)) = cli.command else {
-            panic!("expected secrets asc-auth");
-        };
-        assert_eq!(args.field, expected);
-    }
-}
-
-#[test]
 fn parses_site_render() {
     let icon = Cli::parse_from(["clipkitty", "site", "render", "icon"]);
     let TopLevel::Site(SiteCmd::Render(args)) = icon.command else {
@@ -185,6 +170,7 @@ fn rejects_internalized_legacy_commands() {
         ["clipkitty", "marketing", "screenshots-macos"].as_slice(),
         ["clipkitty", "marketing", "patch-demo-items"].as_slice(),
         ["clipkitty", "site", "icon"].as_slice(),
+        ["clipkitty", "secrets", "asc-auth", "key-id"].as_slice(),
         [
             "clipkitty",
             "release",
