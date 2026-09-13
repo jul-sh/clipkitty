@@ -1,5 +1,9 @@
 {
-  "beta": null,
+  "beta": {
+    "version": "1.13.1503",
+    "build_number": "1503",
+    "url": "https://github.com/jul-sh/clipkitty/releases/download/v1.13.1503-beta/ClipKitty.dmg"
+  },
   "stable": {
     "version": "1.13.1502",
     "build_number": "1502",
