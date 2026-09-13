@@ -50,7 +50,10 @@ struct FeedSelectionActionBar: View {
             .padding(.horizontal, 8)
             .glassEffect(.regular, in: .capsule)
         }
-        .padding(.horizontal, 16)
+        // `safeAreaPadding` rather than `padding`: the gutter has to stack on
+        // top of any horizontal safe area inset so the capsule clears a
+        // hardware cutout instead of tucking under it.
+        .safeAreaPadding(.horizontal, 16)
         .padding(.bottom, 8)
     }
 

@@ -138,7 +138,7 @@ struct SaveAutomaticallySheet: View {
             }
             .buttonBorderShape(.capsule)
             .controlSize(.large)
-            .padding(.horizontal, 24)
+            .safeAreaPadding(.horizontal, 24)
             .padding(.bottom, 16)
         }
         .presentationDragIndicator(.hidden)

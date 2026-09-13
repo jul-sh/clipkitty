@@ -1826,7 +1826,7 @@ struct ClipKittyiOSApp: App {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+                .safeAreaPadding(.horizontal, 32)
         }
     }
 }

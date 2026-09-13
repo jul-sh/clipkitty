@@ -46,9 +46,17 @@ struct HomeFeedView: View {
         /// and any other window at least `multiColumnMinimumWidth` wide.
         case packedRows(rowWidth: CGFloat)
 
-        init(containerWidth: CGFloat) {
-            if containerWidth >= JustifiedCardRow.multiColumnMinimumWidth {
-                self = .packedRows(rowWidth: containerWidth - 2 * HomeFeedView.feedGutter)
+        /// - Parameters:
+        ///   - containerWidth: The scroll view's full width.
+        ///   - horizontalSafeAreaInset: Left plus right safe area inset. Rows
+        ///     are laid out inside it (the feed uses `safeAreaPadding`), so it
+        ///     comes off the packing width alongside the gutters — otherwise
+        ///     packed rows are sized for space the cards never get and
+        ///     overflow under the cutout.
+        init(containerWidth: CGFloat, horizontalSafeAreaInset: CGFloat) {
+            let contentWidth = containerWidth - horizontalSafeAreaInset
+            if contentWidth >= JustifiedCardRow.multiColumnMinimumWidth {
+                self = .packedRows(rowWidth: contentWidth - 2 * HomeFeedView.feedGutter)
             } else {
                 self = .singleColumn
             }
@@ -196,7 +204,11 @@ struct HomeFeedView: View {
         }
         .accessibilityIdentifier("feed.\(viewModel.activeFilterKind.rawValue).\(feedLoadPhase)")
         .onGeometryChange(for: FeedLayout.self) { proxy in
-            FeedLayout(containerWidth: proxy.size.width)
+            FeedLayout(
+                containerWidth: proxy.size.width,
+                horizontalSafeAreaInset: proxy.safeAreaInsets.leading
+                    + proxy.safeAreaInsets.trailing
+            )
         } action: { layout in
             feedLayout = layout
         }
@@ -223,7 +235,7 @@ struct HomeFeedView: View {
         VStack(spacing: 0) {
             if showsPermissionCard, !isSearchOrFilterActive {
                 permissionCard
-                    .padding(.horizontal, Self.feedGutter)
+                    .safeAreaPadding(.horizontal, Self.feedGutter)
                     .padding(.top, Self.feedRowSpacing / 2)
             }
             emptyStateView
@@ -258,7 +270,7 @@ struct HomeFeedView: View {
                 }
             }
         }
-        .padding(.horizontal, Self.feedGutter)
+        .safeAreaPadding(.horizontal, Self.feedGutter)
         .padding(.vertical, Self.feedRowSpacing / 2)
     }
 
@@ -683,7 +695,7 @@ struct HomeFeedView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
+                    .safeAreaPadding(.horizontal, 32)
             }
 
             Spacer()
@@ -702,7 +714,7 @@ struct HomeFeedView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .padding(.horizontal, 32)
+                .safeAreaPadding(.horizontal, 32)
             Spacer()
         }
     }

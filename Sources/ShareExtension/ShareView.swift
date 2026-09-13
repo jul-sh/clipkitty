@@ -593,7 +593,7 @@ struct ShareView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
-                        .padding(.horizontal, 32)
+                        .safeAreaPadding(.horizontal, 32)
                 }
             }
             .animation(.snappy, value: state)

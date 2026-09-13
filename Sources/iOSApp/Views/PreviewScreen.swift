@@ -178,7 +178,7 @@ struct PreviewScreen: View {
                 RoundedRectangle(cornerRadius: 16)
                     .fill(color(from: value))
                     .frame(height: 120)
-                    .padding(.horizontal, 16)
+                    .safeAreaPadding(.horizontal, 16)
                     .padding(.top, 8)
 
                 // Color value text in TextKit 2 renderer (supports highlights + editing)
@@ -201,7 +201,7 @@ struct PreviewScreen: View {
                     metadataSection(for: item)
                 }
                 .cardSurface()
-                .padding(.horizontal, 16)
+                .safeAreaPadding(.horizontal, 16)
                 .padding(.top, 8)
             }
         case let .image(data, description, _):
@@ -213,7 +213,7 @@ struct PreviewScreen: View {
                     metadataSection(for: item)
                 }
                 .cardSurface()
-                .padding(.horizontal, 16)
+                .safeAreaPadding(.horizontal, 16)
                 .padding(.top, 8)
             }
         case .file:
@@ -226,7 +226,7 @@ struct PreviewScreen: View {
                     metadataSection(for: item)
                 }
                 .cardSurface()
-                .padding(.horizontal, 16)
+                .safeAreaPadding(.horizontal, 16)
                 .padding(.top, 8)
             }
         }
@@ -384,7 +384,7 @@ struct PreviewScreen: View {
                         .glassEffect(.regular.interactive(), in: .capsule)
                     }
                 }
-                .padding(.horizontal, 16)
+                .safeAreaPadding(.horizontal, 16)
                 .padding(.bottom, 8)
             case .inactive, .focused, .dirty, .suspendedDirty:
                 // Normal state: standard action bar
@@ -446,7 +446,7 @@ struct PreviewScreen: View {
                         .glassEffect(.regular.interactive(), in: .circle)
                     }
                 }
-                .padding(.horizontal, 16)
+                .safeAreaPadding(.horizontal, 16)
                 .padding(.bottom, 8)
             }
         }

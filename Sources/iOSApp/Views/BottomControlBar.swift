@@ -80,7 +80,11 @@ struct BottomControlBar: View {
                     }
                 }
             }
-            .padding(.horizontal, 16)
+            // `safeAreaPadding` rather than `padding`: on displays with a
+            // non-zero horizontal safe area inset the bar has to clear the
+            // inset *and* keep its own gutter, or the glass capsules slide
+            // under the hardware cutout.
+            .safeAreaPadding(.horizontal, 16)
             .padding(.bottom, 8)
         }
         .photosPicker(
