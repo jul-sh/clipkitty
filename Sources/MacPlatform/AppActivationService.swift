@@ -1,8 +1,18 @@
 import AppKit
 
 public enum SyntheticPasteBehavior {
-    case copyOnly
+    case copyOnly(CopyOnlyReason)
     case paste(targetApp: NSRunningApplication)
+}
+
+/// Why a paste degraded to a copy, so the notice can say what to do next
+/// instead of a bare "Copied" that looks like the paste simply failed.
+public enum CopyOnlyReason: Equatable, Sendable {
+    /// No app to paste into (the target quit, or nothing was frontmost).
+    case noTargetApp
+    /// A remote-desktop client that syncs its clipboard lazily; the user has
+    /// to press ⌘V in it themselves.
+    case remoteDesktop(appName: String)
 }
 
 enum RemoteDesktopApp: CaseIterable, Equatable {
@@ -72,7 +82,7 @@ public final class AppActivationService {
     #if ENABLE_SYNTHETIC_PASTE
         public func syntheticPasteBehavior(for targetApp: NSRunningApplication?) -> SyntheticPasteBehavior {
             guard let targetApp, !targetApp.isTerminated else {
-                return .copyOnly
+                return .copyOnly(.noTargetApp)
             }
 
             // RDP clients lazily sync clipboard contents and can leave modifiers stuck
@@ -81,7 +91,7 @@ public final class AppActivationService {
                 bundleIdentifier: targetApp.bundleIdentifier,
                 localizedName: targetApp.localizedName
             ) != nil {
-                return .copyOnly
+                return .copyOnly(.remoteDesktop(appName: targetApp.localizedName ?? "Remote Desktop"))
             }
 
             return .paste(targetApp: targetApp)

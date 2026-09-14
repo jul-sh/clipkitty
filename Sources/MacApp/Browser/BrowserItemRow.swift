@@ -144,6 +144,13 @@ private struct RowThumbnailView: View {
 struct ItemRow: View {
     let metadata: ItemMetadata
     let presentation: RowPresentation
+    /// Zero-based position in the list and the list's length, for the
+    /// accessibility value ("3 of 47").
+    var positionIndex: Int? = nil
+    var positionCount: Int = 0
+    /// The ⌘-digit that pastes this row, shown while ⌘ is held so the
+    /// shortcut is discoverable rather than folklore.
+    var commandBadge: Int? = nil
     let isSelected: Bool
     let isContextMenuTargeted: Bool
     let hasUserNavigated: Bool
@@ -293,6 +300,22 @@ struct ItemRow: View {
                     .layoutPriority(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let commandBadge {
+                    Text(verbatim: "⌘\(commandBadge)")
+                        .font(settings.appFont(size: runtimeState.scaled(11), weight: .medium))
+                        .foregroundStyle(accentSelected ? Color.white.opacity(0.85) : Color.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            accentSelected ? Color.white.opacity(0.18) : Color.primary.opacity(0.08),
+                            in: Capsule()
+                        )
+                        .fixedSize()
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                        .transition(.opacity)
+                }
             }
             .frame(maxWidth: .infinity, minHeight: rowHeight, maxHeight: rowHeight, alignment: .leading)
             .padding(.horizontal, 4)
@@ -339,7 +362,10 @@ struct ItemRow: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(displayExcerpt.text)
-        .accessibilityHint(AppRuntimeState.shared.pasteMode == .autoPaste ? String(localized: "Double tap to paste") : String(localized: "Double tap to copy"))
+        // VoiceOver on the Mac: say where the row sits in the list and what
+        // Return does; "double tap" is iOS phrasing.
+        .accessibilityValue(positionIndex.map { String(localized: "\($0 + 1) of \(positionCount)") } ?? "")
+        .accessibilityHint(AppRuntimeState.shared.pasteMode == .autoPaste ? String(localized: "Press Return to paste") : String(localized: "Press Return to copy"))
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }

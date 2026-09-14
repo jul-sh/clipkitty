@@ -178,6 +178,11 @@ private struct AppearanceOptionRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Selection is otherwise conveyed only by the drawn radio dot.
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(title)
+        .accessibilityValue(description)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : [.isButton])
     }
 }
 
@@ -321,7 +326,7 @@ private struct PreviewStylePreview: View {
 
 #Preview {
     Form {
-        Section("Appearance") {
+        Section(String(localized: "Appearance")) {
             AppearanceSettingsBody()
         }
     }

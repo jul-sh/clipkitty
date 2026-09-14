@@ -120,6 +120,11 @@ import SwiftUI
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // Selection is otherwise conveyed only by the drawn radio dot.
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(title)
+            .accessibilityValue(description)
+            .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : [.isButton])
         }
     }
 
@@ -302,7 +307,7 @@ import SwiftUI
 
     #Preview {
         Form {
-            Section("Paste Items") {
+            Section(String(localized: "Paste Items")) {
                 PasteItemsSettingView()
             }
         }

@@ -12,8 +12,10 @@ struct RadioDot: View {
                 .stroke(isSelected ? Color.accentColor : Color.secondary.opacity(0.5), lineWidth: 1.5)
                 .frame(width: 14, height: 14)
             if isSelected {
+                // The system's text-on-selection color stays legible against
+                // a light accent, where a hard-coded white dot disappears.
                 Circle()
-                    .fill(Color.white)
+                    .fill(Color(nsColor: .alternateSelectedControlTextColor))
                     .frame(width: 5, height: 5)
             }
         }

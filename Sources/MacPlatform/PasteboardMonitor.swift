@@ -92,6 +92,11 @@ public final class PasteboardMonitor {
     private let pasteboard: PasteboardProtocol
     private let workspace: WorkspaceProtocol
     private let onDetection: @MainActor (DetectedPasteboardContent) -> Void
+
+    /// Called with the byte count when a clip is dropped for exceeding an
+    /// ingestion ceiling. Ingestion used to fail silently here, which the
+    /// user experiences as "I copied it and it never appeared".
+    public var onOversizedContent: (@MainActor (Int) -> Void)?
     private let filterConfiguration: @MainActor () -> FilterConfiguration
 
     private var lastChangeCount: Int
@@ -271,27 +276,44 @@ public final class PasteboardMonitor {
 
         if availableTypes.contains(Self.gifType), let gifData = pasteboard.data(forType: Self.gifType) {
             // Skip oversized images entirely; a truncated image is not usable.
-            guard gifData.count <= Self.maxImageByteCount else { return }
+            guard gifData.count <= Self.maxImageByteCount else {
+                onOversizedContent?(gifData.count)
+                return
+            }
             onDetection(.image(data: gifData, isAnimated: true, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID))
             return
         }
 
+        var oversizedImageByteCount: Int?
         for type in [NSPasteboard.PasteboardType.tiff, .png] {
             guard availableTypes.contains(type) else { continue }
             if let rawData = pasteboard.data(forType: type) {
                 // Skip this representation when it exceeds the ingestion
                 // ceiling and try the next one: an oversized TIFF often has a
                 // much smaller PNG of the same clip beside it.
-                guard rawData.count <= Self.maxImageByteCount else { continue }
+                guard rawData.count <= Self.maxImageByteCount else {
+                    oversizedImageByteCount = max(oversizedImageByteCount ?? 0, rawData.count)
+                    continue
+                }
                 onDetection(.image(data: rawData, isAnimated: false, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID))
                 return
             }
         }
 
-        guard availableTypes.contains(.string) else { return }
+        guard availableTypes.contains(.string) else {
+            // Every image representation was over the ceiling and there is no
+            // text to fall back to: the clip is dropped, so say so.
+            if let oversizedImageByteCount {
+                onOversizedContent?(oversizedImageByteCount)
+            }
+            return
+        }
         guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
         // Skip text past the ingestion ceiling to bound memory and store size.
-        guard text.utf8.count <= Self.maxTextByteCount else { return }
+        guard text.utf8.count <= Self.maxTextByteCount else {
+            onOversizedContent?(text.utf8.count)
+            return
+        }
         onDetection(.text(text: text, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID))
     }
 }

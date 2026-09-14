@@ -77,8 +77,12 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         var pastePreparationDidStartForTesting: (() -> Void)?
     #endif
 
-    /// Whether an Accessibility-permission notice has been shown this launch.
-    private var hasShownPermissionNotice = false
+    /// When the Accessibility-permission notice was last shown. It used to
+    /// show once per launch and then degrade to a bare "Copied" forever, which
+    /// read as though the grant had failed; now it repeats on a cooldown until
+    /// the permission is actually resolved.
+    private var lastPermissionNoticeAt: ContinuousClock.Instant?
+    private let permissionNoticeCooldown: Duration = .seconds(300)
 
     /// Provides the window hosting the app's menu bar status item, if any.
     /// Injected by AppDelegate so resign-key handling can recognize clicks on
@@ -349,7 +353,8 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
 
         guard let layer = animatedLayer else { return }
         panel.alphaValue = 0
-        layer.transform = scaledTransform
+        // Reduce Motion keeps the short fade and drops the scale-up spring.
+        layer.transform = Self.reduceMotion ? CATransform3DIdentity : scaledTransform
         panel.makeKeyAndOrderFront(nil)
         switch mode {
         case .production:
@@ -379,7 +384,9 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
             // layer tree (200+ layers) on every frame during active use.
             layer?.removeAllAnimations()
         }
-        layer.add(spring, forKey: "transform")
+        if !Self.reduceMotion {
+            layer.add(spring, forKey: "transform")
+        }
         layer.add(fade, forKey: "opacity")
         CATransaction.commit()
 
@@ -485,9 +492,17 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         CATransaction.setCompletionBlock { [weak self] in
             self?.completeDismissal(layer: layer)
         }
-        layer.add(scale, forKey: "transform")
+        if !Self.reduceMotion {
+            layer.add(scale, forKey: "transform")
+        }
         layer.add(fade, forKey: "opacity")
         CATransaction.commit()
+    }
+
+    /// The system Reduce Motion setting; the panel keeps its fades but not
+    /// its scale animations when it is on.
+    private static var reduceMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
     private func completeDismissal(layer: CALayer?) {
@@ -518,8 +533,11 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     }
 
     private func centerPanel() {
-        // Fallback to any available screen if main screen is unavailable
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        // The panel belongs where the user is working: the screen under the
+        // pointer, which on a multi-monitor setup is often not `NSScreen.main`.
+        let mouse = NSEvent.mouseLocation
+        let screenUnderPointer = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
+        guard let screen = screenUnderPointer ?? NSScreen.main ?? NSScreen.screens.first else { return }
         let screenFrame = screen.visibleFrame
         let panelFrame = panel.frame
 
@@ -615,13 +633,27 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
                     case .hidden, .visible, .dismissing, .preparingPaste, .copyingPasteForAppWindow:
                         return
                     }
-                case .copyOnly:
-                    showCopiedNotification()
+                case let .copyOnly(reason):
+                    showCopiedNotification(copyOnly: reason)
                 }
             case .copyOnly:
                 showCopiedNotification()
             case let .unavailable(reason):
                 showCopiedWithPermissionNotice(reason)
+            }
+        }
+
+        /// The user chose auto-paste but this target only gets a copy; say
+        /// why, so the missing ⌘V does not read as a failed paste.
+        private func showCopiedNotification(copyOnly reason: CopyOnlyReason) {
+            switch reason {
+            case .noTargetApp:
+                showCopiedNotification()
+            case let .remoteDesktop(appName):
+                snackbarWindow.showNotification(.passive(
+                    message: String(localized: "Copied. Paste manually in \(appName)"),
+                    iconSystemName: "checkmark.circle.fill"
+                ))
             }
         }
 
@@ -703,11 +735,12 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     /// Copy succeeded but synthetic paste is unavailable; explain how to restore
     /// it once per launch, then use the normal copied notification thereafter.
     private func showCopiedWithPermissionNotice(_ reason: AutomaticPasteUnavailableReason) {
-        if hasShownPermissionNotice {
+        let now = ContinuousClock.now
+        if let lastPermissionNoticeAt, now - lastPermissionNoticeAt < permissionNoticeCooldown {
             showCopiedNotification()
             return
         }
-        hasShownPermissionNotice = true
+        lastPermissionNoticeAt = now
 
         let presentation: (message: String, actionTitle: String) = switch reason {
         case .permissionNotGranted:

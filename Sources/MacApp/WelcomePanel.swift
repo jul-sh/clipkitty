@@ -35,6 +35,7 @@ private struct WelcomePageView: View {
                     .frame(maxWidth: 200)
                     .padding(.vertical, 8)
             }
+            .keyboardShortcut(.defaultAction)
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
 
@@ -136,6 +137,7 @@ private struct QuickStartPageView: View {
                             Toggle("", isOn: $settings.syncEnabled)
                                 .labelsHidden()
                                 .toggleStyle(.switch)
+                                .accessibilityLabel(String(localized: "iCloud Sync"))
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
@@ -189,6 +191,7 @@ private struct QuickStartPageView: View {
                     .frame(maxWidth: 200)
                     .padding(.vertical, 8)
             }
+            .keyboardShortcut(.defaultAction)
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
 

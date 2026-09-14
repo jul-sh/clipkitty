@@ -167,7 +167,24 @@ final class ClipboardStore {
         ) { [weak self] detectedContent in
             self?.handleDetectedPasteboardContent(detectedContent)
         }
+        pasteboardMonitor.onOversizedContent = { [weak self] _ in
+            self?.reportOversizedClip()
+        }
         startBootstrap()
+    }
+
+    /// When an oversized clip was last announced; a burst of huge copies
+    /// should not produce a burst of identical toasts.
+    private var lastOversizedNoticeAt: ContinuousClock.Instant?
+
+    private func reportOversizedClip() {
+        let now = ContinuousClock.now
+        if let lastOversizedNoticeAt, now - lastOversizedNoticeAt < .seconds(30) { return }
+        lastOversizedNoticeAt = now
+        ErrorReporter.showNotification?(.passive(
+            message: String(localized: "Copied item is too large to save"),
+            iconSystemName: "exclamationmark.triangle.fill"
+        ))
     }
 
     /// Current database size in bytes (cached, updated async)

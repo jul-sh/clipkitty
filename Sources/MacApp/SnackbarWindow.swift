@@ -248,9 +248,16 @@ final class SnackbarWindow {
         return window
     }
 
+    /// Reduce Motion keeps the cross-fade but drops the slide; a fade is the
+    /// one transition the setting explicitly tolerates.
+    private var reduceMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
     private func animateIn(_ window: NSWindow, slideUp: Bool) {
+        let slide: CGFloat = reduceMotion ? 0 : (slideUp ? -20 : 10)
         var startFrame = window.frame
-        startFrame.origin.y += slideUp ? -20 : 10
+        startFrame.origin.y += slide
         window.setFrame(startFrame, display: false)
         window.alphaValue = 0
         window.orderFront(nil)
@@ -259,7 +266,7 @@ final class SnackbarWindow {
             context.duration = 0.25
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             var endFrame = window.frame
-            endFrame.origin.y += slideUp ? 20 : -10
+            endFrame.origin.y -= slide
             window.animator().setFrame(endFrame, display: true)
             window.animator().alphaValue = 1
         }
@@ -275,11 +282,12 @@ final class SnackbarWindow {
     }
 
     private func animateOut(_ window: NSWindow, slideUp: Bool) {
+        let slide: CGFloat = reduceMotion ? 0 : (slideUp ? 10 : -20)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.2
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
             var endFrame = window.frame
-            endFrame.origin.y += slideUp ? 10 : -20
+            endFrame.origin.y += slide
             window.animator().setFrame(endFrame, display: true)
             window.animator().alphaValue = 0
         } completionHandler: {

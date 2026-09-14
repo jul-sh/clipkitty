@@ -5,6 +5,8 @@ import SwiftUI
 struct BrowserResultsList: View {
     @Bindable var viewModel: BrowserViewModel
     let displayVersion: Int
+    /// True while ⌘ is held: the first nine rows show their ⌘-digit.
+    var showsCommandBadges: Bool = false
     let focusSearchField: () -> Void
 
     private let matchDataPrefetchBuffer = 20
@@ -71,6 +73,9 @@ struct BrowserResultsList: View {
                     ItemRow(
                         metadata: row.metadata,
                         presentation: row.presentation,
+                        positionIndex: index,
+                        positionCount: viewModel.itemCount,
+                        commandBadge: showsCommandBadges && index < 9 ? index + 1 : nil,
                         // While the pending chip is the keyboard target, no row
                         // may read as the active selection even though one stays
                         // selected underneath for when the keyboard returns.

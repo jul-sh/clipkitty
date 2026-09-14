@@ -41,6 +41,31 @@ final class PasteboardMonitorTests: XCTestCase {
         XCTAssertEqual(mode.intervalMilliseconds, 750)
     }
 
+    func testOversizedTextIsReportedInsteadOfSilentlyDropped() async {
+        let pasteboard = MockPasteboard()
+        let workspace = MockWorkspace()
+        let reported = expectation(description: "oversized clip reported")
+
+        let monitor = PasteboardMonitor(
+            pasteboard: pasteboard,
+            workspace: workspace,
+            filterConfiguration: { PasteboardMonitor.FilterConfiguration(isAppIgnored: { _ in false }, ignoreConfidentialContent: true, ignoreTransientContent: true) }
+        ) { _ in
+            XCTFail("An oversized clip must not be ingested")
+        }
+        monitor.onOversizedContent = { byteCount in
+            XCTAssertGreaterThan(byteCount, PasteboardMonitor.maxTextByteCount)
+            reported.fulfill()
+        }
+
+        monitor.start()
+        defer { monitor.stop() }
+
+        _ = pasteboard.setString(String(repeating: "a", count: PasteboardMonitor.maxTextByteCount + 1), forType: .string)
+
+        await fulfillment(of: [reported], timeout: 1.0)
+    }
+
     func testTextDetectionAvoidsUnrelatedPasteboardReads() async {
         let pasteboard = MockPasteboard()
         let workspace = MockWorkspace()

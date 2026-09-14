@@ -1,6 +1,76 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Copied. Paste manually in %@": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Kopiert. In %@ manuell einsetzen" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Copied. Paste manually in %@" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Copiado. Pega manualmente en %@" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Copié. Collez manuellement dans %@" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "コピーしました。%@ に手動でペーストしてください" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "복사됨. %@에 직접 붙여넣으세요" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Copiado. Cole manualmente em %@" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Скопировано. Вставьте вручную в %@" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "已拷贝。请在 %@ 中手动粘贴" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "已拷貝。請在 %@ 中手動貼上" } }
+      }
+    },
+    "Copied item is too large to save": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Kopiertes Element ist zu groß zum Speichern" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Copied item is too large to save" } },
+        "es": { "stringUnit": { "state": "translated", "value": "El elemento copiado es demasiado grande para guardarlo" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "L’élément copié est trop volumineux pour être enregistré" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "コピーした項目が大きすぎて保存できません" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "복사한 항목이 너무 커서 저장할 수 없음" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "O item copiado é grande demais para ser salvo" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Скопированный элемент слишком велик для сохранения" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "拷贝的项目太大，无法保存" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "拷貝的項目太大，無法儲存" } }
+      }
+    },
+    "Press Return to copy": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Zum Kopieren Zeilenschalter drücken" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Press Return to copy" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Pulsa Retorno para copiar" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Appuyez sur Retour pour copier" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "Returnキーでコピー" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Return 키를 눌러 복사" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Pressione Return para copiar" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Нажмите Return, чтобы скопировать" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "按 Return 键拷贝" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "按 Return 鍵拷貝" } }
+      }
+    },
+    "Press Return to paste": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Zum Einsetzen Zeilenschalter drücken" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Press Return to paste" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Pulsa Retorno para pegar" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Appuyez sur Retour pour coller" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "Returnキーでペースト" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "Return 키를 눌러 붙여넣기" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Pressione Return para colar" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Нажмите Return, чтобы вставить" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "按 Return 键粘贴" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "按 Return 鍵貼上" } }
+      }
+    },
+    "%lld of %lld": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "%lld von %lld" } },
+        "en": { "stringUnit": { "state": "translated", "value": "%lld of %lld" } },
+        "es": { "stringUnit": { "state": "translated", "value": "%lld de %lld" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "%lld sur %lld" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "%lld / %lld" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "%lld / %lld" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "%lld de %lld" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "%lld из %lld" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "第 %lld 项，共 %lld 项" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "第 %lld 項，共 %lld 項" } }
+      }
+    },
     "Preview truncated": {
       "localizations": {
         "de": { "stringUnit": { "state": "translated", "value": "Vorschau gekürzt" } },

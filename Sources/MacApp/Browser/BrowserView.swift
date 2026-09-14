@@ -14,6 +14,9 @@ struct BrowserView: View {
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var runtimeState = AppRuntimeState.shared
     @State private var commandKeyEventMonitor: Any?
+    @State private var commandFlagsMonitor: Any?
+    /// Drives the ⌘-digit badges on the first nine rows.
+    @State private var isCommandKeyHeld = false
     @FocusState private var focusTarget: FocusTarget?
 
     enum FocusTarget: Hashable {
@@ -101,6 +104,7 @@ struct BrowserView: View {
         .ignoresSafeArea(edges: .top)
         .onAppear {
             installCommandKeyEventMonitor()
+            installCommandFlagsMonitor()
             focusSearchField()
         }
         .onDisappear {
@@ -121,6 +125,7 @@ struct BrowserView: View {
                 BrowserResultsList(
                     viewModel: viewModel,
                     displayVersion: displayVersion,
+                    showsCommandBadges: isCommandKeyHeld,
                     focusSearchField: focusSearchField
                 )
                 .frame(width: runtimeState.scaled(324))
@@ -287,9 +292,29 @@ struct BrowserView: View {
 
     @MainActor
     private func removeCommandKeyEventMonitor() {
+        if let commandFlagsMonitor {
+            NSEvent.removeMonitor(commandFlagsMonitor)
+            self.commandFlagsMonitor = nil
+        }
+        isCommandKeyHeld = false
         guard let commandKeyEventMonitor else { return }
         NSEvent.removeMonitor(commandKeyEventMonitor)
         self.commandKeyEventMonitor = nil
+    }
+
+    /// Tracks whether ⌘ alone is held so the rows can advertise ⌘1–⌘9.
+    private func installCommandFlagsMonitor() {
+        guard commandFlagsMonitor == nil else { return }
+        commandFlagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let held = flags == .command && isPanelVisible()
+            if held != isCommandKeyHeld {
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isCommandKeyHeld = held
+                }
+            }
+            return event
+        }
     }
 
     private func commandNumber(from event: NSEvent) -> Int? {
