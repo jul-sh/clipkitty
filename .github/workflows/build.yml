@@ -141,7 +141,12 @@ jobs:
           dev-shell: "false"
 
       - name: Build shared workspace graph
-        timeout-minutes: 45
+        # 90 min, not 45: a fully cold purr build for the five Rust targets is
+        # ~30 min on its own, and when the GitHub Actions cache throttles the
+        # Nix proxy even briefly, `fallback = true` rebuilds the vendored crate
+        # set (~12 min) instead of failing. 45 min left no room for both, and a
+        # timed-out attempt never reaches the retry below.
+        timeout-minutes: 90
         # Fixed-output fetches inside the graph (SwiftPM binary targets such
         # as Sparkle come from GitHub Releases) fail on transient 5xx. A
         # failed derivation is not cached, so a retry only redoes that part.
