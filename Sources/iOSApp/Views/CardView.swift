@@ -17,6 +17,7 @@ struct CardView: View {
     @Environment(HapticsClient.self) private var haptics
     @Environment(iOSSettingsStore.self) private var settings
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var isShareLoading = false
     @State private var shareTask: Task<Void, Never>?
@@ -107,10 +108,25 @@ struct CardView: View {
     }
 
     private var cardSurface: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            metadataLine
-            contentPreview
+        // Selection works like Notes and Mail: the marker takes a leading
+        // column and the content shifts right to make room, so nothing in
+        // the metadata line (the bookmark flag in particular) is covered.
+        HStack(alignment: .center, spacing: 12) {
+            if isSelectionMode {
+                selectionIndicator
+                    .font(.title2.weight(.semibold))
+                    .frame(width: 24)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+                    .accessibilityHidden(true)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                metadataLine
+                contentPreview
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .animation(reduceMotion ? nil : .snappy, value: isSelectionMode)
         .cardSurface()
         .contentShape(
             [.interaction, .dragPreview, .contextMenuPreview],
@@ -136,17 +152,9 @@ struct CardView: View {
 
     private var selectableCard: some View {
         cardSurface
-            // Every selectable card carries the indicator in its top-trailing
-            // corner, hollow until chosen, matching the Mac browser: an
-            // unselected card should still advertise that it can be picked,
-            // and the marker must not sit over the card's content.
-            .overlay(alignment: .topTrailing) {
-                selectionIndicator
-                    .font(.title2.weight(.semibold))
-                    .padding(12)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
+            // The marker itself lives in the card's leading column (see
+            // `cardSurface`), hollow until chosen so an unselected card still
+            // advertises that it can be picked.
             .overlay {
                 RoundedRectangle(cornerRadius: CardSurface.cornerRadius, style: .continuous)
                     .strokeBorder(
@@ -155,7 +163,7 @@ struct CardView: View {
                     )
                     .allowsHitTesting(false)
             }
-            .animation(.snappy, value: isSelected)
+            .animation(reduceMotion ? nil : .snappy, value: isSelected)
             .accessibilityHint(
                 isSelected
                     ? String(localized: "Double tap to deselect")
@@ -170,7 +178,7 @@ struct CardView: View {
 
     /// The selection marker: a hollow ring while unselected, a filled
     /// checkmark once chosen. Both states occupy the same box so the card's
-    /// corner does not shift as the selection toggles.
+    /// content does not shift as the selection toggles.
     @ViewBuilder
     private var selectionIndicator: some View {
         if isSelected {
