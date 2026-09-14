@@ -897,6 +897,30 @@ impl SyncStore {
         Ok(())
     }
 
+    /// Set the zone change token for a device, including clearing it with
+    /// `None`. `upsert_device_state` deliberately treats `None` as "keep what
+    /// is stored" so a heartbeat never clobbers a token; this is the explicit
+    /// write for when the token is known to be invalid (the zone was deleted
+    /// or reset) or a fresh one has been issued.
+    pub fn set_zone_change_token(
+        &self,
+        device_id: &str,
+        zone_change_token: Option<&[u8]>,
+    ) -> SyncResult<()> {
+        let now = Utc::now().timestamp();
+        let conn = self.get_conn()?;
+        conn.execute(
+            r#"INSERT INTO sync_device_state
+               (device_id, last_zone_change_token, heartbeat_at)
+               VALUES (?1, ?2, ?3)
+               ON CONFLICT(device_id) DO UPDATE SET
+                 last_zone_change_token = excluded.last_zone_change_token,
+                 heartbeat_at = excluded.heartbeat_at"#,
+            params![device_id, zone_change_token, now],
+        )?;
+        Ok(())
+    }
+
     /// Fetch the zone change token for a device.
     pub fn fetch_zone_change_token(&self, device_id: &str) -> SyncResult<Option<Vec<u8>>> {
         let conn = self.get_conn()?;
@@ -1288,6 +1312,37 @@ mod tests {
             .expect("in-memory pool");
         setup_sync_schema(&pool.get().expect("conn")).expect("schema");
         SyncStore::new(&pool)
+    }
+
+    #[test]
+    fn set_zone_change_token_clears_with_none_while_upsert_keeps_it() {
+        let store = test_store();
+        store
+            .upsert_device_state("device-a", Some(b"tok"))
+            .expect("seed token");
+        // A heartbeat upsert must not clobber a stored token.
+        store
+            .upsert_device_state("device-a", None)
+            .expect("heartbeat");
+        assert_eq!(
+            store.fetch_zone_change_token("device-a").expect("fetch"),
+            Some(b"tok".to_vec())
+        );
+        // The explicit setter clears it, which the zone-gone recovery needs.
+        store
+            .set_zone_change_token("device-a", None)
+            .expect("clear");
+        assert_eq!(
+            store.fetch_zone_change_token("device-a").expect("fetch"),
+            None
+        );
+        store
+            .set_zone_change_token("device-a", Some(b"new"))
+            .expect("set");
+        assert_eq!(
+            store.fetch_zone_change_token("device-a").expect("fetch"),
+            Some(b"new".to_vec())
+        );
     }
 
     fn touch_event(item_id: &str, timestamp: i64, base_touch_version: u64) -> ItemEvent {

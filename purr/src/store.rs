@@ -1605,7 +1605,10 @@ impl ClipboardStore {
         use purr_sync::store::SyncStore;
 
         let sync = SyncStore::new(&self.db.pool()?);
-        sync.upsert_device_state(&device_id, token.as_deref())?;
+        // An explicit write: `None` clears the token. The coordinator relies
+        // on that when the CloudKit zone is gone and the old token must not
+        // be presented to a recreated zone.
+        sync.set_zone_change_token(&device_id, token.as_deref())?;
         Ok(())
     }
 
