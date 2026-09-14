@@ -702,24 +702,10 @@ final class AppState {
 
     /// Show a shared notification request. The overlay projects its
     /// closure-free kind for rendering and matches the request to run actions.
-    ///
-    /// One slot, one toast at a time: a request that arrives while another is
-    /// showing waits its turn instead of clobbering it (a "Copied" landing on
-    /// top of "Couldn’t save" used to erase the one that mattered).
+    /// A newer request replaces the visible one, like the Mac scheduler; the
+    /// stale auto-dismiss is keyed by id so it cannot take the newer toast
+    /// down with it.
     func showNotification(_ request: NotificationRequest) {
-        if case .visible = toast {
-            if queuedToasts.count < Self.maxQueuedToasts {
-                queuedToasts.append(request)
-            }
-            return
-        }
-        present(request)
-    }
-
-    private static let maxQueuedToasts = 3
-    @ObservationIgnored private var queuedToasts: [NotificationRequest] = []
-
-    private func present(_ request: NotificationRequest) {
         let id = UUID()
         let duration = request.kind.duration
         withAnimation(.bouncy) {
@@ -734,9 +720,6 @@ final class AppState {
     func dismissToast() {
         withAnimation(.bouncy) {
             toast = .hidden
-        }
-        if !queuedToasts.isEmpty {
-            present(queuedToasts.removeFirst())
         }
     }
 
@@ -1022,7 +1005,6 @@ final class AppState {
         }
 
         toast = .hidden
-        queuedToasts.removeAll()
         guard !tasks.isEmpty else { return .quiescent }
         return .awaiting(Task { @MainActor in
             for task in tasks {

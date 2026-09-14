@@ -2,7 +2,7 @@
 import XCTest
 
 @MainActor
-final class AccessibilityPermissionMonitorTests: XCTestCase {
+final class AccessibilityPermissionMonitorPollingTests: XCTestCase {
     private func makeMonitor() -> AccessibilityPermissionMonitor {
         AccessibilityPermissionMonitor(client: AccessibilityPermissionClient(
             isAccessibilityTrusted: { false },
