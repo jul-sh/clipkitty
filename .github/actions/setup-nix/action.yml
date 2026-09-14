@@ -6,6 +6,13 @@ inputs:
     description: Whether to connect the shared GitHub Actions Nix cache.
     required: false
     default: "true"
+  dev-shell:
+    description: >-
+      Whether to realize the `.#default` development shell up front, with
+      retries. Jobs that run `make` need it; jobs that only `nix build` a
+      single target do not.
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -16,6 +23,15 @@ runs:
         source-tag: v3.17.3
         determinate: false
         diagnostic-endpoint: ""
+        # `fallback`: when a binary substitute fails mid-download (the GitHub
+        # Actions cache throttles the Magic Nix Cache proxy under fan-out
+        # load and answers 418), build the path from its derivation instead
+        # of failing with "path … is required, but there is no substituter
+        # that can build it". Slower on a bad day; never a spurious red run.
+        extra-conf: |
+          fallback = true
+          connect-timeout = 15
+          stalled-download-timeout = 90
 
     - name: Set up Nix cache
       if: ${{ inputs.cache == 'true' }}
@@ -24,3 +40,20 @@ runs:
         use-flakehub: disabled
         use-gha-cache: enabled
         diagnostic-endpoint: ""
+
+    # Realize the whole dev-shell closure here, with retries, instead of
+    # letting the first `make` step discover a throttled cache halfway through
+    # its substitutions. Once the closure is in the store every later
+    # `nix develop` in the job is instant and cannot fail on the network.
+    - name: Realize the development shell
+      if: ${{ inputs.dev-shell == 'true' }}
+      shell: bash
+      run: |
+        for attempt in 1 2 3; do
+          if nix develop --no-update-lock-file --experimental-features 'nix-command flakes' .#default --command true; then
+            exit 0
+          fi
+          echo "::warning::Realizing the dev shell failed (attempt $attempt of 3); retrying in 60s"
+          sleep 60
+        done
+        exit 1

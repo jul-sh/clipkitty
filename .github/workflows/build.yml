@@ -137,10 +137,23 @@ jobs:
 
       - name: Set up Nix
         uses: ./.github/actions/setup-nix
+        with:
+          dev-shell: "false"
 
       - name: Build shared workspace graph
         timeout-minutes: 45
-        run: nix build '.#clipkitty-generated' -L
+        # Fixed-output fetches inside the graph (SwiftPM binary targets such
+        # as Sparkle come from GitHub Releases) fail on transient 5xx. A
+        # failed derivation is not cached, so a retry only redoes that part.
+        run: |
+          for attempt in 1 2 3; do
+            if nix build '.#clipkitty-generated' -L; then
+              exit 0
+            fi
+            echo "::warning::nix build failed (attempt $attempt of 3); retrying in 60s"
+            sleep 60
+          done
+          exit 1
 
   rust-tests:
     name: Rust Tests
@@ -533,6 +546,8 @@ jobs:
 
       - name: Set up Nix
         uses: ./.github/actions/setup-nix
+        with:
+          dev-shell: "false"
 
       - name: Build iOS Smoke Test
         # 50 min, not 15: unlike the other Nix jobs, this one has no separate
