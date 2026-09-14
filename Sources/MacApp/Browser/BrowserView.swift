@@ -17,6 +17,8 @@ struct BrowserView: View {
     @State private var commandFlagsMonitor: Any?
     /// Drives the ⌘-digit badges on the first nine rows.
     @State private var isCommandKeyHeld = false
+    /// Pending reveal: the badges appear only after ⌘ has been held a beat.
+    @State private var commandHoldTask: Task<Void, Never>?
     @FocusState private var focusTarget: FocusTarget?
 
     enum FocusTarget: Hashable {
@@ -296,6 +298,8 @@ struct BrowserView: View {
             NSEvent.removeMonitor(commandFlagsMonitor)
             self.commandFlagsMonitor = nil
         }
+        commandHoldTask?.cancel()
+        commandHoldTask = nil
         isCommandKeyHeld = false
         guard let commandKeyEventMonitor else { return }
         NSEvent.removeMonitor(commandKeyEventMonitor)
@@ -303,14 +307,33 @@ struct BrowserView: View {
     }
 
     /// Tracks whether ⌘ alone is held so the rows can advertise ⌘1–⌘9.
+    ///
+    /// The badges appear only after ⌘ has been held for a beat, the way
+    /// iPadOS reveals its shortcut overlay: a chord such as ⌘K, ⌘C or ⌘V
+    /// must not flash them across every row, and each flash would also keep
+    /// the list animating (which, in UI automation that pastes one character
+    /// per ⌘V, made every keystroke wait for the animation to settle). The
+    /// release hides them without animation for the same reason.
     private func installCommandFlagsMonitor() {
         guard commandFlagsMonitor == nil else { return }
         commandFlagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            let held = flags == .command && isPanelVisible()
-            if held != isCommandKeyHeld {
-                withAnimation(.easeOut(duration: 0.12)) {
-                    isCommandKeyHeld = held
+            let commandAlone = flags == .command && isPanelVisible()
+            commandHoldTask?.cancel()
+            commandHoldTask = nil
+            if commandAlone {
+                commandHoldTask = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(400))
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        isCommandKeyHeld = true
+                    }
+                }
+            } else if isCommandKeyHeld {
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    isCommandKeyHeld = false
                 }
             }
             return event
