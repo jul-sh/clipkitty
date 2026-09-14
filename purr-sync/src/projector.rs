@@ -61,9 +61,26 @@ fn apply_item_created(
     aggregate: Option<&ItemAggregate>,
     snapshot: &ItemSnapshotData,
 ) -> ApplyResult {
-    if aggregate.is_some() {
-        // Item already exists — this is a duplicate ItemCreated.
-        return ApplyResult::Ignored(IgnoreReason::AlreadyApplied);
+    match aggregate {
+        // Item already exists and is live — this is a genuine duplicate.
+        Some(ItemAggregate::Live(_)) => {
+            return ApplyResult::Ignored(IgnoreReason::AlreadyApplied);
+        }
+        // Create against a tombstone. This is NOT a duplicate: a peer that had
+        // not yet seen the delete produced fresh, complete, user-authored
+        // content under the same id. Reporting it as AlreadyApplied was a lie
+        // and silently dropped that content.
+        //
+        // Resolve it the same way a text edit against a tombstone resolves —
+        // fork. An ItemCreated carries a full snapshot, so it is a *stronger*
+        // case for preservation than an edit, not a weaker one. Forking (rather
+        // than resurrecting the tombstoned id) keeps both intents intact: the
+        // delete still stands on every device, and the new content survives as
+        // its own item, which is exactly the invariant the edit rule maintains.
+        Some(tombstone @ ItemAggregate::Tombstoned(_)) => {
+            return fork_from_item_created(tombstone, snapshot);
+        }
+        None => {}
     }
 
     let versions = VersionVector {
@@ -443,6 +460,25 @@ fn apply_image_description_updated(
 // Fork helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Fork a tombstoned item from a full `ItemCreated` snapshot.
+///
+/// Unlike [`fork_from_text_edit`], nothing has to be reconstructed from the
+/// tombstone: the event already carries the complete snapshot the peer intended.
+/// It is forwarded as-is except for the bookmark flag, which is dropped — a fork
+/// is a new item and inherits no user curation.
+fn fork_from_item_created(tombstone: &ItemAggregate, snapshot: &ItemSnapshotData) -> ApplyResult {
+    debug_assert!(matches!(tombstone, ItemAggregate::Tombstoned(_)));
+
+    let mut forked_snapshot = snapshot.clone();
+    forked_snapshot.is_bookmarked = false;
+
+    ApplyResult::Forked(ForkPlan {
+        forked_snapshot,
+        reason: "item created against a tombstone".to_string(),
+        forked_from: None, // Populated by replay layer which has the item_id.
+    })
+}
+
 fn fork_from_text_edit(aggregate: &ItemAggregate, new_text: &str) -> ApplyResult {
     // Build a new snapshot from the edit content.
     let forked_snapshot = match aggregate {
@@ -477,4 +513,130 @@ fn fork_from_text_edit(aggregate: &ItemAggregate, new_text: &str) -> ApplyResult
         reason: "concurrent text edit conflict".to_string(),
         forked_from: None, // Populated by replay layer which has the item_id.
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_snapshot(text: &str) -> ItemSnapshotData {
+        ItemSnapshotData {
+            content_type: "text".to_string(),
+            content_text: text.to_string(),
+            content_hash: crate::util::content_hash(text),
+            source_app: None,
+            source_app_bundle_id: None,
+            timestamp_unix: 1_700_000_000,
+            is_bookmarked: false,
+            thumbnail_base64: None,
+            color_rgba: None,
+            type_specific: TypeSpecificData::Text {
+                value: text.to_string(),
+            },
+        }
+    }
+
+    fn tombstone() -> ItemAggregate {
+        ItemAggregate::Tombstoned(TombstoneState {
+            deleted_at_unix: 1_700_000_000,
+            versions: VersionVector {
+                content: 1,
+                bookmark: 0,
+                existence: 2,
+                touch: 1,
+                metadata: 1,
+            },
+            content_type: "text".to_string(),
+        })
+    }
+
+    fn live(text: &str) -> ItemAggregate {
+        ItemAggregate::Live(LiveItemState {
+            snapshot: text_snapshot(text),
+            versions: VersionVector {
+                content: 1,
+                bookmark: 0,
+                existence: 1,
+                touch: 1,
+                metadata: 1,
+            },
+        })
+    }
+
+    #[test]
+    fn item_created_against_tombstone_forks_rather_than_claiming_already_applied() {
+        let payload = ItemEventPayload::ItemCreated {
+            snapshot: text_snapshot("resurrected content"),
+        };
+
+        match apply_event(Some(&tombstone()), &payload) {
+            ApplyResult::Forked(plan) => {
+                assert_eq!(plan.forked_snapshot.content_text, "resurrected content");
+                // A fork is a new item and inherits no user curation.
+                assert!(!plan.forked_snapshot.is_bookmarked);
+                // The replay layer, not the projector, fills in lineage.
+                assert!(plan.forked_from.is_none());
+            }
+            other => panic!("expected a fork against a tombstone, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn item_created_against_tombstone_drops_the_bookmark_flag() {
+        let mut snapshot = text_snapshot("bookmarked elsewhere");
+        snapshot.is_bookmarked = true;
+        let payload = ItemEventPayload::ItemCreated { snapshot };
+
+        match apply_event(Some(&tombstone()), &payload) {
+            ApplyResult::Forked(plan) => assert!(!plan.forked_snapshot.is_bookmarked),
+            other => panic!("expected a fork, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn item_created_against_live_item_is_still_a_duplicate() {
+        let payload = ItemEventPayload::ItemCreated {
+            snapshot: text_snapshot("hello"),
+        };
+
+        assert_eq!(
+            apply_event(Some(&live("hello")), &payload),
+            ApplyResult::Ignored(IgnoreReason::AlreadyApplied)
+        );
+    }
+
+    #[test]
+    fn item_created_on_empty_aggregate_applies() {
+        let payload = ItemEventPayload::ItemCreated {
+            snapshot: text_snapshot("brand new"),
+        };
+
+        match apply_event(None, &payload) {
+            ApplyResult::Applied(delta) => match delta.new_aggregate {
+                ItemAggregate::Live(state) => {
+                    assert_eq!(state.snapshot.content_text, "brand new");
+                    assert_eq!(state.versions.existence, 1);
+                }
+                other => panic!("expected a live aggregate, got {other:?}"),
+            },
+            other => panic!("expected Applied, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn text_edit_against_tombstone_still_forks() {
+        // Item 4's chosen resolution mirrors this pre-existing rule; pin it so
+        // the two cannot drift apart.
+        let payload = ItemEventPayload::TextEdited {
+            new_text: "edited after delete".to_string(),
+            base_content_version: 1,
+        };
+
+        match apply_event(Some(&tombstone()), &payload) {
+            ApplyResult::Forked(plan) => {
+                assert_eq!(plan.forked_snapshot.content_text, "edited after delete");
+            }
+            other => panic!("expected a fork, got {other:?}"),
+        }
+    }
 }

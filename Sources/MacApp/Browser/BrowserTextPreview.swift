@@ -194,8 +194,10 @@ struct TextPreviewView: NSViewRepresentable {
     private static let maxAutoScaleCharacters = 4096
     private static let maxAutoScaleLines = 14
 
-    static var textCache: [String: String] = [:]
     let itemId: String
+    /// The text to render. Passed in like any other input; it used to travel
+    /// through a process-global cache written during body evaluation.
+    let text: String
     let fontName: String
     let fontSize: CGFloat
     var highlights: [Utf16HighlightRange] = []
@@ -251,7 +253,6 @@ struct TextPreviewView: NSViewRepresentable {
     private static var lastKnownContainerWidth: CGFloat = 0
 
     private func scaledFontSize(containerWidth: CGFloat) -> CGFloat {
-        let text = TextPreviewView.textCache[itemId] ?? ""
         return Self.scaledFontSize(
             text: text,
             fontName: fontName,
@@ -441,7 +442,7 @@ struct TextPreviewView: NSViewRepresentable {
             Self.lastKnownContainerWidth = nsView.contentSize.width
         }
 
-        let textChanged = itemChanged ? true : textView.string != (TextPreviewView.textCache[itemId] ?? "")
+        let textChanged = itemChanged ? true : textView.string != text
         let highlightsChanged = coordinator.lastHighlights != highlights
         let contentWidthChanged = abs(coordinator.lastContentWidth - containerWidth) > 0.5
         let fontChanged = coordinator.lastFontName != fontName
@@ -486,8 +487,6 @@ struct TextPreviewView: NSViewRepresentable {
             .paragraphStyle: paragraphStyle,
         ]
 
-        let text = TextPreviewView.textCache[itemId] ?? ""
-
         let previousMatchRanges = coordinator.currentMatchRanges
         let tlm = textView.textLayoutManager
         if let tlm,
@@ -503,7 +502,6 @@ struct TextPreviewView: NSViewRepresentable {
         let shouldUpdateText = itemChanged ||
             (!coordinator.isEditing && (textChanged || highlightsChanged || fontChanged || fontSizeChanged))
         if shouldUpdateText {
-            let text = TextPreviewView.textCache[itemId] ?? ""
             // Text content changed — replace storage attributes (font, color, paragraph style only).
             //
             // Memory consideration: For very large text (>100KB), NSAttributedString allocation

@@ -5,8 +5,8 @@
 
 use crate::interface::{
     BaselineExcerpt, ClipboardContent, ClipboardItem, ContentTypeFilter, FileEntry,
-    FilePreviewSnapshot, FileStatus, FileTextPreviewSnapshot, ItemIcon, ItemMetadata, ItemTag,
-    LinkMetadataState, ListPresentationProfile, TransferFetchRejection,
+    FilePreviewSnapshot, FileStatus, FileTextPreviewSnapshot, ItemIcon, ItemMatch, ItemMetadata,
+    ItemTag, LinkMetadataState, ListPresentationProfile, TransferFetchRejection,
 };
 use crate::models::StoredItem;
 use crate::search::{generate_preview_for_profile, SNIPPET_CONTEXT_CHARS};
@@ -53,6 +53,9 @@ impl From<purr_sync::SyncError> for DatabaseError {
 const SEARCH_METADATA_PREFIX_CHARS: usize = SNIPPET_CONTEXT_CHARS * 4;
 const BROWSE_METADATA_PREFIX_CHARS: usize = SNIPPET_CONTEXT_CHARS * 8;
 const DATABASE_POOL_SIZE: u32 = 8;
+/// Bound parameters per batched `DELETE ... WHERE id IN (...)`; SQLite's
+/// default `SQLITE_MAX_VARIABLE_NUMBER` is far higher, so this is comfortable.
+const DELETE_BATCH_SIZE: usize = 512;
 const GENERATED_ITEM_ID_SQL: &str = r#"lower(
     hex(randomblob(4)) || '-' ||
     hex(randomblob(2)) || '-4' ||
@@ -122,11 +125,71 @@ pub(crate) struct SearchRowMetadata {
     pub(crate) row_metadata: RowMetadata,
 }
 
-pub(crate) fn hydrate_item_metadata_tags<'a>(
+/// A value whose [`ItemMetadata`] still has an empty `tags` list.
+///
+/// Row-fetch SQL does not join `item_tags`, so every metadata-bearing value it
+/// produces starts untagged and needs a second pass. That pass used to be a
+/// bare function call each caller had to remember; wrapping the value makes it
+/// unskippable — the inner value is unreachable until [`Untagged::hydrate`]
+/// fills the tags in.
+#[must_use = "metadata is untagged until `hydrate` runs"]
+pub(crate) struct Untagged<T>(T);
+
+impl<T: HasItemMetadata> Untagged<T> {
+    pub(crate) fn new(value: T) -> Self {
+        Self(value)
+    }
+
+    /// Load tags from `db` and release the inner value.
+    pub(crate) fn hydrate(mut self, db: &Database) -> DatabaseResult<T> {
+        hydrate_item_metadata_tags(db, self.0.item_metadata_mut())?;
+        Ok(self.0)
+    }
+}
+
+/// Values carrying [`ItemMetadata`] that tag hydration can reach.
+pub(crate) trait HasItemMetadata {
+    fn item_metadata_mut(&mut self) -> impl Iterator<Item = &mut ItemMetadata>;
+}
+
+impl HasItemMetadata for ItemMetadata {
+    fn item_metadata_mut(&mut self) -> impl Iterator<Item = &mut ItemMetadata> {
+        std::iter::once(self)
+    }
+}
+
+impl<T: HasItemMetadata> HasItemMetadata for Vec<T> {
+    fn item_metadata_mut(&mut self) -> impl Iterator<Item = &mut ItemMetadata> {
+        self.iter_mut().flat_map(T::item_metadata_mut)
+    }
+}
+
+impl HasItemMetadata for RowMetadata {
+    fn item_metadata_mut(&mut self) -> impl Iterator<Item = &mut ItemMetadata> {
+        std::iter::once(&mut self.item_metadata)
+    }
+}
+
+impl HasItemMetadata for ItemMatch {
+    fn item_metadata_mut(&mut self) -> impl Iterator<Item = &mut ItemMetadata> {
+        std::iter::once(&mut self.item_metadata)
+    }
+}
+
+impl HasItemMetadata for ClipboardItem {
+    fn item_metadata_mut(&mut self) -> impl Iterator<Item = &mut ItemMetadata> {
+        std::iter::once(&mut self.item_metadata)
+    }
+}
+
+fn hydrate_item_metadata_tags<'a>(
     db: &Database,
     metadata: impl IntoIterator<Item = &'a mut ItemMetadata>,
 ) -> DatabaseResult<()> {
     let metadata: Vec<_> = metadata.into_iter().collect();
+    if metadata.is_empty() {
+        return Ok(());
+    }
     let item_ids: Vec<_> = metadata.iter().map(|item| item.item_id.clone()).collect();
     let tags_by_id = db.get_tags_for_item_ids(&item_ids)?;
     for item in metadata {
@@ -159,6 +222,44 @@ fn table_column_not_null(
         }
     }
     Ok(false)
+}
+
+/// Whether `table` exists and already has `column`.
+/// Used so legacy `ALTER TABLE ADD COLUMN` steps can be guarded by
+/// introspection instead of running and ignoring the resulting error.
+fn table_has_column(
+    conn: &rusqlite::Connection,
+    table: &str,
+    column: &str,
+) -> DatabaseResult<bool> {
+    let pragma = format!("PRAGMA table_info({table})");
+    let mut stmt = conn.prepare(&pragma)?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Add `column` to `table` only when it is missing, so re-opens are no-ops
+/// and a genuine failure surfaces as a real error instead of being swallowed.
+fn add_column_if_missing(
+    conn: &rusqlite::Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> DatabaseResult<()> {
+    if table_has_column(conn, table, column)? {
+        return Ok(());
+    }
+    conn.execute(
+        &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+        [],
+    )?;
+    Ok(())
 }
 
 fn repair_item_ids(conn: &rusqlite::Connection) -> DatabaseResult<()> {
@@ -261,6 +362,161 @@ fn enforce_non_null_item_ids(conn: &rusqlite::Connection) -> DatabaseResult<()> 
             "foreign key violation after items migration in table `{table}`"
         )));
     }
+
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Schema migration ladder
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The schema version this build expects. Bump it and append a step to
+/// [`MIGRATIONS`] whenever the on-disk shape or stored data has to change.
+const SCHEMA_VERSION: i64 = 1;
+
+struct Migration {
+    step: fn(&rusqlite::Connection) -> DatabaseResult<()>,
+    /// Steps that rebuild a table need `PRAGMA foreign_keys=OFF`, which SQLite
+    /// ignores inside a transaction, so they drive their own transactions and
+    /// must stay idempotent to survive a retry after a partial failure.
+    self_transacted: bool,
+}
+
+/// Ordered ladder; `MIGRATIONS[n]` upgrades `user_version` `n` to `n + 1`.
+const MIGRATIONS: [Migration; SCHEMA_VERSION as usize] = [Migration {
+    step: migrate_0_to_1_legacy_shapes,
+    self_transacted: true,
+}];
+
+fn read_user_version(conn: &rusqlite::Connection) -> DatabaseResult<i64> {
+    Ok(conn.query_row("PRAGMA user_version", [], |row| row.get(0))?)
+}
+
+fn set_user_version(conn: &rusqlite::Connection, version: i64) -> DatabaseResult<()> {
+    // PRAGMA does not accept bound parameters.
+    conn.execute_batch(&format!("PRAGMA user_version = {version}"))?;
+    Ok(())
+}
+
+/// Walk the ladder from the database's recorded version up to [`SCHEMA_VERSION`].
+///
+/// A step is wrapped in a transaction together with its `user_version` bump
+/// wherever SQLite allows it, so a failure leaves the database at the previous
+/// version and the step is retried on the next open rather than half-applied.
+/// Steps that must run outside a transaction bump the version only after they
+/// have fully succeeded.
+fn run_migrations(conn: &rusqlite::Connection) -> DatabaseResult<()> {
+    let mut version = read_user_version(conn)?;
+
+    if version > SCHEMA_VERSION {
+        return Err(DatabaseError::InconsistentData(format!(
+            "database schema version {version} is newer than this build supports ({SCHEMA_VERSION})"
+        )));
+    }
+
+    while version < SCHEMA_VERSION {
+        let migration = &MIGRATIONS[version as usize];
+        if migration.self_transacted {
+            (migration.step)(conn)?;
+            set_user_version(conn, version + 1)?;
+        } else {
+            let tx = conn.unchecked_transaction()?;
+            (migration.step)(&tx)?;
+            set_user_version(&tx, version + 1)?;
+            tx.commit()?;
+        }
+        version += 1;
+    }
+
+    Ok(())
+}
+
+/// Bring any historical database shape up to the v1 baseline.
+///
+/// Databases predating `user_version` are all recorded as version 0 and may be
+/// at any shape between the first release and the v1 baseline, so this step has
+/// to stay introspection-based and idempotent. Later steps can assume the v1
+/// shape and be written as straightforward one-shot SQL.
+fn migrate_0_to_1_legacy_shapes(conn: &rusqlite::Connection) -> DatabaseResult<()> {
+    // Everything except the items-table rebuild is transactional.
+    let tx = conn.unchecked_transaction()?;
+    migrate_0_to_1_transactional_part(&tx)?;
+    tx.commit()?;
+
+    // The rebuild needs `PRAGMA foreign_keys=OFF`, which SQLite ignores inside
+    // a transaction, so it runs on its own and drives its own transaction.
+    enforce_non_null_item_ids(conn)?;
+
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_items_item_id ON items(item_id)",
+        [],
+    )?;
+
+    Ok(())
+}
+
+fn migrate_0_to_1_transactional_part(conn: &rusqlite::Connection) -> DatabaseResult<()> {
+    // `pinned` tags became `bookmark` tags.
+    conn.execute(
+        "INSERT OR IGNORE INTO item_tags (itemId, tag)
+         SELECT itemId, 'bookmark' FROM item_tags WHERE tag = 'pinned'",
+        [],
+    )?;
+    conn.execute("DELETE FROM item_tags WHERE tag = 'pinned'", [])?;
+
+    // Columns added to tables that predate them. Guarded by `PRAGMA table_info`
+    // so a missing column is added exactly once and any other failure is a real
+    // error rather than a silently ignored one.
+    add_column_if_missing(
+        conn,
+        "image_items",
+        "is_animated",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+    add_column_if_missing(
+        conn,
+        "file_items",
+        "previewKind",
+        "TEXT NOT NULL DEFAULT 'unavailable'",
+    )?;
+    add_column_if_missing(
+        conn,
+        "file_items",
+        "previewReason",
+        "TEXT DEFAULT 'migrated_without_preview'",
+    )?;
+    add_column_if_missing(conn, "file_items", "previewText", "TEXT")?;
+    add_column_if_missing(conn, "file_items", "previewData", "BLOB")?;
+    add_column_if_missing(
+        conn,
+        "file_items",
+        "previewTruncated",
+        "INTEGER NOT NULL DEFAULT 0",
+    )?;
+
+    // Bake the "Image: " label into existing image descriptions so older rows
+    // match the form new images are stored in (see `format_image_description`).
+    // Skips the bare "Image" placeholder and any row already prefixed. The
+    // description is denormalized into both `items.content` and
+    // `image_items.description`, so both are updated.
+    conn.execute(
+        "UPDATE items SET content = 'Image: ' || content
+         WHERE contentType = 'image'
+           AND content <> 'Image'
+           AND content NOT LIKE 'Image: %'",
+        [],
+    )?;
+    conn.execute(
+        "UPDATE image_items SET description = 'Image: ' || description
+         WHERE description <> 'Image'
+           AND description NOT LIKE 'Image: %'",
+        [],
+    )?;
+
+    // Logical item IDs: add the column to tables that predate it and repair
+    // missing/duplicate values. The caller then enforces NOT NULL + UNIQUE.
+    add_column_if_missing(conn, "items", "item_id", "TEXT")?;
+    repair_item_ids(conn)?;
 
     Ok(())
 }
@@ -379,6 +635,15 @@ impl Database {
     fn setup_schema(&self) -> DatabaseResult<()> {
         let conn = self.get_conn()?;
 
+        // Refuse a database written by a newer build before touching it: its
+        // shape may be one this build's DDL and queries would corrupt.
+        let version = read_user_version(&conn)?;
+        if version > SCHEMA_VERSION {
+            return Err(DatabaseError::InconsistentData(format!(
+                "database schema version {version} is newer than this build supports ({SCHEMA_VERSION})"
+            )));
+        }
+
         conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS items (
@@ -444,68 +709,13 @@ impl Database {
         "#,
         )?;
 
-        conn.execute(
-            "INSERT OR IGNORE INTO item_tags (itemId, tag)
-             SELECT itemId, 'bookmark' FROM item_tags WHERE tag = 'pinned'",
-            [],
-        )?;
-        conn.execute("DELETE FROM item_tags WHERE tag = 'pinned'", [])?;
-
-        // Migration: Add is_animated column to existing image_items tables
-        // This is idempotent - if the column already exists, the ALTER TABLE will fail silently
-        let _ = conn.execute(
-            "ALTER TABLE image_items ADD COLUMN is_animated INTEGER NOT NULL DEFAULT 0",
-            [],
-        );
-
-        // Migration: Add file preview snapshot columns to existing file_items tables.
-        let _ = conn.execute(
-            "ALTER TABLE file_items ADD COLUMN previewKind TEXT NOT NULL DEFAULT 'unavailable'",
-            [],
-        );
-        let _ = conn.execute(
-            "ALTER TABLE file_items ADD COLUMN previewReason TEXT DEFAULT 'migrated_without_preview'",
-            [],
-        );
-        let _ = conn.execute("ALTER TABLE file_items ADD COLUMN previewText TEXT", []);
-        let _ = conn.execute("ALTER TABLE file_items ADD COLUMN previewData BLOB", []);
-        let _ = conn.execute(
-            "ALTER TABLE file_items ADD COLUMN previewTruncated INTEGER NOT NULL DEFAULT 0",
-            [],
-        );
-
-        // Migration: bake the "Image: " label into existing image descriptions
-        // so older rows match the form new images are stored in (see
-        // `format_image_description`). Skips the bare "Image" placeholder and any
-        // row already prefixed, so it is safe to re-run. The description is
-        // denormalized into both `items.content` and `image_items.description`,
-        // so both are updated.
-        conn.execute(
-            "UPDATE items SET content = 'Image: ' || content
-             WHERE contentType = 'image'
-               AND content <> 'Image'
-               AND content NOT LIKE 'Image: %'",
-            [],
-        )?;
-        conn.execute(
-            "UPDATE image_items SET description = 'Image: ' || description
-             WHERE description <> 'Image'
-               AND description NOT LIKE 'Image: %'",
-            [],
-        )?;
-
-        // Migration: Add item_id column to existing items tables
-        let _ = conn.execute("ALTER TABLE items ADD COLUMN item_id TEXT", []);
-
-        // Repair missing / duplicate logical IDs before enforcing storage invariants.
-        repair_item_ids(&conn)?;
-        enforce_non_null_item_ids(&conn)?;
-
-        // Unique index on item_id
-        conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_items_item_id ON items(item_id)",
-            [],
-        )?;
+        // ── Versioned migration ladder ────────────────────────────────
+        // Each step runs exactly once per database and its failures are real
+        // errors. `PRAGMA user_version` records how far the ladder has been
+        // applied; a fresh database created by the DDL above is already at the
+        // current shape, but it still walks the ladder because every step is a
+        // no-op on an empty, current-shape database.
+        run_migrations(&conn)?;
 
         // ── Sync tables (delegated to purr-sync) ──────────────────────
         #[cfg(feature = "sync")]
@@ -840,6 +1050,9 @@ impl Database {
 
     /// Fetch lightweight item metadata for list display.
     /// No JOINs needed — `thumbnail` covers link images too.
+    ///
+    /// The rows come back [`Untagged`]: this projection does not join
+    /// `item_tags`, so the caller must `hydrate` before the metadata is usable.
     pub(crate) fn fetch_browse_row_metadata(
         &self,
         before_timestamp: Option<DateTime<Utc>>,
@@ -847,7 +1060,7 @@ impl Database {
         filter: Option<&ContentTypeFilter>,
         tag: Option<&ItemTag>,
         presentation: ListPresentationProfile,
-    ) -> DatabaseResult<(Vec<RowMetadata>, u64)> {
+    ) -> DatabaseResult<(Untagged<Vec<RowMetadata>>, u64)> {
         let conn = self.get_conn()?;
 
         let type_filter_clause = Self::content_type_where_clause(filter, "");
@@ -856,15 +1069,21 @@ impl Database {
             Self::tag_where_clause(tag, type_filter_clause.is_empty(), "WHERE", "AND");
         let tag_clause_and = Self::tag_where_clause(tag, false, "WHERE", "AND");
 
+        let type_filter_params = Self::content_type_params(filter);
+
         let count_sql = format!(
             "SELECT COUNT(*) FROM items {} {}",
             type_filter_clause, tag_clause_where
         );
-        let total_count: i64 = if let Some(tag) = tag {
-            conn.query_row(&count_sql, params![tag.database_str()], |row| row.get(0))?
-        } else {
-            conn.query_row(&count_sql, [], |row| row.get(0))?
-        };
+        let mut count_params = type_filter_params.clone();
+        if let Some(tag) = tag {
+            count_params.push(tag.database_str().to_string().into());
+        }
+        let total_count: i64 = conn.query_row(
+            &count_sql,
+            rusqlite::params_from_iter(count_params),
+            |row| row.get(0),
+        )?;
         let total_count = total_count as u64;
 
         let sql = if before_timestamp.is_some() {
@@ -882,30 +1101,24 @@ impl Database {
         };
 
         let mut stmt = conn.prepare(&sql)?;
-        let raw_items = if let Some(ts) = before_timestamp {
-            let ts_str = ts.format("%Y-%m-%d %H:%M:%S%.f").to_string();
-            let mut param_values: Vec<rusqlite::types::Value> = vec![ts_str.into()];
-            if let Some(tag) = tag {
-                param_values.push(tag.database_str().to_string().into());
-            }
-            param_values.push((limit as i64).into());
-            stmt.query_map(
+        // Parameter order mirrors the statement text: optional `timestamp <`
+        // bound first, then the content-type `IN (...)` list, then the tag, then
+        // the limit.
+        let mut param_values: Vec<rusqlite::types::Value> = Vec::new();
+        if let Some(ts) = before_timestamp {
+            param_values.push(ts.format("%Y-%m-%d %H:%M:%S%.f").to_string().into());
+        }
+        param_values.extend(type_filter_params);
+        if let Some(tag) = tag {
+            param_values.push(tag.database_str().to_string().into());
+        }
+        param_values.push((limit as i64).into());
+        let raw_items = stmt
+            .query_map(
                 rusqlite::params_from_iter(param_values),
                 Self::row_to_raw_row_metadata,
             )?
-            .collect::<Result<Vec<_>, _>>()?
-        } else {
-            let mut param_values: Vec<rusqlite::types::Value> = Vec::new();
-            if let Some(tag) = tag {
-                param_values.push(tag.database_str().to_string().into());
-            }
-            param_values.push((limit as i64).into());
-            stmt.query_map(
-                rusqlite::params_from_iter(param_values),
-                Self::row_to_raw_row_metadata,
-            )?
-            .collect::<Result<Vec<_>, _>>()?
-        };
+            .collect::<Result<Vec<_>, _>>()?;
 
         let items = raw_items
             .into_iter()
@@ -917,7 +1130,7 @@ impl Database {
             })
             .collect();
 
-        Ok((items, total_count))
+        Ok((Untagged::new(items), total_count))
     }
 
     /// Fetch items by IDs, preserving the order of the input IDs
@@ -1013,6 +1226,56 @@ impl Database {
             .iter()
             .filter_map(|id| id_to_item.get(*id).cloned())
             .collect())
+    }
+
+    /// Resolve the set of `item_id`s matching a content-type and/or tag filter.
+    ///
+    /// Used to push browser filters *into* trigram recall instead of discarding
+    /// non-matching candidates after ranking has already truncated to
+    /// `MAX_RESULTS`. Returns `None` when the filter selects everything (no
+    /// content-type narrowing and no tag), so callers can skip the scan
+    /// entirely.
+    ///
+    /// The result is capped at `max_ids`; exceeding the cap also yields `None`,
+    /// which degrades to the old post-filter behaviour rather than holding an
+    /// unbounded id set in memory. The cap only bites for filters that select a
+    /// large fraction of the history (in practice `Text`), where recall is
+    /// already dominated by matching items.
+    pub(crate) fn resolve_filter_item_ids(
+        &self,
+        filter: Option<&ContentTypeFilter>,
+        tag: Option<&ItemTag>,
+        max_ids: usize,
+    ) -> DatabaseResult<Option<HashSet<String>>> {
+        let type_clause = Self::content_type_where_clause(filter, "");
+        let tag_clause = Self::tag_where_clause(tag, type_clause.is_empty(), "WHERE", "AND");
+        if type_clause.is_empty() && tag_clause.is_empty() {
+            return Ok(None);
+        }
+
+        let conn = self.get_conn()?;
+        // One extra row distinguishes "exactly at the cap" from "over the cap".
+        let sql = format!(
+            "SELECT item_id FROM items {} {} LIMIT ?",
+            type_clause, tag_clause
+        );
+        let mut param_values: Vec<rusqlite::types::Value> = Self::content_type_params(filter);
+        if let Some(tag) = tag {
+            param_values.push(tag.database_str().to_string().into());
+        }
+        param_values.push((max_ids as i64 + 1).into());
+
+        let mut stmt = conn.prepare(&sql)?;
+        let ids: HashSet<String> = stmt
+            .query_map(rusqlite::params_from_iter(param_values), |row| {
+                row.get::<_, String>(0)
+            })?
+            .collect::<Result<HashSet<_>, _>>()?;
+
+        if ids.len() > max_ids {
+            return Ok(None);
+        }
+        Ok(Some(ids))
     }
 
     /// Filter string item_ids by tag, returning those that have the tag.
@@ -1142,6 +1405,10 @@ impl Database {
 
     /// Get IDs that would be pruned (for index deletion before database prune).
     /// Returns (row_id, item_id) pairs so callers can delete from both DB and search index.
+    ///
+    /// This is the single source of truth for the prune set: callers pass the
+    /// returned row IDs straight to [`Database::delete_items_by_ids`] rather
+    /// than letting the database recompute an independent set.
     pub fn get_prunable_ids(
         &self,
         max_bytes: i64,
@@ -1178,6 +1445,29 @@ impl Database {
         Ok(ids)
     }
 
+    /// Delete exactly the given row IDs in one transaction (CASCADE handles children).
+    /// Returns the number of rows actually deleted.
+    pub fn delete_items_by_ids(&self, ids: &[i64]) -> DatabaseResult<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+
+        let conn = self.get_conn()?;
+        let tx = conn.unchecked_transaction()?;
+        let mut deleted = 0usize;
+        // Batched to stay well under SQLite's bound-parameter limit.
+        for chunk in ids.chunks(DELETE_BATCH_SIZE) {
+            let placeholders = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!("DELETE FROM items WHERE id IN ({})", placeholders);
+            deleted += tx.execute(&sql, rusqlite::params_from_iter(chunk.iter()))?;
+        }
+        tx.commit()?;
+
+        Ok(deleted)
+    }
+
     /// Search for short queries (<3 chars) using prefix matching + substring LIKE on recent items.
     /// Prefix-only search for very short queries (< 3 chars).
     /// Uses LIKE prefix matching which can leverage the index.
@@ -1206,6 +1496,7 @@ impl Database {
         );
         let mut stmt = conn.prepare(&sql)?;
         let mut param_values: Vec<rusqlite::types::Value> = vec![prefix_pattern.into()];
+        param_values.extend(Self::content_type_params(filter));
         if let Some(tag) = tag {
             param_values.push(tag.database_str().to_string().into());
         }
@@ -1243,7 +1534,7 @@ impl Database {
             type_filter_where, tag_filter_where
         );
         let mut stmt = conn.prepare(&sql)?;
-        let mut param_values: Vec<rusqlite::types::Value> = Vec::new();
+        let mut param_values: Vec<rusqlite::types::Value> = Self::content_type_params(filter);
         if let Some(tag) = tag {
             param_values.push(tag.database_str().to_string().into());
         }
@@ -1261,52 +1552,41 @@ impl Database {
         Ok(results)
     }
 
-    /// Prune old items to stay under max size (CASCADE handles children)
-    pub fn prune_to_size(&self, max_bytes: i64, keep_ratio: f64) -> DatabaseResult<usize> {
-        let current_size = self.database_size()?;
-        if current_size <= max_bytes {
-            return Ok(0);
-        }
-
-        let conn = self.get_conn()?;
-
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM items", [], |row| row.get(0))?;
-        if count == 0 {
-            return Ok(0);
-        }
-
-        let avg_item_size = current_size / count;
-        if avg_item_size == 0 {
-            return Ok(0);
-        }
-        let target_size = (max_bytes as f64 * keep_ratio) as i64;
-        let items_to_delete =
-            std::cmp::max(100, ((current_size - target_size) / avg_item_size) as usize);
-
-        conn.execute(
-            r#"DELETE FROM items WHERE id IN (
-                SELECT id FROM items ORDER BY timestamp ASC LIMIT ?1
-            )"#,
-            [items_to_delete as i64],
-        )?;
-
-        Ok(items_to_delete)
-    }
-
     /// Build a SQL clause for filtering by content type.
+    ///
+    /// The `IN (...)` list is bound as parameters rather than interpolated, so
+    /// callers must splice [`Self::content_type_params`] into their parameter
+    /// vector at the position where this clause appears in the statement.
     fn content_type_where_clause(filter: Option<&ContentTypeFilter>, prefix: &str) -> String {
-        let types = match filter {
-            Some(f) => f.database_types(),
-            None => None,
-        };
-        match types {
+        match Self::content_type_db_types(filter) {
             None => String::new(),
             Some(types) => {
-                let quoted: Vec<String> = types.iter().map(|t| format!("'{}'", t)).collect();
+                let placeholders = std::iter::repeat_n("?", types.len())
+                    .collect::<Vec<_>>()
+                    .join(",");
                 let keyword = if prefix.is_empty() { "WHERE" } else { prefix };
-                format!("{} contentType IN ({})", keyword, quoted.join(","))
+                format!("{} contentType IN ({})", keyword, placeholders)
             }
         }
+    }
+
+    /// Bound parameters matching the placeholders in
+    /// [`Self::content_type_where_clause`], in statement order.
+    fn content_type_params(filter: Option<&ContentTypeFilter>) -> Vec<rusqlite::types::Value> {
+        Self::content_type_db_types(filter)
+            .map(|types| {
+                types
+                    .iter()
+                    .map(|t| rusqlite::types::Value::from(t.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn content_type_db_types(
+        filter: Option<&ContentTypeFilter>,
+    ) -> Option<&'static [&'static str]> {
+        filter.and_then(|f| f.database_types())
     }
 
     fn tag_where_clause(
@@ -2340,6 +2620,7 @@ mod tests {
         let (items, total_count) = db
             .fetch_browse_row_metadata(None, 1, None, None, ListPresentationProfile::CompactRow)
             .unwrap();
+        let items = items.hydrate(&db).unwrap();
 
         assert_eq!(total_count, 1);
         assert_eq!(items.len(), 1);
@@ -2354,6 +2635,119 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let conn = db.get_conn().unwrap();
         assert!(table_column_not_null(&conn, "items", "item_id").unwrap());
+    }
+
+    #[test]
+    fn test_fresh_database_is_stamped_at_current_schema_version() {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.get_conn().unwrap();
+        assert_eq!(read_user_version(&conn).unwrap(), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn test_migrations_run_once_and_are_skipped_on_reopen() {
+        let temp = NamedTempFile::new().unwrap();
+        {
+            let db = Database::open(temp.path()).unwrap();
+            let conn = db.get_conn().unwrap();
+            assert_eq!(read_user_version(&conn).unwrap(), SCHEMA_VERSION);
+        }
+
+        // A reopen must not re-run the ladder. Seed a row whose description
+        // the 0->1 "Image: " rewrite would touch if it ran again, and assert
+        // it survives untouched.
+        {
+            let conn = rusqlite::Connection::open(temp.path()).unwrap();
+            conn.execute(
+                "INSERT INTO items (item_id, contentType, contentHash, content, timestamp)
+                 VALUES ('reopen-image', 'image', 'hash-reopen', 'Image: a cat', '2026-01-01 00:00:00')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let db = Database::open(temp.path()).unwrap();
+        let conn = db.get_conn().unwrap();
+        assert_eq!(read_user_version(&conn).unwrap(), SCHEMA_VERSION);
+        let content: String = conn
+            .query_row(
+                "SELECT content FROM items WHERE item_id = 'reopen-image'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            content, "Image: a cat",
+            "the 0->1 migration must not re-run on reopen"
+        );
+    }
+
+    #[test]
+    fn test_legacy_database_is_upgraded_to_current_schema_version() {
+        let temp = NamedTempFile::new().unwrap();
+        {
+            let conn = rusqlite::Connection::open(temp.path()).unwrap();
+            conn.execute_batch(
+                r#"
+                PRAGMA foreign_keys=ON;
+                CREATE TABLE items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    contentType TEXT NOT NULL,
+                    contentHash TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    sourceApp TEXT,
+                    sourceAppBundleId TEXT,
+                    thumbnail BLOB,
+                    colorRgba INTEGER
+                );
+                INSERT INTO items (id, contentType, contentHash, content, timestamp)
+                VALUES (1, 'text', 'hash-legacy', 'legacy', '2026-01-01 00:00:00');
+                "#,
+            )
+            .unwrap();
+            // Legacy databases predate `user_version` and so report 0.
+            assert_eq!(read_user_version(&conn).unwrap(), 0);
+        }
+
+        let db = Database::open(temp.path()).unwrap();
+        let conn = db.get_conn().unwrap();
+        assert_eq!(read_user_version(&conn).unwrap(), SCHEMA_VERSION);
+        assert!(table_column_not_null(&conn, "items", "item_id").unwrap());
+    }
+
+    #[test]
+    fn test_database_from_the_future_is_rejected() {
+        let temp = NamedTempFile::new().unwrap();
+        {
+            let conn = rusqlite::Connection::open(temp.path()).unwrap();
+            conn.execute_batch(&format!("PRAGMA user_version = {}", SCHEMA_VERSION + 1))
+                .unwrap();
+        }
+
+        match Database::open(temp.path()).err() {
+            Some(DatabaseError::InconsistentData(message)) => {
+                assert!(message.contains("newer than this build supports"));
+            }
+            other => panic!("expected a future-version rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_delete_items_by_ids_deletes_exactly_the_given_rows() {
+        let db = Database::open_in_memory().unwrap();
+        let keep = seed_base_item(&db, "text", "keep me", None);
+        let drop_a = seed_base_item(&db, "text", "drop a", None);
+        let drop_b = seed_base_item(&db, "text", "drop b", None);
+
+        let deleted = db.delete_items_by_ids(&[drop_a, drop_b]).unwrap();
+        assert_eq!(deleted, 2);
+
+        let remaining = db.fetch_all_item_ids().unwrap();
+        assert_eq!(remaining, vec![keep]);
+
+        // Empty input is a no-op, not an error.
+        assert_eq!(db.delete_items_by_ids(&[]).unwrap(), 0);
     }
 
     #[test]

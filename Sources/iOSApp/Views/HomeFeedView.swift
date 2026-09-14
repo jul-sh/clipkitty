@@ -269,9 +269,30 @@ struct HomeFeedView: View {
                     }
                 }
             }
+
+            truncationFooter
         }
         .safeAreaPadding(.horizontal, Self.feedGutter)
         .padding(.vertical, Self.feedRowSpacing / 2)
+    }
+
+    /// The browse feed is capped by the store while `totalCount` is the real
+    /// row count, so a long history would otherwise just end without a word.
+    @ViewBuilder
+    private var truncationFooter: some View {
+        if let totalCount = viewModel.totalCount, totalCount > viewModel.itemCount {
+            VStack(spacing: 2) {
+                Text(String(localized: "Showing \(viewModel.itemCount) of \(totalCount)"))
+                    .font(.footnote.weight(.medium))
+                Text(String(localized: "Search to find older clips"))
+                    .font(.footnote)
+            }
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("FeedTruncationFooter")
+        }
     }
 
     /// Load-state signal for UI automation, the iOS counterpart of the Mac's
@@ -715,6 +736,11 @@ struct HomeFeedView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .safeAreaPadding(.horizontal, 32)
+            Button(String(localized: "Retry")) {
+                viewModel.retryFailedSearch()
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.top, 4)
             Spacer()
         }
     }

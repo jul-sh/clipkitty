@@ -27,6 +27,7 @@ struct GeneralSettingsView: View {
     let store: ClipboardStore
     #if ENABLE_SPARKLE_UPDATES
         var onInstallUpdate: (() -> Void)? = nil
+        var onCheckForUpdates: (() -> Void)? = nil
     #endif
 
     private let limitScale = StorageLimitScale()
@@ -78,6 +79,24 @@ struct GeneralSettingsView: View {
                         Text(message)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+                    }
+
+                    // Account status alone cannot tell the user whether sync is
+                    // working; the engine's own status can, and it was never shown.
+                    if settings.syncEnabled, isICloudAvailable, let engine = store.syncEngine {
+                        HStack {
+                            Text(Self.syncStatusText(engine.status))
+                                .font(.subheadline)
+                                .foregroundStyle(Self.isSyncFailure(engine.status) ? .red : .secondary)
+                                .textSelection(.enabled)
+                            Spacer()
+                            Button(String(localized: "Sync now")) {
+                                engine.start()
+                                engine.handleRemoteNotification()
+                            }
+                            .font(.subheadline)
+                        }
+                        .accessibilityIdentifier("SyncStatusRow")
                     }
                 #endif
             }
@@ -180,11 +199,55 @@ struct GeneralSettingsView: View {
                 isOn: $settings.autoInstallUpdates
             )
 
-            if !settings.autoInstallUpdates, case .available = runtimeState.updateCheckState {
-                Button(String(localized: "Install Update")) {
-                    onInstallUpdate?()
+            // Every updater state is rendered: a failed or in-progress check
+            // used to be indistinguishable from "no update available".
+            HStack(spacing: 10) {
+                switch runtimeState.updateCheckState {
+                case .idle:
+                    Text(String(localized: "Up to date"))
+                        .foregroundStyle(.secondary)
+                case .checking:
+                    ProgressView().controlSize(.small)
+                    Text(String(localized: "Checking for updates…"))
+                        .foregroundStyle(.secondary)
+                case .downloading:
+                    ProgressView().controlSize(.small)
+                    Text(String(localized: "Downloading update…"))
+                        .foregroundStyle(.secondary)
+                case .installing:
+                    ProgressView().controlSize(.small)
+                    Text(String(localized: "Installing update…"))
+                        .foregroundStyle(.secondary)
+                case .available:
+                    Text(String(localized: "Update available"))
+                    if !settings.autoInstallUpdates {
+                        Button(String(localized: "Install Update")) {
+                            onInstallUpdate?()
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                case .checkFailed:
+                    Text(String(localized: "Couldn’t check for updates"))
+                        .foregroundStyle(.red)
                 }
-                .buttonStyle(.borderedProminent)
+                Spacer()
+                Button(String(localized: "Check for Updates")) {
+                    onCheckForUpdates?()
+                }
+                .disabled({
+                    switch runtimeState.updateCheckState {
+                    case .checking, .downloading, .installing: true
+                    case .idle, .available, .checkFailed: false
+                    }
+                }())
+            }
+            .font(.subheadline)
+
+            if case let .checkFailed(errorMessage) = runtimeState.updateCheckState {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -263,14 +326,42 @@ struct GeneralSettingsView: View {
         }
     }
 
+    #if ENABLE_ICLOUD_SYNC
+        private static func syncStatusText(_ status: SyncEngine.SyncStatus, now: Date = Date()) -> String {
+            switch status {
+            case .idle:
+                return String(localized: "Waiting to sync")
+            case .connecting:
+                return String(localized: "Connecting")
+            case let .syncing(activity):
+                return activity.statusDescription
+            case let .synced(lastSync):
+                guard abs(lastSync.timeIntervalSince(now)) >= 60 else {
+                    return String(localized: "Synced just now")
+                }
+                let formatter = RelativeDateTimeFormatter()
+                formatter.unitsStyle = .full
+                let relative = formatter.localizedString(for: lastSync, relativeTo: now)
+                return String(localized: "Synced \(relative)")
+            case let .error(message):
+                let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? String(localized: "Sync failed") : trimmed
+            case .temporarilyUnavailable:
+                return String(localized: "iCloud temporarily unavailable")
+            case .unavailable:
+                return String(localized: "iCloud not available")
+            }
+        }
+
+        private static func isSyncFailure(_ status: SyncEngine.SyncStatus) -> Bool {
+            if case .error = status { return true }
+            return false
+        }
+    #endif
+
     private var launchAtLoginBinding: Binding<Bool> {
         Binding(
-            get: {
-                switch launchAtLogin.state.registrationStatus {
-                case .enabled: true
-                case .disabled: false
-                }
-            },
+            get: { launchAtLogin.state.registrationStatus.isOn },
             set: { newValue in
                 if launchAtLogin.setEnabled(newValue) {
                     settings.launchAtLoginEnabled = newValue

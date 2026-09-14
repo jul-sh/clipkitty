@@ -1216,6 +1216,9 @@ enum ToastMessage: Equatable {
     case unbookmarked
     case addSucceeded
     case addFailed(String)
+    /// A delete, bookmark or edit that the store rejected after the UI had
+    /// already applied it optimistically.
+    case mutationFailed(String)
     case clipboardEmpty
 
     var notificationRequest: NotificationRequest {
@@ -1228,7 +1231,7 @@ enum ToastMessage: Equatable {
             return .passive(message: String(localized: "Removed bookmark"), iconSystemName: "bookmark.slash")
         case .addSucceeded:
             return .passive(message: String(localized: "Added"), iconSystemName: "plus.circle")
-        case let .addFailed(reason):
+        case let .addFailed(reason), let .mutationFailed(reason):
             return .passive(
                 message: String(localized: "Failed: \(reason)"),
                 iconSystemName: "exclamationmark.triangle"
@@ -1827,6 +1830,22 @@ struct ClipKittyiOSApp: App {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .safeAreaPadding(.horizontal, 32)
+            Button(String(localized: "Try Again")) {
+                retryAfterBootstrapFailure()
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("BootstrapRetryButton")
         }
+    }
+
+    /// The user's own retry after the automatic retry budget ran out. Takes
+    /// the same path the scheduled retries take: rest, then resume as if the
+    /// scene had just activated, with a fresh retry budget.
+    private func retryAfterBootstrapFailure() {
+        guard case .failed = launchState else { return }
+        resumeRetryAttempt = 0
+        launchState = .suspended(.resting)
+        guard scenePhase != .background else { return }
+        handleForegroundActivation()
     }
 }

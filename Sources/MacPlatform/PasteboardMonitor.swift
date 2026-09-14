@@ -279,8 +279,10 @@ public final class PasteboardMonitor {
         for type in [NSPasteboard.PasteboardType.tiff, .png] {
             guard availableTypes.contains(type) else { continue }
             if let rawData = pasteboard.data(forType: type) {
-                // Skip this image type when it exceeds the ingestion ceiling.
-                guard rawData.count <= Self.maxImageByteCount else { return }
+                // Skip this representation when it exceeds the ingestion
+                // ceiling and try the next one: an oversized TIFF often has a
+                // much smaller PNG of the same clip beside it.
+                guard rawData.count <= Self.maxImageByteCount else { continue }
                 onDetection(.image(data: rawData, isAnimated: false, sourceApp: sourceApp, sourceAppBundleId: sourceAppBundleID))
                 return
             }

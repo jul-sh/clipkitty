@@ -1,6 +1,188 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Preview truncated": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Vorschau gekürzt" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Preview truncated" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Vista previa truncada" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Aperçu tronqué" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "プレビューは省略されています" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "미리보기가 잘림" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Pré-visualização truncada" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Предпросмотр обрезан" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "预览已截断" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "預覽已截斷" } }
+      }
+    },
+    "Sync failed": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Synchronisierung fehlgeschlagen" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Sync failed" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Error de sincronización" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Échec de la synchronisation" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "同期に失敗しました" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "동기화 실패" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Falha na sincronização" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Ошибка синхронизации" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "同步失败" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "同步失敗" } }
+      }
+    },
+    "Connecting": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Verbinden" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Connecting" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Conectando" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Connexion" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "接続中" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "연결 중" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Conectando" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Подключение" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在连接" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在連線" } }
+      }
+    },
+    "Synced just now": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Gerade synchronisiert" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Synced just now" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Sincronizado justo ahora" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Synchronisé à l’instant" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "たった今同期しました" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "방금 동기화됨" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Sincronizado agora mesmo" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Синхронизировано только что" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "刚刚同步" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "剛剛同步" } }
+      }
+    },
+    "Sync now": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Jetzt synchronisieren" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Sync now" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Sincronizar ahora" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Synchroniser maintenant" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "今すぐ同期" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "지금 동기화" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Sincronizar agora" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Синхронизировать сейчас" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "立即同步" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "立即同步" } }
+      }
+    },
+    "Couldn’t check for updates": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Updates konnten nicht gesucht werden" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Couldn’t check for updates" } },
+        "es": { "stringUnit": { "state": "translated", "value": "No se pudo buscar actualizaciones" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Impossible de rechercher des mises à jour" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "アップデートを確認できませんでした" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "업데이트를 확인할 수 없음" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Não foi possível buscar atualizações" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Не удалось проверить обновления" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "无法检查更新" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "無法檢查更新" } }
+      }
+    },
+    "Checking for updates…": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Suche nach Updates…" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Checking for updates…" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Buscando actualizaciones…" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Recherche de mises à jour…" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "アップデートを確認中…" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "업데이트 확인 중…" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Buscando atualizações…" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Проверка обновлений…" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在检查更新…" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在檢查更新…" } }
+      }
+    },
+    "Showing %lld of %lld": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "%lld von %lld angezeigt" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Showing %lld of %lld" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Mostrando %lld de %lld" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "%lld sur %lld affichés" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "%lld / %lld 件を表示中" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "%lld / %lld개 표시 중" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Mostrando %lld de %lld" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Показано %lld из %lld" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "显示 %lld / %lld" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "顯示 %lld / %lld" } }
+      }
+    },
+    "Launch at login needs your approval in System Settings › Login Items.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "„Bei der Anmeldung starten“ muss in den Systemeinstellungen › Anmeldeobjekte genehmigt werden." } },
+        "en": { "stringUnit": { "state": "translated", "value": "Launch at login needs your approval in System Settings › Login Items." } },
+        "es": { "stringUnit": { "state": "translated", "value": "Abrir al iniciar sesión necesita tu aprobación en Ajustes del Sistema › Ítems de inicio." } },
+        "fr": { "stringUnit": { "state": "translated", "value": "L’ouverture à la connexion doit être approuvée dans Réglages Système › Ouverture." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ログイン時に起動するには、システム設定 › ログイン項目で許可が必要です。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "로그인 시 실행하려면 시스템 설정 › 로그인 항목에서 승인이 필요합니다." } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Abrir ao iniciar sessão precisa da sua aprovação em Ajustes do Sistema › Itens de Início." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Для запуска при входе требуется подтверждение в Системных настройках › Объекты входа." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "登录时启动需要在“系统设置 › 登录项”中批准。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "登入時啟動需要在「系統設定 › 登入項目」中核准。" } }
+      }
+    },
+    "Couldn’t clear history": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Verlauf konnte nicht gelöscht werden" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Couldn’t clear history" } },
+        "es": { "stringUnit": { "state": "translated", "value": "No se pudo borrar el historial" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Impossible d’effacer l’historique" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "履歴を消去できませんでした" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "기록을 지울 수 없음" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Não foi possível limpar o histórico" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Не удалось очистить историю" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "无法清除历史记录" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "無法清除歷史記錄" } }
+      }
+    },
+    "Clearing…": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Wird gelöscht…" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Clearing…" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Borrando…" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Effacement…" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "消去中…" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "지우는 중…" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Limpando…" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Очистка…" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在清除…" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在清除…" } }
+      }
+    },
+    "Couldn’t delete %lld of %lld items": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "%lld von %lld Objekten konnten nicht gelöscht werden" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Couldn’t delete %lld of %lld items" } },
+        "es": { "stringUnit": { "state": "translated", "value": "No se pudieron eliminar %lld de %lld elementos" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Impossible de supprimer %lld éléments sur %lld" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "%lld / %lld 件を削除できませんでした" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "%lld / %lld개 항목을 삭제할 수 없음" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Não foi possível excluir %lld de %lld itens" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Не удалось удалить %lld из %lld элементов" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "无法删除 %lld / %lld 个项目" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "無法刪除 %lld / %lld 個項目" } }
+      }
+    },
+    "Couldn’t copy": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Kopieren fehlgeschlagen" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Couldn’t copy" } },
+        "es": { "stringUnit": { "state": "translated", "value": "No se pudo copiar" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Impossible de copier" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "コピーできませんでした" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "복사할 수 없음" } },
+        "pt-BR": { "stringUnit": { "state": "translated", "value": "Não foi possível copiar" } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Не удалось скопировать" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "无法拷贝" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "無法拷貝" } }
+      }
+    },
     "Indexing…": {
       "localizations": {
         "de": { "stringUnit": { "state": "translated", "value": "Indizierung…" } },

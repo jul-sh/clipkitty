@@ -12,16 +12,32 @@ extension SMAppService: LaunchAtLoginServiceProtocol {}
 public enum LaunchAtLoginState: Equatable {
     case enabled
     case disabled
+    /// Registration succeeded but macOS is holding it until the user approves
+    /// ClipKitty under System Settings › Login Items. The toggle stays on
+    /// (that is the user's intent) and the message says what is missing.
+    case requiresApproval
     case registrationFailed(currentStatus: RegistrationStatus)
     case unregistrationFailed(currentStatus: RegistrationStatus)
 
     public enum RegistrationStatus: Equatable {
         case enabled
         case disabled
+        case requiresApproval
+
+        /// What the toggle should show: approval-pending is on, because
+        /// the registration itself succeeded.
+        public var isOn: Bool {
+            switch self {
+            case .enabled, .requiresApproval: return true
+            case .disabled: return false
+            }
+        }
     }
 
     public var displayMessage: String? {
         switch self {
+        case .requiresApproval:
+            return String(localized: "Launch at login needs your approval in System Settings › Login Items.")
         case .registrationFailed:
             return String(localized: "Could not enable launch at login. Please add ClipKitty manually in System Settings.")
         case .unregistrationFailed:
@@ -37,6 +53,8 @@ public enum LaunchAtLoginState: Equatable {
             return .enabled
         case .disabled:
             return .disabled
+        case .requiresApproval:
+            return .requiresApproval
         case let .registrationFailed(currentStatus), let .unregistrationFailed(currentStatus):
             return currentStatus
         }
@@ -70,6 +88,8 @@ public final class LaunchAtLogin: ObservableObject {
             state = .enabled
         case .disabled:
             state = .disabled
+        case .requiresApproval:
+            state = .requiresApproval
         }
     }
 
@@ -77,7 +97,9 @@ public final class LaunchAtLogin: ObservableObject {
         switch service.status {
         case .enabled:
             return .enabled
-        case .notRegistered, .requiresApproval, .notFound:
+        case .requiresApproval:
+            return .requiresApproval
+        case .notRegistered, .notFound:
             return .disabled
         @unknown default:
             return .disabled

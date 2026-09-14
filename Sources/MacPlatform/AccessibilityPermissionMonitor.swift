@@ -38,6 +38,11 @@ public final class AccessibilityPermissionMonitor {
     private var pollingTask: Task<Void, Never>?
     private let client: AccessibilityPermissionClient
 
+    /// Views currently asking for polling. Several permission-aware views can
+    /// be on screen at once (Welcome plus Settings during onboarding); the
+    /// first one to disappear must not silence the rest.
+    private var observerCount = 0
+
     /// Polling interval while a permission-related view is visible.
     private let pollingIntervalMs: Int = 500
 
@@ -50,10 +55,11 @@ public final class AccessibilityPermissionMonitor {
         status = Self.currentStatus(using: client)
     }
 
-    /// Start monitoring for permission changes.
-    /// Polling continues until `stop()` is called so revocation and stale grants
-    /// are reflected while Settings is open.
+    /// Start monitoring for permission changes. Balanced by `stop()`; polling
+    /// runs while at least one caller is observing, so revocation and stale
+    /// grants are reflected while a permission view is open.
     public func start() {
+        observerCount += 1
         guard pollingTask == nil else { return }
 
         refresh()
@@ -67,10 +73,18 @@ public final class AccessibilityPermissionMonitor {
         }
     }
 
-    /// Stop monitoring for permission changes.
+    /// Stop monitoring for permission changes. Polling ends once every
+    /// `start()` has been matched by a `stop()`.
     public func stop() {
+        observerCount = max(0, observerCount - 1)
+        guard observerCount == 0 else { return }
         pollingTask?.cancel()
         pollingTask = nil
+    }
+
+    /// Whether polling is active. Exposed for tests.
+    public var isPolling: Bool {
+        pollingTask != nil
     }
 
     /// Request accessibility permission.

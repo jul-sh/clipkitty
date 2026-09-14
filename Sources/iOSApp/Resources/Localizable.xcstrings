@@ -1,6 +1,146 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Saves the clipboard each time you open ClipKitty. Allow “Paste from Other Apps” in Settings so iOS stops asking every time." : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Speichert die Zwischenablage bei jedem Öffnen von ClipKitty. Erlaube „Aus anderen Apps einsetzen“ in den Einstellungen, damit iOS nicht jedes Mal nachfragt." } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Saves the clipboard each time you open ClipKitty. Allow “Paste from Other Apps” in Settings so iOS stops asking every time." } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Guarda el portapapeles cada vez que abres ClipKitty. Permite “Pegar desde otras apps” en Ajustes para que iOS deje de preguntar cada vez." } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Enregistre le presse-papiers à chaque ouverture de ClipKitty. Autorisez « Coller depuis d’autres apps » dans Réglages pour qu’iOS cesse de demander à chaque fois." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ClipKittyを開くたびにクリップボードを保存します。設定で「他のAppからペースト」を許可すると、iOSが毎回確認しなくなります。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty를 열 때마다 클립보드를 저장합니다. 설정에서 “다른 앱에서 붙여넣기”를 허용하면 iOS가 매번 묻지 않습니다." } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Salva a área de transferência sempre que você abre o ClipKitty. Permita “Colar de outros apps” nos Ajustes para que o iOS pare de perguntar toda vez." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Сохраняет буфер обмена при каждом открытии ClipKitty. Разрешите «Вставку из других приложений» в Настройках, чтобы iOS перестала спрашивать каждый раз." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "每次打开 ClipKitty 时保存剪贴板。在“设置”中允许“从其他 App 粘贴”，iOS 就不会每次都询问。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "每次打開 ClipKitty 時儲存剪貼簿。在「設定」中允許「從其他 App 貼上」，iOS 就不會每次都詢問。" } }
+      }
+    },
+    "Set Up Clipboard Access…" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Zugriff auf Zwischenablage einrichten…" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Set Up Clipboard Access…" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Configurar acceso al portapapeles…" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Configurer l’accès au presse-papiers…" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "クリップボードへのアクセスを設定…" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "클립보드 접근 설정…" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Configurar acesso à área de transferência…" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Настроить доступ к буферу обмена…" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "设置剪贴板访问…" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "設定剪貼簿取用…" } }
+      }
+    },
+    "Add from Clipboard" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Aus Zwischenablage hinzufügen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add from Clipboard" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Añadir desde el portapapeles" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Ajouter depuis le presse-papiers" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "クリップボードから追加" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "클립보드에서 추가" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Adicionar da área de transferência" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Добавить из буфера обмена" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "从剪贴板添加" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "從剪貼簿加入" } }
+      }
+    },
+    "Write Text" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Text schreiben" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Write Text" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Escribir texto" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Écrire du texte" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "テキストを書く" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "텍스트 작성" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Escrever texto" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Написать текст" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "输入文本" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "輸入文字" } }
+      }
+    },
+    "Add Photo" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Foto hinzufügen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Add Photo" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Añadir foto" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Ajouter une photo" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "写真を追加" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "사진 추가" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Adicionar foto" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Добавить фото" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "添加照片" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "加入照片" } }
+      }
+    },
+    "Search to find older clips" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Suche, um ältere Clips zu finden" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Search to find older clips" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Busca para encontrar clips más antiguos" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Recherchez pour trouver des clips plus anciens" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "古いクリップは検索で見つけられます" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "이전 클립은 검색으로 찾을 수 있습니다" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Pesquise para encontrar clipes mais antigos" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Используйте поиск, чтобы найти более старые клипы" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "搜索以查找更早的剪贴内容" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "搜尋以尋找更早的剪貼內容" } }
+      }
+    },
+    "Try Again" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Erneut versuchen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Try Again" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Reintentar" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Réessayer" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "再試行" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "다시 시도" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Tentar novamente" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Повторить" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重试" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "重試" } }
+      }
+    },
+    "Open Link" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Link öffnen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open Link" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Abrir enlace" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Ouvrir le lien" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "リンクを開く" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "링크 열기" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Abrir link" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Открыть ссылку" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开链接" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "打開連結" } }
+      }
+    },
+    "Showing %lld of %lld" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "%lld von %lld angezeigt" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Showing %lld of %lld" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Mostrando %lld de %lld" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "%lld sur %lld affichés" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld / %lld 件を表示中" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "%lld / %lld개 표시 중" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Mostrando %lld de %lld" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Показано %lld из %lld" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "显示 %lld / %lld" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "顯示 %lld / %lld" } }
+      }
+    },
+    "Couldn’t delete %lld of %lld items" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "%lld von %lld Objekten konnten nicht gelöscht werden" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn’t delete %lld of %lld items" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "No se pudieron eliminar %lld de %lld elementos" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Impossible de supprimer %lld éléments sur %lld" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld / %lld 件を削除できませんでした" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "%lld / %lld개 항목을 삭제할 수 없음" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Não foi possível excluir %lld de %lld itens" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Не удалось удалить %lld из %lld элементов" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法删除 %lld / %lld 个项目" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "無法刪除 %lld / %lld 個項目" } }
+      }
+    },
     "ClipKitty couldn't access this clipboard item. Check Paste permissions or try again." : {
       "localizations" : {
         "de" : { "stringUnit" : { "state" : "translated", "value" : "ClipKitty konnte nicht auf dieses Element in der Zwischenablage zugreifen. Prüfe die Einfügeberechtigung oder versuche es erneut." } },

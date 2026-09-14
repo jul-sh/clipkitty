@@ -31,15 +31,18 @@ struct TextPreviewView: UIViewRepresentable {
     }
 
     /// The UIFont for the active preview preferences, falling back to the system
-    /// monospaced font when the custom face is unavailable.
+    /// monospaced font when the custom face is unavailable. Scaled for Dynamic
+    /// Type; the text view re-applies the scale itself when the size changes.
     private var previewFont: UIFont {
-        UIFont(name: previewFontName, size: 16)
+        let base = UIFont(name: previewFontName, size: 16)
             ?? UIFont.monospacedSystemFont(ofSize: 16, weight: .regular)
+        return DynamicTypeScaling.scaledFont(base)
     }
 
     func makeUIView(context: Context) -> UITextView {
         let textView = UITextView(usingTextLayoutManager: true)
         textView.isEditable = isEditable
+        textView.adjustsFontForContentSizeCategory = true
         textView.isSelectable = true
         textView.backgroundColor = .clear
         textView.textContainerInset = UIEdgeInsets(top: 16, left: 12, bottom: 16, right: 12)

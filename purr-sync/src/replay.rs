@@ -14,11 +14,13 @@ use crate::snapshot::ItemSnapshot;
 use crate::store::{ProjectionEntry, ProjectionState, SyncStore};
 use crate::types::{
     ApplyResult, DownloadBatchOutcome, ForkPlan, FullResyncResult, IgnoreReason, ItemAggregate,
-    ItemEventPayload, FLAG_NEEDS_FULL_RESYNC, SYNC_SCHEMA_VERSION,
+    ItemEventPayload, DEFERRED_EVENT_MAX_AGE_SECS, FLAG_NEEDS_FULL_RESYNC,
+    FULL_RESYNC_ESCALATION_INTERVAL_SECS, SYNC_SCHEMA_VERSION,
 };
+use chrono::Utc;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// Maximum deferred event retries before marking full resync needed.
 const MAX_DEFERRED_RETRY_ROUNDS: usize = 3;
@@ -32,15 +34,62 @@ pub struct BatchApplyResult {
     pub events_forked: usize,
     pub snapshots_applied: usize,
     pub needs_full_resync: bool,
-    /// Count of events that applied in the sync layer but failed to materialize
-    /// into the read model. Set by the FFI layer, not by replay itself.
+    /// Count of items whose aggregate genuinely changed (an event Applied or
+    /// Forked) but which failed to materialize into the read model.
+    ///
+    /// These block the zone change token: the sync layer has accepted state the
+    /// read model does not reflect, so re-delivering the batch is the only way
+    /// to heal it. Set by the FFI layer, not by replay itself.
     pub materialization_failures: usize,
+    /// Count of items whose aggregate did NOT change in this batch (every event
+    /// for them was Ignored or Deferred) but whose opportunistic read-model heal
+    /// failed anyway.
+    ///
+    /// These are recorded for diagnostics only and deliberately do NOT block the
+    /// token: the batch delivered nothing new for those items, so replaying it
+    /// forever cannot fix them and would wedge the whole zone behind one
+    /// permanently bad row. Set by the FFI layer, not by replay itself.
+    pub unchanged_materialization_failures: usize,
+    /// Item IDs whose aggregate changed in this batch (Applied or Forked
+    /// outcomes). Only these need the read model re-materialized; re-writing
+    /// items that only saw Ignored/Deferred events is wasted work and turns an
+    /// unrelated bad row into a token-blocking failure.
+    pub changed_item_ids: BTreeSet<String>,
+    /// Item IDs that appeared in the batch but whose aggregate did not change.
+    /// Materializing these is an optional heal, never a correctness requirement.
+    pub unchanged_item_ids: BTreeSet<String>,
+    /// How many deferred events were dropped this batch for exceeding
+    /// `DEFERRED_EVENT_MAX_AGE_SECS`. Reported rather than silently swallowed:
+    /// a non-zero value means remote changes were lost and only a full resync
+    /// can recover them.
+    pub deferred_events_aged_out: usize,
+    /// True when deferred events remain but the full-resync escalation was
+    /// suppressed by the rate limiter. Diagnostic only.
+    pub full_resync_escalation_throttled: bool,
     /// Global item IDs of items that were forked (caller should create new items).
     pub fork_plans: Vec<(String, ForkPlan)>,
 }
 
 impl BatchApplyResult {
+    /// Record the per-event outcome for an item so the FFI layer knows whether
+    /// materializing that item is required (Applied/Forked) or merely
+    /// opportunistic (Ignored/Deferred).
+    fn note_item_outcome(&mut self, item_id: &str, changed: bool) {
+        if changed {
+            self.unchanged_item_ids.remove(item_id);
+            self.changed_item_ids.insert(item_id.to_string());
+        } else if !self.changed_item_ids.contains(item_id) {
+            self.unchanged_item_ids.insert(item_id.to_string());
+        }
+    }
+
     /// Determine whether it is safe to advance the zone change token.
+    ///
+    /// Rule: the token advances only when every item whose aggregate actually
+    /// changed in this batch also reached the read model. Failures on items that
+    /// saw no change (`unchanged_materialization_failures`) are reported through
+    /// the counters but never downgrade the outcome — otherwise one permanently
+    /// unmaterializable row would block all unrelated progress forever.
     pub fn download_outcome(&self, snapshots_applied: usize) -> DownloadBatchOutcome {
         if self.needs_full_resync {
             return DownloadBatchOutcome::FullResyncRequired;
@@ -185,11 +234,21 @@ pub fn apply_remote_event_batch(
     // Apply all new events.
     for event in events {
         match apply_remote_event(pool, event)? {
-            ApplyResult::Applied(_) => result.events_applied += 1,
-            ApplyResult::Ignored(_) => result.events_ignored += 1,
-            ApplyResult::Deferred(_) => result.events_deferred += 1,
+            ApplyResult::Applied(_) => {
+                result.events_applied += 1;
+                result.note_item_outcome(&event.item_id, true);
+            }
+            ApplyResult::Ignored(_) => {
+                result.events_ignored += 1;
+                result.note_item_outcome(&event.item_id, false);
+            }
+            ApplyResult::Deferred(_) => {
+                result.events_deferred += 1;
+                result.note_item_outcome(&event.item_id, false);
+            }
             ApplyResult::Forked(plan) => {
                 result.events_forked += 1;
+                result.note_item_outcome(&event.item_id, true);
                 result.fork_plans.push((event.item_id.clone(), plan));
             }
         }
@@ -249,6 +308,7 @@ fn retry_deferred_events(
 
                     result.events_applied += 1;
                     result.events_deferred = result.events_deferred.saturating_sub(1);
+                    result.note_item_outcome(&event.item_id, true);
                     progress = true;
                 }
                 ApplyResult::Ignored(_) => {
@@ -256,6 +316,7 @@ fn retry_deferred_events(
                     sync.mark_event_applied(&event.event_id)?;
                     result.events_ignored += 1;
                     result.events_deferred = result.events_deferred.saturating_sub(1);
+                    result.note_item_outcome(&event.item_id, false);
                     progress = true;
                 }
                 ApplyResult::Forked(plan) => {
@@ -264,6 +325,7 @@ fn retry_deferred_events(
                     sync.mark_event_applied(&event.event_id)?;
                     result.events_forked += 1;
                     result.events_deferred = result.events_deferred.saturating_sub(1);
+                    result.note_item_outcome(&event.item_id, true);
                     result.fork_plans.push((event.item_id.clone(), plan));
                     progress = true;
                 }
@@ -278,10 +340,36 @@ fn retry_deferred_events(
         }
     }
 
-    // If deferred events remain, flag for full resync.
+    // Age out deferred events that have waited longer than we are willing to.
+    // Nothing can deliver their missing prerequisite as a raw event any more, so
+    // holding them only keeps re-arming the escalation below.
+    let age_threshold = Utc::now().timestamp() - DEFERRED_EVENT_MAX_AGE_SECS;
+    result.deferred_events_aged_out = sync.purge_deferred_events_before(age_threshold)?;
+
+    // If deferred events still remain, escalate to a full resync — but at most
+    // once per FULL_RESYNC_ESCALATION_INTERVAL_SECS. Without the damper this
+    // fired on every sync cycle for as long as one stuck event survived.
+    //
+    // This governs only the deferred-driven escalation. Full resync on zone
+    // token expiry is driven by Swift from the CloudKit error and never consults
+    // this flag or this timestamp, so it is unaffected.
     if sync.count_deferred_events()? > 0 {
-        result.needs_full_resync = true;
-        sync.set_dirty_flag(FLAG_NEEDS_FULL_RESYNC, true)?;
+        let now = Utc::now().timestamp();
+        let throttled = matches!(
+            sync.latest_full_resync_at()?,
+            Some(last) if now.saturating_sub(last) < FULL_RESYNC_ESCALATION_INTERVAL_SECS
+        );
+
+        if throttled {
+            result.full_resync_escalation_throttled = true;
+        } else {
+            result.needs_full_resync = true;
+            sync.set_dirty_flag(FLAG_NEEDS_FULL_RESYNC, true)?;
+            // Stamp the attempt now, not when the resync completes: the point is
+            // to rate-limit *requests*, and a resync that never runs (offline,
+            // user quit) must not let the next cycle escalate immediately.
+            sync.mark_full_resync_requested()?;
+        }
     }
 
     Ok(())
@@ -371,6 +459,12 @@ pub fn full_resync(
         result.checkpoints_applied += 1;
     }
 
+    // Stamp the resync before replaying the tail. The tail replay goes through
+    // apply_remote_event_batch, whose own escalation check would otherwise see
+    // freshly deferred events and immediately demand *another* full resync —
+    // the loop this damper exists to break.
+    sync.mark_full_resync_requested()?;
+
     let (tail_events_to_apply, covered_tail_events) =
         events_after_checkpoints(checkpoints, tail_events);
     result.tail_events_ignored += covered_tail_events;
@@ -385,6 +479,8 @@ pub fn full_resync(
     result.fork_plans.extend(batch_result.fork_plans);
 
     // Keep the full resync flag set when replay still has unresolved gaps.
+    // Gaps that survive a resync get another chance only after the escalation
+    // interval, since the marker stamped above throttles the next attempt.
     sync.set_dirty_flag(FLAG_NEEDS_FULL_RESYNC, result.tail_events_deferred > 0)?;
 
     Ok(result)

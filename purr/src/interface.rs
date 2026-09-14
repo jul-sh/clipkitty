@@ -68,7 +68,7 @@ pub enum ContentTypeFilter {
 
 impl ContentTypeFilter {
     /// Returns the database content type strings this filter matches, or None for All.
-    pub fn database_types(&self) -> Option<&[&str]> {
+    pub fn database_types(&self) -> Option<&'static [&'static str]> {
         match self {
             ContentTypeFilter::All => None,
             ContentTypeFilter::Text => Some(&["text"]),
@@ -721,12 +721,8 @@ pub enum TransferFetchRejection {
 /// remain `ClipKittyError`; expected selection and size rejections are values.
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
 pub enum TransferFetchOutcome {
-    Success {
-        items: Vec<ClipboardItem>,
-    },
-    Rejected {
-        reason: TransferFetchRejection,
-    },
+    Success { items: Vec<ClipboardItem> },
+    Rejected { reason: TransferFetchRejection },
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -886,7 +882,10 @@ impl From<crate::database::DatabaseError> for ClipKittyError {
 
 impl From<crate::indexer::IndexerError> for ClipKittyError {
     fn from(e: crate::indexer::IndexerError) -> Self {
-        ClipKittyError::IndexError(e.to_string())
+        match e {
+            crate::indexer::IndexerError::Cancelled => ClipKittyError::Cancelled,
+            other => ClipKittyError::IndexError(other.to_string()),
+        }
     }
 }
 

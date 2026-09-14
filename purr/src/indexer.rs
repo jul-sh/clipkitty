@@ -181,6 +181,11 @@ pub enum IndexerError {
     Directory(#[from] tantivy::directory::error::OpenDirectoryError),
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    /// The caller's cancellation token fired mid-search. Distinct from a real
+    /// failure so callers can surface it as `ClipKittyError::Cancelled` without
+    /// having to re-inspect the token.
+    #[error("search cancelled")]
+    Cancelled,
 }
 
 pub type IndexerResult<T> = Result<T, IndexerError>;
@@ -564,6 +569,31 @@ struct CollapsedTopDocs {
     now: i64,
 }
 
+/// Browser filter pushed into Phase 1 recall.
+///
+/// The trigram path used to rank an unfiltered `MAX_RESULTS` candidate set and
+/// discard non-matching items afterwards, so a search narrowed to a sparse
+/// content type (Images, Links, Colors, Files) or to Bookmarks returned nothing
+/// whenever its matches ranked below the truncation point. Applying the filter
+/// during collapse instead keeps escalation deepening until enough *matching*
+/// candidates exist, and leaves the relative order of matching candidates
+/// exactly as recall produced it.
+pub(crate) enum RecallFilter {
+    /// No narrowing: every candidate is admitted.
+    None,
+    /// Only these item ids are admitted.
+    Allowed(HashSet<String>),
+}
+
+impl RecallFilter {
+    fn admits(&self, item_id: &str) -> bool {
+        match self {
+            RecallFilter::None => true,
+            RecallFilter::Allowed(allowed) => allowed.contains(item_id),
+        }
+    }
+}
+
 // Collect the best Phase 1 hit per parent item within a segment so large-document
 // chunks are collapsed before we materialize stored docs or build the Phase 2 head.
 struct CollapsedTopDocsSegmentCollector {
@@ -683,6 +713,11 @@ fn collapsed_hit_is_better(candidate: &CollapsedDocHit, current: &CollapsedDocHi
         || (candidate.score == current.score && candidate.address < current.address)
 }
 
+/// How many candidates to process between cancellation-token polls. Small
+/// enough to abandon an obsolete query promptly, large enough that the atomic
+/// load is not a per-candidate cost.
+const CANCELLATION_CHECK_CHUNK_SIZE: usize = 32;
+
 fn run_phase_two_head(
     head: PhaseTwoHead,
     candidates: &[SearchCandidate],
@@ -691,8 +726,6 @@ fn run_phase_two_head(
     token: &CancellationToken,
 ) -> Result<PhaseTwoRun, IndexerError> {
     use rayon::prelude::*;
-
-    const CANCELLATION_CHECK_CHUNK_SIZE: usize = 32;
 
     let head_candidates: Vec<(usize, SearchCandidate)> = head
         .into_indices()
@@ -728,9 +761,7 @@ fn run_phase_two_head(
         .collect();
 
     if token.is_cancelled() {
-        return Err(IndexerError::Tantivy(tantivy::TantivyError::InternalError(
-            "search cancelled".into(),
-        )));
+        return Err(IndexerError::Cancelled);
     }
 
     let mut scored = Vec::new();
@@ -879,22 +910,34 @@ impl Indexer {
     }
 
     fn close_writer(&self) -> IndexerResult<()> {
-        // Keep the slot locked until the old writer has released its directory
-        // lock and all merge work. Otherwise a concurrent mutation can observe
-        // `None` and try to open a replacement writer while this one is closing.
-        let mut writer_slot = self.writer.lock();
-        let writer = writer_slot.take();
-        let Some(mut writer) = writer else {
-            return Ok(());
-        };
+        // Scope the writer lock so it is released before the reader reload.
+        // Searches hold the reader read-lock across all of phase-one recall;
+        // reloading under the writer mutex let one slow search block every
+        // subsequent write behind a lock it has no reason to hold.
+        {
+            // Keep the slot locked until the old writer has released its
+            // directory lock and all merge work. Otherwise a concurrent
+            // mutation can observe `None` and try to open a replacement writer
+            // while this one is closing.
+            let mut writer_slot = self.writer.lock();
+            let writer = writer_slot.take();
+            let Some(mut writer) = writer else {
+                return Ok(());
+            };
 
-        let commit_result = writer.commit();
-        // Drain even when commit failed. Returning early would drop the only
-        // handle capable of joining merge work scheduled by an earlier commit.
-        let close_result = writer.wait_merging_threads();
+            let commit_result = writer.commit();
+            // Drain even when commit failed. Returning early would drop the
+            // only handle capable of joining merge work scheduled by an earlier
+            // commit.
+            let close_result = writer.wait_merging_threads();
 
-        commit_result?;
-        close_result?;
+            commit_result?;
+            close_result?;
+        }
+
+        // The commit is already durable at this point; the reload only
+        // republishes it to readers, so doing it outside the writer lock does
+        // not weaken the commit's guarantees.
         self.reader.write().reload()?;
         Ok(())
     }
@@ -1069,8 +1112,11 @@ impl Indexer {
     ) -> Vec<Term> {
         let mut extra = Vec::new();
         for word in words {
-            if word.len() >= 3 && word.len() <= 4 {
-                let chars: Vec<char> = word.chars().collect();
+            // Guard on character count, not byte length: a 1-char CJK word is
+            // 3 bytes and would otherwise pass as a "3-char" word, while a
+            // genuine 3-char CJK word is 9 bytes and would be skipped.
+            let chars: Vec<char> = word.chars().collect();
+            if (3..=4).contains(&chars.len()) {
                 for i in 0..chars.len() - 1 {
                     let mut v = chars.clone();
                     v.swap(i, i + 1);
@@ -1103,12 +1149,22 @@ impl Indexer {
         limit: usize,
         token: &CancellationToken,
     ) -> IndexerResult<Vec<SearchCandidate>> {
+        self.search_parsed_filtered(query, limit, &RecallFilter::None, token)
+    }
+
+    pub(crate) fn search_parsed_filtered(
+        &self,
+        query: &SearchQuery,
+        limit: usize,
+        recall_filter: &RecallFilter,
+        token: &CancellationToken,
+    ) -> IndexerResult<Vec<SearchCandidate>> {
         #[cfg(feature = "perf-log")]
         let t0 = std::time::Instant::now();
         let recall_text = query.recall_text();
         let prepared_query = PreparedQuery::new(recall_text);
         let phase_one_plan = self.plan_phase_one_query(&prepared_query);
-        let candidates = self.phase_one_recall(&phase_one_plan, limit)?;
+        let candidates = self.phase_one_recall(&phase_one_plan, limit, recall_filter, token)?;
         #[cfg(feature = "perf-log")]
         let t1 = std::time::Instant::now();
 
@@ -1123,9 +1179,7 @@ impl Indexer {
 
         // Phase 2: Bucket re-ranking (parallelized — compute_bucket_score is a pure function)
         if token.is_cancelled() {
-            return Err(IndexerError::Tantivy(tantivy::TantivyError::InternalError(
-                "search cancelled".into(),
-            )));
+            return Err(IndexerError::Cancelled);
         }
         let prefix_preference = prepare_prefix_preference(query);
         let phase_two_query = PhaseTwoQuery {
@@ -1176,7 +1230,13 @@ impl Indexer {
         let tail_scan_order = (0..candidates.len())
             .filter(|index| !head_indices.contains(index))
             .chain((0..candidates.len()).filter(|index| head_indices.contains(index)));
-        for index in tail_scan_order {
+        for (scanned, index) in tail_scan_order.enumerate() {
+            // The scan can run the full candidate set through content
+            // verification, so poll the token the way Phase 2 does rather than
+            // finishing work for an abandoned query.
+            if scanned % CANCELLATION_CHECK_CHUNK_SIZE == 0 && token.is_cancelled() {
+                return Err(IndexerError::Cancelled);
+            }
             if scored_pre_rescue.contains(&index) {
                 continue;
             }
@@ -1359,6 +1419,8 @@ impl Indexer {
         &self,
         plan: &PhaseOneQueryPlan<'_>,
         _limit: usize,
+        recall_filter: &RecallFilter,
+        token: &CancellationToken,
     ) -> IndexerResult<Vec<SearchCandidate>> {
         let reader = self.reader.read();
         let searcher = reader.searcher();
@@ -1366,7 +1428,25 @@ impl Indexer {
         let now = Utc::now().timestamp();
         let mut collapsed = Vec::new();
 
+        // Escalation re-runs the collector with a larger `limit`, and the
+        // collector returns the globally best `limit` collapsed hits by a
+        // deterministic score. A larger batch therefore re-reports doc
+        // addresses the previous batch already materialized, so cache the
+        // stored-doc fetch by address: each escalation only pays for its new
+        // tail instead of refetching everything from scratch.
+        let mut fetched: HashMap<DocAddress, SearchCandidate> = HashMap::new();
+
+        // Escalation deliberately does NOT stop once `limit` distinct
+        // candidates exist: callers pass `MAX_RESULTS` and surface the full
+        // match count, and `should_stop_recall` is the policy that decides when
+        // the frontier has descended into trigram noise. Bounding by `limit`
+        // here would silently truncate both deep matches and the reported total.
         for raw_limit in RAW_RECALL_BATCHES {
+            // Each escalation batch searches a strictly larger slice of the
+            // index, so an abandoned query must not start the next one.
+            if token.is_cancelled() {
+                return Err(IndexerError::Cancelled);
+            }
             let top_collector = CollapsedTopDocs {
                 limit: raw_limit,
                 now,
@@ -1377,11 +1457,27 @@ impl Indexer {
             let top_doc_count = top_docs.len();
             let mut batch_collapsed = Vec::with_capacity(top_doc_count);
             let mut seen_ids = HashSet::with_capacity(top_doc_count);
-            for hit in top_docs {
-                let doc: tantivy::TantivyDocument = searcher.doc(hit.doc_address)?;
-                let candidate = self.candidate_from_doc(&doc, hit.score);
+            for (scanned, hit) in top_docs.into_iter().enumerate() {
+                if scanned % CANCELLATION_CHECK_CHUNK_SIZE == 0 && token.is_cancelled() {
+                    return Err(IndexerError::Cancelled);
+                }
+                let candidate = match fetched.entry(hit.doc_address) {
+                    std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        let doc: tantivy::TantivyDocument = searcher.doc(hit.doc_address)?;
+                        entry.insert(self.candidate_from_doc(&doc, hit.score))
+                    }
+                };
+                // Browser filters are applied here, before the candidate set is
+                // handed to Phase 2 and truncated, so a filtered search keeps
+                // deepening until it has enough *matching* candidates instead
+                // of ranking 2000 unfiltered ones and discarding them after.
+                // Relative order among matching candidates is untouched.
+                if !recall_filter.admits(&candidate.id) {
+                    continue;
+                }
                 if seen_ids.insert(candidate.id.clone()) {
-                    batch_collapsed.push(candidate);
+                    batch_collapsed.push(candidate.clone());
                 }
             }
 
@@ -1982,6 +2078,37 @@ mod tests {
             .search(&phrase_q, &TopDocs::with_limit(10))
             .unwrap();
         assert_eq!(results.len(), 1, "PhraseQuery should find exactly 1 doc");
+    }
+
+    #[test]
+    fn test_transposition_trigrams_guards_on_char_length() {
+        let indexer = Indexer::new_in_memory().unwrap();
+
+        // A 3-character CJK word is 9 bytes; the byte-length guard used to skip
+        // it entirely. It must now produce transposition variants.
+        let mut seen = std::collections::HashSet::new();
+        let cjk = indexer.transposition_trigrams(&["日本語"], &mut seen);
+        assert!(
+            !cjk.is_empty(),
+            "3-char CJK word should generate transposition terms"
+        );
+
+        // A single multibyte character is 3 bytes but only 1 char: no
+        // transposition is possible, so it must produce nothing.
+        let mut seen = std::collections::HashSet::new();
+        let single = indexer.transposition_trigrams(&["日"], &mut seen);
+        assert!(
+            single.is_empty(),
+            "1-char multibyte word should generate no transposition terms"
+        );
+
+        // A 5-character ASCII word stays out of the 3-4 char window.
+        let mut seen = std::collections::HashSet::new();
+        let long = indexer.transposition_trigrams(&["hello"], &mut seen);
+        assert!(
+            long.is_empty(),
+            "5-char word is outside the 3-4 char window"
+        );
     }
 
     #[test]
@@ -2834,7 +2961,9 @@ mod tests {
         // recall, or this test stops exercising the scan order at all.
         let prepared_query = PreparedQuery::new("man");
         let plan = indexer.plan_phase_one_query(&prepared_query);
-        let candidates = indexer.phase_one_recall(&plan, 500).unwrap();
+        let candidates = indexer
+            .phase_one_recall(&plan, 500, &RecallFilter::None, &CancellationToken::new())
+            .unwrap();
         let noise_recalled = candidates
             .iter()
             .filter(|c| c.id.starts_with("noise-"))
@@ -2887,7 +3016,9 @@ mod tests {
 
         let prepared_query = PreparedQuery::new("man clip");
         let plan = indexer.plan_phase_one_query(&prepared_query);
-        let candidates = indexer.phase_one_recall(&plan, 50).unwrap();
+        let candidates = indexer
+            .phase_one_recall(&plan, 50, &RecallFilter::None, &CancellationToken::new())
+            .unwrap();
         let recalled: Vec<&str> = candidates.iter().map(|c| c.id.as_str()).collect();
 
         assert!(recalled.contains(&"legit"), "true prefix match must recall");
@@ -2909,6 +3040,64 @@ mod tests {
             noise_recalled.is_empty(),
             "deletion/substitution-variant prefixes leaked into phase-1 recall: {noise_recalled:?}"
         );
+    }
+
+    #[test]
+    fn recall_filter_keeps_deep_match_that_post_filtering_would_drop() {
+        // A single "rare-type" match buried under 400 fresher competitors, all
+        // matching the same query. Post-filtering ranks the unfiltered window
+        // first and then discards, so the buried match is lost; pushing the
+        // filter into recall must surface it.
+        let indexer = Indexer::new_in_memory().unwrap();
+        let now = Utc::now().timestamp();
+        for i in 0..400i64 {
+            indexer
+                .add_document(
+                    &format!("common-{i}"),
+                    &format!("invoice report {i}"),
+                    now - (i + 2) * 60,
+                )
+                .unwrap();
+        }
+        indexer
+            .add_document("rare", "invoice report archived", now - 500_000)
+            .unwrap();
+        indexer.commit().unwrap();
+
+        let prepared_query = PreparedQuery::new("invoice");
+        let plan = indexer.plan_phase_one_query(&prepared_query);
+
+        let allowed = RecallFilter::Allowed(HashSet::from(["rare".to_string()]));
+        let filtered = indexer
+            .phase_one_recall(&plan, 10, &allowed, &CancellationToken::new())
+            .unwrap();
+        let ids: Vec<&str> = filtered.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["rare"],
+            "recall filtered to the allow-list must yield exactly the allowed match"
+        );
+
+        // Sanity: unfiltered recall still returns the whole competitive set,
+        // so the filtered run above is not just an empty index.
+        let unfiltered = indexer
+            .phase_one_recall(&plan, 10, &RecallFilter::None, &CancellationToken::new())
+            .unwrap();
+        assert!(
+            unfiltered.len() > 100,
+            "unfiltered recall should still be broad, got {}",
+            unfiltered.len()
+        );
+    }
+
+    #[test]
+    fn recall_filter_none_admits_every_candidate() {
+        let filter = RecallFilter::None;
+        assert!(filter.admits("anything"));
+
+        let allowed = RecallFilter::Allowed(HashSet::from(["keep".to_string()]));
+        assert!(allowed.admits("keep"));
+        assert!(!allowed.admits("drop"));
     }
 
     #[test]

@@ -336,6 +336,13 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
     func show() {
         guard case .hidden = panelState else { return }
 
+        #if ENABLE_SYNTHETIC_PASTE
+            // The panel's Paste/Copy labels derive from this status, and it only
+            // polls while a settings view is open. A user who just granted
+            // Accessibility in System Settings expects the next panel to know.
+            AppRuntimeState.shared.accessibilityPermissionMonitor.refresh()
+        #endif
+
         let previousApp = activationService.frontmostApplication()
         if initialSearchQuery != nil { updatePanelContent() }
         centerPanel()
@@ -683,7 +690,12 @@ final class FloatingPanelController: NSObject, NSWindowDelegate {
         progressTask.cancel()
         snackbarWindow.dismissProgress()
         if !ok, !Task.isCancelled {
-            snackbarWindow.showNotification(.passive(message: String(localized: "Couldn’t copy image"), iconSystemName: "exclamationmark.triangle.fill"))
+            let message = if case .image = content {
+                String(localized: "Couldn’t copy image")
+            } else {
+                String(localized: "Couldn’t copy")
+            }
+            snackbarWindow.showNotification(.passive(message: message, iconSystemName: "exclamationmark.triangle.fill"))
         }
         return ok
     }

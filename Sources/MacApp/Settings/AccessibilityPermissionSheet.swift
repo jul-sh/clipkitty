@@ -107,16 +107,18 @@ struct AccessibilityPermissionSheet: View {
         }
         .frame(width: 380, height: 360)
         .background(Color(nsColor: .windowBackgroundColor))
-        .onChange(of: permissionMonitor.status) { _, status in
-            switch status {
-            case .granted:
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(500))
-                    dismiss()
-                }
-            case .notGranted, .requiresRepair:
-                break
-            }
+        // The sheet promises to notice the grant, so it must poll itself
+        // rather than rely on whichever view presented it still polling.
+        .onAppear { permissionMonitor.start() }
+        .onDisappear { permissionMonitor.stop() }
+        .task(id: permissionMonitor.status) {
+            guard permissionMonitor.status == .granted else { return }
+            // Let the user see the change land before the sheet goes away.
+            // `.task(id:)` cancels this if the status flaps back, and Cancel
+            // tearing the sheet down cancels it too.
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled, permissionMonitor.status == .granted else { return }
+            dismiss()
         }
     }
 

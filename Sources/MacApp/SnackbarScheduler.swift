@@ -107,10 +107,7 @@ struct LiveSnackbarEnvironment: SnackbarEnvironment {
     }
 
     var isLaunchAtLoginSystemEnabled: Bool {
-        switch LaunchAtLogin.shared.state.registrationStatus {
-        case .enabled: true
-        case .disabled: false
-        }
+        LaunchAtLogin.shared.state.registrationStatus.isOn
     }
 
     var isLaunchAtLoginDismissed: Bool {

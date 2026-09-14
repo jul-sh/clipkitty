@@ -235,13 +235,12 @@ struct FilePreviewView: View {
             sample: sample,
             queryWords: queryWords
         )
-        let _ = { TextPreviewView.textCache[previewId] = sample }()
-
         return VStack(spacing: 0) {
             previewHeader(file: file)
             Divider()
             TextPreviewView(
                 itemId: previewId,
+                text: sample,
                 fontName: settings.previewFontName,
                 fontSize: settings.previewFontSize(12),
                 highlights: highlights,
@@ -253,7 +252,7 @@ struct FilePreviewView: View {
                 EmptyView()
             case .truncated:
                 Divider()
-                Text("Preview truncated")
+                Text(String(localized: "Preview truncated"))
                     .font(settings.appFont(size: 11))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)

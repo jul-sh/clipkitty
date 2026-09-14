@@ -288,6 +288,32 @@ pub const FLAG_INDEX_DIRTY: &str = "index_dirty";
 pub const FLAG_NEEDS_FULL_RESYNC: &str = "needs_full_resync";
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Deferred-Event Aging and Full-Resync Escalation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// How long a deferred event may wait for its missing prerequisite before it is
+/// dropped instead of escalating to a full resync.
+///
+/// Seven days: the same horizon as `COMPACTION_AGE_THRESHOLD_SECS`. Past it, any
+/// event the deferred one was waiting for has been folded into a checkpoint on
+/// the originating device, so the gap can never be delivered as a raw event —
+/// only a checkpoint can heal it, and that is what full resync already does.
+pub const DEFERRED_EVENT_MAX_AGE_SECS: i64 = 7 * 24 * 3600;
+
+/// Minimum interval between deferred-driven full-resync escalations.
+///
+/// A full resync re-downloads every checkpoint in the zone. Escalating on every
+/// sync cycle — which unbounded deferred events used to do — burns CloudKit quota
+/// and battery for a condition a single resync either fixes or cannot fix at all.
+/// Six hours bounds it to a handful of attempts a day while still recovering
+/// within a normal usage session.
+pub const FULL_RESYNC_ESCALATION_INTERVAL_SECS: i64 = 6 * 3600;
+
+/// Synthetic device row used by the replay layer to stamp full-resync
+/// escalations, which happen without a device identity in scope.
+pub const REPLAY_RESYNC_DEVICE_ID: &str = "__replay__";
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Search Index Maintenance Queue
 // ─────────────────────────────────────────────────────────────────────────────
 

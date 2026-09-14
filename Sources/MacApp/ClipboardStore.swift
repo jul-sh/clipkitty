@@ -980,7 +980,8 @@ final class ClipboardStore {
 
     /// Writes the item to the pasteboard, returning whether the write succeeded.
     /// Image writes convert off the main thread and are awaited so callers can
-    /// give honest feedback; text and file writes are synchronous and always succeed.
+    /// give honest feedback. Every write reports the pasteboard's own result:
+    /// a failed write must not be announced as a paste.
     @discardableResult
     func paste(itemId: String, content: ClipboardContent) async -> Bool {
         // Handle images differently - convert off main thread
@@ -990,12 +991,13 @@ final class ClipboardStore {
 
         #if ENABLE_FILE_CLIPBOARD_ITEMS
             if case let .file(_, files) = content {
-                pasteFiles(files: files, itemId: itemId)
-                return true
+                return pasteFiles(files: files, itemId: itemId)
             }
         #endif
 
-        pasteboardMonitor.acknowledgeLocalWrite(changeCount: pasteService.writeText(content.textContent))
+        let outcome = pasteService.writeText(content.textContent)
+        pasteboardMonitor.acknowledgeLocalWrite(changeCount: outcome.changeCount)
+        guard outcome.succeeded else { return false }
 
         Task { [weak self] in
             await self?.updateItemTimestamp(id: itemId)
@@ -1018,9 +1020,9 @@ final class ClipboardStore {
             }
 
             let fallback = NSImage(data: data)?.tiffRepresentation
-            pasteboardMonitor.acknowledgeLocalWrite(
-                changeCount: pasteService.writeAnimatedImage(gifData: gifData, tiffFallback: fallback)
-            )
+            let outcome = pasteService.writeAnimatedImage(gifData: gifData, tiffFallback: fallback)
+            pasteboardMonitor.acknowledgeLocalWrite(changeCount: outcome.changeCount)
+            guard outcome.succeeded else { return false }
         } else {
             // Convert from stored format (HEIC) to TIFF off main thread
             let tiffData: Data? = await withCheckedContinuation { continuation in
@@ -1040,7 +1042,9 @@ final class ClipboardStore {
                 return false
             }
 
-            pasteboardMonitor.acknowledgeLocalWrite(changeCount: pasteService.writeStaticImage(tiffData))
+            let outcome = pasteService.writeStaticImage(tiffData)
+            pasteboardMonitor.acknowledgeLocalWrite(changeCount: outcome.changeCount)
+            guard outcome.succeeded else { return false }
         }
 
         if let itemId {
@@ -1098,7 +1102,7 @@ final class ClipboardStore {
     }
 
     #if ENABLE_FILE_CLIPBOARD_ITEMS
-        private func pasteFiles(files: [FileEntry], itemId: String) {
+        private func pasteFiles(files: [FileEntry], itemId: String) -> Bool {
             // Resolve each file's bookmark to get current URL
             var resolvedURLs: [URL] = []
             for file in files {
@@ -1106,15 +1110,18 @@ final class ClipboardStore {
                 resolvedURLs.append(URL(fileURLWithPath: file.path))
             }
 
-            guard !resolvedURLs.isEmpty else { return }
+            guard !resolvedURLs.isEmpty else { return false }
 
             // Write to pasteboard with both modern and legacy types for broad compatibility.
             // Finder requires NSFilenamesPboardType for file paste; other apps use public.file-url.
-            pasteboardMonitor.acknowledgeLocalWrite(changeCount: pasteService.writeFiles(resolvedURLs))
+            let outcome = pasteService.writeFiles(resolvedURLs)
+            pasteboardMonitor.acknowledgeLocalWrite(changeCount: outcome.changeCount)
+            guard outcome.succeeded else { return false }
 
             Task { [weak self] in
                 await self?.updateItemTimestamp(id: itemId)
             }
+            return true
         }
     #endif
 

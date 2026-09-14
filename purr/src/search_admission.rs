@@ -3,7 +3,7 @@ use crate::ranking::{
     does_word_match, fold_str, prefix_match_for_query_word, PrefixMatch, WordMatchKind,
     LARGE_DOC_THRESHOLD_BYTES, NON_FINAL_PREFIX_MIN_QUERY_CHARS,
 };
-use crate::search::{is_word_token, tokenize_words};
+use crate::search::{is_word_token, tokenize_doc_spans};
 
 pub(crate) const CHUNK_PARENT_THRESHOLD_BYTES: usize = 128 * 1024;
 pub(crate) const PROXIMITY_BOOST_SCALE: f32 = 1000.0;
@@ -464,16 +464,17 @@ pub(crate) fn verify_tail_word_evidence(
         return TailEvidence::BudgetExhausted;
     }
 
-    for (_, _, doc_word) in tokenize_words(content) {
-        if !is_word_token(&doc_word) {
+    for token in tokenize_doc_spans(content) {
+        let doc_word = token.text(content);
+        if !is_word_token(doc_word) {
             continue;
         }
-        let dw_folded = fold_str(&doc_word);
+        let dw_folded = fold_str(doc_word);
         for (index, word) in query.words.iter().enumerate() {
             if matched[index] {
                 continue;
             }
-            if does_word_match(&word.word_folded, &dw_folded, &doc_word, word.prefix_match)
+            if does_word_match(&word.word_folded, &dw_folded, doc_word, word.prefix_match)
                 != WordMatchKind::None
             {
                 matched[index] = true;

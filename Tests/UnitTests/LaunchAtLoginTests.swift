@@ -42,6 +42,26 @@ final class LaunchAtLoginTests: XCTestCase {
             .unregistrationFailed(currentStatus: .enabled)
         )
     }
+
+    func testRegistrationAwaitingApprovalKeepsToggleOnWithGuidance() {
+        let service = MockLaunchAtLoginService(status: .notRegistered)
+        let launchAtLogin = LaunchAtLogin(service: service)
+
+        // SMAppService reports success but holds the registration until the
+        // user approves it under Login Items. That used to render as
+        // "disabled" while `enable()` returned true.
+        service.status = .requiresApproval
+        XCTAssertTrue(launchAtLogin.enable())
+
+        XCTAssertEqual(launchAtLogin.state, .requiresApproval)
+        XCTAssertTrue(launchAtLogin.state.registrationStatus.isOn)
+        XCTAssertNotNil(launchAtLogin.state.displayMessage)
+
+        service.status = .enabled
+        launchAtLogin.refreshState()
+        XCTAssertEqual(launchAtLogin.state, .enabled)
+        XCTAssertNil(launchAtLogin.state.displayMessage)
+    }
 }
 
 // MARK: - Snackbar Scheduler Tests

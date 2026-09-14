@@ -7,6 +7,7 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppState.self) private var appState
+    @Environment(HapticsClient.self) private var haptics
     @Environment(\.dockedKeyboardInset) private var dockedKeyboardInset
     #if ENABLE_ICLOUD_SYNC
         /// Optional on purpose: the coordinator leaves the environment when the
@@ -36,6 +37,17 @@ struct RootView: View {
             // mutations in `withAnimation`) still animate.
             .animation(.bouncy, value: activeSnackbar)
             .avoidsOnlyDockedKeyboard()
+            // A failed delete, bookmark or edit has already been reconciled
+            // against the store by the view model; without this the rows just
+            // silently revert. The toast is the acknowledgement, so clear the
+            // failure state afterwards (the Mac banner does the same on
+            // dismiss) so an identical repeat failure can surface again.
+            .onChange(of: appState.viewModel.mutationFailureMessage) { _, message in
+                guard let message else { return }
+                haptics.fire(.destructive)
+                appState.showToast(.mutationFailed(message))
+                appState.viewModel.dismissMutationFailure()
+            }
     }
 
     // MARK: - Snackbar resolution

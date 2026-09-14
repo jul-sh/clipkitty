@@ -218,6 +218,8 @@ struct BottomControlBar: View {
                             isActive ? .regular.interactive() : .regular,
                             in: .capsule
                         )
+                        .accessibilityLabel(option.title)
+                        .accessibilityAddTraits(isActive ? [.isSelected] : [])
                         .accessibilityIdentifier("bottomBar.filterOption.\(option.identifierSuffix)")
                     }
                 }
@@ -266,6 +268,7 @@ struct BottomControlBar: View {
                 .buttonStyle(.plain)
                 .glassEffect(.regular.interactive(), in: .circle)
                 .glassEffectID("add_photo", in: barNamespace)
+                .accessibilityLabel(String(localized: "Add Photo"))
 
                 Button {
                     withAnimation(.bouncy) { presentation = .composingText }
@@ -278,6 +281,7 @@ struct BottomControlBar: View {
                 .buttonStyle(.plain)
                 .glassEffect(.regular.interactive(), in: .circle)
                 .glassEffectID("add_text", in: barNamespace)
+                .accessibilityLabel(String(localized: "Write Text"))
 
                 // With auto-add on, everything on the pasteboard is ingested
                 // each time the app comes to the foreground, so a manual
@@ -295,6 +299,7 @@ struct BottomControlBar: View {
                     .buttonStyle(.plain)
                     .glassEffect(.regular.interactive(), in: .circle)
                     .glassEffectID("add_paste", in: barNamespace)
+                    .accessibilityLabel(String(localized: "Add from Clipboard"))
                 }
             case .idle, .filterMenu, .composingText, .importingPhoto:
                 EmptyView()

@@ -15,6 +15,7 @@ struct PreviewScreen: View {
     @Environment(iOSSettingsStore.self) private var settings
     @Environment(\.dockedKeyboardInset) private var dockedKeyboardInset
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
 
     /// Preview-text font honouring the user's typeface + spacing preferences.
     private func previewFont(size: CGFloat) -> Font {
@@ -47,7 +48,9 @@ struct PreviewScreen: View {
             }
             .alert(String(localized: "Delete Item"), isPresented: $showDeleteConfirmation) {
                 Button(String(localized: "Delete"), role: .destructive) {
-                    viewModel.deleteItem(itemId: itemId)
+                    // `false` means another mutation is still committing; the
+                    // item is still there, so neither confirm nor dismiss.
+                    guard viewModel.deleteItem(itemId: itemId) else { return }
                     haptics.fire(.destructive)
                     dismiss()
                 }
@@ -100,10 +103,14 @@ struct PreviewScreen: View {
                 }
             }
         case let .failed(failedItemId, _) where failedItemId == itemId:
-            ContentUnavailableView(
-                String(localized: "Unable to load preview"),
-                systemImage: "exclamationmark.triangle"
-            )
+            ContentUnavailableView {
+                Label(String(localized: "Unable to load preview"), systemImage: "exclamationmark.triangle")
+            } actions: {
+                Button(String(localized: "Retry")) {
+                    viewModel.select(itemId: itemId, origin: .click)
+                }
+                .buttonStyle(.borderedProminent)
+            }
         case .none, .loading, .selected, .failed:
             Color.clear
         }
@@ -409,8 +416,22 @@ struct PreviewScreen: View {
                         .glassEffect(.regular.interactive(), in: .circle)
                         .disabled(isShareLoading)
 
-                        // Center capsule: Bookmark, Copy
+                        // Center capsule: Open (links only), Bookmark, Copy
                         HStack(spacing: 0) {
+                            if case let .link(url, _) = item.content, let linkURL = URL(string: url) {
+                                Button {
+                                    openURL(linkURL)
+                                } label: {
+                                    Image(systemName: "safari")
+                                        .font(.body.weight(.medium))
+                                        .frame(width: 52, height: 52)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(String(localized: "Open Link"))
+                                .accessibilityIdentifier("PreviewOpenLinkButton")
+                            }
+
                             Button {
                                 toggleBookmark(for: item)
                             } label: {

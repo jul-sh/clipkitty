@@ -17,22 +17,20 @@ private struct WelcomePageView: View {
                 .frame(width: 96, height: 96)
 
             VStack(spacing: 12) {
-                Text("Your Clipboard, Supercharged")
+                Text(String(localized: "Your Clipboard, Supercharged"))
                     .font(.system(size: 24, weight: .bold))
 
-                Text(
-                    "ClipKitty keeps your clipboard history at your fingertips. Copy anything and find it later, instantly."
-                )
-                .font(.system(size: 14))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 360)
+                Text(String(localized: "ClipKitty keeps your clipboard history at your fingertips. Copy anything and find it later, instantly."))
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 360)
             }
 
             Spacer()
 
             Button(action: onGetStarted) {
-                Text("Get Started")
+                Text(String(localized: "Get Started"))
                     .font(.system(size: 14, weight: .semibold))
                     .frame(maxWidth: 200)
                     .padding(.vertical, 8)
@@ -55,10 +53,7 @@ private struct QuickStartPageView: View {
     private var launchAtLoginBinding: Binding<Bool> {
         Binding(
             get: {
-                switch launchAtLogin.state.registrationStatus {
-                case .enabled: true
-                case .disabled: false
-                }
+                launchAtLogin.state.registrationStatus.isOn
             },
             set: { newValue in
                 if launchAtLogin.setEnabled(newValue) {
@@ -77,7 +72,7 @@ private struct QuickStartPageView: View {
                 .resizable()
                 .frame(width: 56, height: 56)
 
-            Text("Quick Start")
+            Text(String(localized: "Quick Start"))
                 .font(.system(size: 22, weight: .bold))
 
             VStack(spacing: 14) {
@@ -85,9 +80,9 @@ private struct QuickStartPageView: View {
                 VStack(spacing: 0) {
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Activation Shortcut")
+                            Text(String(localized: "Activation Shortcut"))
                                 .font(.system(size: 13, weight: .medium))
-                            Text("Open your clipboard history anytime")
+                            Text(String(localized: "Open your clipboard history anytime"))
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }
@@ -107,7 +102,7 @@ private struct QuickStartPageView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "menubar.arrow.up.rectangle")
                         .font(.system(size: 12))
-                    Text("You can also click the menu bar icon to open ClipKitty.")
+                    Text(String(localized: "You can also click the menu bar icon to open ClipKitty."))
                         .font(.system(size: 12))
                 }
                 .foregroundStyle(.secondary)
@@ -116,7 +111,7 @@ private struct QuickStartPageView: View {
                     #if ENABLE_SYNTHETIC_PASTE
                         // Paste Items row
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Paste Items")
+                            Text(String(localized: "Paste Items"))
                                 .font(.system(size: 13, weight: .medium))
                             PasteItemsSettingView()
                         }
@@ -131,9 +126,9 @@ private struct QuickStartPageView: View {
                         // iCloud Sync row
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("iCloud Sync")
+                                Text(String(localized: "iCloud Sync"))
                                     .font(.system(size: 13, weight: .medium))
-                                Text("Sync clipboard history across your devices")
+                                Text(String(localized: "Sync clipboard history across your devices"))
                                     .font(.system(size: 11))
                                     .foregroundStyle(.secondary)
                             }
@@ -152,9 +147,9 @@ private struct QuickStartPageView: View {
                     // Launch at Login row
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Start at Login")
+                            Text(String(localized: "Start at Login"))
                                 .font(.system(size: 13, weight: .medium))
-                            Text("Keep ClipKitty running in the background")
+                            Text(String(localized: "Keep ClipKitty running in the background"))
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
                         }
@@ -162,9 +157,20 @@ private struct QuickStartPageView: View {
                         Toggle("", isOn: launchAtLoginBinding)
                             .labelsHidden()
                             .toggleStyle(.switch)
+                            .accessibilityLabel(String(localized: "Start at Login"))
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
+
+                    // Settings shows this; onboarding used to swallow it, so a
+                    // toggle that snapped back gave no clue why.
+                    if let message = launchAtLogin.state.displayMessage {
+                        Text(message)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 12)
+                    }
                 }
                 .background(.ultraThickMaterial, in: RoundedRectangle(cornerRadius: 12))
                 .overlay(
@@ -178,7 +184,7 @@ private struct QuickStartPageView: View {
                 .frame(height: 8)
 
             Button(action: onComplete) {
-                Text("Got It")
+                Text(String(localized: "Got It"))
                     .font(.system(size: 14, weight: .semibold))
                     .frame(maxWidth: 200)
                     .padding(.vertical, 8)

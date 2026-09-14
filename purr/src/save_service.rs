@@ -176,13 +176,12 @@ pub(crate) fn update_image_description(
     // items carry "File:". It is persisted and indexed verbatim.
     db.update_image_description(item_id, &description)?;
     if let Some(item) = get_stored_item(db, item_id)? {
-        if indexer
+        let index_result = indexer
             .add_document(&item.item_id, &description, item.timestamp_unix)
-            .is_err()
-        {
+            .and_then(|_| indexer.commit());
+        if index_result.is_err() {
             return Ok(ReindexOutcome::IndexFailed);
         }
-        let _ = indexer.commit();
     }
     Ok(ReindexOutcome::Indexed)
 }
@@ -197,13 +196,12 @@ pub(crate) fn update_text_item(
 
     db.update_text_item(item_id, &text, &content_hash)?;
     if let Some(item) = get_stored_item(db, item_id)? {
-        if indexer
+        let index_result = indexer
             .add_document(&item.item_id, &text, item.timestamp_unix)
-            .is_err()
-        {
+            .and_then(|_| indexer.commit());
+        if index_result.is_err() {
             return Ok(ReindexOutcome::IndexFailed);
         }
-        let _ = indexer.commit();
     }
     Ok(ReindexOutcome::Indexed)
 }
@@ -243,15 +241,20 @@ pub(crate) fn delete_item(
     db: &Database,
     indexer: &Indexer,
     item_id: i64,
-) -> Result<(), ClipKittyError> {
+) -> Result<ReindexOutcome, ClipKittyError> {
     // Fetch the string item_id before deleting from DB (needed for index deletion).
     let string_item_id = get_stored_item(db, item_id)?.map(|item| item.item_id);
     db.delete_item(item_id)?;
     if let Some(sid) = string_item_id {
-        indexer.delete_document(&sid)?;
-        indexer.commit()?;
+        // The row is already gone, so an index failure cannot be undone by
+        // returning an error — it would only hide the successful delete. Report
+        // it the way the update paths do so the caller marks the index dirty.
+        let index_result = indexer.delete_document(&sid).and_then(|_| indexer.commit());
+        if index_result.is_err() {
+            return Ok(ReindexOutcome::IndexFailed);
+        }
     }
-    Ok(())
+    Ok(ReindexOutcome::Indexed)
 }
 
 pub(crate) fn clear(db: &Database, indexer: &Indexer) -> Result<(), ClipKittyError> {
@@ -266,6 +269,9 @@ pub(crate) fn prune_to_size(
     max_bytes: i64,
     keep_ratio: f64,
 ) -> Result<PruneOutcome, ClipKittyError> {
+    // Compute the prune set exactly once, then delete that same set from both
+    // the search index and the database. Recomputing it per-store let the two
+    // sides disagree about which rows were pruned.
     let prunable = db.get_prunable_ids(max_bytes, keep_ratio)?;
 
     for (_row_id, item_id) in &prunable {
@@ -274,8 +280,12 @@ pub(crate) fn prune_to_size(
     if !prunable.is_empty() {
         indexer.commit()?;
     }
+
+    let row_ids: Vec<i64> = prunable.iter().map(|(row_id, _)| *row_id).collect();
     let deleted_ids: Vec<String> = prunable.into_iter().map(|(_, item_id)| item_id).collect();
-    let bytes_freed = db.prune_to_size(max_bytes, keep_ratio)? as u64;
+    // Preserves the previous return semantics: the number of rows the prune
+    // pass removed (the old `prune_to_size` returned its own planned count).
+    let bytes_freed = db.delete_items_by_ids(&row_ids)? as u64;
     Ok(PruneOutcome {
         deleted_ids,
         bytes_freed,

@@ -1,4 +1,4 @@
-use crate::database::{hydrate_item_metadata_tags, Database, RowMetadata, SearchRowMetadata};
+use crate::database::{Database, SearchRowMetadata, Untagged};
 use crate::interface::{
     ClipKittyError, ContentTypeFilter, ItemMatch, ItemQueryFilter, ItemTag,
     ListPresentationProfile, MatchedExcerptRequest, RowPresentation, SearchResult,
@@ -16,6 +16,15 @@ const SHORT_CONTENT_THRESHOLD: usize = 1024;
 /// Number of early short-content results to eagerly decorate.
 const EAGER_SHORT_MATCH_WINDOW: usize = 24;
 const SHORT_QUERY_MAX_RESULTS: usize = 50;
+/// Cap on the pre-resolved recall allow-list for a filtered trigram search.
+///
+/// Sparse filters (Images, Links, Colors, Files, Bookmarks) fit well under this
+/// and get exact pre-filtered recall. A filter matching more ids than this
+/// (in practice only `Text`, which dominates the history) falls back to
+/// post-filtering, where the truncation bug is not reachable because matching
+/// items already fill the ranked window. Sized so the id set stays a few MB at
+/// worst rather than growing with an unbounded history.
+const RECALL_FILTER_ID_CAP: usize = 50_000;
 const SHORT_QUERY_RECENT_WINDOW: usize = 5000;
 const SHORT_QUERY_CONTENT_CAP: usize = 512;
 
@@ -54,14 +63,14 @@ impl<'a> SearchResultAssembler<'a> {
         filter: ItemQueryFilter,
     ) -> Result<SearchResult, ClipKittyError> {
         let (content_type_filter, tag_filter) = split_filter(filter);
-        let (mut items, total_count) = self.db.fetch_browse_row_metadata(
+        let (items, total_count) = self.db.fetch_browse_row_metadata(
             None,
             1000,
             content_type_filter.as_ref(),
             tag_filter.as_ref(),
             self.presentation,
         )?;
-        self.hydrate_item_metadata_tags(&mut items)?;
+        let items = items.hydrate(self.db)?;
         let first_preview_payload = self.presentation().load_first_preview_payload(
             items
                 .first()
@@ -90,10 +99,10 @@ impl<'a> SearchResultAssembler<'a> {
     pub(crate) fn build_search_result(
         &self,
         query: &str,
-        mut matches: Vec<ItemMatch>,
+        matches: Untagged<Vec<ItemMatch>>,
     ) -> Result<SearchResult, ClipKittyError> {
+        let matches = matches.hydrate(self.db)?;
         let total_count = matches.len() as u64;
-        self.hydrate_item_match_tags(&mut matches)?;
         let first_preview_payload = self.presentation().load_first_preview_payload(
             matches
                 .first()
@@ -116,14 +125,14 @@ impl<'a> SearchResultAssembler<'a> {
         mode: ShortQueryMode,
         filter: Option<&ContentTypeFilter>,
         tag: Option<ItemTag>,
-    ) -> Result<Vec<ItemMatch>, ClipKittyError> {
+    ) -> Result<Untagged<Vec<ItemMatch>>, ClipKittyError> {
         if self.token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
         let trimmed = query.trim();
         if trimmed.is_empty() {
-            return Ok(Vec::new());
+            return Ok(Untagged::new(Vec::new()));
         }
 
         let query_folded = crate::ranking::fold_str(trimmed);
@@ -179,14 +188,27 @@ impl<'a> SearchResultAssembler<'a> {
         query: &search::SearchQuery,
         filter: Option<&ContentTypeFilter>,
         tag: Option<ItemTag>,
-    ) -> Result<Vec<ItemMatch>, ClipKittyError> {
+    ) -> Result<Untagged<Vec<ItemMatch>>, ClipKittyError> {
         if self.token.is_cancelled() {
             return Err(ClipKittyError::Cancelled);
         }
 
-        let candidates = search::search_trigram_lazy(indexer, query, self.token)?;
+        // Resolve the filter to an allow-list of item ids and push it into
+        // Phase 1 recall, so candidate selection deepens until it has enough
+        // matching items. Without this a filtered search ranks an unfiltered
+        // MAX_RESULTS window and then discards non-matching rows, which returns
+        // nothing when the matches rank below that window. The post-filter
+        // below is kept as a safety net: `resolve_filter_item_ids` returns
+        // `None` for very broad filters, which fall back to the old behaviour.
+        let recall_filter = self
+            .db
+            .resolve_filter_item_ids(filter, tag.as_ref(), RECALL_FILTER_ID_CAP)?
+            .map(crate::indexer::RecallFilter::Allowed)
+            .unwrap_or(crate::indexer::RecallFilter::None);
+
+        let candidates = search::search_trigram_lazy(indexer, query, &recall_filter, self.token)?;
         if candidates.is_empty() {
-            return Ok(Vec::new());
+            return Ok(Untagged::new(Vec::new()));
         }
 
         let ids: Vec<&str> = candidates
@@ -292,16 +314,16 @@ impl<'a> SearchResultAssembler<'a> {
             eager_index += 1;
         }
 
-        Ok(results)
+        Ok(Untagged::new(results))
     }
 
     fn assemble_short_query_matches(
         &self,
         ordered_ids: &[i64],
         query: &str,
-    ) -> Result<Vec<ItemMatch>, ClipKittyError> {
+    ) -> Result<Untagged<Vec<ItemMatch>>, ClipKittyError> {
         if ordered_ids.is_empty() {
-            return Ok(Vec::new());
+            return Ok(Untagged::new(Vec::new()));
         }
 
         if self.token.is_cancelled() {
@@ -317,38 +339,24 @@ impl<'a> SearchResultAssembler<'a> {
             .collect();
         let presentation = self.presentation();
 
-        Ok(ordered_ids
-            .iter()
-            .filter_map(|id| {
-                item_map.get(id).map(|item| ItemMatch {
-                    item_metadata: item.to_metadata(),
-                    presentation: RowPresentation::Matched {
-                        excerpt: presentation.matched_excerpt_for_item(
-                            &item.item_id,
-                            item.content.text_content(),
-                            query,
-                            self.presentation,
-                        ),
-                    },
+        Ok(Untagged::new(
+            ordered_ids
+                .iter()
+                .filter_map(|id| {
+                    item_map.get(id).map(|item| ItemMatch {
+                        item_metadata: item.to_metadata(),
+                        presentation: RowPresentation::Matched {
+                            excerpt: presentation.matched_excerpt_for_item(
+                                &item.item_id,
+                                item.content.text_content(),
+                                query,
+                                self.presentation,
+                            ),
+                        },
+                    })
                 })
-            })
-            .collect())
-    }
-
-    fn hydrate_item_match_tags(&self, matches: &mut [ItemMatch]) -> Result<(), ClipKittyError> {
-        hydrate_item_metadata_tags(
-            self.db,
-            matches.iter_mut().map(|item| &mut item.item_metadata),
-        )?;
-        Ok(())
-    }
-
-    fn hydrate_item_metadata_tags(&self, items: &mut [RowMetadata]) -> Result<(), ClipKittyError> {
-        hydrate_item_metadata_tags(
-            self.db,
-            items.iter_mut().map(|item| &mut item.item_metadata),
-        )?;
-        Ok(())
+                .collect(),
+        ))
     }
 
     fn presentation(&self) -> MatchPresentation<'_> {

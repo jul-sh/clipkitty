@@ -365,6 +365,145 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertEqual(try store.pendingLocalEvents().count, 1)
     }
 
+    func testCoordinatorChunksEventUploadsToTheCloudKitRecordLimit() async throws {
+        let store = try makeStore()
+        let defaults = makeDefaults()
+        let transport = FakeCloudTransport()
+        let deviceId = "chunked-upload-device"
+
+        store.setSyncDeviceId(deviceId: deviceId)
+        let limit = SyncEngine.cloudKitOperationRecordLimit
+        let eventCount = limit + 25
+        for index in 0 ..< eventCount {
+            _ = try store.saveText(text: "backlog \(index)", sourceApp: nil, sourceAppBundleId: nil)
+        }
+        XCTAssertEqual(try store.pendingLocalEvents().count, eventCount)
+
+        var eventBatchSizes: [Int] = []
+        transport.saveRecordsHandler = { records, savePolicy in
+            switch savePolicy {
+            case .ifServerRecordUnchanged:
+                eventBatchSizes.append(records.count)
+                // CloudKit rejects the whole operation past the limit; before
+                // chunking, a backlog this size wedged sync permanently.
+                if records.count > limit {
+                    return SyncRecordSaveResult(operationError: CKError(.limitExceeded))
+                }
+                return SyncRecordSaveResult(savedRecordIDs: records.map(\.recordID))
+            case .changedKeys:
+                return SyncRecordSaveResult(savedRecordIDs: records.map(\.recordID))
+            case .allKeys:
+                XCTFail("Unexpected save policy \(savePolicy)")
+                return SyncRecordSaveResult(savedRecordIDs: records.map(\.recordID))
+            @unknown default:
+                XCTFail("Unexpected save policy \(savePolicy)")
+                return SyncRecordSaveResult(savedRecordIDs: records.map(\.recordID))
+            }
+        }
+
+        let engine = makeEngine(
+            store: store,
+            transport: transport,
+            defaults: defaults,
+            deviceId: deviceId
+        )
+
+        await engine.runCoordinatorCycle()
+
+        assertSynced(engine.status)
+        XCTAssertEqual(eventBatchSizes, [limit, 25])
+        XCTAssertTrue(try store.pendingLocalEvents().isEmpty)
+    }
+
+    func testEventUploadKeepsEarlierChunksWhenALaterChunkFails() async throws {
+        let store = try makeStore()
+        let defaults = makeDefaults()
+        let transport = FakeCloudTransport()
+        let deviceId = "partial-chunk-device"
+
+        store.setSyncDeviceId(deviceId: deviceId)
+        let limit = SyncEngine.cloudKitOperationRecordLimit
+        let eventCount = limit + 25
+        for index in 0 ..< eventCount {
+            _ = try store.saveText(text: "backlog \(index)", sourceApp: nil, sourceAppBundleId: nil)
+        }
+
+        var eventBatchCount = 0
+        transport.saveRecordsHandler = { records, savePolicy in
+            switch savePolicy {
+            case .ifServerRecordUnchanged:
+                eventBatchCount += 1
+                if eventBatchCount == 1 {
+                    return SyncRecordSaveResult(savedRecordIDs: records.map(\.recordID))
+                }
+                return SyncRecordSaveResult(operationError: CKError(.networkUnavailable))
+            case .changedKeys:
+                return SyncRecordSaveResult(savedRecordIDs: records.map(\.recordID))
+            case .allKeys:
+                XCTFail("Unexpected save policy \(savePolicy)")
+                return SyncRecordSaveResult(savedRecordIDs: records.map(\.recordID))
+            @unknown default:
+                XCTFail("Unexpected save policy \(savePolicy)")
+                return SyncRecordSaveResult(savedRecordIDs: records.map(\.recordID))
+            }
+        }
+
+        let engine = makeEngine(
+            store: store,
+            transport: transport,
+            defaults: defaults,
+            deviceId: deviceId
+        )
+
+        await engine.runCoordinatorCycle()
+
+        // The first chunk's progress is durable; only the remainder is retried.
+        assertError(engine.status, contains: "Upload failed")
+        XCTAssertEqual(try store.pendingLocalEvents().count, 25)
+    }
+
+    func testQuotaExhaustionIsRetryableWithTheLongQuotaBackoff() {
+        let quota = CKError(.quotaExceeded)
+        XCTAssertFalse(SyncEngine.isPermanentError(quota))
+
+        var backoff = SyncBackoff()
+        XCTAssertEqual(backoff.registerFailure(error: quota), 300)
+        XCTAssertTrue(SyncEngine.userVisibleSyncError(quota).contains("iCloud storage is full"))
+    }
+
+    func testZoneGoneClearsChangeTokenAndRecreatesZoneNextCycle() async throws {
+        let store = try makeStore()
+        let defaults = makeDefaults()
+        let transport = FakeCloudTransport()
+        let deviceId = "zone-gone-device"
+
+        store.setSyncDeviceId(deviceId: deviceId)
+        try store.updateZoneChangeToken(deviceId: deviceId, token: Data([0x01, 0x02, 0x03]))
+
+        var zoneGone = SyncZoneChangeResult()
+        zoneGone.fetchError = CKError(.zoneNotFound)
+        transport.zoneChangeResults = [zoneGone]
+
+        let engine = makeEngine(
+            store: store,
+            transport: transport,
+            defaults: defaults,
+            deviceId: deviceId
+        )
+
+        await engine.runCoordinatorCycle()
+
+        XCTAssertNil(try store.getSyncDeviceState(deviceId: deviceId).zoneChangeToken)
+        XCTAssertEqual(transport.ensureZoneAttempts, 1)
+
+        // Bootstrap fell back to `.needsZone`, so the next cycle sets the zone
+        // up again instead of failing into backoff forever.
+        await engine.runCoordinatorCycle()
+
+        XCTAssertEqual(transport.ensureZoneAttempts, 2)
+        assertSynced(engine.status)
+    }
+
     func testCoordinatorPrefersFullResyncWhenTokenExpires() async throws {
         let store = try makeStore()
         let defaults = makeDefaults()

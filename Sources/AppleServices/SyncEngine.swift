@@ -1135,12 +1135,24 @@
                 }
 
             } catch {
-                let delay = backoff.registerFailure(error: error)
-                logger.error("Coordinator cycle error: \(error.localizedDescription), backoff \(delay)s")
-                updateActiveState { state in
-                    state.activity = .error(error.localizedDescription)
+                if Self.isZoneGoneError(error) {
+                    await handleZoneGone(error)
                 }
-                return .failed(error.localizedDescription)
+                if Self.isNotAuthenticatedError(error) {
+                    let delay = backoff.registerFailure(error: error)
+                    logger.warning("iCloud account signed out mid-cycle, backoff \(delay)s")
+                    updateActiveState { state in
+                        state.activity = .temporarilyUnavailable
+                    }
+                    return .failed(Self.userVisibleSyncError(error))
+                }
+                let delay = backoff.registerFailure(error: error)
+                let reason = Self.userVisibleSyncError(error)
+                logger.error("Coordinator cycle error: \(reason), backoff \(delay)s")
+                updateActiveState { state in
+                    state.activity = .error(reason)
+                }
+                return .failed(reason)
             }
         }
 
@@ -1287,6 +1299,11 @@
         }
 
         /// Upload pending events to CloudKit with structured outcome.
+        ///
+        /// Uploads go up in CloudKit-sized chunks and each chunk is marked
+        /// uploaded as soon as it lands, so a device that accumulated a long
+        /// offline backlog makes durable progress every cycle instead of
+        /// failing wholesale on the per-operation record limit.
         private func uploadPendingEvents() async -> UploadOutcome {
             do {
                 guard let uploadBatch = try await makeEventUploadBatch() else {
@@ -1295,34 +1312,58 @@
                 markSyncing(.uploading(.events(count: uploadBatch.pendingCount)))
                 defer { Self.cleanupTemporaryFiles(uploadBatch.tempFiles) }
 
-                let saveResult = await cloud.saveRecords(uploadBatch.records, savePolicy: .ifServerRecordUnchanged)
-
-                var uploadedIds = Set(saveResult.savedRecordIDs.map(\.recordName))
+                var uploadedIds = Set<String>()
                 var errors: [Error] = []
-                for (recordID, error) in saveResult.perRecordErrors {
-                    if Self.isAlreadyUploadedEventError(error) {
-                        uploadedIds.insert(recordID.recordName)
-                    } else {
-                        errors.append(error)
+                var missingRecordCount = 0
+                var operationError: Error?
+
+                for chunk in uploadBatch.records.chunked(into: Self.cloudKitOperationRecordLimit) {
+                    let saveResult = await cloud.saveRecords(chunk, savePolicy: .ifServerRecordUnchanged)
+
+                    var chunkUploaded = Set(saveResult.savedRecordIDs.map(\.recordName))
+                    var chunkErrorCount = 0
+                    for (recordID, error) in saveResult.perRecordErrors {
+                        if Self.isAlreadyUploadedEventError(error) {
+                            chunkUploaded.insert(recordID.recordName)
+                        } else {
+                            errors.append(error)
+                            chunkErrorCount += 1
+                        }
+                    }
+
+                    if !chunkUploaded.isEmpty {
+                        let chunkUploadedIds = Array(chunkUploaded)
+                        try await performStoreOperation { store in
+                            try store.markEventsUploaded(eventIds: chunkUploadedIds)
+                        }
+                        uploadedIds.formUnion(chunkUploaded)
+                    }
+                    missingRecordCount += chunk.count - chunkUploaded.count - chunkErrorCount
+
+                    if let chunkOperationError = saveResult.operationError {
+                        // The whole operation failed (network, zone, quota):
+                        // later chunks would fail the same way. Keep what
+                        // landed and retry the rest next cycle.
+                        operationError = chunkOperationError
+                        break
                     }
                 }
-                let uploadedEventIds = Array(uploadedIds)
 
+                let uploadedEventIds = Array(uploadedIds)
                 if !uploadedEventIds.isEmpty {
-                    try await performStoreOperation { store in
-                        try store.markEventsUploaded(eventIds: uploadedEventIds)
-                    }
                     logger.debug("Uploaded \(uploadedEventIds.count) events")
                 }
 
                 // Determine outcome based on success/failure counts.
-                let missingRecordCount = uploadBatch.pendingCount - uploadedEventIds.count - errors.count
-                let primaryError = errors.first ?? (missingRecordCount > 0 ? saveResult.operationError : nil)
+                let primaryError = errors.first ?? (missingRecordCount > 0 ? operationError : nil)
                 if primaryError == nil {
                     return .uploaded(eventIds: uploadedEventIds)
                 }
 
                 if let primaryError {
+                    if Self.isZoneGoneError(primaryError) {
+                        await handleZoneGone(primaryError)
+                    }
                     if Self.isPermanentError(primaryError) {
                         return .permanentFailure(reason: Self.userVisibleSyncError(primaryError))
                     }
@@ -1331,6 +1372,9 @@
                 return .retryableFailure(reason: "CloudKit event upload failed")
 
             } catch {
+                if Self.isZoneGoneError(error) {
+                    await handleZoneGone(error)
+                }
                 if Self.isPermanentError(error) {
                     return .permanentFailure(reason: Self.userVisibleSyncError(error))
                 }
@@ -1338,11 +1382,18 @@
             }
         }
 
+        /// CloudKit rejects modify operations above this many records.
+        static let cloudKitOperationRecordLimit = 400
+
         /// Classify whether a CKError is permanent (non-retryable).
-        private static func isPermanentError(_ error: Error) -> Bool {
+        ///
+        /// Quota exhaustion is deliberately NOT permanent: it clears as soon as
+        /// the user frees iCloud space, so the cycle keeps retrying on the
+        /// long quota backoff and the status line explains what to do.
+        static func isPermanentError(_ error: Error) -> Bool {
             guard let ckError = error as? CKError else { return false }
             switch ckError.code {
-            case .quotaExceeded, .invalidArguments, .assetNotAvailable,
+            case .invalidArguments, .assetNotAvailable,
                  .managedAccountRestricted, .participantMayNeedVerification:
                 return true
             default:
@@ -1350,7 +1401,60 @@
             }
         }
 
-        private static func userVisibleSyncError(_ error: Error) -> String {
+        /// The record zone the change token refers to no longer exists: the
+        /// user reset iCloud data, deleted the zone from another device, or
+        /// turned the container off. Nothing keyed on the old zone is valid.
+        static func isZoneGoneError(_ error: Error) -> Bool {
+            guard let ckError = error as? CKError else { return false }
+            switch ckError.code {
+            case .zoneNotFound, .userDeletedZone:
+                return true
+            default:
+                return false
+            }
+        }
+
+        /// The account signed out mid-cycle. Treated like a temporarily
+        /// unavailable account: back off and re-check on the next cycle.
+        static func isNotAuthenticatedError(_ error: Error) -> Bool {
+            guard let ckError = error as? CKError else { return false }
+            return ckError.code == .notAuthenticated
+        }
+
+        /// Forget the zone: drop the change token and return bootstrap to
+        /// `.needsZone` so the next cycle recreates the zone and subscription
+        /// and downloads from scratch. Local history stays intact; events the
+        /// store already marked uploaded are not re-sent (that needs a store
+        /// API to reset upload state), so a recreated zone is repopulated by
+        /// the periodic checkpoint uploads over time.
+        private func handleZoneGone(_ error: Error) async {
+            logger.warning("CloudKit zone gone (\(error.localizedDescription)); resetting zone bootstrap")
+            let deviceId = self.deviceId
+            do {
+                try await performStoreOperation { store in
+                    try store.updateZoneChangeToken(deviceId: deviceId, token: nil)
+                }
+            } catch {
+                logger.error("Failed to clear zone change token: \(error.localizedDescription)")
+            }
+            updateActiveState { state in
+                state.bootstrap = .needsZone
+            }
+        }
+
+        static func userVisibleSyncError(_ error: Error) -> String {
+            if let ckError = error as? CKError {
+                switch ckError.code {
+                case .quotaExceeded:
+                    return "iCloud storage is full. Free up space in iCloud settings; sync will retry automatically."
+                case .zoneNotFound, .userDeletedZone:
+                    return "ClipKitty’s iCloud data was reset. Sync will set it up again on the next attempt."
+                case .notAuthenticated:
+                    return "Not signed in to iCloud. Sign in to resume sync."
+                default:
+                    break
+                }
+            }
             if isMissingRecordTypeError(error, recordType: itemSnapshotRecordType) {
                 return SyncEngineSchemaError.missingCloudKitRecordType(
                     recordType: itemSnapshotRecordType,
@@ -1765,7 +1869,7 @@
                 defer { Self.cleanupTemporaryFiles(uploadBatch.tempFiles) }
 
                 var uploadedCount = 0
-                for chunk in uploadBatch.records.chunked(into: 400) {
+                for chunk in uploadBatch.records.chunked(into: Self.cloudKitOperationRecordLimit) {
                     let saveResult = await cloud.saveRecords(chunk, savePolicy: .changedKeys)
                     let savedIds = saveResult.savedRecordIDs.map(\.recordName)
                     let errors = Array(saveResult.perRecordErrors.values)
@@ -1832,7 +1936,7 @@
                 // CloudKit batch delete limit is 400; chunk if needed.
                 var deletedEventIds: [String] = []
                 var encounteredFailure = false
-                for chunk in recordIDs.chunked(into: 400) {
+                for chunk in recordIDs.chunked(into: Self.cloudKitOperationRecordLimit) {
                     let deleteResult = await cloud.deleteRecords(chunk)
                     var deletedIds = Set(deleteResult.deletedRecordIDs.map(\.recordName))
                     var errors: [Error] = []
@@ -2175,7 +2279,8 @@
     // MARK: - Backoff
 
     /// Exponential backoff with CKError-aware delay extraction.
-    private struct SyncBackoff {
+    /// Internal (not private) so the delay table is reachable from tests.
+    struct SyncBackoff {
         private static let baseDelay: TimeInterval = 30
         private static let maxDelay: TimeInterval = 900 // 15 minutes
         private static let quotaDelay: TimeInterval = 300 // 5 minutes

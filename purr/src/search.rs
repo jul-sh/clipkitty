@@ -22,6 +22,14 @@ pub(crate) const MAX_RESULTS: usize = 2000;
 
 pub(crate) const MIN_TRIGRAM_QUERY_LEN: usize = 3;
 
+/// Byte cap on the document prefix that highlighting tokenizes and scans.
+///
+/// Chosen as 8x `LARGE_DOC_THRESHOLD_BYTES` (256KB): comfortably above the
+/// 16KB recall chunk a large item matches through and above any clip a user
+/// reads in a preview pane, but small enough that a multi-megabyte paste costs
+/// bounded work per keystroke instead of scaling with its full length.
+pub(crate) const HIGHLIGHT_SCAN_LIMIT_BYTES: usize = 8 * LARGE_DOC_THRESHOLD_BYTES;
+
 /// Context chars to include before/after match in snippet
 pub(crate) const SNIPPET_CONTEXT_CHARS: usize = 200;
 
@@ -269,6 +277,7 @@ fn limit_preview_highlights(
 pub(crate) fn search_trigram_lazy(
     indexer: &Indexer,
     query: &SearchQuery,
+    recall_filter: &crate::indexer::RecallFilter,
     token: &CancellationToken,
 ) -> Result<Vec<crate::candidate::SearchCandidate>, ClipKittyError> {
     if query.raw_text().is_empty() {
@@ -278,11 +287,9 @@ pub(crate) fn search_trigram_lazy(
     // Bucket-ranked candidates from two-phase search
     #[cfg(feature = "perf-log")]
     let t0 = std::time::Instant::now();
-    let candidates = match indexer.search_parsed(query, MAX_RESULTS, token) {
-        Ok(candidates) => candidates,
-        Err(_) if token.is_cancelled() => return Err(ClipKittyError::Cancelled),
-        Err(error) => return Err(error.into()),
-    };
+    // `IndexerError::Cancelled` converts to `ClipKittyError::Cancelled`, so no
+    // token re-check is needed to tell cancellation from a real index failure.
+    let candidates = indexer.search_parsed_filtered(query, MAX_RESULTS, recall_filter, token)?;
     #[cfg(feature = "perf-log")]
     eprintln!(
         "[perf] indexer_total={:.1}ms candidates={}",
@@ -310,51 +317,35 @@ fn word_match_to_highlight_kind(wmk: WordMatchKind) -> HighlightKind {
     }
 }
 
-fn token_span_bounds(
-    char_start: usize,
-    char_end: usize,
-    span_start: usize,
-    span_end: usize,
-) -> (usize, usize) {
-    let token_len = char_end.saturating_sub(char_start);
-    let relative_start = span_start.min(token_len);
-    let relative_end = span_end.min(token_len).max(relative_start);
-    (char_start + relative_start, char_start + relative_end)
-}
-
 fn append_word_highlight(
-    highlights: &mut Vec<(usize, usize, HighlightKind)>,
-    char_start: usize,
-    char_end: usize,
+    highlights: &mut Vec<(DocToken, HighlightKind)>,
+    content: &str,
+    token: DocToken,
     word_match_kind: WordMatchKind,
 ) {
-    let (highlight_start, highlight_end) = match word_match_kind {
+    let highlighted = match word_match_kind {
         WordMatchKind::Prefix { span }
         | WordMatchKind::SubwordPrefix { span }
-        | WordMatchKind::InfixSubstring { span } => {
-            token_span_bounds(char_start, char_end, span.start, span.end())
-        }
+        | WordMatchKind::InfixSubstring { span } => token.subspan(content, span.start, span.end()),
         WordMatchKind::Exact
         | WordMatchKind::Fuzzy(_)
         | WordMatchKind::Subsequence(_)
-        | WordMatchKind::None => (char_start, char_end),
+        | WordMatchKind::None => token,
     };
 
-    highlights.push((
-        highlight_start,
-        highlight_end,
-        word_match_to_highlight_kind(word_match_kind),
-    ));
+    highlights.push((highlighted, word_match_to_highlight_kind(word_match_kind)));
 
-    if matches!(word_match_kind, WordMatchKind::Prefix { .. }) && highlight_end < char_end {
-        highlights.push((highlight_end, char_end, HighlightKind::PrefixTail));
+    if matches!(word_match_kind, WordMatchKind::Prefix { .. }) {
+        if let Some(tail) = token.tail_after(&highlighted) {
+            highlights.push((tail, HighlightKind::PrefixTail));
+        }
     }
 }
 
 fn should_bridge_highlights(
     previous_kind: HighlightKind,
     next_kind: HighlightKind,
-    gap_chars: &[char],
+    gap: &str,
 ) -> bool {
     if matches!(previous_kind, HighlightKind::PrefixTail)
         || matches!(next_kind, HighlightKind::PrefixTail)
@@ -362,16 +353,130 @@ fn should_bridge_highlights(
         return false;
     }
 
-    gap_chars.is_empty()
-        || gap_chars
-            .iter()
+    gap.is_empty()
+        || gap
+            .chars()
             .all(|c| !c.is_alphanumeric() && !c.is_whitespace())
+}
+
+/// A document token located by both char and byte offsets.
+///
+/// Char offsets are what `HighlightRange` speaks; byte offsets let callers
+/// slice the token text straight out of the original `&str`, so tokenizing a
+/// document costs no `Vec<char>` and no per-token `String`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DocToken {
+    pub char_start: usize,
+    pub char_end: usize,
+    pub byte_start: usize,
+    pub byte_end: usize,
+}
+
+impl DocToken {
+    /// The token's text, borrowed from the content it was tokenized from.
+    pub(crate) fn text<'a>(&self, content: &'a str) -> &'a str {
+        &content[self.byte_start..self.byte_end]
+    }
+
+    fn char_len(&self) -> usize {
+        self.char_end.saturating_sub(self.char_start)
+    }
+
+    /// Narrow this token to the relative char range `[start, end)`, keeping the
+    /// char and byte offsets in sync.
+    ///
+    /// Match kinds report spans in chars relative to the token, so the byte
+    /// offsets have to be recomputed by walking the token's own text — short by
+    /// construction, unlike the document.
+    fn subspan(&self, content: &str, start: usize, end: usize) -> DocToken {
+        let token_len = self.char_len();
+        let relative_start = start.min(token_len);
+        let relative_end = end.min(token_len).max(relative_start);
+        if relative_start == 0 && relative_end == token_len {
+            return *self;
+        }
+
+        let text = self.text(content);
+        let byte_of = |char_offset: usize| -> usize {
+            if char_offset == 0 {
+                self.byte_start
+            } else if char_offset >= token_len {
+                self.byte_end
+            } else {
+                self.byte_start
+                    + text
+                        .char_indices()
+                        .nth(char_offset)
+                        .map(|(byte_index, _)| byte_index)
+                        .unwrap_or(text.len())
+            }
+        };
+
+        DocToken {
+            char_start: self.char_start + relative_start,
+            char_end: self.char_start + relative_end,
+            byte_start: byte_of(relative_start),
+            byte_end: byte_of(relative_end),
+        }
+    }
+
+    /// The remainder of this token after `prefix`, or `None` when `prefix`
+    /// already covers it.
+    fn tail_after(&self, prefix: &DocToken) -> Option<DocToken> {
+        (prefix.char_end < self.char_end).then_some(DocToken {
+            char_start: prefix.char_end,
+            char_end: self.char_end,
+            byte_start: prefix.byte_end,
+            byte_end: self.byte_end,
+        })
+    }
+}
+
+/// Tokenize `content` into [`DocToken`] spans.
+///
+/// Same token boundaries as [`tokenize_words`] — alphanumeric runs and
+/// non-whitespace punctuation runs, whitespace as a separator — but it
+/// allocates only the span vector. Used on the document side of highlighting,
+/// where contents can be megabytes.
+pub(crate) fn tokenize_doc_spans(content: &str) -> Vec<DocToken> {
+    let mut tokens = Vec::new();
+    let mut chars = content.char_indices().enumerate().peekable();
+
+    while let Some((char_index, (byte_index, ch))) = chars.next() {
+        if ch.is_whitespace() {
+            continue;
+        }
+
+        let is_word = ch.is_alphanumeric();
+        let char_start = char_index;
+        let byte_start = byte_index;
+        let mut char_end = char_index + 1;
+        let mut byte_end = byte_index + ch.len_utf8();
+
+        while let Some(&(next_char_index, (next_byte_index, next_ch))) = chars.peek() {
+            if next_ch.is_whitespace() || next_ch.is_alphanumeric() != is_word {
+                break;
+            }
+            char_end = next_char_index + 1;
+            byte_end = next_byte_index + next_ch.len_utf8();
+            chars.next();
+        }
+
+        tokens.push(DocToken {
+            char_start,
+            char_end,
+            byte_start,
+            byte_end,
+        });
+    }
+
+    tokens
 }
 
 /// Context for highlighting a candidate document.
 pub(crate) struct HighlightContext<'a> {
     pub content: &'a str,
-    pub doc_words: &'a [(usize, usize, String)],
+    pub doc_words: &'a [DocToken],
     pub query_words: &'a [&'a str],
     pub last_word_is_prefix: bool,
 }
@@ -386,14 +491,18 @@ pub(crate) struct HighlightContext<'a> {
 /// For large documents (>32KB), uses fast matching (exact + prefix only)
 /// to avoid expensive fuzzy/subsequence matching.
 pub(crate) fn highlight_candidate(ctx: &HighlightContext<'_>) -> FuzzyMatch {
-    let mut word_highlights: Vec<(usize, usize, HighlightKind)> = Vec::new();
+    // Highlights carry the byte span alongside the char span so the bridging
+    // pass can read the intervening text directly from `content` instead of
+    // materializing the whole document as a `Vec<char>`.
+    let mut word_highlights: Vec<(DocToken, HighlightKind)> = Vec::new();
     let mut matched_query_words = vec![false; ctx.query_words.len()];
 
     let query_folded: Vec<String> = ctx.query_words.iter().map(|w| fold_str(w)).collect();
     // Use fast matching for large documents
     let is_large_doc = ctx.content.len() > LARGE_DOC_THRESHOLD_BYTES;
 
-    for (char_start, char_end, doc_word) in ctx.doc_words {
+    for token in ctx.doc_words {
+        let doc_word = token.text(ctx.content);
         let doc_word_folded = fold_str(doc_word);
         for (qi, qw) in query_folded.iter().enumerate() {
             let prefix_match =
@@ -409,7 +518,7 @@ pub(crate) fn highlight_candidate(ctx: &HighlightContext<'_>) -> FuzzyMatch {
                 // are included via the bridging pass when they fall between word highlights,
                 // preventing random punctuation elsewhere from being highlighted.
                 if is_word_token(qw) {
-                    append_word_highlight(&mut word_highlights, *char_start, *char_end, wmk);
+                    append_word_highlight(&mut word_highlights, ctx.content, *token, wmk);
                 }
                 break; // Don't double-highlight from multiple query words
             }
@@ -417,23 +526,23 @@ pub(crate) fn highlight_candidate(ctx: &HighlightContext<'_>) -> FuzzyMatch {
     }
 
     // Sort by start position
-    word_highlights.sort_unstable_by_key(|&(s, _, _)| s);
+    word_highlights.sort_unstable_by_key(|(token, _)| token.char_start);
 
     // Bridge gaps between adjacent highlighted ranges where intervening chars are all
     // non-whitespace punctuation or ranges are directly adjacent (e.g. "://" in URLs,
     // "." in domains, "/" in paths). Inherit the first range's kind.
-    let content_chars: Vec<char> = ctx.content.chars().collect();
-    let mut bridged: Vec<(usize, usize, HighlightKind)> = Vec::with_capacity(word_highlights.len());
+    let mut bridged: Vec<(DocToken, HighlightKind)> = Vec::with_capacity(word_highlights.len());
     for wh in &word_highlights {
         if let Some(last) = bridged.last_mut() {
-            let gap_start = last.1;
-            let gap_end = wh.0;
+            let gap_start = last.0.byte_end;
+            let gap_end = wh.0.byte_start;
             if gap_start <= gap_end
-                && gap_end <= content_chars.len()
-                && should_bridge_highlights(last.2, wh.2, &content_chars[gap_start..gap_end])
+                && gap_end <= ctx.content.len()
+                && should_bridge_highlights(last.1, wh.1, &ctx.content[gap_start..gap_end])
             {
                 // Merge into previous range, inheriting its kind
-                last.1 = wh.1;
+                last.0.char_end = wh.0.char_end;
+                last.0.byte_end = wh.0.byte_end;
                 continue;
             }
         }
@@ -443,10 +552,10 @@ pub(crate) fn highlight_candidate(ctx: &HighlightContext<'_>) -> FuzzyMatch {
     // Convert to HighlightRange
     let highlight_ranges: Vec<HighlightRange> = bridged
         .iter()
-        .map(|&(s, e, k)| HighlightRange {
-            start: s as u64,
-            end: e as u64,
-            kind: k,
+        .map(|(token, kind)| HighlightRange {
+            start: token.char_start as u64,
+            end: token.char_end as u64,
+            kind: *kind,
         })
         .collect();
 
@@ -878,17 +987,40 @@ fn compute_scalar_highlights(content: &str, query: &str) -> Vec<HighlightRange> 
         .collect();
     let last_word_is_prefix = trimmed.ends_with(|c: char| c.is_alphanumeric());
 
-    let doc_words = tokenize_words(content);
+    let scanned = highlight_scan_window(content);
+    let doc_words = tokenize_doc_spans(scanned);
 
     // Create a temporary FuzzyMatch to reuse highlight_candidate
     let fm = highlight_candidate(&HighlightContext {
-        content,
+        content: scanned,
         doc_words: &doc_words,
         query_words: &query_words,
         last_word_is_prefix,
     });
 
     fm.highlight_ranges
+}
+
+/// Leading slice of `content` that highlighting scans.
+///
+/// Highlighting is a presentation concern: the excerpt and the preview's
+/// initial scroll target both come from the earliest dense cluster of matches,
+/// so highlights past this window can never be shown. Capping the scan keeps a
+/// pathological multi-megabyte clip from costing time and memory proportional
+/// to its full length on every keystroke, while leaving every realistic clip
+/// (and the entire chunk a large item was recalled through) fully scanned.
+///
+/// The cut lands on a char boundary, so the returned slice is always valid and
+/// char offsets into it match offsets into `content`.
+fn highlight_scan_window(content: &str) -> &str {
+    if content.len() <= HIGHLIGHT_SCAN_LIMIT_BYTES {
+        return content;
+    }
+    let mut end = HIGHLIGHT_SCAN_LIMIT_BYTES;
+    while end > 0 && !content.is_char_boundary(end) {
+        end -= 1;
+    }
+    &content[..end]
 }
 
 pub(crate) fn analyze_content_for_query(content: &str, query: &str) -> Option<HighlightAnalysis> {
@@ -951,13 +1083,15 @@ fn compute_word_match_highlights(content: &str, query: &str) -> Vec<HighlightRan
         .collect();
     let last_word_is_prefix = query.ends_with(|c: char| c.is_alphanumeric());
 
-    let doc_words = tokenize_words(content);
+    let content = highlight_scan_window(content);
+    let doc_words = tokenize_doc_spans(content);
     let query_folded: Vec<String> = query_words.iter().map(|w| fold_str(w)).collect();
     let use_full_matching = content.len() <= LARGE_DOC_THRESHOLD_BYTES;
 
-    let mut highlights: Vec<(usize, usize, HighlightKind)> = Vec::new();
+    let mut highlights: Vec<(DocToken, HighlightKind)> = Vec::new();
 
-    for (char_start, char_end, doc_word) in &doc_words {
+    for token in &doc_words {
+        let doc_word = token.text(content);
         if !is_word_token(doc_word) {
             continue;
         }
@@ -973,20 +1107,20 @@ fn compute_word_match_highlights(content: &str, query: &str) -> Vec<HighlightRan
                 None => does_word_match_fast_raw(qw_folded, doc_word, prefix_match),
             };
             if wmk != WordMatchKind::None {
-                append_word_highlight(&mut highlights, *char_start, *char_end, wmk);
+                append_word_highlight(&mut highlights, content, *token, wmk);
                 break;
             }
         }
     }
 
-    highlights.sort_unstable_by_key(|&(s, _, _)| s);
+    highlights.sort_unstable_by_key(|(token, _)| token.char_start);
 
     highlights
         .into_iter()
-        .map(|(s, e, k)| HighlightRange {
-            start: s as u64,
-            end: e as u64,
-            kind: k,
+        .map(|(token, kind)| HighlightRange {
+            start: token.char_start as u64,
+            end: token.char_end as u64,
+            kind,
         })
         .collect()
 }
@@ -1386,6 +1520,106 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tokenize_doc_spans_matches_tokenize_words() {
+        // `tokenize_doc_spans` is the zero-copy replacement for `tokenize_words`
+        // on the document side of highlighting. Highlight offsets are char
+        // offsets, so the char spans must agree exactly, and slicing by the byte
+        // span must reproduce the token text — including for multi-byte input,
+        // where char and byte offsets diverge.
+        let cases = [
+            "hello world",
+            "urlparser.parse(input)",
+            "one--two...three",
+            "https://github.com",
+            "",
+            "   ",
+            "a",
+            ".",
+            "café naïve",
+            "日本語 テキスト",
+            "emoji 🎉🎉 mix",
+            "Ünïcödé--wörds...ok",
+            "tab\there\nnewline",
+            "trailing   ",
+            "   leading",
+            "a1b2c3!@#$xyz",
+            "\u{4f60}\u{597d} world",
+            "mixed🎉alnum",
+        ];
+
+        for case in cases {
+            let expected = tokenize_words(case);
+            let actual = super::tokenize_doc_spans(case);
+            assert_eq!(
+                expected.len(),
+                actual.len(),
+                "token count differs for {case:?}"
+            );
+            for (expected, actual) in expected.iter().zip(actual.iter()) {
+                assert_eq!(
+                    (expected.0, expected.1),
+                    (actual.char_start, actual.char_end),
+                    "char span differs for {case:?}"
+                );
+                assert_eq!(
+                    expected.2.as_str(),
+                    actual.text(case),
+                    "token text differs for {case:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn doc_token_subspan_keeps_char_and_byte_offsets_in_sync() {
+        // A prefix match on a multi-byte token reports a char-relative span;
+        // the byte offsets must follow it so the bridging pass reads the right
+        // gap text.
+        let content = "xx ünïcödé yy";
+        let tokens = super::tokenize_doc_spans(content);
+        let token = tokens[1];
+        assert_eq!(token.text(content), "ünïcödé");
+
+        let head = token.subspan(content, 0, 3);
+        assert_eq!((head.char_start, head.char_end), (3, 6));
+        assert_eq!(head.text(content), "ünï");
+
+        let tail = token.tail_after(&head).expect("prefix leaves a tail");
+        assert_eq!(tail.text(content), "cödé");
+        assert_eq!((tail.char_start, tail.char_end), (6, 10));
+
+        // A full-width span returns the token untouched.
+        assert_eq!(token.subspan(content, 0, 99), token);
+        assert!(token.tail_after(&token).is_none());
+    }
+
+    #[test]
+    fn highlight_scan_window_caps_pathological_content_on_a_char_boundary() {
+        let small = "short content";
+        assert_eq!(super::highlight_scan_window(small), small);
+
+        // Multi-byte filler so the cut lands mid-character without the
+        // boundary walk.
+        let huge = "é".repeat(super::HIGHLIGHT_SCAN_LIMIT_BYTES);
+        let window = super::highlight_scan_window(&huge);
+        assert!(window.len() <= super::HIGHLIGHT_SCAN_LIMIT_BYTES);
+        assert!(window.len() > super::HIGHLIGHT_SCAN_LIMIT_BYTES - 4);
+        // Valid UTF-8 slice made only of the filler char.
+        assert!(window.chars().all(|c| c == 'é'));
+    }
+
+    #[test]
+    fn highlights_survive_content_far_past_the_scan_window() {
+        // A match inside the scanned window still highlights when the item is
+        // much larger than the cap, and the offsets stay correct.
+        let mut content = String::from("needle at the very start ");
+        content.push_str(&"filler ".repeat(super::HIGHLIGHT_SCAN_LIMIT_BYTES / 7));
+        let highlights = super::compute_scalar_highlights(&content, "needle");
+        assert_eq!(highlights.len(), 1);
+        assert_eq!((highlights[0].start, highlights[0].end), (0, 6));
+    }
+
     /// Helper: call highlight_candidate with automatic lowercasing/tokenization.
     fn hc(
         _id: i64,
@@ -1395,7 +1629,7 @@ mod tests {
         query_words: &[&str],
         last_word_is_prefix: bool,
     ) -> FuzzyMatch {
-        let doc_words = tokenize_words(content);
+        let doc_words = super::tokenize_doc_spans(content);
         super::highlight_candidate(&super::HighlightContext {
             content,
             doc_words: &doc_words,

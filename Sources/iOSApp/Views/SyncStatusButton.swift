@@ -21,6 +21,12 @@
 
         let phase: Phase
 
+        /// The one phase that needs the user's attention rather than patience.
+        var isFailure: Bool {
+            if case .error = phase { return true }
+            return false
+        }
+
         init(syncEnabled: Bool, status: SyncEngine.SyncStatus?) {
             guard syncEnabled else {
                 phase = .off

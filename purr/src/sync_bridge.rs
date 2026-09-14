@@ -325,12 +325,15 @@ impl RealSyncEmitter {
 
         match projector::apply_event(current_aggregate.as_ref(), &event.payload) {
             ApplyResult::Applied(delta) => {
-                SyncStore::append_local_event_on_connection(conn, event)?;
+                // Coalescing may fold this event into an existing pending row,
+                // in which case that row's id — not this event's — is what the
+                // snapshot watermark must point at.
+                let recorded_event_id = SyncStore::record_local_event_on_connection(conn, event)?;
                 self.persist_local_aggregate_on_connection(
                     conn,
                     &event.item_id,
                     &delta.new_aggregate,
-                    &event.event_id,
+                    &recorded_event_id,
                 )
             }
             ApplyResult::Ignored(reason) => Err(ClipKittyError::DataInconsistency(format!(

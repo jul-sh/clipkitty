@@ -32,9 +32,69 @@ struct IgnoredApp: Identifiable, Hashable {
 
 struct PrivacySettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
+    @State private var historyAction: HistoryAction = .idle
+
+    let store: ClipboardStore
+
+    /// Lifecycle of the Clear History control. Confirmation is a system
+    /// dialog; the failed state keeps the button live so pressing it again is
+    /// the retry.
+    private enum HistoryAction: Equatable {
+        case idle
+        case confirming
+        case clearing
+        case failed(String)
+    }
 
     var body: some View {
         Form {
+            Section(String(localized: "History")) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Button(String(localized: "Clear History"), role: .destructive) {
+                            historyAction = .confirming
+                        }
+                        .disabled(historyAction == .clearing)
+                        .accessibilityIdentifier("ClearHistoryButton")
+
+                        if historyAction == .clearing {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(String(localized: "Clearing…"))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    if case let .failed(message) = historyAction {
+                        Text(String(localized: "Couldn’t clear history"))
+                            .font(.subheadline)
+                            .foregroundStyle(.red)
+                        Text(message)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .confirmationDialog(
+                    String(localized: "Clear History"),
+                    isPresented: Binding(
+                        get: { historyAction == .confirming },
+                        set: { presented in
+                            if !presented, historyAction == .confirming { historyAction = .idle }
+                        }
+                    ),
+                    titleVisibility: .visible
+                ) {
+                    Button(String(localized: "Delete"), role: .destructive) {
+                        historyAction = .clearing
+                        Task { await clearHistory() }
+                    }
+                    Button(String(localized: "Cancel"), role: .cancel) {
+                        historyAction = .idle
+                    }
+                } message: {
+                    Text(String(localized: "Are you sure you want to delete all clipboard history? This cannot be undone."))
+                }
+            }
+
             Section(String(localized: "Content Filtering")) {
                 Toggle(isOn: $settings.ignoreConfidentialContent) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -82,6 +142,15 @@ struct PrivacySettingsView: View {
             #endif
         }
         .formStyle(.grouped)
+    }
+
+    private func clearHistory() async {
+        switch await store.clearAll() {
+        case .success:
+            historyAction = .idle
+        case let .failure(error):
+            historyAction = .failed(error.localizedDescription)
+        }
     }
 }
 
@@ -241,9 +310,4 @@ struct IgnoredAppsListView: View {
         settings.removeIgnoredApp(bundleId: selectedId)
         listState.select(nil)
     }
-}
-
-#Preview {
-    PrivacySettingsView()
-        .frame(width: 420, height: 400)
 }

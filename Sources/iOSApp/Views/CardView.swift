@@ -16,6 +16,7 @@ struct CardView: View {
     @Environment(AppState.self) private var appState
     @Environment(HapticsClient.self) private var haptics
     @Environment(iOSSettingsStore.self) private var settings
+    @Environment(\.openURL) private var openURL
 
     @State private var isShareLoading = false
     @State private var shareTask: Task<Void, Never>?
@@ -388,6 +389,15 @@ struct CardView: View {
             Label(String(localized: "Preview"), systemImage: "eye")
         }
 
+        // A link row's excerpt is the URL itself (see `CardLinkPreview`).
+        if case .symbol(.link) = metadata.icon, let url = URL(string: displayExcerpt.text) {
+            Button {
+                openURL(url)
+            } label: {
+                Label(String(localized: "Open Link"), systemImage: "safari")
+            }
+        }
+
         Button {
             if isBookmarked {
                 viewModel.removeTag(.bookmark, fromItem: metadata.itemId)
@@ -476,7 +486,7 @@ struct CardView: View {
 
     private var accessibilityCardLabel: String {
         var parts = [typeLabel]
-        if isBookmarked { parts.append("bookmarked") }
+        if isBookmarked { parts.append(String(localized: "Bookmarked")) }
         let preview = displayExcerpt.text.prefix(100)
         if !preview.isEmpty { parts.append(String(preview)) }
         parts.append(relativeTime)

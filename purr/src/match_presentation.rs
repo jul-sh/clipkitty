@@ -1,5 +1,5 @@
 use crate::candidate::{ScoringPhase, SearchMatchContext};
-use crate::database::{hydrate_item_metadata_tags, Database, SearchRowMetadata};
+use crate::database::{Database, SearchRowMetadata, Untagged};
 use crate::interface::{
     BaselineExcerpt, ClipKittyError, ClipboardItem, ExcerptPlaceholder, ExcerptUnavailableReason,
     ListPresentationProfile, MatchedExcerpt, MatchedExcerptRequest, MatchedExcerptResolution,
@@ -623,8 +623,7 @@ impl<'a> MatchPresentation<'a> {
         mode: PreviewLoadMode,
     ) -> Result<PreviewPayload, ClipKittyError> {
         let parent_content_hash = stored_item.content_hash.clone();
-        let mut item = stored_item.to_clipboard_item();
-        hydrate_clipboard_item_tags(self.db, &mut item)?;
+        let item = Untagged::new(stored_item.to_clipboard_item()).hydrate(self.db)?;
 
         let cached_match_context = self
             .cache
@@ -714,12 +713,4 @@ impl<'a> MatchPresentation<'a> {
             analysis,
         ))
     }
-}
-
-fn hydrate_clipboard_item_tags(
-    db: &Database,
-    item: &mut ClipboardItem,
-) -> Result<(), ClipKittyError> {
-    hydrate_item_metadata_tags(db, std::iter::once(&mut item.item_metadata))?;
-    Ok(())
 }

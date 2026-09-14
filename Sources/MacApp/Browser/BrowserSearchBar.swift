@@ -9,6 +9,11 @@ struct BrowserSearchBar: View {
     @Environment(\.colorScheme) private var colorScheme
     @Binding var searchText: String
     let appliedFilter: BrowserFilterDescriptor?
+    /// Every filter the menu offers, "All" first. Typing a prefix still
+    /// surfaces the suggestion chip; the menu is the mouse-discoverable path.
+    let filterOptions: [BrowserFilterDescriptor]
+    let activeFilterKind: BrowserFilterKind
+    let onSelectFilter: (BrowserFilterKind) -> Void
     let contentState: BrowserContentState
     let selectedItemAvailable: Bool
     let hasPendingEdit: Bool
@@ -117,6 +122,8 @@ struct BrowserSearchBar: View {
                  .failed:
                 EmptyView()
             }
+
+            filterMenu
         }
         // Keep optional controls from resizing the row when they appear. The
         // height scales with the search text so larger accessibility sizes
@@ -124,6 +131,42 @@ struct BrowserSearchBar: View {
         .frame(height: runtimeState.scaled(24))
         .padding(.horizontal, 17)
         .padding(.vertical, 15)
+    }
+
+    /// Type and bookmark filters were reachable on the Mac only by typing a
+    /// magic prefix until the suggestion chip appeared. This is the same
+    /// picker iOS has in its bottom bar, driving the same view-model API.
+    private var filterMenu: some View {
+        Menu {
+            Picker(
+                String(localized: "Filter"),
+                selection: Binding(
+                    get: { activeFilterKind },
+                    set: { onSelectFilter($0) }
+                )
+            ) {
+                ForEach(filterOptions, id: \.kind) { option in
+                    Label(option.title, systemImage: option.symbolName)
+                        .tag(option.kind)
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Image(systemName: appliedFilter == nil
+                ? "line.3.horizontal.decrease.circle"
+                : "line.3.horizontal.decrease.circle.fill")
+                .font(settings.appFont(size: runtimeState.scaled(16), weight: .medium))
+                .foregroundStyle(appliedFilter == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .focusable(false)
+        .accessibilityLabel(String(localized: "Filter"))
+        .accessibilityIdentifier("FilterMenu")
     }
 }
 

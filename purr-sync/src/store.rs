@@ -6,8 +6,8 @@ use crate::error::{SyncError, SyncResult};
 use crate::event::ItemEvent;
 use crate::snapshot::ItemSnapshot;
 use crate::types::{
-    CheckpointState, DeferredReason, IndexQueueEntry, IndexQueueOperation, VersionVector,
-    FLAG_INDEX_DIRTY, INDEX_QUEUE_RESET_KEY,
+    CheckpointState, DeferredReason, IndexQueueEntry, IndexQueueOperation, ItemEventPayload,
+    VersionVector, FLAG_INDEX_DIRTY, INDEX_QUEUE_RESET_KEY, REPLAY_RESYNC_DEVICE_ID,
 };
 use chrono::Utc;
 use r2d2::Pool;
@@ -36,7 +36,51 @@ impl SyncStore {
         Self::append_local_event_on_connection(&conn, event)
     }
 
+    /// Record a local event, coalescing it with a pending one where the payload
+    /// allows. This is the method the local emit path should use.
+    ///
+    /// `ItemTouched` is the one payload that coalesces: it carries nothing but a
+    /// "last used" timestamp, so N still-pending touches for one item are
+    /// equivalent to the newest of them. When a pending touch (`is_local = 1`,
+    /// `uploaded = 0`, `compacted = 0`) already exists for the item, that row
+    /// absorbs the new timestamp instead of a new row being appended. Every
+    /// other payload type appends, as the log is append-only for them.
+    ///
+    /// [`Self::append_local_event_on_connection`] remains the raw, always-append
+    /// primitive; see [`Self::coalesce_pending_touch_on_connection`] for why the
+    /// surviving row keeps its original `base_touch_version`.
+    ///
+    /// Returns the `event_id` of the row that now carries this event — the
+    /// event's own id when appended, or the absorbing row's id when coalesced.
+    /// Callers that stamp a snapshot watermark must use the returned id, since
+    /// the event's own id has no row of its own after a coalesce.
+    pub fn record_local_event_on_connection(
+        conn: &rusqlite::Connection,
+        event: &ItemEvent,
+    ) -> SyncResult<String> {
+        if matches!(event.payload, ItemEventPayload::ItemTouched { .. }) {
+            if let Some(absorbing_event_id) =
+                Self::coalesce_pending_touch_on_connection(conn, event)?
+            {
+                return Ok(absorbing_event_id);
+            }
+        }
+        Self::append_local_event_on_connection(conn, event)?;
+        Ok(event.event_id.clone())
+    }
+
+    /// Record a local event on a fresh connection. See
+    /// [`Self::record_local_event_on_connection`].
+    pub fn record_local_event(&self, event: &ItemEvent) -> SyncResult<String> {
+        let conn = self.get_conn()?;
+        Self::record_local_event_on_connection(&conn, event)
+    }
+
     /// Append a local event using an existing connection or transaction.
+    ///
+    /// Always appends a new row. Callers on the local emit path want
+    /// [`Self::record_local_event_on_connection`] instead, which coalesces
+    /// pending touches.
     pub fn append_local_event_on_connection(
         conn: &rusqlite::Connection,
         event: &ItemEvent,
@@ -57,6 +101,81 @@ impl SyncStore {
             ],
         )?;
         Ok(())
+    }
+
+    /// Fold a new local `ItemTouched` into the pending touch row for the same
+    /// item, if one exists. Returns the absorbing row's `event_id`, or `None`
+    /// when there was nothing to fold into and the caller should append.
+    ///
+    /// Only rows no other device can have seen are eligible: local, not yet
+    /// uploaded, and not yet folded into a checkpoint. Dropping those is safe
+    /// because nothing downstream has observed them.
+    ///
+    /// The surviving row keeps its **original** `base_touch_version` and takes
+    /// only the new `new_last_used_at_unix` (and `recorded_at`). That ordering
+    /// matters: a peer sitting at touch version N accepts a base of exactly N.
+    /// Keeping the newest event's base (N + k, since every local touch bumped the
+    /// counter here) would make the peer's projector see a FutureVersion and
+    /// defer the event forever, since the intervening events it is waiting for
+    /// were the ones we just collapsed. Keeping the oldest base preserves the
+    /// chain; the timestamp is the only payload that matters and last-write-wins
+    /// already governs it.
+    ///
+    /// The event id is *not* rewritten either — the local snapshot's
+    /// `covers_through_event` may already reference the pending row, and reusing
+    /// the row's identity keeps that watermark valid.
+    fn coalesce_pending_touch_on_connection(
+        conn: &rusqlite::Connection,
+        event: &ItemEvent,
+    ) -> SyncResult<Option<String>> {
+        let ItemEventPayload::ItemTouched {
+            new_last_used_at_unix,
+            ..
+        } = event.payload
+        else {
+            return Ok(None);
+        };
+
+        let existing = match conn.query_row::<(String, String), _, _>(
+            r#"SELECT event_id, payload_data FROM sync_events
+               WHERE item_id = ?1
+                 AND payload_type = ?2
+                 AND is_local = 1
+                 AND uploaded = 0
+                 AND compacted = 0
+               ORDER BY recorded_at ASC, event_id ASC
+               LIMIT 1"#,
+            params![event.item_id, event.payload.type_tag()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ) {
+            Ok(row) => row,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+            Err(err) => return Err(err.into()),
+        };
+        let (existing_event_id, existing_payload_data) = existing;
+
+        // Reuse the stored base version; only the timestamp moves forward.
+        let Ok(ItemEventPayload::ItemTouched {
+            base_touch_version, ..
+        }) = serde_json::from_str::<ItemEventPayload>(&existing_payload_data)
+        else {
+            // Unreadable pending row — fall back to appending rather than
+            // silently discarding the new touch.
+            return Ok(None);
+        };
+
+        let coalesced = ItemEventPayload::ItemTouched {
+            new_last_used_at_unix,
+            base_touch_version,
+        };
+        let payload_data =
+            serde_json::to_string(&coalesced).expect("payload serialization cannot fail");
+
+        conn.execute(
+            "UPDATE sync_events SET recorded_at = ?1, payload_data = ?2 WHERE event_id = ?3",
+            params![event.recorded_at, payload_data, existing_event_id],
+        )?;
+        Ok(Some(existing_event_id))
     }
 
     /// Append a remote event to sync_events (non-local).
@@ -114,14 +233,27 @@ impl SyncStore {
     }
 
     /// Fetch pending local events that haven't been uploaded yet.
+    ///
+    /// Events that compaction has already folded into a checkpoint are skipped
+    /// **only when that checkpoint is itself confirmed in CloudKit**
+    /// (`sync_snapshots.uploaded = 1`, i.e. `CheckpointState::Uploaded`). Other
+    /// devices can then recover the same state from the checkpoint, so
+    /// re-uploading the folded tail is pure waste.
+    ///
+    /// A compacted event whose checkpoint is still `LocalOnly` (or `Absent`) is
+    /// *not* skipped: nothing in CloudKit carries its effect yet, so dropping it
+    /// would silently lose the change on every other device.
     pub fn fetch_pending_upload_events(&self) -> SyncResult<Vec<ItemEvent>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(
-            r#"SELECT event_id, item_id, origin_device_id, schema_version,
-                      recorded_at, payload_type, payload_data
-               FROM sync_events
-               WHERE is_local = 1 AND uploaded = 0
-               ORDER BY recorded_at ASC"#,
+            r#"SELECT e.event_id, e.item_id, e.origin_device_id, e.schema_version,
+                      e.recorded_at, e.payload_type, e.payload_data
+               FROM sync_events e
+               LEFT JOIN sync_snapshots s ON s.item_id = e.item_id
+               WHERE e.is_local = 1
+                 AND e.uploaded = 0
+                 AND NOT (e.compacted = 1 AND COALESCE(s.uploaded, 0) = 1)
+               ORDER BY e.recorded_at ASC"#,
         )?;
         let events = stmt
             .query_map([], |row| {
@@ -687,6 +819,22 @@ impl SyncStore {
         Ok(())
     }
 
+    /// Drop deferred events whose `deferred_at` is older than the threshold.
+    ///
+    /// An event that has waited this long for a prerequisite that never arrived
+    /// is not going to apply: the gap it needs is either lost or already folded
+    /// into a checkpoint that superseded it. Dropping it is strictly better than
+    /// letting it re-trigger a full resync on every sync cycle forever. Returns
+    /// how many rows were dropped so the caller can report the loss.
+    pub fn purge_deferred_events_before(&self, threshold_unix: i64) -> SyncResult<usize> {
+        let conn = self.get_conn()?;
+        let removed = conn.execute(
+            "DELETE FROM sync_deferred_events WHERE deferred_at < ?1",
+            params![threshold_unix],
+        )?;
+        Ok(removed)
+    }
+
     /// Count deferred events (to detect if we're stuck).
     pub fn count_deferred_events(&self) -> SyncResult<usize> {
         let conn = self.get_conn()?;
@@ -765,15 +913,52 @@ impl SyncStore {
     }
 
     /// Mark the last full resync time for a device.
+    ///
+    /// Inserts the device row when it does not exist yet: a plain UPDATE was a
+    /// silent no-op on a device that had never persisted a zone token, which
+    /// left the escalation rate limiter with nothing to read.
     pub fn mark_full_resync(&self, device_id: &str) -> SyncResult<()> {
         let now = Utc::now().timestamp();
         let conn = self.get_conn()?;
         conn.execute(
-            r#"UPDATE sync_device_state SET last_full_resync_at = ?1, heartbeat_at = ?2
-               WHERE device_id = ?3"#,
-            params![now, now, device_id],
+            r#"INSERT INTO sync_device_state
+               (device_id, last_zone_change_token, last_full_resync_at, heartbeat_at)
+               VALUES (?1, NULL, ?2, ?3)
+               ON CONFLICT(device_id) DO UPDATE SET
+                 last_full_resync_at = excluded.last_full_resync_at,
+                 heartbeat_at = excluded.heartbeat_at"#,
+            params![device_id, now, now],
         )?;
         Ok(())
+    }
+
+    /// Most recent `last_full_resync_at` recorded by any device row.
+    ///
+    /// The table holds one row per device, and replay only ever runs as *this*
+    /// device, so in practice this reads this device's own marker. It is exposed
+    /// device-id-free because the replay layer — where full-resync escalation is
+    /// decided — has no device identity plumbed into it.
+    pub fn latest_full_resync_at(&self) -> SyncResult<Option<i64>> {
+        let conn = self.get_conn()?;
+        let result = conn.query_row(
+            "SELECT MAX(last_full_resync_at) FROM sync_device_state",
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        );
+        match result {
+            Ok(at) => Ok(at),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Record that a full resync was requested, for the escalation rate limiter.
+    ///
+    /// Uses the synthetic `__replay__` device row so replay can stamp the marker
+    /// without a device identity; [`Self::latest_full_resync_at`] reads the max
+    /// across rows, so this and a real device's marker both throttle escalation.
+    pub fn mark_full_resync_requested(&self) -> SyncResult<()> {
+        self.mark_full_resync(REPLAY_RESYNC_DEVICE_ID)
     }
 
     // ── Dirty Flags ──────────────────────────────────────────────────────
@@ -1087,4 +1272,315 @@ pub enum ProjectionState {
     PendingMaterialization { versions: VersionVector },
     Materialized { versions: VersionVector },
     Tombstoned { versions: VersionVector },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::setup_sync_schema;
+    use crate::types::{ItemAggregate, ItemSnapshotData, LiveItemState, TypeSpecificData};
+
+    fn test_store() -> SyncStore {
+        let manager = SqliteConnectionManager::memory();
+        let pool = Pool::builder()
+            .max_size(1)
+            .build(manager)
+            .expect("in-memory pool");
+        setup_sync_schema(&pool.get().expect("conn")).expect("schema");
+        SyncStore::new(&pool)
+    }
+
+    fn touch_event(item_id: &str, timestamp: i64, base_touch_version: u64) -> ItemEvent {
+        ItemEvent::new_local(
+            item_id.to_string(),
+            "device-a",
+            ItemEventPayload::ItemTouched {
+                new_last_used_at_unix: timestamp,
+                base_touch_version,
+            },
+        )
+    }
+
+    fn touch_payload(event: &ItemEvent) -> (i64, u64) {
+        match event.payload {
+            ItemEventPayload::ItemTouched {
+                new_last_used_at_unix,
+                base_touch_version,
+            } => (new_last_used_at_unix, base_touch_version),
+            ref other => panic!("expected a touch payload, got {other:?}"),
+        }
+    }
+
+    fn live_snapshot(item_id: &str) -> ItemSnapshot {
+        ItemSnapshot::initial(
+            item_id.to_string(),
+            ItemAggregate::Live(LiveItemState {
+                snapshot: ItemSnapshotData {
+                    content_type: "text".to_string(),
+                    content_text: "hello".to_string(),
+                    content_hash: crate::util::content_hash("hello"),
+                    source_app: None,
+                    source_app_bundle_id: None,
+                    timestamp_unix: 1_700_000_000,
+                    is_bookmarked: false,
+                    thumbnail_base64: None,
+                    color_rgba: None,
+                    type_specific: TypeSpecificData::Text {
+                        value: "hello".to_string(),
+                    },
+                },
+                versions: VersionVector::default(),
+            }),
+        )
+    }
+
+    // ── Touch coalescing ─────────────────────────────────────────────────
+
+    #[test]
+    fn repeated_pending_touches_collapse_into_one_row() {
+        let store = test_store();
+        let first = store
+            .record_local_event(&touch_event("item-1", 100, 5))
+            .expect("first touch");
+        let second = store
+            .record_local_event(&touch_event("item-1", 200, 6))
+            .expect("second touch");
+        let third = store
+            .record_local_event(&touch_event("item-1", 300, 7))
+            .expect("third touch");
+
+        assert_eq!(
+            (second.as_str(), third.as_str()),
+            (first.as_str(), first.as_str()),
+            "later touches report the absorbing row's id so the snapshot \
+             watermark keeps pointing at a row that exists"
+        );
+
+        let pending = store.fetch_pending_upload_events().expect("pending");
+        assert_eq!(pending.len(), 1, "three touches must collapse to one");
+
+        let (timestamp, base) = touch_payload(&pending[0]);
+        assert_eq!(timestamp, 300, "newest timestamp wins");
+        assert_eq!(
+            base, 5,
+            "the surviving row keeps the OLDEST base version so peers \
+             sitting at that version still accept it"
+        );
+    }
+
+    #[test]
+    fn append_local_event_stays_append_only() {
+        // The raw primitive must not coalesce: compaction fixtures and any
+        // caller that needs a literal log write depend on it.
+        let store = test_store();
+        for i in 0..3 {
+            store
+                .append_local_event(&touch_event("item-1", 100 + i, 1))
+                .expect("append");
+        }
+
+        assert_eq!(
+            store.fetch_pending_upload_events().expect("pending").len(),
+            3
+        );
+    }
+
+    #[test]
+    fn touches_for_different_items_do_not_coalesce() {
+        let store = test_store();
+        store
+            .record_local_event(&touch_event("item-1", 100, 1))
+            .expect("touch a");
+        store
+            .record_local_event(&touch_event("item-2", 100, 1))
+            .expect("touch b");
+
+        assert_eq!(
+            store.fetch_pending_upload_events().expect("pending").len(),
+            2
+        );
+    }
+
+    #[test]
+    fn an_uploaded_touch_is_not_coalesced_into() {
+        let store = test_store();
+        let first = touch_event("item-1", 100, 5);
+        store.record_local_event(&first).expect("first touch");
+        store
+            .mark_events_uploaded(&[first.event_id.as_str()])
+            .expect("mark uploaded");
+
+        store
+            .record_local_event(&touch_event("item-1", 200, 6))
+            .expect("second touch");
+
+        let pending = store.fetch_pending_upload_events().expect("pending");
+        assert_eq!(
+            pending.len(),
+            1,
+            "an already-uploaded touch has been seen by peers and must survive"
+        );
+        assert_eq!(touch_payload(&pending[0]), (200, 6));
+    }
+
+    #[test]
+    fn a_compacted_touch_is_not_coalesced_into() {
+        let store = test_store();
+        let first = touch_event("item-1", 100, 5);
+        store.record_local_event(&first).expect("first touch");
+        store
+            .mark_events_compacted(&[first.event_id.as_str()])
+            .expect("mark compacted");
+
+        store
+            .record_local_event(&touch_event("item-1", 200, 6))
+            .expect("second touch");
+
+        let pending = store.fetch_pending_upload_events().expect("pending");
+        assert_eq!(
+            pending.len(),
+            2,
+            "a compacted touch is already folded into a checkpoint and must \
+             not be rewritten underneath it"
+        );
+    }
+
+    #[test]
+    fn non_touch_events_are_never_coalesced() {
+        let store = test_store();
+        for text in ["one", "two", "three"] {
+            store
+                .record_local_event(&ItemEvent::new_local(
+                    "item-1".to_string(),
+                    "device-a",
+                    ItemEventPayload::TextEdited {
+                        new_text: text.to_string(),
+                        base_content_version: 1,
+                    },
+                ))
+                .expect("edit");
+        }
+
+        assert_eq!(
+            store.fetch_pending_upload_events().expect("pending").len(),
+            3
+        );
+    }
+
+    // ── Pending-upload checkpoint predicate ──────────────────────────────
+
+    #[test]
+    fn compacted_events_under_an_uploaded_checkpoint_are_not_re_uploaded() {
+        let store = test_store();
+        let event = touch_event("item-1", 100, 1);
+        store.append_local_event(&event).expect("append");
+        store
+            .upsert_snapshot(&live_snapshot("item-1"))
+            .expect("snap");
+        store
+            .mark_events_compacted(&[event.event_id.as_str()])
+            .expect("compact");
+
+        assert_eq!(
+            store.fetch_pending_upload_events().expect("pending").len(),
+            1,
+            "checkpoint is LocalOnly — the event's effect is nowhere in CloudKit yet"
+        );
+
+        store.mark_snapshot_uploaded("item-1").expect("upload snap");
+
+        assert!(
+            store
+                .fetch_pending_upload_events()
+                .expect("pending")
+                .is_empty(),
+            "checkpoint is Uploaded — peers can recover this event's effect from it"
+        );
+    }
+
+    #[test]
+    fn uncompacted_events_are_uploaded_even_under_an_uploaded_checkpoint() {
+        let store = test_store();
+        store
+            .append_local_event(&touch_event("item-1", 100, 1))
+            .expect("append");
+        store
+            .upsert_snapshot(&live_snapshot("item-1"))
+            .expect("snap");
+        store.mark_snapshot_uploaded("item-1").expect("upload snap");
+
+        assert_eq!(
+            store.fetch_pending_upload_events().expect("pending").len(),
+            1,
+            "the checkpoint predates this event, so it does not cover it"
+        );
+    }
+
+    // ── Deferred aging and full-resync rate limiting ─────────────────────
+
+    #[test]
+    fn deferred_events_age_out_by_deferred_at_not_recorded_at() {
+        let store = test_store();
+        // recorded_at is ancient but deferred_at is "now" — must survive.
+        let fresh = ItemEvent::new_local(
+            "item-1".to_string(),
+            "device-a",
+            ItemEventPayload::TextEdited {
+                new_text: "x".to_string(),
+                base_content_version: 9,
+            },
+        );
+        store
+            .defer_event(&fresh, &DeferredReason::MissingItem)
+            .expect("defer");
+
+        let now = Utc::now().timestamp();
+        assert_eq!(
+            store
+                .purge_deferred_events_before(now - 1_000)
+                .expect("purge"),
+            0
+        );
+        assert_eq!(store.count_deferred_events().expect("count"), 1);
+
+        // A threshold in the future ages everything out.
+        assert_eq!(
+            store
+                .purge_deferred_events_before(now + 1_000)
+                .expect("purge"),
+            1
+        );
+        assert_eq!(store.count_deferred_events().expect("count"), 0);
+    }
+
+    #[test]
+    fn mark_full_resync_inserts_a_row_when_the_device_is_unknown() {
+        let store = test_store();
+        assert_eq!(store.latest_full_resync_at().expect("read"), None);
+
+        store.mark_full_resync_requested().expect("mark");
+
+        let stamped = store
+            .latest_full_resync_at()
+            .expect("read")
+            .expect("a marker must exist after marking");
+        assert!((Utc::now().timestamp() - stamped).abs() < 60);
+    }
+
+    #[test]
+    fn latest_full_resync_at_takes_the_newest_across_devices() {
+        let store = test_store();
+        store
+            .upsert_device_state("device-a", None)
+            .expect("device row");
+        assert_eq!(
+            store.latest_full_resync_at().expect("read"),
+            None,
+            "a device row with no resync yet reads as None"
+        );
+
+        store.mark_full_resync("device-a").expect("mark a");
+        store.mark_full_resync_requested().expect("mark replay");
+        assert!(store.latest_full_resync_at().expect("read").is_some());
+    }
 }

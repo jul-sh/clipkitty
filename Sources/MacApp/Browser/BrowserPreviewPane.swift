@@ -63,7 +63,7 @@ struct BrowserPreviewPane: View {
             if viewModel.itemIds.isEmpty {
                 emptyState
             } else {
-                Text("No item selected")
+                Text(String(localized: "No item selected"))
                     .font(settings.appFont(size: 16))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -127,9 +127,9 @@ struct BrowserPreviewPane: View {
         case .text, .color:
             let previewText = viewModel.effectiveContent(for: item).textContent
             let decoration = content.displayDecoration(for: viewModel.editSession)
-            let _ = { TextPreviewView.textCache[item.itemMetadata.itemId] = previewText }()
             TextPreviewView(
                 itemId: item.itemMetadata.itemId,
+                text: previewText,
                 fontName: settings.previewFontName,
                 fontSize: settings.previewFontSize(runtimeState.scaled(15)),
                 highlights: decoration?.highlights ?? [],
@@ -272,7 +272,7 @@ struct BrowserPreviewPane: View {
                     viewModel.discardCurrentEdit()
                     focusSearchField()
                 } label: {
-                    Text("Esc Discard")
+                    Text(String(localized: "Esc Discard"))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .subtleHover()
@@ -335,7 +335,7 @@ struct BrowserPreviewPane: View {
                         Image("BookmarkIcon")
                             .resizable()
                             .frame(width: 14, height: 14)
-                        Text("Bookmark")
+                        Text(String(localized: "Bookmark"))
                             .lineLimit(1)
                     }
                 } else if let app = item.itemMetadata.sourceApp {

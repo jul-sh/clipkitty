@@ -36,6 +36,17 @@ struct BrowserResultsList: View {
             }
 
             resultsList
+
+            // The browse query is capped by the store; say so instead of
+            // letting a long history silently end at the cap.
+            if let totalCount = viewModel.totalCount, totalCount > viewModel.itemCount {
+                Text(String(localized: "Showing \(viewModel.itemCount) of \(totalCount)"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .accessibilityIdentifier("ResultsTruncationFooter")
+            }
         }
         .animation(.easeOut(duration: 0.15), value: viewModel.pendingFilterSuggestion?.kind)
         // Locale-invariant automation signal: which filter's results are on

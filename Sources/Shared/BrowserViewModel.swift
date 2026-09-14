@@ -123,6 +123,10 @@ public final class BrowserViewModel {
     private var pendingMatchedExcerptItemIds: Set<String> = []
     private var pendingFilterSurfaceTask: Task<Void, Never>?
     private var pendingDeleteTask: Task<Void, Never>?
+    /// The fetch behind a copy/paste of an item that is neither selected nor
+    /// prefetched. Owned so suspension can cancel it: its continuation writes
+    /// the system pasteboard, which must not happen after the UI stood down.
+    private var itemActionTask: Task<Void, Never>?
     private var mutationExecution: MutationExecution = .idle
     private var queryGeneration = 0
     private var selectionGeneration = 0
@@ -256,6 +260,20 @@ public final class BrowserViewModel {
     public var mutationFailureMessage: String? {
         guard case let .failed(failure) = mutationState else { return nil }
         return failure.message
+    }
+
+    /// How many items the store holds for the displayed request, which can be
+    /// more than `itemCount` because browse results are capped. `nil` until a
+    /// response has been displayed.
+    public var totalCount: Int? {
+        currentResponse?.totalCount
+    }
+
+    /// Re-run the request whose search failed. A failure is otherwise
+    /// terminal: nothing resubmits it until the query text changes.
+    public func retryFailedSearch() {
+        guard case let .failed(request, _, _) = contentState else { return }
+        submitSearch(request: request, targetContentRevision: latestKnownContentRevision)
     }
 
     public func onAppear(initialSearchQuery: String, contentRevision: Int = 0) {
@@ -1044,6 +1062,8 @@ public final class BrowserViewModel {
         pendingFilterSurfaceTask = nil
         pendingDeleteTask?.cancel()
         pendingDeleteTask = nil
+        itemActionTask?.cancel()
+        itemActionTask = nil
         queryGeneration += 1
         cancelPreviewSpinner()
     }
@@ -1875,17 +1895,26 @@ public final class BrowserViewModel {
         mutationExecution = .running(Task { [weak self] in
             guard let self else { return }
             var lastError: ClipboardError?
+            var failedCount = 0
             for itemId in transaction.deletedItemIds {
                 let result = await self.client.delete(itemId: itemId)
                 if case let .failure(error) = result {
                     lastError = error
+                    failedCount += 1
                 }
             }
+            let totalCount = transaction.deletedItemIds.count
             await MainActor.run {
                 self.mutationExecution = .idle
                 guard case .deleting(.committing) = self.mutationState else { return }
-                self.mutationState = lastError.map {
-                    .failed(ActionFailure(message: $0.localizedDescription))
+                self.mutationState = lastError.map { error in
+                    // A partial failure must not read as a total one: the
+                    // rows that did delete are gone, the rest come back on
+                    // the refresh below, and the message says how many.
+                    let message = failedCount < totalCount
+                        ? String(localized: "Couldn’t delete \(failedCount) of \(totalCount) items")
+                        : error.localizedDescription
+                    return .failed(ActionFailure(message: message))
                 } ?? .idle
                 self.refreshCurrentRequestAfterMutation(
                     discardSelectedPayload: lastError != nil
@@ -2465,15 +2494,18 @@ public final class BrowserViewModel {
             return
         }
 
-        Task { [weak self] in
+        itemActionTask?.cancel()
+        itemActionTask = Task { [weak self] in
             guard let self else { return }
+            defer { self.itemActionTask = nil }
             guard let item = await self.client.fetchItem(id: itemId) else { return }
-            await MainActor.run {
-                // Re-check edit ownership after the fetch. A draft may have
-                // started while this item was loading, and that draft must
-                // not be discarded by a late callback.
-                self.performSelectedItemAction(item, handler: handler)
-            }
+            // Suspension or a newer action cancelled this fetch while it was
+            // in flight; a late pasteboard write is exactly what it forbids.
+            guard !Task.isCancelled else { return }
+            // Re-check edit ownership after the fetch. A draft may have
+            // started while this item was loading, and that draft must
+            // not be discarded by a late callback.
+            self.performSelectedItemAction(item, handler: handler)
         }
     }
 

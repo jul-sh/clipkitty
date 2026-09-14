@@ -177,6 +177,7 @@ struct SaveAutomaticallySheet: View {
 struct HowToAllowPasteSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(iOSSettingsStore.self) private var settings
 
     /// Called when the user taps "Done" after visiting Settings; the parent
@@ -245,6 +246,9 @@ struct HowToAllowPasteSheet: View {
             .tabViewStyle(.page(indexDisplayMode: .never))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onReceive(pageTimer) { _ in
+                // Unrequested motion is exactly what Reduce Motion asks us to
+                // stop; the user can still swipe between the two pages.
+                guard !reduceMotion else { return }
                 withAnimation {
                     pageIndex = (pageIndex + 1) % 2
                 }

@@ -1,4 +1,4 @@
-use crate::database::Database;
+use crate::database::{Database, Untagged};
 use crate::indexer::Indexer;
 use crate::interface::{
     ClipKittyError, ItemMatch, ItemQueryFilter, ListPresentationProfile, MatchedExcerptRequest,
@@ -107,7 +107,7 @@ fn execute_search_sync(
     token: &CancellationToken,
     runtime: &tokio::runtime::Handle,
     presentation: ListPresentationProfile,
-) -> Result<Vec<ItemMatch>, ClipKittyError> {
+) -> Result<Untagged<Vec<ItemMatch>>, ClipKittyError> {
     let assembler = SearchResultAssembler::new(db, cache, token, runtime, presentation);
     let (content_type_filter, tag_filter) = crate::search_result_builder::split_filter(filter);
 

@@ -12,6 +12,7 @@ struct SettingsView: View {
     let store: ClipboardStore
     #if ENABLE_SPARKLE_UPDATES
         var onInstallUpdate: (() -> Void)? = nil
+        var onCheckForUpdates: (() -> Void)? = nil
     #endif
 
     var body: some View {
@@ -23,7 +24,7 @@ struct SettingsView: View {
                 .tag(SettingsTab.general)
                 .accessibilityIdentifier("SettingsTab_General")
 
-            PrivacySettingsView()
+            PrivacySettingsView(store: store)
                 .tabItem {
                     Label(String(localized: "Privacy"), systemImage: "hand.raised")
                 }
@@ -44,7 +45,8 @@ struct SettingsView: View {
         #if ENABLE_SPARKLE_UPDATES
             GeneralSettingsView(
                 store: store,
-                onInstallUpdate: onInstallUpdate
+                onInstallUpdate: onInstallUpdate,
+                onCheckForUpdates: onCheckForUpdates
             )
         #else
             GeneralSettingsView(

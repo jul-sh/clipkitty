@@ -1,8 +1,6 @@
 //! ClipboardStore - Thin UniFFI-facing facade over search/save services.
 
-use crate::database::{
-    hydrate_item_metadata_tags, Database, DatabaseTransferFetchOutcome, TransferFetchLimits,
-};
+use crate::database::{Database, DatabaseTransferFetchOutcome, TransferFetchLimits, Untagged};
 use crate::indexer::{IndexInspection, Indexer};
 use crate::interface::{
     ClipKittyError, ClipboardItem, ItemQueryFilter, ItemTag, ListPresentationProfile,
@@ -569,7 +567,6 @@ impl ClipboardStore {
             .fetch_row_id_by_item_id(item_id)?
             .ok_or_else(|| ClipKittyError::InvalidInput(format!("item not found: {item_id}")))
     }
-
 }
 
 #[uniffi::export]
@@ -644,15 +641,11 @@ impl ClipboardStore {
     ) -> Result<Vec<ClipboardItem>, ClipKittyError> {
         let _permit = self.admission.admit()?;
         let stored_items = self.db.fetch_items_by_item_ids(&item_ids)?;
-        let mut items: Vec<ClipboardItem> = stored_items
+        let items: Vec<ClipboardItem> = stored_items
             .into_iter()
             .map(|item| item.to_clipboard_item())
             .collect();
-        hydrate_item_metadata_tags(
-            &self.db,
-            items.iter_mut().map(|item| &mut item.item_metadata),
-        )?;
-        Ok(items)
+        Ok(Untagged::new(items).hydrate(&self.db)?)
     }
 
     /// Fetch a bounded, all-or-nothing set of clips for an outbound transfer.
@@ -852,7 +845,14 @@ impl ClipboardStore {
         #[cfg(feature = "sync")]
         self.sync_emitter.emit_item_deleted(&item_id)?;
 
-        save_service::delete_item(&self.db, &self.indexer, row_id)
+        #[allow(unused_variables)]
+        let reindex = save_service::delete_item(&self.db, &self.indexer, row_id)?;
+
+        #[cfg(feature = "sync")]
+        if matches!(reindex, save_service::ReindexOutcome::IndexFailed) {
+            let _ = self.sync_emitter.set_index_dirty();
+        }
+        Ok(())
     }
 
     pub fn clear(&self) -> Result<(), ClipKittyError> {
@@ -1220,9 +1220,12 @@ impl ClipboardStore {
             .map(|record| record.item_id.as_str())
             .chain(event_records.iter().map(|record| record.item_id.as_str()))
         {
-            known_local_item_ids
-                .entry(item_id.to_string())
-                .or_insert_with(|| self.db.fetch_row_id_by_item_id(item_id).ok().flatten());
+            // A lookup failure must not be read as "no local row": that would
+            // send materialization down the insert branch and duplicate the item.
+            if !known_local_item_ids.contains_key(item_id) {
+                let row_id = self.db.fetch_row_id_by_item_id(item_id)?;
+                known_local_item_ids.insert(item_id.to_string(), row_id);
+            }
         }
 
         // Apply snapshots first.
@@ -1271,22 +1274,57 @@ impl ClipboardStore {
 
         let mut batch_result = replay::apply_remote_event_batch(&self.db.pool()?, &events)?;
 
-        // Materialize Applied events into the read model.
-        // Re-fetch the applied events' aggregates from the sync store.
-        for event_record in &event_records {
+        // Materialize into the read model, per item and exactly once.
+        //
+        // Two tiers, so one permanently bad row cannot wedge the zone:
+        //
+        //  * `changed_item_ids` — an event for this item Applied or Forked, so
+        //    the sync layer now holds state the read model does not. A failure
+        //    here counts as `materialization_failures`, which forces
+        //    PartialFailure and keeps Swift from advancing the zone token; the
+        //    batch is re-delivered and we try again. Not advancing is the only
+        //    thing that prevents data loss here.
+        //
+        //  * `unchanged_item_ids` — every event for this item was Ignored or
+        //    Deferred, so nothing new arrived. Re-materializing is only an
+        //    opportunistic heal for a read model that fell behind earlier, and a
+        //    failure is recorded in `unchanged_materialization_failures` for
+        //    diagnostics WITHOUT blocking the token. Replaying the same batch
+        //    could never fix such a row, so blocking on it would stall every
+        //    other item behind it forever.
+        //
+        // An item whose snapshot was materialized above is still re-materialized
+        // here when a later event changed it — the snapshot pass ran before the
+        // events did, so its write is stale. Unchanged items that only appeared
+        // via a snapshot are skipped: that write is already current.
+        let snapshot_item_ids: std::collections::HashSet<&str> = snapshot_records
+            .iter()
+            .map(|record| record.item_id.as_str())
+            .collect();
+
+        let changed_item_ids = std::mem::take(&mut batch_result.changed_item_ids);
+        let unchanged_item_ids = std::mem::take(&mut batch_result.unchanged_item_ids);
+        for (item_id, blocks_token) in changed_item_ids
+            .iter()
+            .map(|id| (id, true))
+            .chain(unchanged_item_ids.iter().map(|id| (id, false)))
+        {
+            if !blocks_token && snapshot_item_ids.contains(item_id.as_str()) {
+                continue;
+            }
             match self.materialize_current_sync_state(
-                &event_record.item_id,
+                item_id,
                 true,
-                known_local_item_ids
-                    .get(&event_record.item_id)
-                    .copied()
-                    .flatten(),
+                known_local_item_ids.get(item_id).copied().flatten(),
             ) {
                 Ok(local_item_id) => {
-                    known_local_item_ids.insert(event_record.item_id.clone(), local_item_id);
+                    known_local_item_ids.insert(item_id.clone(), local_item_id);
+                }
+                Err(_) if blocks_token => {
+                    batch_result.materialization_failures += 1;
                 }
                 Err(_) => {
-                    batch_result.materialization_failures += 1;
+                    batch_result.unchanged_materialization_failures += 1;
                 }
             }
         }
