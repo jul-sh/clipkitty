@@ -1215,8 +1215,6 @@ final class AppState {
 /// builds a shared `NotificationRequest` for the platform transport.
 enum ToastMessage: Equatable {
     case copied
-    case bookmarked
-    case unbookmarked
     case addSucceeded
     case addFailed(String)
     /// A delete, bookmark or edit that the store rejected after the UI had
@@ -1228,10 +1226,6 @@ enum ToastMessage: Equatable {
         switch self {
         case .copied:
             return .passive(message: String(localized: "Copied to clipboard"), iconSystemName: "doc.on.doc")
-        case .bookmarked:
-            return .passive(message: String(localized: "Bookmarked"), iconSystemName: "bookmark.fill")
-        case .unbookmarked:
-            return .passive(message: String(localized: "Removed bookmark"), iconSystemName: "bookmark.slash")
         case .addSucceeded:
             return .passive(message: String(localized: "Added"), iconSystemName: "plus.circle")
         case let .addFailed(reason), let .mutationFailed(reason):

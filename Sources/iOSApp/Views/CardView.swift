@@ -111,14 +111,20 @@ struct CardView: View {
         // Selection works like Notes and Mail: the marker takes a leading
         // column and the content shifts right to make room, so nothing in
         // the metadata line (the bookmark flag in particular) is covered.
-        HStack(alignment: .center, spacing: 12) {
-            if isSelectionMode {
-                selectionIndicator
-                    .font(.title2.weight(.semibold))
-                    .frame(width: 24)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-                    .accessibilityHidden(true)
-            }
+        // The marker's slot is always in the tree, collapsed to zero width
+        // outside selection mode. Entering and leaving selection swaps the
+        // card between two different branches of `body` (only one of which is
+        // wrapped in a drag host), so a marker added by an `if` would be a new
+        // view each time and could never transition — it would pop in. Holding
+        // the slot and animating its width keeps one continuous view, so the
+        // marker slides the content aside under the caller's `withAnimation`.
+        HStack(alignment: .center, spacing: isSelectionMode ? 12 : 0) {
+            selectionIndicator
+                .font(.title2.weight(.semibold))
+                .fixedSize()
+                .frame(width: isSelectionMode ? 24 : 0, alignment: .center)
+                .opacity(isSelectionMode ? 1 : 0)
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 10) {
                 metadataLine
@@ -126,7 +132,6 @@ struct CardView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .animation(reduceMotion ? nil : .snappy, value: isSelectionMode)
         .cardSurface()
         .contentShape(
             [.interaction, .dragPreview, .contextMenuPreview],
@@ -163,7 +168,11 @@ struct CardView: View {
                     )
                     .allowsHitTesting(false)
             }
-            .animation(reduceMotion ? nil : .snappy, value: isSelected)
+            // Toggling a card is a high-frequency action, often several in a
+            // row, so the feedback stays quiet: a plain ease-out fade on the
+            // border rather than `.snappy`, whose overshoot reads as a bounce
+            // on every tap.
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: isSelected)
             .accessibilityHint(
                 isSelected
                     ? String(localized: "Double tap to deselect")
@@ -179,16 +188,42 @@ struct CardView: View {
     /// The selection marker: a hollow ring while unselected, a filled
     /// checkmark once chosen. Both states occupy the same box so the card's
     /// content does not shift as the selection toggles.
-    @ViewBuilder
     private var selectionIndicator: some View {
-        if isSelected {
-            Image(systemName: "checkmark.circle.fill")
-                .symbolRenderingMode(.palette)
-                .foregroundStyle(.white, Color.accentColor)
-                .transition(.scale(scale: 0.7).combined(with: .opacity))
-        } else {
-            Image(systemName: "circle")
-                .foregroundStyle(.secondary)
+        // One image whose SF Symbol variant changes, rather than two images
+        // swapped by an `if`. The ring and the filled checkmark share a glyph
+        // family, so this cross-fades the fill in place instead of scaling a
+        // replacement view in — picking a card should read as the marker
+        // filling in, not as something landing on the card.
+        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            // The two-style `foregroundStyle` overload implies palette
+            // rendering, so it cannot describe the unselected ring — that state
+            // is a single secondary-tinted glyph. Applying the right overload
+            // per state keeps the hollow ring visible; passing both styles with
+            // `.monochrome` left it untinted and effectively invisible.
+            .modifier(SelectionMarkerStyle(isSelected: isSelected))
+            .contentTransition(.symbolEffect(.replace.byLayer))
+    }
+
+    /// Tints the selection marker for one state.
+    ///
+    /// Split out as a `ViewModifier` because the selected and unselected states
+    /// need *different* `foregroundStyle` overloads — two styles for the
+    /// palette-rendered checkmark, one for the monochrome ring — and a plain
+    /// `if` in the view body would fork the `Image`'s identity and defeat the
+    /// symbol-replace transition.
+    private struct SelectionMarkerStyle: ViewModifier {
+        let isSelected: Bool
+
+        func body(content: Content) -> some View {
+            if isSelected {
+                content
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(.white, Color.accentColor)
+            } else {
+                content
+                    .symbolRenderingMode(.monochrome)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -407,12 +442,12 @@ struct CardView: View {
         }
 
         Button {
+            // No snackbar: the card's own bookmark flag changes in place, so
+            // the toast only repeated what the card already showed.
             if isBookmarked {
                 viewModel.removeTag(.bookmark, fromItem: metadata.itemId)
-                appState.showToast(.unbookmarked)
             } else {
                 viewModel.addTag(.bookmark, toItem: metadata.itemId)
-                appState.showToast(.bookmarked)
             }
             haptics.fire(.selection)
         } label: {

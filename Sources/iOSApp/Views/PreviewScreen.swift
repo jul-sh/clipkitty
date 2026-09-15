@@ -479,16 +479,15 @@ struct PreviewScreen: View {
         item.itemMetadata.tags.contains(.bookmark)
     }
 
+    /// No snackbar: the bookmark control reflects the new state itself, and
+    /// the haptic already confirms the tap landed.
     private func toggleBookmark(for item: ClipboardItem) {
         if isBookmarked(item) {
             viewModel.removeTag(.bookmark, fromItem: item.itemMetadata.itemId)
-            haptics.fire(.selection)
-            appState.showToast(.unbookmarked)
         } else {
             viewModel.addTag(.bookmark, toItem: item.itemMetadata.itemId)
-            haptics.fire(.selection)
-            appState.showToast(.bookmarked)
         }
+        haptics.fire(.selection)
     }
 
     // MARK: - Share

@@ -197,6 +197,20 @@
         "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "全選" } }
       }
     },
+    "Select Clips" : {
+      "localizations" : {
+        "de" : { "stringUnit" : { "state" : "translated", "value" : "Clips auswählen" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Select Clips" } },
+        "es" : { "stringUnit" : { "state" : "translated", "value" : "Seleccionar clips" } },
+        "fr" : { "stringUnit" : { "state" : "translated", "value" : "Sélectionner des clips" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "クリップを選択" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "클립 선택" } },
+        "pt-BR" : { "stringUnit" : { "state" : "translated", "value" : "Selecionar Clipes" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Выбрать клипы" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "选择剪贴项" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "選取剪貼項" } }
+      }
+    },
     "Deselect All" : {
       "localizations" : {
         "de" : { "stringUnit" : { "state" : "translated", "value" : "Auswahl aufheben" } },

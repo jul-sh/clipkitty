@@ -399,7 +399,7 @@ struct HomeFeedView: View {
                         selection.beginSelection()
                     }
                 } label: {
-                    Label(String(localized: "Select"), systemImage: "checkmark.circle")
+                    Label(String(localized: "Select Clips"), systemImage: "checkmark.circle")
                 }
                 .disabled(filteredRows.isEmpty)
                 .accessibilityIdentifier("home.selectMenuItem")
@@ -528,9 +528,10 @@ struct HomeFeedView: View {
         guard !itemIDs.isEmpty else { return }
         let shouldInclude = !allSelectedAreBookmarked
 
+        // No snackbar: the affected rows update in place, so the change is
+        // visible on the feed itself.
         viewModel.setTag(.bookmark, onItems: itemIDs, shouldInclude: shouldInclude)
         haptics.fire(.selection)
-        appState.showToast(shouldInclude ? .bookmarked : .unbookmarked)
     }
 
     private func shareSelectedItems() {
