@@ -19,7 +19,11 @@ public enum PreviewFontPreference: String, CaseIterable, Identifiable {
 }
 
 public enum AppFontMetrics {
-    private static let systemScale: CGFloat = 0.94
+    /// The system faces render visibly larger than Iosevka Charon at the same
+    /// point size, so they are scaled down a touch to keep the two typeface
+    /// choices at the same apparent size. 0.94 read as slightly small in
+    /// practice; 0.97 keeps the parity without the shrink.
+    private static let systemScale: CGFloat = 0.97
 
     public static func size(_ size: CGFloat, for preference: AppFontPreference) -> CGFloat {
         switch preference {
