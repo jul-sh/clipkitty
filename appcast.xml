@@ -5,6 +5,16 @@
         <link>https://jul-sh.github.io/clipkitty/appcast.xml</link>
         <language>en</language>
         <item>
+            <title>1.13.1514</title>
+            <pubDate>Wed, 16 Sep 2026 00:47:54 +0000</pubDate>
+            <link>https://jul-sh.github.io/clipkitty/</link>
+            <sparkle:channel>beta</sparkle:channel>
+            <sparkle:version>1514</sparkle:version>
+            <sparkle:shortVersionString>1.13.1514</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.13.1514-beta/ClipKitty.dmg" length="19949976" type="application/octet-stream" sparkle:edSignature="1aHNiq6tNwhgBmWv4uWQbcejPE3X36QCjRvAkois3FQ9/i3s+3uMurkogdgDBR3LNrqE++J9q/MZ2txPJnBAAA=="/>
+        </item>
+        <item>
             <title>1.13.1513</title>
             <pubDate>Tue, 15 Sep 2026 02:21:23 +0000</pubDate>
             <link>https://jul-sh.github.io/clipkitty/</link>
@@ -32,16 +42,6 @@
             <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.13.1502/ClipKitty.dmg" length="19775965" type="application/octet-stream" sparkle:edSignature="64rQSuy7F42pZvmZW9WFy8g9HifLGIkrznB1yWb4Ium1IQrmRj9zf67IF9YThqJisDPStFpGQ/1/knDTSKJLDw=="/>
             <title>1.13.1502</title>
             <pubDate>Thu, 03 Sep 2026 18:43:27 +0000</pubDate>
-        </item>
-        <item>
-            <title>1.13.1500</title>
-            <pubDate>Wed, 02 Sep 2026 16:51:40 +0000</pubDate>
-            <link>https://jul-sh.github.io/clipkitty/</link>
-            <sparkle:channel>beta</sparkle:channel>
-            <sparkle:version>1500</sparkle:version>
-            <sparkle:shortVersionString>1.13.1500</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.13.1500-beta/ClipKitty.dmg" length="19775985" type="application/octet-stream" sparkle:edSignature="PvtXFHlJs7FeDtzDbAjr2ULV46ttC568dzPdMKIc+9RGF0A1wg+s+uZ685P+GE9OdZdlyyl5YwZiOsYBfv+SAA=="/>
         </item>
         <item>
             <link>https://jul-sh.github.io/clipkitty/</link>
