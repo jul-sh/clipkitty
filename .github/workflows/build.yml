@@ -1337,9 +1337,14 @@ jobs:
   # Deploy the site whenever its marketing inputs succeeded, even when
   # unrelated checks failed. Sparkle publication is deliberately separate:
   # the appcast must not advertise an archive until the release exists.
+  #
+  # ios-screenshots is a need only to order the two: the site wants this run's
+  # iPhone/iPad captures if they exist, but a failed or skipped capture must
+  # not hold the site back, so its result is deliberately not asserted here and
+  # the deploy step falls back to the previously published images.
   gh-pages:
     name: Deploy to gh-pages
-    needs: [macos-marketing, release]
+    needs: [macos-marketing, ios-screenshots, release]
     if: >-
       !cancelled()
       && needs.macos-marketing.result == 'success'
@@ -1368,6 +1373,27 @@ jobs:
         with:
           name: assets
           path: .
+
+      # The site's iPhone/iPad shots come from the same artifacts the App Store
+      # publish consumes, so what the README shows is what ASC received. The
+      # capture jobs are allowed to fail without blocking the site (see the
+      # `continue-on-error` below and the guard in the deploy step); a stale
+      # iOS image is better than an undeployed site.
+      - name: Download iPhone screenshots
+        id: ios_iphone_assets
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ios-assets-iphone
+          path: marketing-ios
+
+      - name: Download iPad screenshots
+        id: ios_ipad_assets
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ios-assets-ipad
+          path: marketing-ipad
 
       - name: Deploy to gh-pages
         env:
@@ -1411,10 +1437,36 @@ jobs:
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_2.png" marketing_2.png
           cp "$GITHUB_WORKSPACE/marketing/en/screenshot_3.png" marketing_3.png
 
+          SITE_FILES="icon.png privacy.html site.css marketing_1.png marketing_2.png marketing_3.png index.html"
+
+          # iPhone/iPad shots are published under their own names so the README
+          # can show the apps the "any device" copy promises. Copy each only if
+          # its capture job produced it: when a device's artifact is missing the
+          # previously published image stays untouched rather than being
+          # deleted, so the site never regresses to a broken image.
+          copy_ios_screenshot() {
+            src="$1"
+            dest="$2"
+            if [ -f "$src" ]; then
+              cp "$src" "$dest"
+              SITE_FILES="$SITE_FILES $dest"
+              echo "Publishing $dest from $src"
+            elif [ -f "$dest" ]; then
+              echo "::warning::$src missing; keeping the existing $dest"
+            else
+              echo "::warning::$src missing and no existing $dest to keep"
+            fi
+          }
+
+          copy_ios_screenshot "$GITHUB_WORKSPACE/marketing-ios/en/screenshot_1.png" marketing_ios_1.png
+          copy_ios_screenshot "$GITHUB_WORKSPACE/marketing-ios/en/screenshot_2.png" marketing_ios_2.png
+          copy_ios_screenshot "$GITHUB_WORKSPACE/marketing-ipad/en/screenshot_1.png" marketing_ipad_1.png
+
           # Generate landing page from README.md (cmark-gfm installed via Nix)
           make -C "$GITHUB_WORKSPACE" site-landing-page > index.html
 
-          git add icon.png privacy.html site.css marketing_1.png marketing_2.png marketing_3.png index.html
+          # shellcheck disable=SC2086 # deliberate word splitting: one path per arg
+          git add $SITE_FILES
           if git diff --cached --quiet; then
             echo "No changes to commit"
           else
@@ -1439,6 +1491,9 @@ jobs:
           echo "Marketing 1: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_1.png"
           echo "Marketing 2: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_2.png"
           echo "Marketing 3: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_3.png"
+          echo "iPhone 1: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_ios_1.png"
+          echo "iPhone 2: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_ios_2.png"
+          echo "iPad 1: https://raw.githubusercontent.com/$REPO/gh-pages/marketing_ipad_1.png"
 
   # Publish Sparkle only after the immutable GitHub beta release exists. The
   # gh-pages dependency orders the two writers, but site success is deliberately

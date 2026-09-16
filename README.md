@@ -2,7 +2,10 @@
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/main/Sources/MacApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png" alt="ClipKitty icon" width="60">
 
-<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty clipboard history" width="820">
+<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty clipboard history on the Mac" width="820">
+
+<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_ios_1.png" alt="ClipKitty on iPhone" width="260">
+<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_ipad_1.png" alt="ClipKitty on iPad" width="400">
 
 ## Why ClipKitty
 
