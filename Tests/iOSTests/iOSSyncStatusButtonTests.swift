@@ -15,7 +15,6 @@
             )
 
             XCTAssertEqual(presentation.phase, .off)
-            XCTAssertFalse(presentation.isAnimating)
             XCTAssertEqual(
                 presentation.accessibilityValue(locale: english),
                 "Sync is off"
@@ -29,42 +28,39 @@
             )
 
             XCTAssertEqual(presentation.phase, .unavailable)
-            XCTAssertFalse(presentation.isAnimating)
             XCTAssertEqual(
                 presentation.accessibilityValue(locale: english),
                 "iCloud not available"
             )
         }
 
-        func testIdleIsStaticAndReportsWaiting() {
+        func testIdleReportsWaiting() {
             let presentation = iOSSyncStatusPresentation(
                 syncEnabled: true,
                 status: .idle
             )
 
             XCTAssertEqual(presentation.phase, .idle)
-            XCTAssertFalse(presentation.isAnimating)
             XCTAssertEqual(
                 presentation.accessibilityValue(locale: english),
                 "Waiting to sync"
             )
         }
 
-        func testConnectingAnimatesAndReportsConnecting() {
+        func testConnectingReportsConnecting() {
             let presentation = iOSSyncStatusPresentation(
                 syncEnabled: true,
                 status: .connecting
             )
 
             XCTAssertEqual(presentation.phase, .connecting)
-            XCTAssertTrue(presentation.isAnimating)
             XCTAssertEqual(
                 presentation.accessibilityValue(locale: english),
                 "Connecting"
             )
         }
 
-        func testEveryWorkingActivityAnimatesAndReportsItsExactDescription() {
+        func testEveryWorkingActivityReportsItsExactDescription() {
             let records = SyncEngine.SyncRecordCounts(events: 2, snapshots: 1)
             let activities: [SyncEngine.SyncActivity] = [
                 .downloading(.incremental(records: records)),
@@ -82,7 +78,6 @@
                 )
 
                 XCTAssertEqual(presentation.phase, .syncing(activity))
-                XCTAssertTrue(presentation.isAnimating)
                 XCTAssertEqual(
                     presentation.accessibilityValue(locale: english),
                     activity.statusDescription
@@ -90,14 +85,13 @@
             }
         }
 
-        func testRecentSuccessIsStaticAndReportsJustNow() {
+        func testRecentSuccessReportsJustNow() {
             let now = Date(timeIntervalSince1970: 10000)
             let presentation = iOSSyncStatusPresentation(
                 syncEnabled: true,
                 status: .synced(lastSync: now.addingTimeInterval(-59))
             )
 
-            XCTAssertFalse(presentation.isAnimating)
             XCTAssertEqual(
                 presentation.accessibilityValue(now: now, locale: english),
                 "Synced just now"
@@ -111,20 +105,17 @@
                 status: .synced(lastSync: now.addingTimeInterval(-120))
             )
 
-            XCTAssertFalse(presentation.isAnimating)
             XCTAssertEqual(
                 presentation.accessibilityValue(now: now, locale: english),
                 "Synced 2 minutes ago"
             )
         }
 
-        /// The toolbar slot is occupied only by states worth interrupting a
-        /// resting feed for: work in flight, or a failure the user may need
-        /// to act on. Idle, synced, off, and unavailable stay hidden.
-        func testOnlyWorkingAndFailedStatesOccupyTheToolbarSlot() {
+        /// The toolbar slot is occupied only by a failure the user may need to
+        /// resolve. Work in flight is as ambient as a resting state, so
+        /// connecting, syncing, idle, synced, off and unavailable stay hidden.
+        func testOnlyFailedStatesOccupyTheToolbarSlot() {
             let visible: [(String, SyncEngine.SyncStatus?)] = [
-                ("connecting", .connecting),
-                ("syncing", .syncing(.uploading(.events(count: 3)))),
                 ("error", .error("Upload failed, retrying")),
                 ("temporarilyUnavailable", .temporarilyUnavailable),
             ]
@@ -135,6 +126,8 @@
 
             let hidden: [(String, SyncEngine.SyncStatus?)] = [
                 ("idle", .idle),
+                ("connecting", .connecting),
+                ("syncing", .syncing(.uploading(.events(count: 3)))),
                 ("synced", .synced(lastSync: Date())),
                 ("unavailable", .unavailable),
             ]
@@ -155,13 +148,13 @@
         }
 
         /// A suspended session drops the coordinator from the environment; the
-        /// resulting nil status must not leave a stranded spinner behind.
+        /// resulting nil status must not leave a stranded indicator behind.
         func testMissingCoordinatorHidesTheControl() {
             let presentation = iOSSyncStatusPresentation(syncEnabled: true, status: nil)
             XCTAssertFalse(presentation.isVisible)
         }
 
-        func testFailureStatesAreStaticAndExposeAnActionableReason() {
+        func testFailureStatesExposeAnActionableReason() {
             let cases: [(SyncEngine.SyncStatus, String)] = [
                 (.error("Upload failed, retrying"), "Upload failed, retrying"),
                 (.error("  \n"), "Sync failed"),
@@ -175,7 +168,6 @@
                     status: status
                 )
 
-                XCTAssertFalse(presentation.isAnimating)
                 XCTAssertEqual(
                     presentation.accessibilityValue(locale: english),
                     expectedValue

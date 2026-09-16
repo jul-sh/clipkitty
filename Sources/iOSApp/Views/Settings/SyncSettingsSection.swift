@@ -17,31 +17,21 @@
                     syncCoordinator?.setSyncEnabled(enabled)
                 }
 
-            // The toolbar button hides itself while sync is healthy or idle, so
-            // this row is the one place a user can see what sync is doing and
-            // why it might be stuck.
+            // Sync runs on its own; a healthy or in-flight status is not
+            // something the user can act on. Only a failure earns a line, and
+            // it explains rather than offers a button.
             if settings.syncEnabled {
                 let presentation = iOSSyncStatusPresentation(
                     syncEnabled: settings.syncEnabled,
                     status: syncCoordinator?.status
                 )
-                HStack {
+                if presentation.isVisible {
                     Text(presentation.accessibilityValue())
                         .font(.caption)
                         .foregroundStyle(presentation.isFailure ? .red : .secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                    if let syncCoordinator, syncCoordinator.canRequestSync {
-                        Button(String(localized: "Sync now")) {
-                            syncCoordinator.requestSync()
-                        }
-                        .font(.caption)
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .accessibilityIdentifier("settings.syncNow")
-                    }
+                        .accessibilityIdentifier("settings.syncStatus")
                 }
-                .accessibilityIdentifier("settings.syncStatus")
             }
         }
     }

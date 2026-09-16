@@ -81,22 +81,17 @@ struct GeneralSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    // Account status alone cannot tell the user whether sync is
-                    // working; the engine's own status can, and it was never shown.
-                    if settings.syncEnabled, isICloudAvailable, let engine = store.syncEngine {
-                        HStack {
-                            Text(Self.syncStatusText(engine.status))
-                                .font(.subheadline)
-                                .foregroundStyle(Self.isSyncFailure(engine.status) ? .red : .secondary)
-                                .textSelection(.enabled)
-                            Spacer()
-                            Button(String(localized: "Sync now")) {
-                                engine.start()
-                                engine.handleRemoteNotification()
-                            }
+                    // Sync is ambient: a healthy or in-flight status is not
+                    // something the user can act on, so only a failure earns a
+                    // row here.
+                    if settings.syncEnabled, isICloudAvailable, let engine = store.syncEngine,
+                       let failure = Self.syncFailureText(engine.status)
+                    {
+                        Text(failure)
                             .font(.subheadline)
-                        }
-                        .accessibilityIdentifier("SyncStatusRow")
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                            .accessibilityIdentifier("SyncStatusRow")
                     }
                 #endif
             }
@@ -327,22 +322,13 @@ struct GeneralSettingsView: View {
     }
 
     #if ENABLE_ICLOUD_SYNC
-        private static func syncStatusText(_ status: SyncEngine.SyncStatus, now: Date = Date()) -> String {
+        /// The only sync states worth a line in Settings: a hard error, and
+        /// iCloud being unavailable in a way the user may need to resolve.
+        /// Everything else (idle, connecting, syncing, synced) is silent.
+        private static func syncFailureText(_ status: SyncEngine.SyncStatus) -> String? {
             switch status {
-            case .idle:
-                return String(localized: "Waiting to sync")
-            case .connecting:
-                return String(localized: "Connecting")
-            case let .syncing(activity):
-                return activity.statusDescription
-            case let .synced(lastSync):
-                guard abs(lastSync.timeIntervalSince(now)) >= 60 else {
-                    return String(localized: "Synced just now")
-                }
-                let formatter = RelativeDateTimeFormatter()
-                formatter.unitsStyle = .full
-                let relative = formatter.localizedString(for: lastSync, relativeTo: now)
-                return String(localized: "Synced \(relative)")
+            case .idle, .connecting, .syncing, .synced:
+                return nil
             case let .error(message):
                 let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
                 return trimmed.isEmpty ? String(localized: "Sync failed") : trimmed
@@ -351,11 +337,6 @@ struct GeneralSettingsView: View {
             case .unavailable:
                 return String(localized: "iCloud not available")
             }
-        }
-
-        private static func isSyncFailure(_ status: SyncEngine.SyncStatus) -> Bool {
-            if case .error = status { return true }
-            return false
         }
     #endif
 

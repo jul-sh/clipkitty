@@ -4,9 +4,9 @@
     import Foundation
     import SwiftUI
 
-    /// A stable, testable projection of every CloudKit state shown by the
-    /// toolbar control. The symbol itself never changes, so status changes do
-    /// not make the leading toolbar item jump; only active work rotates it.
+    /// A stable, testable projection of every CloudKit state. Only the failure
+    /// states reach the toolbar (see `isVisible`); the rest exist so Settings
+    /// and VoiceOver can describe what sync is doing.
     struct iOSSyncStatusPresentation: Equatable {
         enum Phase: Equatable {
             case off
@@ -55,24 +55,14 @@
             }
         }
 
-        var isAnimating: Bool {
-            switch phase {
-            case .connecting, .syncing:
-                return true
-            case .off, .idle, .synced, .error, .temporarilyUnavailable, .unavailable:
-                return false
-            }
-        }
-
-        /// Whether the toolbar shows the control at all. Sync is ambient: a
-        /// resting spinner is chrome the user cannot act on, so the slot is
-        /// occupied only while work is actually in flight. Failures stay
-        /// visible because they are the one state the user may need to see.
+        /// Whether the toolbar shows the control at all. Sync is ambient, and
+        /// in-flight work is no more actionable than a resting state, so the
+        /// slot is occupied only by a failure the user may need to resolve.
         var isVisible: Bool {
             switch phase {
-            case .connecting, .syncing, .error, .temporarilyUnavailable:
+            case .error, .temporarilyUnavailable:
                 return true
-            case .off, .idle, .synced, .unavailable:
+            case .off, .idle, .connecting, .syncing, .synced, .unavailable:
                 return false
             }
         }
@@ -114,55 +104,30 @@
         }
     }
 
-    /// Top-toolbar-ready iCloud status and manual sync control.
+    /// Top-toolbar-ready iCloud failure indicator.
     ///
     /// The navigation toolbar supplies the circular Liquid Glass material. The
-    /// control appears only while sync is working or has something the user
-    /// needs to see (see `isVisible`), so a resting feed carries no idle
-    /// spinner in its leading slot.
+    /// indicator appears only when sync has failed or iCloud is unavailable
+    /// (see `isVisible`), so a healthy feed carries nothing in its leading
+    /// slot. It reports state and does not offer a manual trigger.
     struct SyncStatusButton: View {
         @Environment(iOSSettingsStore.self) private var settings
         @Environment(iOSSyncCoordinator.self) private var syncCoordinator: iOSSyncCoordinator?
-        @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
         var body: some View {
             let presentation = iOSSyncStatusPresentation(
                 syncEnabled: settings.syncEnabled,
                 status: syncCoordinator?.status
             )
-            let canRequestSync = settings.syncEnabled &&
-                (syncCoordinator?.canRequestSync ?? false)
 
             if presentation.isVisible {
-                if canRequestSync {
-                    button(presentation: presentation, canRequestSync: true)
-                        .accessibilityHint(String(localized: "Sync now"))
-                } else {
-                    button(presentation: presentation, canRequestSync: false)
-                }
-            }
-        }
-
-        private func button(
-            presentation: iOSSyncStatusPresentation,
-            canRequestSync: Bool
-        ) -> some View {
-            Button {
-                syncCoordinator?.requestSync()
-            } label: {
-                Image(systemName: "arrow.triangle.2.circlepath")
+                Image(systemName: "exclamationmark.arrow.triangle.2.circlepath")
                     .font(.body.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .symbolEffect(
-                        .rotate.clockwise,
-                        options: .repeat(.continuous),
-                        isActive: presentation.isAnimating && !reduceMotion
-                    )
+                    .foregroundStyle(presentation.isFailure ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                    .accessibilityLabel(String(localized: "iCloud Sync"))
+                    .accessibilityValue(presentation.accessibilityValue())
+                    .accessibilityIdentifier("home.syncStatusButton")
             }
-            .disabled(!canRequestSync)
-            .accessibilityLabel(String(localized: "iCloud Sync"))
-            .accessibilityValue(presentation.accessibilityValue())
-            .accessibilityIdentifier("home.syncStatusButton")
         }
     }
 

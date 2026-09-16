@@ -34,17 +34,6 @@ struct BrowserView: View {
                     set: { viewModel.updateSearchText($0) }
                 ),
                 appliedFilter: viewModel.appliedFilterDescriptor,
-                filterOptions: [viewModel.filterDescriptor(for: .all)] + viewModel.selectableFilters,
-                activeFilterKind: viewModel.activeFilterKind,
-                onSelectFilter: { kind in
-                    switch kind {
-                    case .all:
-                        viewModel.clearAppliedFilter()
-                    case .bookmarks, .text, .images, .links, .colors, .files:
-                        viewModel.applyFilter(kind)
-                    }
-                    focusSearchField()
-                },
                 contentState: viewModel.contentState,
                 // Row-only shortcuts (Cmd+K, delete item) must not fire while
                 // the pending filter chip is the keyboard target.
