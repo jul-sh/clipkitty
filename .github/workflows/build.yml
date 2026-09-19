@@ -1465,6 +1465,27 @@ jobs:
           copy_ios_screenshot "$GITHUB_WORKSPACE/marketing-ios/en/screenshot_2.png" marketing_ios_2.png
           copy_ios_screenshot "$GITHUB_WORKSPACE/marketing-ipad/en/screenshot_1.png" marketing_ipad_1.png
 
+          # Every image the README points at must exist on the branch we are
+          # about to push. The fallback above only protects an image that was
+          # published once already, so the first deploy after a capture job
+          # fails would otherwise ship a README referencing a file that is not
+          # there — which is exactly how marketing_ios_1.png ended up broken.
+          # Fail the deploy instead and let the capture flake be fixed.
+          MISSING_SITE_IMAGES=""
+          while read -r referenced; do
+            [ -n "$referenced" ] || continue
+            if [ ! -f "$referenced" ]; then
+              MISSING_SITE_IMAGES="$MISSING_SITE_IMAGES $referenced"
+            fi
+          done <<EOF
+          $(grep -o 'gh-pages/[A-Za-z0-9_.-]*\.png' "$GITHUB_WORKSPACE/README.md" \
+            | sed 's|^gh-pages/||' | sort -u)
+          EOF
+          if [ -n "$MISSING_SITE_IMAGES" ]; then
+            echo "::error::README references images missing from gh-pages:${MISSING_SITE_IMAGES}"
+            exit 1
+          fi
+
           # Generate landing page from README.md (cmark-gfm installed via Nix)
           make -C "$GITHUB_WORKSPACE" site-landing-page > index.html
 

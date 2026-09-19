@@ -101,8 +101,13 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         // Dismiss the iOS keyboard "slide to type" tutorial if it appears
         dismissKeyboardTutorial()
 
+        // The same 5s budget the other waits get. This one is reached right
+        // after dismissKeyboardTutorial() has already spent up to 2s waiting
+        // on a button that usually never appears, so a shorter timeout here
+        // was the first to expire on a loaded CI runner and failed the whole
+        // capture for one locale.
         let searchField = app.textFields["bottomBar.searchField"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 3),
+        XCTAssertTrue(searchField.waitForExistence(timeout: 5),
                       "bottomBar.searchField not found for locale \(locale!)")
         typeSearchQuery("dockr push", into: searchField)
         sleep(2)
@@ -113,7 +118,7 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
 
         // Dismiss search
         let closeButton = app.buttons["bottomBar.closeSearchButton"]
-        XCTAssertTrue(closeButton.waitForExistence(timeout: 3),
+        XCTAssertTrue(closeButton.waitForExistence(timeout: 5),
                       "bottomBar.closeSearchButton not found for locale \(locale!)")
         closeButton.tap()
         sleep(1)
