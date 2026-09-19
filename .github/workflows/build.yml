@@ -694,6 +694,9 @@ jobs:
           - device: iphone
             target: screenshots-ios
             outdir: marketing-ios
+          - device: iphone-max
+            target: screenshots-ios-max
+            outdir: marketing-ios-max
           - device: ipad
             target: screenshots-ipad
             outdir: marketing-ipad
@@ -1849,6 +1852,12 @@ jobs:
           name: ios-assets-iphone
           path: marketing-ios
 
+      - name: Download 6.9-inch iPhone screenshots
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ios-assets-iphone-max
+          path: marketing-ios-max
+
       - name: Download iPad screenshots
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -1857,16 +1866,14 @@ jobs:
 
       - name: Verify iOS screenshots present
         run: |
-          for locale in en es zh-Hans zh-Hant ja ko fr de pt-BR ru; do
-            for screenshot in screenshot_1.png screenshot_2.png screenshot_3.png; do
-              if [ ! -f "marketing-ios/$locale/$screenshot" ]; then
-                echo "::error::Missing marketing-ios/$locale/$screenshot; cannot publish to ASC"
-                exit 1
-              fi
-              if [ ! -f "marketing-ipad/$locale/$screenshot" ]; then
-                echo "::error::Missing marketing-ipad/$locale/$screenshot; cannot publish to ASC"
-                exit 1
-              fi
+          for dir in marketing-ios marketing-ios-max marketing-ipad; do
+            for locale in en es zh-Hans zh-Hant ja ko fr de pt-BR ru; do
+              for screenshot in screenshot_1.png screenshot_2.png screenshot_3.png; do
+                if [ ! -f "$dir/$locale/$screenshot" ]; then
+                  echo "::error::Missing $dir/$locale/$screenshot; cannot publish to ASC"
+                  exit 1
+                fi
+              done
             done
           done
 

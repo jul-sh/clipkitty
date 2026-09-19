@@ -13,7 +13,7 @@ endif
 
 XTASK := $(NIX_RUN) cargo run --quiet -p xtask --
 
-.PHONY: help check workspace install-hooks install-sparkle-cli app-hardened app-app-store release-dmg release-macos-appstore release-ios-appstore release-version release-appcast-generate release-appcast-update screenshots-macos screenshots-ios screenshots-ipad intro-video site-icon site-landing-page secrets-asc-auth shell
+.PHONY: help check workspace install-hooks install-sparkle-cli app-hardened app-app-store release-dmg release-macos-appstore release-ios-appstore release-version release-appcast-generate release-appcast-update screenshots-macos screenshots-ios screenshots-ios-max screenshots-ipad intro-video site-icon site-landing-page secrets-asc-auth shell
 
 help: ## Show the supported automation entry points.
 	@awk 'BEGIN {FS = ":.*## "; printf "\nClipKitty automation entry points\n\n"} /^[a-zA-Z0-9_.-]+:.*## / { printf "  %-26s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
@@ -65,6 +65,9 @@ screenshots-macos: ## Capture macOS screenshots. Optional CLIPKITTY_MARKETING_LO
 
 screenshots-ios: ## Capture iOS screenshots. Optional CLIPKITTY_MARKETING_LOCALES=en,fr.
 	@$(XTASK) marketing screenshots ios
+
+screenshots-ios-max: ## Capture 6.9" iPhone screenshots. Optional CLIPKITTY_MARKETING_LOCALES=en,fr.
+	@$(XTASK) marketing screenshots ios-max
 
 screenshots-ipad: ## Capture iPad screenshots. Optional CLIPKITTY_MARKETING_LOCALES=en,fr.
 	@$(XTASK) marketing screenshots ipad

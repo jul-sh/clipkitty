@@ -203,6 +203,8 @@ pub enum ScreenshotPlatform {
     MacOs,
     #[value(name = "ios")]
     Ios,
+    #[value(name = "ios-max")]
+    IosMax,
     #[value(name = "ipad")]
     IPad,
 }

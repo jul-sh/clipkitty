@@ -55,6 +55,7 @@ pub fn run(cmd: &MarketingCmd, dry_run: bool, reporter: &Reporter) -> Result<()>
         MarketingCmd::Screenshots(args) => match args.platform {
             ScreenshotPlatform::MacOs => screenshots_macos(&repo, dry_run, reporter),
             ScreenshotPlatform::Ios => screenshots_ios(&repo, dry_run, reporter),
+            ScreenshotPlatform::IosMax => screenshots_ios_max(&repo, dry_run, reporter),
             ScreenshotPlatform::IPad => screenshots_ipad(&repo, dry_run, reporter),
         },
         MarketingCmd::IntroVideo => intro_video(&repo, dry_run, reporter),
@@ -259,6 +260,24 @@ impl ScreenshotPlan {
         }
     }
 
+    /// The 6.9" iPhone. App Store Connect treats 6.9" and 6.3" as separate
+    /// display classes with their own screenshot sets, so the tallest iPhone
+    /// is captured on its own device rather than reusing the 6.3" images.
+    fn ios_max() -> Self {
+        Self {
+            platform: CapturePlatform::Ios(IosDeviceKind::IPhone),
+            locale_file: IOS_SCREENSHOT_LOCALE_FILE,
+            db_file: IOS_SCREENSHOT_DB_FILE,
+            marketing_root: "marketing-ios-max",
+            scheme: "ClipKittyiOSUITests",
+            destination: "platform=iOS Simulator,name=iPhone 17 Pro Max",
+            derived_data: "DerivedData",
+            only_testing:
+                "ClipKittyiOSUITests/ClipKittyiOSScreenshotTests/testTakeMarketingScreenshots",
+            prepare_macos_environment: false,
+        }
+    }
+
     fn ipad() -> Self {
         Self {
             platform: CapturePlatform::Ios(IosDeviceKind::IPad),
@@ -288,6 +307,10 @@ fn screenshots_macos(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Res
 
 fn screenshots_ios(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
     run_screenshot_plan(repo, ScreenshotPlan::ios(), dry_run, reporter)
+}
+
+fn screenshots_ios_max(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
+    run_screenshot_plan(repo, ScreenshotPlan::ios_max(), dry_run, reporter)
 }
 
 fn screenshots_ipad(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {

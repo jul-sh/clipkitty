@@ -227,7 +227,7 @@ fn ios_appstore(
         repo,
         ReleaseTarget::Ios,
         &args.version,
-        &[IPAD_SCREENSHOTS],
+        &[IOS_MAX_SCREENSHOTS, IPAD_SCREENSHOTS],
         reporter,
     )
 }
@@ -443,10 +443,24 @@ const MAC_SCREENSHOTS: ScreenshotTarget = ScreenshotTarget {
     expected_files: MAC_SCREENSHOT_FILES,
 };
 
+// Each display class is its own screenshot set in App Store Connect, and a set
+// is only refreshed by an upload naming its exact device type. These constants
+// must therefore match the simulators the captures actually run on (see
+// `ScreenshotPlan` in marketing.rs): iPhone 17 is 6.3" at 1206x2622, iPhone 17
+// Pro Max is 6.9" at 1320x2868, and iPad Pro 13-inch is 13" at 2064x2752.
+// Labelling a capture with the wrong class leaves the real set untouched and
+// stale however often CI runs.
 const IOS_SCREENSHOTS: ScreenshotTarget = ScreenshotTarget {
-    label: "iOS",
+    label: "iOS (6.3\")",
     marketing_dir_name: "marketing-ios",
-    device_types: &["APP_IPHONE_61"],
+    device_types: &["APP_IPHONE_63"],
+    expected_files: IOS_SCREENSHOT_FILES,
+};
+
+const IOS_MAX_SCREENSHOTS: ScreenshotTarget = ScreenshotTarget {
+    label: "iOS (6.9\")",
+    marketing_dir_name: "marketing-ios-max",
+    device_types: &["APP_IPHONE_69"],
     expected_files: IOS_SCREENSHOT_FILES,
 };
 

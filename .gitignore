@@ -52,6 +52,7 @@ screenshot-*.png
 # Marketing screenshots (generated in CI by ImageMagick)
 marketing/
 marketing-ios/
+marketing-ios-max/
 marketing-ipad/
 marketing_*.png
 
