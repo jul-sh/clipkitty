@@ -297,12 +297,16 @@ struct BrowserView: View {
 
     /// Tracks whether ⌘ alone is held so the rows can advertise ⌘1–⌘9.
     ///
-    /// The badges appear only after ⌘ has been held for a beat, the way
-    /// iPadOS reveals its shortcut overlay: a chord such as ⌘K, ⌘C or ⌘V
-    /// must not flash them across every row, and each flash would also keep
-    /// the list animating (which, in UI automation that pastes one character
-    /// per ⌘V, made every keystroke wait for the animation to settle). The
-    /// release hides them without animation for the same reason.
+    /// The badges wait out a brief hold before appearing: a chord such as ⌘K,
+    /// ⌘C or ⌘V must not flash them across every row, and each flash would
+    /// also keep the list animating (which, in UI automation that pastes one
+    /// character per ⌘V, made every keystroke wait for the animation to
+    /// settle). The release hides them without animation for the same reason.
+    ///
+    /// The delay only has to outlast a chord, not a human decision, so it is
+    /// short enough to still read as immediate. These are small inline badges,
+    /// not a full-screen overlay like the iPadOS shortcut sheet, and they do
+    /// not earn a perceptible wait.
     private func installCommandFlagsMonitor() {
         guard commandFlagsMonitor == nil else { return }
         commandFlagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
@@ -312,7 +316,7 @@ struct BrowserView: View {
             commandHoldTask = nil
             if commandAlone {
                 commandHoldTask = Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(400))
+                    try? await Task.sleep(for: .milliseconds(50))
                     guard !Task.isCancelled else { return }
                     withAnimation(.easeOut(duration: 0.12)) {
                         isCommandKeyHeld = true
