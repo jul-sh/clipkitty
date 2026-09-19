@@ -38,17 +38,6 @@ struct BrowserResultsList: View {
             }
 
             resultsList
-
-            // The browse query is capped by the store; say so instead of
-            // letting a long history silently end at the cap.
-            if let totalCount = viewModel.totalCount, totalCount > viewModel.itemCount {
-                Text(String(localized: "Showing \(viewModel.itemCount) of \(totalCount)"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .accessibilityIdentifier("ResultsTruncationFooter")
-            }
         }
         .animation(.easeOut(duration: 0.15), value: viewModel.pendingFilterSuggestion?.kind)
         // Locale-invariant automation signal: which filter's results are on
@@ -127,6 +116,23 @@ struct BrowserResultsList: View {
                     .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
+                }
+
+                // The browse query is capped by the store; say so instead of
+                // letting a long history silently end at the cap. It is the
+                // last row rather than a pinned bar so it stays out of the way
+                // until the user has actually scrolled to the end of what the
+                // cap returned, which is the moment the count explains.
+                if let totalCount = viewModel.totalCount, totalCount > viewModel.itemCount {
+                    Text(String(localized: "Showing \(viewModel.itemCount) of \(totalCount)"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .accessibilityIdentifier("ResultsTruncationFooter")
+                        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                 }
             }
             .listStyle(.plain)
