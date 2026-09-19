@@ -5,6 +5,16 @@
         <link>https://jul-sh.github.io/clipkitty/appcast.xml</link>
         <language>en</language>
         <item>
+            <title>1.13.1520</title>
+            <pubDate>Sat, 19 Sep 2026 21:04:15 +0000</pubDate>
+            <link>https://jul-sh.github.io/clipkitty/</link>
+            <sparkle:channel>beta</sparkle:channel>
+            <sparkle:version>1520</sparkle:version>
+            <sparkle:shortVersionString>1.13.1520</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.13.1520-beta/ClipKitty.dmg" length="19932259" type="application/octet-stream" sparkle:edSignature="iDCSyUgq6ZFmkboHQxoIQ6T33ZLBhkIHdEzN2VAAnZI+j01YcPe8n698WwgsDlY9KIpXBoLXSHHQOHTm/VIRDw=="/>
+        </item>
+        <item>
             <title>1.13.1515</title>
             <pubDate>Wed, 16 Sep 2026 03:35:29 +0000</pubDate>
             <link>https://jul-sh.github.io/clipkitty/</link>
@@ -23,16 +33,6 @@
             <sparkle:shortVersionString>1.13.1514</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.13.1514-beta/ClipKitty.dmg" length="19949976" type="application/octet-stream" sparkle:edSignature="1aHNiq6tNwhgBmWv4uWQbcejPE3X36QCjRvAkois3FQ9/i3s+3uMurkogdgDBR3LNrqE++J9q/MZ2txPJnBAAA=="/>
-        </item>
-        <item>
-            <title>1.13.1513</title>
-            <pubDate>Tue, 15 Sep 2026 02:21:23 +0000</pubDate>
-            <link>https://jul-sh.github.io/clipkitty/</link>
-            <sparkle:channel>beta</sparkle:channel>
-            <sparkle:version>1513</sparkle:version>
-            <sparkle:shortVersionString>1.13.1513</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/jul-sh/clipkitty/releases/download/v1.13.1513-beta/ClipKitty.dmg" length="19949882" type="application/octet-stream" sparkle:edSignature="ZTnkbrL3rfoP7Ihe1/nIjbyUA7UC+aqlVkjWRCvm40PvmfqW+jxpXAfHbLXSF+XoCYaaf1e2oXFzZkNw60LJCw=="/>
         </item>
         <item>
             <link>https://jul-sh.github.io/clipkitty/</link>
