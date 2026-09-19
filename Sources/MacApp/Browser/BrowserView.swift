@@ -303,10 +303,9 @@ struct BrowserView: View {
     /// character per ⌘V, made every keystroke wait for the animation to
     /// settle). The release hides them without animation for the same reason.
     ///
-    /// The delay only has to outlast a chord, not a human decision, so it is
-    /// short enough to still read as immediate. These are small inline badges,
-    /// not a full-screen overlay like the iPadOS shortcut sheet, and they do
-    /// not earn a perceptible wait.
+    /// The delay is a deliberate hold: long enough that ⌘ pressed on the way
+    /// to a chord never reveals anything, short enough that holding ⌘ to look
+    /// something up does not feel like waiting on the app.
     private func installCommandFlagsMonitor() {
         guard commandFlagsMonitor == nil else { return }
         commandFlagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
@@ -316,7 +315,7 @@ struct BrowserView: View {
             commandHoldTask = nil
             if commandAlone {
                 commandHoldTask = Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(50))
+                    try? await Task.sleep(for: .milliseconds(250))
                     guard !Task.isCancelled else { return }
                     withAnimation(.easeOut(duration: 0.12)) {
                         isCommandKeyHeld = true
