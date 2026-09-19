@@ -102,6 +102,13 @@ struct BrowserView: View {
             removeCommandKeyEventMonitor()
         }
         .onChange(of: displayVersion) { _, _ in
+            // The panel hides with orderOut, which leaves this view installed,
+            // so .onDisappear never runs and the badge state would otherwise
+            // survive into the next display: hiding while the badges were up
+            // brought them back on the next open with ⌘ not held. The store
+            // bumps displayVersion on every dismissal, so clear the reveal
+            // (and any hold still pending) here.
+            cancelCommandBadgeReveal()
             focusSearchField()
         }
     }
@@ -287,12 +294,25 @@ struct BrowserView: View {
             NSEvent.removeMonitor(commandFlagsMonitor)
             self.commandFlagsMonitor = nil
         }
-        commandHoldTask?.cancel()
-        commandHoldTask = nil
-        isCommandKeyHeld = false
+        cancelCommandBadgeReveal()
         guard let commandKeyEventMonitor else { return }
         NSEvent.removeMonitor(commandKeyEventMonitor)
         self.commandKeyEventMonitor = nil
+    }
+
+    /// Drops any pending hold and hides the badges without animation. Used
+    /// both when the monitors go away and on each dismissal, so no reveal can
+    /// outlive the display it was started in.
+    @MainActor
+    private func cancelCommandBadgeReveal() {
+        commandHoldTask?.cancel()
+        commandHoldTask = nil
+        guard isCommandKeyHeld else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            isCommandKeyHeld = false
+        }
     }
 
     /// Tracks whether ⌘ alone is held so the rows can advertise ⌘1–⌘9.
@@ -316,17 +336,16 @@ struct BrowserView: View {
             if commandAlone {
                 commandHoldTask = Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(250))
-                    guard !Task.isCancelled else { return }
+                    // The panel can be dismissed inside the hold window, and a
+                    // dismissal that races this task must not leave the badges
+                    // revealed on a hidden panel.
+                    guard !Task.isCancelled, isPanelVisible() else { return }
                     withAnimation(.easeOut(duration: 0.12)) {
                         isCommandKeyHeld = true
                     }
                 }
-            } else if isCommandKeyHeld {
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                withTransaction(transaction) {
-                    isCommandKeyHeld = false
-                }
+            } else {
+                cancelCommandBadgeReveal()
             }
             return event
         }
