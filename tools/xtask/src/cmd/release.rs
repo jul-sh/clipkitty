@@ -444,16 +444,20 @@ const MAC_SCREENSHOTS: ScreenshotTarget = ScreenshotTarget {
 };
 
 // Each display class is its own screenshot set in App Store Connect, and a set
-// is only refreshed by an upload naming its exact device type. These constants
-// must therefore match the simulators the captures actually run on (see
-// `ScreenshotPlan` in marketing.rs): iPhone 17 is 6.3" at 1206x2622, iPhone 17
-// Pro Max is 6.9" at 1320x2868, and iPad Pro 13-inch is 13" at 2064x2752.
-// Labelling a capture with the wrong class leaves the real set untouched and
-// stale however often CI runs.
+// is only refreshed by an upload naming its exact device type.
+//
+// These names are Apple's, and they are historical rather than descriptive:
+// the enum is frozen at the sizes that existed when each class was introduced,
+// so a current device uploads under the older name its class inherited.
+// APP_IPHONE_61 is the class that accepts iPhone 17's 1206x2622 (nominally
+// 6.3"), and APP_IPHONE_69 accepts iPhone 17 Pro Max's 1320x2868. There is no
+// APP_IPHONE_63: naming one gets `unsupported screenshot display type` and
+// fails the publish. Verify any new value against the API before using it,
+// for instance with `asc screenshots upload --dry-run --device-type <TYPE>`.
 const IOS_SCREENSHOTS: ScreenshotTarget = ScreenshotTarget {
-    label: "iOS (6.3\")",
+    label: "iOS (6.1\"/6.3\")",
     marketing_dir_name: "marketing-ios",
-    device_types: &["APP_IPHONE_63"],
+    device_types: &["APP_IPHONE_61"],
     expected_files: IOS_SCREENSHOT_FILES,
 };
 
