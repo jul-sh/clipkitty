@@ -448,12 +448,23 @@ const MAC_SCREENSHOTS: ScreenshotTarget = ScreenshotTarget {
 //
 // These names are Apple's, and they are historical rather than descriptive:
 // the enum is frozen at the sizes that existed when each class was introduced,
-// so a current device uploads under the older name its class inherited.
-// APP_IPHONE_61 is the class that accepts iPhone 17's 1206x2622 (nominally
-// 6.3"), and APP_IPHONE_69 accepts iPhone 17 Pro Max's 1320x2868. There is no
-// APP_IPHONE_63: naming one gets `unsupported screenshot display type` and
-// fails the publish. Verify any new value against the API before using it,
-// for instance with `asc screenshots upload --dry-run --device-type <TYPE>`.
+// so a current device uploads under the older name its class inherited. The
+// 1206x2622 capture from iPhone 17 (nominally 6.3") belongs to APP_IPHONE_61,
+// and the 1320x2868 capture from iPhone 17 Pro Max (6.9") to APP_IPHONE_67.
+//
+// Two traps here, both of which have broken this publish. APP_IPHONE_63 does
+// not exist at all and fails loudly with `unsupported screenshot display
+// type`. APP_IPHONE_69 is worse: the API accepts the name and silently
+// normalizes it to APP_IPHONE_67, so the upload reports success while the
+// readback for APP_IPHONE_69 finds an empty set and the publish dies on a
+// count mismatch. The accepted spelling is therefore not proof that a set by
+// that name exists.
+//
+// Confirm a value round-trips before using it: a `--dry-run` upload echoes the
+// `displayType` the API actually resolved, which must match the name here.
+//
+//   asc screenshots upload --version-localization <ID> \
+//     --device-type <TYPE> --path <PNG> --dry-run
 const IOS_SCREENSHOTS: ScreenshotTarget = ScreenshotTarget {
     label: "iOS (6.1\"/6.3\")",
     marketing_dir_name: "marketing-ios",
@@ -462,9 +473,9 @@ const IOS_SCREENSHOTS: ScreenshotTarget = ScreenshotTarget {
 };
 
 const IOS_MAX_SCREENSHOTS: ScreenshotTarget = ScreenshotTarget {
-    label: "iOS (6.9\")",
+    label: "iOS (6.7\"/6.9\")",
     marketing_dir_name: "marketing-ios-max",
-    device_types: &["APP_IPHONE_69"],
+    device_types: &["APP_IPHONE_67"],
     expected_files: IOS_SCREENSHOT_FILES,
 };
 

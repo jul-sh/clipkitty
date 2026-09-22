@@ -206,13 +206,16 @@ final class BrowserSearchLifecycleTests: XCTestCase {
         )
 
         viewModel.onAppear(initialSearchQuery: "")
-        await flushMainActor()
+        // Wait on the state itself: a fixed yield count loses this race when
+        // the test host's main actor is busy (SyncEngine startup), which left
+        // itemIds empty here and failed the run.
+        await settle { !viewModel.itemIds.isEmpty }
 
         XCTAssertEqual(viewModel.itemIds, ["1"])
         XCTAssertEqual(viewModel.selectedItemId, "1")
 
         viewModel.handleDisplayReset(initialSearchQuery: "")
-        await flushMainActor()
+        await settle { viewModel.selectedItemId == nil }
 
         guard case let .loading(request, previous, _) = viewModel.contentState else {
             return XCTFail("Expected display reset to preserve stale results while refreshing")
@@ -255,7 +258,7 @@ final class BrowserSearchLifecycleTests: XCTestCase {
         )
 
         viewModel.onAppear(initialSearchQuery: "")
-        await flushMainActor()
+        await settle { !viewModel.itemIds.isEmpty }
 
         XCTAssertEqual(viewModel.itemIds, ["1"])
         XCTAssertEqual(viewModel.selectedItemId, "1")
