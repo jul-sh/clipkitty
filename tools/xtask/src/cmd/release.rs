@@ -1406,6 +1406,12 @@ fn is_transient_asc_error(err: &anyhow::Error) -> bool {
         || msg.contains("context deadline exceeded")
 }
 
+/// How many locales upload at once. ASC rate-limits, and a 429 lands in the
+/// per-set retry path (clear + re-upload + re-poll), so the ceiling is kept
+/// low enough that the retries it provokes cannot cost more than the
+/// parallelism saves.
+const SCREENSHOT_UPLOAD_CONCURRENCY: usize = 3;
+
 fn upload_screenshots(
     repo: &RepoRoot,
     target: ScreenshotTarget,
@@ -1424,17 +1430,100 @@ fn upload_screenshots(
         ));
     }
 
-    for (source_locale, asc_locale) in LOCALE_MAP {
-        let Some(localization_id) = locale_to_id.get(*asc_locale) else {
-            return Err(anyhow!(
-                "no ASC localization for {asc_locale}; cannot upload {} screenshots",
-                target.label
-            ));
-        };
+    // Locales are uploaded concurrently. Each one writes only to its own
+    // localization's screenshot sets, so they share no ASC state, but the
+    // work is entirely blocking `asc` subprocesses: 10 locales x (1 clear + N
+    // uploads + a readiness poll) ran to several minutes per target in
+    // sequence. Concurrency is bounded rather than one-thread-per-locale
+    // because ASC rate-limits, and 429s would land in the retry path and cost
+    // more than the serialisation saves.
+    let plans = LOCALE_MAP
+        .iter()
+        .map(|(source_locale, asc_locale)| {
+            let Some(localization_id) = locale_to_id.get(*asc_locale) else {
+                return Err(anyhow!(
+                    "no ASC localization for {asc_locale}; cannot upload {} screenshots",
+                    target.label
+                ));
+            };
+            let locale_dir = marketing_dir.join(source_locale);
+            let pngs = expected_screenshot_paths(&locale_dir, asc_locale, target)?;
+            Ok(LocaleUploadPlan {
+                asc_locale,
+                localization_id,
+                pngs,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-        let locale_dir = marketing_dir.join(source_locale);
-        let pngs = expected_screenshot_paths(&locale_dir, asc_locale, target)?;
+    // Results are indexed by plan rather than pushed in completion order, so
+    // which locale failed is never in doubt and the error a run reports is
+    // the same one on every run.
+    let next_index = std::sync::Mutex::new(0usize);
+    let mut results: Vec<Option<Result<usize>>> = (0..plans.len()).map(|_| None).collect();
+    let results_sink = std::sync::Mutex::new(&mut results);
+    let worker_count = SCREENSHOT_UPLOAD_CONCURRENCY.min(plans.len().max(1));
 
+    thread::scope(|scope| {
+        for _ in 0..worker_count {
+            scope.spawn(|| loop {
+                let index = {
+                    let mut next = next_index.lock().expect("plan cursor poisoned");
+                    if *next >= plans.len() {
+                        return;
+                    }
+                    let index = *next;
+                    *next += 1;
+                    index
+                };
+                let plan = &plans[index];
+                let outcome = upload_screenshots_for_locale(repo, target, plan, asc_env, reporter)
+                    .with_context(|| {
+                        format!("uploading {} screenshots for {}", target.label, plan.asc_locale)
+                    });
+                results_sink.lock().expect("results sink poisoned")[index] = Some(outcome);
+            });
+        }
+    });
+
+    for result in results {
+        uploaded_count +=
+            result.unwrap_or_else(|| Err(anyhow!("screenshot upload worker did not report")))?;
+    }
+
+    reporter.info(&format!("Total screenshots uploaded: {uploaded_count}"));
+    Ok(())
+}
+
+/// One locale's screenshot upload: which localization to write to and the
+/// files to put there, resolved before any upload starts so a missing locale
+/// or file fails the publish before it has half-written a set.
+struct LocaleUploadPlan<'a> {
+    asc_locale: &'a str,
+    localization_id: &'a String,
+    pngs: Vec<Utf8PathBuf>,
+}
+
+/// Replace one locale's screenshots for every device type of `target`,
+/// returning how many were uploaded. Shares no mutable state with other
+/// locales, which is what makes running these concurrently safe.
+fn upload_screenshots_for_locale(
+    repo: &RepoRoot,
+    target: ScreenshotTarget,
+    plan: &LocaleUploadPlan<'_>,
+    asc_env: &[(&str, &str)],
+    reporter: &Reporter,
+) -> Result<usize> {
+    let LocaleUploadPlan {
+        asc_locale,
+        localization_id,
+        pngs,
+    } = plan;
+    let asc_locale = *asc_locale;
+    let localization_id = localization_id.as_str();
+    let mut uploaded_count = 0usize;
+
+    {
         for device_type in target.device_types {
             // Up to 3 attempts: ASC's flaky 401s can leave the set with the
             // wrong number of screenshots (partial uploads, duplicates from
@@ -1509,8 +1598,7 @@ fn upload_screenshots(
         }
     }
 
-    reporter.info(&format!("Total screenshots uploaded: {uploaded_count}"));
-    Ok(())
+    Ok(uploaded_count)
 }
 
 /// Poll the screenshot set for up to ~3m, returning `Ok(())` once it has
