@@ -129,6 +129,61 @@ final class BrowserFilterCatalogTests: XCTestCase {
         XCTAssertNil(catalog.typedSuggestion(searchText: "i", appliedFilter: .all))
     }
 
+    /// Two characters are prefixes of ordinary words, not filter intent:
+    /// typing "copy" passes through "co" (Colors) and "find" through "fi"
+    /// (Files), which flashed the chip mid-word. The third character is what
+    /// separates a typed filter from the start of a normal word.
+    func testTwoCharacterPrefixOfACommonWordDoesNotSurface() {
+        XCTAssertNil(catalog.typedSuggestion(searchText: "co", appliedFilter: .all))
+        XCTAssertNil(catalog.typedSuggestion(searchText: "fi", appliedFilter: .all))
+
+        XCTAssertEqual(
+            catalog.typedSuggestion(searchText: "col", appliedFilter: .all)?.kind,
+            .colors
+        )
+        XCTAssertEqual(
+            catalog.typedSuggestion(searchText: "fil", appliedFilter: .all)?.kind,
+            .files
+        )
+    }
+
+    /// Raising the minimum must not strand a filter behind a prefix longer
+    /// than its own name. Every filter keeps at least one alias it can still
+    /// be triggered by in full.
+    func testEveryFilterIsReachableAtTheMinimumTriggerLength() {
+        for descriptor in catalog.selectableFilters {
+            let reachable = descriptor.searchAliases.contains { alias in
+                catalog.typedSuggestion(searchText: alias, appliedFilter: .all)?.kind
+                    == descriptor.kind
+            }
+            XCTAssertTrue(
+                reachable,
+                "\(descriptor.kind) has no alias that still surfaces it: \(descriptor.searchAliases)"
+            )
+        }
+    }
+
+    /// CJK titles are two characters — 文件, 파일, 画像 — so the alphabetic
+    /// minimum would make those filters untypable in their own locale.
+    func testIdeographicTokensKeepTheShorterMinimum() {
+        let ideographic = BrowserFilterCatalog(selectableFilters: [
+            BrowserFilterDescriptor(
+                kind: .files,
+                queryFilter: .contentType(contentType: .files),
+                title: "文件",
+                identifierSuffix: "files",
+                symbolName: "folder",
+                searchAliases: ["文件"]
+            ),
+        ])
+
+        XCTAssertEqual(
+            ideographic.typedSuggestion(searchText: "文件", appliedFilter: .all)?.kind,
+            .files
+        )
+        XCTAssertNil(ideographic.typedSuggestion(searchText: "文", appliedFilter: .all))
+    }
+
     func testNonMatchingTokenDoesNotSurface() {
         XCTAssertNil(catalog.typedSuggestion(searchText: "important", appliedFilter: .all))
         XCTAssertNil(catalog.typedSuggestion(searchText: "docker", appliedFilter: .all))

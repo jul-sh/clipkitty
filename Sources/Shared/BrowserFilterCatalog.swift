@@ -176,10 +176,47 @@ public struct TypedFilterSuggestion: Equatable, Sendable {
 }
 
 extension BrowserFilterCatalog {
-    /// Minimum typed length before a suggestion surfaces. Single characters
-    /// are too eager: nearly every query starts with a letter that prefixes
-    /// some alias.
-    private static let minimumTriggerLength = 2
+    /// Minimum typed length before a suggestion surfaces, for alphabetic
+    /// scripts. Short prefixes are too eager to read as filter intent: at one
+    /// character nearly every query prefixes some alias, and at two the
+    /// prefixes of ordinary words still collide — "co" in "copy" matches
+    /// Colors, "fi" in "find" matches Files. Three characters is the shortest
+    /// length that distinguishes a typed filter from the start of a normal
+    /// word, and every alphabetic alias is still reachable by then ("col",
+    /// "fil", "ima", "url").
+    ///
+    /// The surfacing debounce does not fix this. It hides the flash only
+    /// while keystrokes arrive faster than the delay, which is not a property
+    /// the suggestion can rely on: the marketing recording types English at a
+    /// 200ms mean and 517ms p95 per character, so every intermediate prefix
+    /// sits alone well past any delay short enough to stay usable.
+    private static let minimumTriggerLength = 3
+
+    /// The same rule would make several filters unreachable in CJK, where a
+    /// whole localized title is shorter than the alphabetic minimum: Files is
+    /// 文件 / 檔案 / 파일 and Images is 画像 / 图像, all two characters. These
+    /// scripts do not have the collision problem that motivates the longer
+    /// minimum — a two-character CJK token is a word, not the start of one —
+    /// so they keep the shorter threshold.
+    private static let minimumIdeographicTriggerLength = 2
+
+    /// Whether `token` is written in a script whose words are short enough
+    /// that the alphabetic minimum would suppress legitimate filter names.
+    /// Covers CJK ideographs, kana and Hangul.
+    private static func isIdeographicToken(_ token: Substring) -> Bool {
+        token.unicodeScalars.allSatisfy { scalar in
+            switch scalar.value {
+            case 0x3040 ... 0x30FF, // Hiragana + Katakana
+                 0x3400 ... 0x4DBF, // CJK Unified Ideographs Extension A
+                 0x4E00 ... 0x9FFF, // CJK Unified Ideographs
+                 0xAC00 ... 0xD7AF, // Hangul Syllables
+                 0xF900 ... 0xFAFF: // CJK Compatibility Ideographs
+                return true
+            default:
+                return false
+            }
+        }
+    }
 
     /// Resolves the pending filter suggestion for the current search state.
     ///
@@ -195,11 +232,13 @@ extension BrowserFilterCatalog {
     ///    one filter kind produce no suggestion.
     public func typedSuggestion(searchText: String, appliedFilter: ItemQueryFilter) -> TypedFilterSuggestion? {
         guard appliedFilter == .all else { return nil }
-        guard let token = searchText.split(whereSeparator: \.isWhitespace).last,
-              token.count >= Self.minimumTriggerLength
-        else {
+        guard let token = searchText.split(whereSeparator: \.isWhitespace).last else {
             return nil
         }
+        let minimumLength = Self.isIdeographicToken(token)
+            ? Self.minimumIdeographicTriggerLength
+            : Self.minimumTriggerLength
+        guard token.count >= minimumLength else { return nil }
 
         let needle = token.lowercased()
         let matches = selectableFilters.filter { descriptor in
