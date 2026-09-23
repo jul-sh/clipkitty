@@ -1131,14 +1131,16 @@ final class ClipKittyUITests: XCTestCase {
         }
 
         func typingUnits(for text: String) -> [String] {
-            guard screenshotLocale != nil else {
-                return text.map(String.init)
-            }
-
-            // Keep the chunking optimization for Latin-script translations,
-            // where it is reliable. A scalar above Latin Extended Additional
-            // indicates one of the Cyrillic/CJK marketing locales and uses the
-            // proven character-at-a-time path instead.
+            // Chunk every Latin-script query, including the untranslated
+            // English default. Each `typeText` call blocks until the app goes
+            // idle, so the per-character path pays that round-trip once per
+            // letter: English measured a 200ms mean against 110ms for French,
+            // which was already chunked, purely because it took this branch.
+            //
+            // A scalar above Latin Extended Additional indicates one of the
+            // Cyrillic/CJK marketing locales, where XCTest's synthetic
+            // keyboard intermittently rejects multi-character events, so
+            // those keep the proven character-at-a-time path.
             if requiresInputMethod(text) {
                 return text.map(String.init)
             }
