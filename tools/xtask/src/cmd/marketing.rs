@@ -39,6 +39,7 @@ const VIDEO_ATTACHMENTS_DIR: &str = "/tmp/xcresult-attachments";
 const VIDEO_BOUNDS_FILE: &str = "/tmp/clipkitty_window_bounds.txt";
 const VIDEO_OFFSET_FILE: &str = "/tmp/clipkitty_video_start_offset.txt";
 const VIDEO_TYPING_LATENCY_FILE: &str = "/tmp/clipkitty_video_typing_latency.json";
+const VIDEO_END_OFFSET_FILE: &str = "/tmp/clipkitty_video_end_offset.txt";
 
 /// How far a recording may be slowed to reach the target duration before the
 /// frame duplication it causes reads as judder. Footage shorter than this
@@ -1526,10 +1527,22 @@ fn postprocess_video(
         .unwrap_or(0.0);
     fs::remove_file(VIDEO_OFFSET_FILE).ok();
 
-    // Usable footage is the post-setup portion of the recording. We rescale
-    // it (speed up or slow down) so the final video is exactly
-    // `target_duration` seconds long, rather than trimming.
-    let usable_duration = (raw_duration - start_offset).max(0.0);
+    // The recording keeps rolling until the test returns, and XCUITest tears
+    // the app down while it does, so the raw footage ends on empty desktop.
+    // The test marks its last useful frame the same way it marks the end of
+    // setup; honour it when present and fall back to the full recording when
+    // it is missing.
+    let end_offset = fs::read_to_string(VIDEO_END_OFFSET_FILE)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<f64>().ok())
+        .filter(|end| *end > start_offset && *end <= raw_duration)
+        .unwrap_or(raw_duration);
+    fs::remove_file(VIDEO_END_OFFSET_FILE).ok();
+
+    // Usable footage is the recorded demo between those two marks. We rescale
+    // it (speed up or slow down) toward `target_duration` rather than
+    // trimming.
+    let usable_duration = (end_offset - start_offset).max(0.0);
     if usable_duration <= 0.0 {
         return Err(anyhow!(
             "raw video usable duration is non-positive (raw={raw_duration:.3}s, offset={start_offset:.3}s)"

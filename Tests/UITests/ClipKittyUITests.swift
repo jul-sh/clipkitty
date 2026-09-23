@@ -1167,7 +1167,13 @@ final class ClipKittyUITests: XCTestCase {
 
         /// Helper to clear search field. No trailing delay — the next typed char
         /// should hit the empty field immediately.
-        func clearSearch() {
+        ///
+        /// `readPause` holds on the completed query first. Each scene ends by
+        /// clearing a sentence the viewer has only just finished watching
+        /// appear, and wiping it the instant the last character lands gives
+        /// them no time to read either the query or the results it produced.
+        func clearSearch(readPause: TimeInterval = 0.5) {
+            Thread.sleep(forTimeInterval: readPause)
             searchField.typeKey(.delete, modifierFlags: .command)
             if !waitForCondition(timeout: 1.0, {
                 (searchField.value as? String)?.isEmpty == true
@@ -1189,7 +1195,8 @@ final class ClipKittyUITests: XCTestCase {
         // showing the localized "fast" image, then reset back to the default state.
         typeSlowly(queries["fast"] ?? "fast")
         Thread.sleep(forTimeInterval: 1.0)
-        clearSearch()
+        // No read pause: this runs before the recorded portion begins.
+        clearSearch(readPause: 0)
         Thread.sleep(forTimeInterval: 0.5)
 
         // Write elapsed time so the post-processing script can skip the setup portion.
@@ -1241,18 +1248,25 @@ final class ClipKittyUITests: XCTestCase {
         // OUTRO — clear the query so the video closes on the default view.
         // ============================================================
         clearSearch()
+        // Hold on the default view so the demo does not end on the very frame
+        // the query disappears.
+        Thread.sleep(forTimeInterval: 0.75)
+
+        // Mark the last frame worth keeping. The recording runs until the test
+        // returns and XCUITest tears the app down while it is still rolling,
+        // so every video ended on a second or so of empty desktop. Sleeping
+        // longer here does not help — it only lengthens the blank tail. The
+        // post-processing already skips a head offset written the same way;
+        // this is its counterpart for the end.
+        let demoElapsed = Date().timeIntervalSince(setUpStartTime)
+        try? String(format: "%.1f", demoElapsed)
+            .write(toFile: "/tmp/clipkitty_video_end_offset.txt",
+                   atomically: true, encoding: .utf8)
 
         writeTypingLatencyReport(
             locale: screenshotLocale ?? "en",
             samples: typingSamples
         )
-
-        // Hold on the default view until the recording stops. Returning ends
-        // the test, and XCUITest tears the app down as it does, so a short
-        // tail here was captured as a second or more of empty desktop after
-        // the panel vanished. The recording keeps rolling until the test
-        // returns, so the hold has to outlast the teardown, not precede it.
-        Thread.sleep(forTimeInterval: 2.0)
     }
 
     /// Writes per-character `typeText` latencies to
