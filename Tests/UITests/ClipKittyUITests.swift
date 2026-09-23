@@ -1241,14 +1241,18 @@ final class ClipKittyUITests: XCTestCase {
         // OUTRO — clear the query so the video closes on the default view.
         // ============================================================
         clearSearch()
-        Thread.sleep(forTimeInterval: 0.5)
 
         writeTypingLatencyReport(
             locale: screenshotLocale ?? "en",
             samples: typingSamples
         )
 
-        // Demo finished — the xcresult screen recording ends when the test returns.
+        // Hold on the default view until the recording stops. Returning ends
+        // the test, and XCUITest tears the app down as it does, so a short
+        // tail here was captured as a second or more of empty desktop after
+        // the panel vanished. The recording keeps rolling until the test
+        // returns, so the hold has to outlast the teardown, not precede it.
+        Thread.sleep(forTimeInterval: 2.0)
     }
 
     /// Writes per-character `typeText` latencies to

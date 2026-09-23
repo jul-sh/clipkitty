@@ -39,6 +39,14 @@ const VIDEO_ATTACHMENTS_DIR: &str = "/tmp/xcresult-attachments";
 const VIDEO_BOUNDS_FILE: &str = "/tmp/clipkitty_window_bounds.txt";
 const VIDEO_OFFSET_FILE: &str = "/tmp/clipkitty_video_start_offset.txt";
 const VIDEO_TYPING_LATENCY_FILE: &str = "/tmp/clipkitty_video_typing_latency.json";
+
+/// How far a recording may be slowed to reach the target duration before the
+/// frame duplication it causes reads as judder. Footage shorter than this
+/// allows produces a shorter video rather than a stretched one.
+const MINIMUM_VIDEO_SPEED_FACTOR: f64 = 0.85;
+
+/// App Store Connect rejects app previews shorter than this.
+const MINIMUM_APP_PREVIEW_DURATION: f64 = 15.0;
 const SILVER_BACKGROUND: &str = "/System/Library/Desktop Pictures/Solid Colors/Silver.png";
 /// Index/suffix pairs the Mac screenshot test saves. The iOS/iPad set is a
 /// superset — see `CapturePlatform::capture_specs`.
@@ -1532,10 +1540,42 @@ fn postprocess_video(
             "raw video usable duration {usable_duration:.3}s exceeds {max_duration}s ceiling; tighten the recording script"
         ));
     }
-    let speed_factor = usable_duration / target_duration;
-    reporter.info(&format!(
-        "  rescaling {usable_duration:.2}s of footage to {target_duration:.2}s (speed x{speed_factor:.3})"
-    ));
+    // Slowing footage down duplicates frames: the output is forced to 30fps,
+    // so `setpts` stretching beyond about a third turns the recording's own
+    // uneven pacing (typing stalls of several hundred ms) into visible
+    // judder. Locales whose script is quick to type produce the shortest
+    // footage and so were stretched hardest — zh-Hans reached x0.484, more
+    // than doubling every frame's duration.
+    //
+    // Cap how far a video may be slowed and let it simply run shorter than
+    // the target instead. Speeding up has no equivalent problem, since
+    // dropping frames does not introduce judder, so only the floor is
+    // clamped.
+    let exact_speed_factor = usable_duration / target_duration;
+    let speed_factor = exact_speed_factor.max(MINIMUM_VIDEO_SPEED_FACTOR);
+    let output_duration = usable_duration / speed_factor;
+
+    // App Store previews must run at least 15s. Stretching further to reach
+    // it is what this clamp exists to avoid, so footage this short is a
+    // recording-script problem: say so here rather than letting App Store
+    // Connect reject the upload later.
+    if output_duration < MINIMUM_APP_PREVIEW_DURATION {
+        return Err(anyhow!(
+            "rescaled video would run {output_duration:.2}s, under App Store Connect's \
+             {MINIMUM_APP_PREVIEW_DURATION:.0}s preview minimum; the recording produced only \
+             {usable_duration:.2}s of usable footage, so lengthen the script for this locale"
+        ));
+    }
+    if speed_factor > exact_speed_factor {
+        reporter.info(&format!(
+            "  rescaling {usable_duration:.2}s of footage to {output_duration:.2}s (speed x{speed_factor:.3}; \
+             clamped from x{exact_speed_factor:.3} to avoid frame-duplication judder)"
+        ));
+    } else {
+        reporter.info(&format!(
+            "  rescaling {usable_duration:.2}s of footage to {output_duration:.2}s (speed x{speed_factor:.3})"
+        ));
+    }
 
     let crop_filter = fs::read_to_string(VIDEO_BOUNDS_FILE)
         .ok()
@@ -1570,7 +1610,7 @@ fn postprocess_video(
             "anullsrc=channel_layout=stereo:sample_rate=44100",
         ])
         .arg("-t")
-        .arg(format!("{target_duration:.3}"))
+        .arg(format!("{output_duration:.3}"))
         .arg("-vf")
         .arg(format!(
             "{crop_filter}scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0xC0C0C0,setpts=PTS/{speed_factor:.6}"
