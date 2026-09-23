@@ -1092,7 +1092,15 @@ final class ClipKittyUITests: XCTestCase {
             }
         }
 
-        func typeSlowly(_ text: String, scene: String? = nil, delay: TimeInterval = 0.0055) {
+        /// Per-unit pause added on top of `typeText`'s own latency, which is
+        /// what actually paces the typing (roughly 500ms per call, divided
+        /// across a chunk). 90ms per 4-character chunk is about +23ms per
+        /// character, slowing the reference English recording from its
+        /// measured ~113ms to ~136ms — a fifth slower, so the text reads as
+        /// typed rather than appearing. Locales whose own latency is already
+        /// higher gain the same absolute amount rather than the same fraction,
+        /// which is the intent: the slow ones do not need slowing further.
+        func typeSlowly(_ text: String, scene: String? = nil, delay: TimeInterval = 0.09) {
             let startedEmpty = (searchField.value as? String)?.isEmpty ?? true
             if startedEmpty {
                 searchField.click()
