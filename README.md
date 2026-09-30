@@ -2,11 +2,6 @@
 
 <img src="https://raw.githubusercontent.com/jul-sh/clipkitty/main/Sources/MacApp/Assets.xcassets/AppIcon.appiconset/AppIcon.png" alt="ClipKitty icon" width="60">
 
-<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_1.png" alt="ClipKitty clipboard history on the Mac" width="820">
-
-<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_ios_1.png" alt="ClipKitty on iPhone" width="260">
-<img src="https://raw.githubusercontent.com/jul-sh/clipkitty/gh-pages/marketing_ipad_1.png" alt="ClipKitty on iPad" width="400">
-
 ## Why ClipKitty
 
 Most clipboard managers work fine when your history is small. Then the thing you need is from last week, from another device, or buried under a hundred other clips.
@@ -84,28 +79,3 @@ Then it asks whether the whole alignment looks like something a person would hav
 Those signals get turned into a small ordered score: coarse match quality first, then human-scale recency buckets like last hour, day, week, month, and quarter, then the finer match quality differences. Clipboard history is temporal, so recency should matter a lot, but not so much that a weak recent match beats the obvious phrase from yesterday. The result is that `rails console` inside `docker compose exec api rails console` beats a random clip with `rails` near the top and `console` far away, while `improt` can still find `import` without letting every vaguely similar word jump the line.
 
 The important idea is that search quality does not come from doing expensive work on everything. It comes from doing cheap work to find plausible candidates, then doing expensive work only where it can change what the user sees.
-
-## Building from Source
-
-```bash
-git clone https://github.com/jul-sh/clipkitty
-cd clipkitty
-nix build .#clipkitty-debug
-```
-
-Run the debug app, materialize the generated Xcode workspace, or verify repository invariants with the supported entry points:
-
-```bash
-nix run .#run
-make workspace
-make check
-```
-
-Build a release variant through its explicit Nix package. The hardened build is a different binary with network, broad filesystem access, and sync compiled out.
-
-```bash
-nix build .#clipkitty-sparkle
-nix build .#clipkitty-hardened
-```
-
-Run `make help` for the complete automation surface. Building requires macOS 15+, Xcode with Swift 6.2+, and Nix with flakes enabled.
