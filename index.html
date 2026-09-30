@@ -22,9 +22,6 @@
 <main>
 <h1>ClipKitty</h1>
 <img src="icon.png" alt="ClipKitty icon" width="60">
-<img src="marketing_1.png" alt="ClipKitty clipboard history on the Mac" width="820">
-<img src="marketing_ios_1.png" alt="ClipKitty on iPhone" width="260">
-<img src="marketing_ipad_1.png" alt="ClipKitty on iPad" width="400">
 <h2 id="why-clipkitty">Why ClipKitty</h2>
 <p>Most clipboard managers work fine when your history is small. Then the thing you need is from last week, from another device, or buried under a hundred other clips.</p>
 <p>ClipKitty is built around a simple idea: your clipboard can remember more without asking more from you.</p>
@@ -107,21 +104,6 @@ ClipKitty is open source, empowering anyone to verify its privacy and behavior c
 <p>Then it asks whether the whole alignment looks like something a person would have picked. Did most of the important query words match? Are they in the same order? Are they close together, or scattered across a giant log? A compact phrase match usually feels intentional. A distant match across thousands of characters usually feels suspicious, even if every word technically appears.</p>
 <p>Those signals get turned into a small ordered score: coarse match quality first, then human-scale recency buckets like last hour, day, week, month, and quarter, then the finer match quality differences. Clipboard history is temporal, so recency should matter a lot, but not so much that a weak recent match beats the obvious phrase from yesterday. The result is that <code>rails console</code> inside <code>docker compose exec api rails console</code> beats a random clip with <code>rails</code> near the top and <code>console</code> far away, while <code>improt</code> can still find <code>import</code> without letting every vaguely similar word jump the line.</p>
 <p>The important idea is that search quality does not come from doing expensive work on everything. It comes from doing cheap work to find plausible candidates, then doing expensive work only where it can change what the user sees.</p>
-<h2>Building from Source</h2>
-<pre><code class="language-bash">git clone https://github.com/jul-sh/clipkitty
-cd clipkitty
-nix build .#clipkitty-debug
-</code></pre>
-<p>Run the debug app, materialize the generated Xcode workspace, or verify repository invariants with the supported entry points:</p>
-<pre><code class="language-bash">nix run .#run
-make workspace
-make check
-</code></pre>
-<p>Build a release variant through its explicit Nix package. The hardened build is a different binary with network, broad filesystem access, and sync compiled out.</p>
-<pre><code class="language-bash">nix build .#clipkitty-sparkle
-nix build .#clipkitty-hardened
-</code></pre>
-<p>Run <code>make help</code> for the complete automation surface. Building requires macOS 15+, Xcode with Swift 6.2+, and Nix with flakes enabled.</p>
 
 </main>
 <footer>
