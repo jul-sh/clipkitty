@@ -81,3 +81,7 @@ Then it asks whether the whole alignment looks like something a person would hav
 Those signals get turned into a small ordered score: coarse match quality first, then human-scale recency buckets like last hour, day, week, month, and quarter, then the finer match quality differences. Clipboard history is temporal, so recency should matter a lot, but not so much that a weak recent match beats the obvious phrase from yesterday. The result is that `rails console` inside `docker compose exec api rails console` beats a random clip with `rails` near the top and `console` far away, while `improt` can still find `import` without letting every vaguely similar word jump the line.
 
 The important idea is that search quality does not come from doing expensive work on everything. It comes from doing cheap work to find plausible candidates, then doing expensive work only where it can change what the user sees.
+
+## Building for iOS
+
+iOS builds require Xcode 27.1+ with the iOS 27.1 SDK or later for full iPhone Duo support, plus Nix with flakes enabled. Build the simulator app with `nix build .#clipkitty-ios-sim`. The app still runs on iOS 26 and later.

@@ -11,6 +11,32 @@ use camino::{Utf8Path, Utf8PathBuf};
 use crate::output::Reporter;
 use crate::process::Runner;
 
+/// Duo's edge-to-edge layout requires linking against the iOS 27.1 SDK.
+/// This does not change the app's iOS 26 deployment target.
+pub fn require_ios_sdk(reporter: &Reporter) -> Result<()> {
+    let output = Runner::new(reporter, "xcrun")
+        .args(["--sdk", "iphoneos", "--show-sdk-version"])
+        .sanitize_for_xcode()
+        .output()?;
+    validate_ios_sdk_version(output.stdout_string()?.trim())
+}
+
+fn validate_ios_sdk_version(version: &str) -> Result<()> {
+    let components = version
+        .split('.')
+        .map(str::parse::<u32>)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|_| anyhow!("unrecognized iOS SDK version `{version}`"))?;
+    let major = components[0];
+    let minor = components.get(1).copied().unwrap_or(0);
+    if (major, minor) < (27, 1) {
+        return Err(anyhow!(
+            "iOS builds require the iOS 27.1 SDK or later (Xcode 27.1+) for iPhone Duo support; found {version}"
+        ));
+    }
+    Ok(())
+}
+
 pub fn plist_set(reporter: &Reporter, plist: &Utf8Path, key: &str, value: &str) -> Result<()> {
     Runner::new(reporter, "/usr/libexec/PlistBuddy")
         .arg("-c")
@@ -105,4 +131,25 @@ pub fn codesign_verify(reporter: &Reporter, bundle: &Utf8Path) -> Result<()> {
         .args(["--verify", "--deep", "--strict"])
         .arg(bundle.as_std_path())
         .run()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_ios_sdk_version;
+
+    #[test]
+    fn ios_sdk_floor_accepts_patch_and_future_versions() {
+        for version in ["27.1", "27.1.0", "27.1.2", "27.10", "28", "28.0"] {
+            assert!(validate_ios_sdk_version(version).is_ok(), "{version}");
+        }
+    }
+
+    #[test]
+    fn ios_sdk_floor_rejects_older_and_malformed_versions() {
+        for version in [
+            "26.5", "27", "27.0", "27.0.99", "", "27.1beta", "27..1", "27.1.bad",
+        ] {
+            assert!(validate_ios_sdk_version(version).is_err(), "{version}");
+        }
+    }
 }

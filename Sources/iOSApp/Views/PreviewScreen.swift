@@ -41,10 +41,11 @@ struct PreviewScreen: View {
         selectionContent
             .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar(.hidden, for: .bottomBar)
-            .safeAreaInset(edge: .bottom) {
+            .adaptiveActionBar {
                 actionBar
                     .padding(.bottom, dockedKeyboardInset)
+            } actions: {
+                toolbarContent
             }
             .alert(String(localized: "Delete Item"), isPresented: $showDeleteConfirmation) {
                 Button(String(localized: "Delete"), role: .destructive) {
@@ -357,6 +358,66 @@ struct PreviewScreen: View {
     }
 
     // MARK: - Action Bar
+
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItemGroup(placement: .bottomBar) {
+            if let item = viewModel.selectedItemState?.item {
+                switch viewModel.editSession {
+                case let .dirty(dirtyId, _) where dirtyId == item.itemMetadata.itemId:
+                    Button(String(localized: "Cancel")) {
+                        viewModel.discardCurrentEdit()
+                    }
+                    Button(String(localized: "Save")) {
+                        viewModel.commitCurrentEdit()
+                    }
+                case .inactive, .focused, .dirty, .suspendedDirty:
+                    Button {
+                        shareItem(item)
+                    } label: {
+                        if isShareLoading {
+                            ProgressView()
+                        } else {
+                            Label(String(localized: "Share"), systemImage: "square.and.arrow.up")
+                        }
+                    }
+                    .disabled(isShareLoading)
+                    .accessibilityLabel(String(localized: "Share"))
+
+                    if case let .link(url, _) = item.content, let linkURL = URL(string: url) {
+                        Button {
+                            openURL(linkURL)
+                        } label: {
+                            Label(String(localized: "Open Link"), systemImage: "safari")
+                        }
+                        .accessibilityIdentifier("PreviewOpenLinkButton")
+                    }
+
+                    Button {
+                        toggleBookmark(for: item)
+                    } label: {
+                        Label(
+                            isBookmarked(item)
+                                ? String(localized: "Remove Bookmark")
+                                : String(localized: "Bookmark"),
+                            systemImage: isBookmarked(item) ? "bookmark.slash" : "bookmark"
+                        )
+                    }
+
+                    Button {
+                        appState.copyToPasteboard(item.content)
+                    } label: {
+                        Label(String(localized: "Copy"), systemImage: "doc.on.doc")
+                    }
+
+                    Button(role: .destructive) {
+                        showDeleteConfirmation = true
+                    } label: {
+                        Label(String(localized: "Delete"), systemImage: "trash")
+                    }
+                }
+            }
+        }
+    }
 
     @ViewBuilder
     private var actionBar: some View {

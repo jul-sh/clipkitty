@@ -5,10 +5,18 @@ import ClipKittyStore
 import PhotosUI
 import SwiftUI
 
-struct BottomControlBar: View {
+struct BottomControlBar: ViewModifier {
     @Binding var isSearchActive: Bool
     let searchFocusRequestID: Int
+    @Binding var presentation: Presentation
+    let mode: Mode
 
+    enum Mode {
+        case browsing
+        case selecting(FeedSelectionActionBar)
+    }
+
+    @Environment(\.dockedKeyboardInset) private var dockedKeyboardInset
     @Environment(AppContainer.self) private var container
     @Environment(AppState.self) private var appState
     @Environment(BrowserViewModel.self) private var viewModel
@@ -16,13 +24,12 @@ struct BottomControlBar: View {
     @Environment(iOSSettingsStore.self) private var settings
 
     @State private var selectedPhoto: PhotosPickerItem?
-    @State private var presentation: BarPresentation = .idle
     @State private var pasteClipboardTask: Task<Void, Never>?
     @State private var pasteClipboardRequestID: UUID?
     @State private var importPhotoTask: Task<Void, Never>?
     @State private var importPhotoRequestID: UUID?
 
-    private enum BarPresentation {
+    enum Presentation {
         case idle
         case addMenu
         case filterMenu
@@ -33,59 +40,33 @@ struct BottomControlBar: View {
     @FocusState private var isSearchFocused: Bool
     @Namespace private var barNamespace
 
-    var body: some View {
-        ZStack(alignment: .bottom) {
-            // Dismiss overlay when expanded menus are open
-            switch presentation {
-            case .addMenu, .filterMenu:
-                Color.clear
-                    .contentShape(Rectangle())
-                    .ignoresSafeArea()
-                    .onTapGesture {
-                        withAnimation(.bouncy) {
-                            presentation = .idle
-                        }
+    func body(content: Content) -> some View {
+        ActionBarPlacementReader { placement in
+            content
+                .adaptiveActionBar {
+                    switch mode {
+                    case .browsing: floatingBar.padding(.bottom, dockedKeyboardInset)
+                    case let .selecting(bar): bar.padding(.bottom, dockedKeyboardInset)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .idle, .composingText, .importingPhoto:
-                EmptyView()
-            }
-
-            GlassEffectContainer(spacing: 20) {
-                HStack(alignment: .bottom, spacing: 20) {
-                    // Left: search circle morphs into search field
-                    if isSearchActive {
-                        searchField
-                            .id(searchFocusRequestID)
-                            .glassEffect(.regular.interactive(), in: .capsule)
-                            .glassEffectID("search", in: barNamespace)
-                    } else {
-                        searchButton
-                            .glassEffect(.regular.interactive(), in: .circle)
-                            .glassEffectID("search", in: barNamespace)
-                    }
-
-                    // Center: filter — morphs between pill and expanded picker
-                    if !isSearchActive {
-                        filterCluster
-                    }
-
-                    // Right: add cluster morphs into dismiss circle
-                    if isSearchActive {
-                        dismissButton
-                            .glassEffect(.regular.interactive(), in: .circle)
-                            .glassEffectID("trailing", in: barNamespace)
-                    } else {
-                        addCluster
+                } actions: {
+                    switch mode {
+                    case .browsing: browsingToolbarContent
+                    case let .selecting(bar): bar.toolbarContent
                     }
                 }
-            }
-            // `safeAreaPadding` rather than `padding`: on displays with a
-            // non-zero horizontal safe area inset the bar has to clear the
-            // inset *and* keep its own gutter, or the glass capsules slide
-            // under the hardware cutout.
-            .safeAreaPadding(.horizontal, 16)
-            .padding(.bottom, 8)
+                .modifier(NativeRailSearch(
+                    placement: placement,
+                    text: searchTextBinding,
+                    isPresented: nativeSearchPresentation(for: placement)
+                ))
+                .autocorrectionDisabled()
+                .onChange(of: placement) { _, _ in
+                    switch presentation {
+                    case .addMenu, .filterMenu: presentation = .idle
+                    case .idle, .composingText, .importingPhoto: break
+                    }
+                    restoreSearchFocusIfNeeded()
+                }
         }
         .photosPicker(
             isPresented: Binding(
@@ -136,6 +117,102 @@ struct BottomControlBar: View {
         .onDisappear {
             cancelPasteClipboard()
             cancelImportPhoto()
+        }
+    }
+
+    private var floatingBar: some View {
+        GlassEffectContainer(spacing: 20) {
+            HStack(alignment: .bottom, spacing: 20) {
+                // Left: search circle morphs into search field
+                if isSearchActive {
+                    searchField
+                        .id(searchFocusRequestID)
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                        .glassEffectID("search", in: barNamespace)
+                } else {
+                    searchButton
+                        .glassEffect(.regular.interactive(), in: .circle)
+                        .glassEffectID("search", in: barNamespace)
+                }
+
+                // Center: filter — morphs between pill and expanded picker
+                if !isSearchActive {
+                    filterCluster
+                }
+
+                // Right: add cluster morphs into dismiss circle
+                if isSearchActive {
+                    dismissButton
+                        .glassEffect(.regular.interactive(), in: .circle)
+                        .glassEffectID("trailing", in: barNamespace)
+                } else {
+                    addCluster
+                }
+            }
+        }
+        // Expanded menus float above the bar without changing the
+        // scroll view's reserved space as the device folds or resizes.
+        .frame(height: 52, alignment: .bottom)
+        .safeAreaPadding(.horizontal, 16)
+        .padding(.bottom, 8)
+    }
+
+    private func nativeSearchPresentation(for placement: ActionBarPlacement) -> Binding<Bool> {
+        Binding(
+            get: {
+                switch placement {
+                case .horizontal: return false
+                case .vertical: return isSearchActive
+                }
+            },
+            set: { active in
+                switch placement {
+                case .horizontal: break
+                case .vertical:
+                    isSearchActive = active
+                    if !active { viewModel.updateSearchText("") }
+                }
+            }
+        )
+    }
+
+    @ToolbarContentBuilder
+    private var browsingToolbarContent: some ToolbarContent {
+        DefaultToolbarItem(kind: .search, placement: .bottomBar)
+        ToolbarSpacer(.fixed, placement: .bottomBar)
+        ToolbarItem(placement: .bottomBar) {
+            Menu {
+                ForEach(sortedFilterOptions, id: \.kind) { option in
+                    Button {
+                        viewModel.applyFilter(option.kind)
+                        haptics.fire(.selection)
+                    } label: {
+                        Label(option.title, systemImage: option.symbolName)
+                    }
+                    .accessibilityIdentifier("bottomBar.filterOption.\(option.identifierSuffix)")
+                }
+            } label: {
+                Label(activeFilterDescriptor.title, systemImage: activeFilterDescriptor.symbolName)
+            }
+            .accessibilityIdentifier("bottomBar.filterPill")
+        }
+        ToolbarSpacer(.fixed, placement: .bottomBar)
+        ToolbarItem(placement: .bottomBar) {
+            Menu {
+                Button { presentation = .importingPhoto } label: {
+                    Label(String(localized: "Add Photo"), systemImage: "photo.badge.plus")
+                }
+                Button { presentation = .composingText } label: {
+                    Label(String(localized: "Write Text"), systemImage: "square.and.pencil")
+                }
+                if !settings.autoAddFromClipboard {
+                    Button { startPasteClipboard() } label: {
+                        Label(String(localized: "Add from Clipboard"), systemImage: "doc.on.clipboard")
+                    }
+                }
+            } label: {
+                Label(String(localized: "Add new item"), systemImage: "plus")
+            }
         }
     }
 
@@ -576,6 +653,77 @@ struct BottomControlBar: View {
         case let .failure(error):
             haptics.fire(.destructive)
             appState.showToast(.addFailed(error.localizedDescription))
+        }
+    }
+}
+
+/// Read the system's placement inside the navigation content, so changes to
+/// display, pose, or Split View use the same rail as the navigation buttons.
+enum ActionBarPlacement: Equatable {
+    case horizontal
+    case vertical
+}
+
+struct ActionBarPlacementReader<Content: View>: View {
+    @ViewBuilder let content: (ActionBarPlacement) -> Content
+
+    var body: some View {
+        if #available(iOS 27.1, *) {
+            SystemActionBarPlacementReader(content: content)
+        } else {
+            content(.horizontal)
+        }
+    }
+}
+
+@available(iOS 27.1, *)
+private struct SystemActionBarPlacementReader<Content: View>: View {
+    @Environment(\.toolbarVerticalEdge) private var verticalEdge
+    @ViewBuilder let content: (ActionBarPlacement) -> Content
+
+    var body: some View {
+        let placement: ActionBarPlacement = switch verticalEdge {
+        case .some: .vertical
+        case .none: .horizontal
+        }
+        content(placement)
+    }
+}
+
+extension View {
+    func adaptiveActionBar<Bar: View, Actions: ToolbarContent>(
+        @ViewBuilder bar: @escaping () -> Bar,
+        @ToolbarContentBuilder actions: @escaping () -> Actions
+    ) -> some View {
+        ActionBarPlacementReader { placement in
+            self
+                .safeAreaBar(edge: .bottom) {
+                    switch placement {
+                    case .horizontal: bar()
+                    case .vertical: EmptyView()
+                    }
+                }
+                .toolbar {
+                    switch placement {
+                    case .horizontal: ToolbarItemGroup(placement: .bottomBar) { EmptyView() }
+                    case .vertical: actions()
+                    }
+                }
+        }
+    }
+}
+
+private struct NativeRailSearch: ViewModifier {
+    let placement: ActionBarPlacement
+    @Binding var text: String
+    @Binding var isPresented: Bool
+
+    func body(content: Content) -> some View {
+        switch placement {
+        case .horizontal:
+            content
+        case .vertical:
+            content.searchable(text: $text, isPresented: $isPresented, placement: .toolbar)
         }
     }
 }

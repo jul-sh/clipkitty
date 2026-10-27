@@ -9,9 +9,9 @@ struct HomeFeedView: View {
     @Environment(BrowserViewModel.self) private var viewModel
     @Environment(HapticsClient.self) private var haptics
     @Environment(iOSSettingsStore.self) private var settings
-    @Environment(\.dockedKeyboardInset) private var dockedKeyboardInset
 
     @State private var isSearchActive = false
+    @State private var barPresentation: BottomControlBar.Presentation = .idle
     @State private var previewItemId: String?
     @State private var hasAppeared = false
     @State private var showSettings = false
@@ -47,16 +47,12 @@ struct HomeFeedView: View {
         case packedRows(rowWidth: CGFloat)
 
         /// - Parameters:
-        ///   - containerWidth: The scroll view's full width.
-        ///   - horizontalSafeAreaInset: Left plus right safe area inset. Rows
-        ///     are laid out inside it (the feed uses `safeAreaPadding`), so it
-        ///     comes off the packing width alongside the gutters — otherwise
-        ///     packed rows are sized for space the cards never get and
-        ///     overflow under the cutout.
-        init(containerWidth: CGFloat, horizontalSafeAreaInset: CGFloat) {
-            let contentWidth = containerWidth - horizontalSafeAreaInset
-            if contentWidth >= JustifiedCardRow.multiColumnMinimumWidth {
-                self = .packedRows(rowWidth: contentWidth - 2 * HomeFeedView.feedGutter)
+        ///   - containerWidth: The width proposed inside the current safe
+        ///     area. GeometryProxy already excludes system bars and cutouts;
+        ///     only the feed's own design gutters come off the packing width.
+        init(containerWidth: CGFloat) {
+            if containerWidth >= JustifiedCardRow.multiColumnMinimumWidth {
+                self = .packedRows(rowWidth: containerWidth - 2 * HomeFeedView.feedGutter)
             } else {
                 self = .singleColumn
             }
@@ -65,95 +61,107 @@ struct HomeFeedView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack(alignment: .bottom) {
-                feedContent
-                    .safeAreaInset(edge: .bottom) {
-                        Color.clear.frame(height: 72 + dockedKeyboardInset)
-                    }
-
-                if selection.isActive {
-                    FeedSelectionActionBar(
-                        selectedItemIDs: orderedSelectedItemIDs,
-                        allSelectedAreBookmarked: allSelectedAreBookmarked,
-                        isCopying: isBulkCopying,
-                        onCopy: copySelectedItems,
-                        onToggleBookmark: toggleBookmarkForSelectedItems,
-                        onShare: shareSelectedItems,
-                        onDelete: { showDeleteConfirmation = true }
-                    )
-                    .padding(.bottom, dockedKeyboardInset)
-                } else {
-                    BottomControlBar(
-                        isSearchActive: $isSearchActive,
-                        searchFocusRequestID: searchFocusRequestID
-                    )
-                    .padding(.bottom, dockedKeyboardInset)
-                }
-            }
-            .navigationTitle(navigationTitle)
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(item: $previewItemId) { itemId in
-                PreviewScreen(itemId: itemId)
-            }
-            .toolbar {
-                if selection.isActive {
-                    selectionToolbarContent
-                } else {
-                    defaultToolbarContent
-                }
-            }
-            .sheet(isPresented: $showSettings) {
-                SettingsScreen()
-            }
-            .sheet(isPresented: $showPermissionFlow) {
-                SaveAutomaticallySheet(resumeInDoneState: permissionFlowResumesInDoneState)
-            }
-            .onChange(of: showPermissionFlow) { _, isPresented in
-                if !isPresented {
-                    permissionFlowResumesInDoneState = false
-                }
-            }
-            .onAppear {
-                guard !hasAppeared else { return }
-                hasAppeared = true
-                // A trip to the Settings app from the permission flow comes
-                // back through a rebootstrapped session with all sheets gone;
-                // pick the flow back up on its finishing step.
-                if settings.permissionFlowResumePending {
-                    settings.permissionFlowResumePending = false
-                    if !settings.permissionHintDismissed {
-                        permissionFlowResumesInDoneState = true
-                        showPermissionFlow = true
+            feedContent
+                .overlay {
+                    switch barPresentation {
+                    case .addMenu, .filterMenu:
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                withAnimation(.bouncy) { barPresentation = .idle }
+                            }
+                    case .idle, .composingText, .importingPhoto:
+                        EmptyView()
                     }
                 }
-                viewModel.onAppear(
-                    initialSearchQuery: "",
-                    contentRevision: appState.contentRevision
-                )
-            }
-            .onChange(of: visibleItemIDs) { _, newValue in
-                cancelBulkCopy()
-                selection.reconcile(with: newValue)
-            }
-            .onChange(of: previewItemId) { oldValue, newValue in
-                guard oldValue != nil, newValue == nil, isSearchActive else { return }
-                searchFocusRequestID += 1
-            }
-            .alert(
-                String(localized: "Delete Selected Items?"),
-                isPresented: $showDeleteConfirmation
-            ) {
-                Button(String(localized: "Delete"), role: .destructive) {
-                    deleteSelectedItems()
+                .modifier(BottomControlBar(
+                    isSearchActive: $isSearchActive,
+                    searchFocusRequestID: searchFocusRequestID,
+                    presentation: $barPresentation,
+                    mode: controlBarMode
+                ))
+                .navigationTitle(navigationTitle)
+                .navigationBarTitleDisplayMode(.inline)
+                .navigationDestination(item: $previewItemId) { itemId in
+                    PreviewScreen(itemId: itemId)
                 }
-                Button(String(localized: "Cancel"), role: .cancel) {}
-            } message: {
-                Text(String(localized: "Are you sure you want to delete the selected items?"))
-            }
-            .onDisappear {
-                cancelBulkCopy()
-            }
+                .toolbar {
+                    if selection.isActive {
+                        selectionToolbarContent
+                    } else {
+                        defaultToolbarContent
+                    }
+                }
+                .sheet(isPresented: $showSettings) {
+                    SettingsScreen()
+                }
+                .sheet(isPresented: $showPermissionFlow) {
+                    SaveAutomaticallySheet(resumeInDoneState: permissionFlowResumesInDoneState)
+                }
+                .onChange(of: showPermissionFlow) { _, isPresented in
+                    if !isPresented {
+                        permissionFlowResumesInDoneState = false
+                    }
+                }
+                .onAppear {
+                    guard !hasAppeared else { return }
+                    hasAppeared = true
+                    // A trip to the Settings app from the permission flow comes
+                    // back through a rebootstrapped session with all sheets gone;
+                    // pick the flow back up on its finishing step.
+                    if settings.permissionFlowResumePending {
+                        settings.permissionFlowResumePending = false
+                        if !settings.permissionHintDismissed {
+                            permissionFlowResumesInDoneState = true
+                            showPermissionFlow = true
+                        }
+                    }
+                    viewModel.onAppear(
+                        initialSearchQuery: "",
+                        contentRevision: appState.contentRevision
+                    )
+                }
+                .onChange(of: selection.isActive) { _, _ in
+                    barPresentation = .idle
+                }
+                .onChange(of: visibleItemIDs) { _, newValue in
+                    cancelBulkCopy()
+                    selection.reconcile(with: newValue)
+                }
+                .onChange(of: previewItemId) { oldValue, newValue in
+                    guard oldValue != nil, newValue == nil, isSearchActive else { return }
+                    searchFocusRequestID += 1
+                }
+                .alert(
+                    String(localized: "Delete Selected Items?"),
+                    isPresented: $showDeleteConfirmation
+                ) {
+                    Button(String(localized: "Delete"), role: .destructive) {
+                        deleteSelectedItems()
+                    }
+                    Button(String(localized: "Cancel"), role: .cancel) {}
+                } message: {
+                    Text(String(localized: "Are you sure you want to delete the selected items?"))
+                }
+                .onDisappear {
+                    cancelBulkCopy()
+                }
         }
+    }
+
+    private var controlBarMode: BottomControlBar.Mode {
+        if selection.isActive {
+            return .selecting(FeedSelectionActionBar(
+                selectedItemIDs: orderedSelectedItemIDs,
+                allSelectedAreBookmarked: allSelectedAreBookmarked,
+                isCopying: isBulkCopying,
+                onCopy: copySelectedItems,
+                onToggleBookmark: toggleBookmarkForSelectedItems,
+                onShare: shareSelectedItems,
+                onDelete: { showDeleteConfirmation = true }
+            ))
+        }
+        return .browsing
     }
 
     @ViewBuilder
@@ -204,11 +212,7 @@ struct HomeFeedView: View {
         }
         .accessibilityIdentifier("feed.\(viewModel.activeFilterKind.rawValue).\(feedLoadPhase)")
         .onGeometryChange(for: FeedLayout.self) { proxy in
-            FeedLayout(
-                containerWidth: proxy.size.width,
-                horizontalSafeAreaInset: proxy.safeAreaInsets.leading
-                    + proxy.safeAreaInsets.trailing
-            )
+            FeedLayout(containerWidth: proxy.size.width)
         } action: { layout in
             feedLayout = layout
         }

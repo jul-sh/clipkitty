@@ -571,6 +571,16 @@ let
         # stdenv var that would push a mismatched SDK into swiftc.
         export PATH=/usr/bin:/bin:$PATH
         unset SDKROOT MACOSX_DEPLOYMENT_TARGET
+        ${lib.optionalString (sdk == "iphoneos" || sdk == "iphonesimulator") ''
+          iosSdkVersion=$(/usr/bin/xcrun --sdk ${lib.escapeShellArg sdk} --show-sdk-version)
+          if ! /usr/bin/awk -F. '
+            /^[0-9]+([.][0-9]+)*$/ { if ($1 > 27 || ($1 == 27 && $2 >= 1)) exit 0 }
+            { exit 1 }
+          ' <<< "$iosSdkVersion"; then
+            echo "error: iOS builds require the iOS 27.1 SDK or later (Xcode 27.1+) for iPhone Duo support; found $iosSdkVersion" >&2
+            exit 1
+          fi
+        ''}
         unset NIX_CFLAGS_COMPILE NIX_CFLAGS_COMPILE_BEFORE NIX_CFLAGS_LINK
         unset NIX_LDFLAGS NIX_LDFLAGS_BEFORE NIX_COREFOUNDATION_RPATH
         unset NIX_DONT_SET_RPATH NIX_DONT_SET_RPATH_FOR_BUILD
@@ -635,6 +645,7 @@ let
           ENABLE_USER_SCRIPT_SANDBOXING=NO \
           SWIFT_DISABLE_SANDBOX=YES \
           OTHER_SWIFT_FLAGS='$(inherited) -disable-sandbox' \
+          ${lib.optionalString (sdk == "iphonesimulator") "ONLY_ACTIVE_ARCH=YES ARCHS=arm64"} \
           ${lib.optionalString universal "ONLY_ACTIVE_ARCH=NO ARCHS='arm64 x86_64'"} \
           build
 

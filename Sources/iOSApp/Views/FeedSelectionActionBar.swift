@@ -57,6 +57,44 @@ struct FeedSelectionActionBar: View {
         .padding(.bottom, 8)
     }
 
+    var toolbarContent: some ToolbarContent {
+        ToolbarItemGroup(placement: .bottomBar) {
+            Button(action: onCopy) {
+                if isCopying {
+                    ProgressView()
+                } else {
+                    Label(String(localized: "Copy"), systemImage: "doc.on.doc")
+                }
+            }
+            .disabled(selectedItemIDs.isEmpty || isCopying)
+            .accessibilityLabel(String(localized: "Copy"))
+            .accessibilityIdentifier("selection.copyButton")
+
+            Button(action: onToggleBookmark) {
+                Label(
+                    allSelectedAreBookmarked
+                        ? String(localized: "Remove Bookmark")
+                        : String(localized: "Bookmark"),
+                    systemImage: allSelectedAreBookmarked ? "bookmark.slash" : "bookmark"
+                )
+            }
+            .disabled(selectedItemIDs.isEmpty)
+            .accessibilityIdentifier("selection.bookmarkButton")
+
+            Button(action: onShare) {
+                Label(String(localized: "Share"), systemImage: "square.and.arrow.up")
+            }
+            .disabled(selectedItemIDs.isEmpty)
+            .accessibilityIdentifier("selection.shareButton")
+
+            Button(role: .destructive, action: onDelete) {
+                Label(String(localized: "Delete"), systemImage: "trash")
+            }
+            .disabled(selectedItemIDs.isEmpty)
+            .accessibilityIdentifier("selection.deleteButton")
+        }
+    }
+
     private var copyAction: some View {
         Button(action: onCopy) {
             Group {

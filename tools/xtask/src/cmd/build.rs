@@ -216,6 +216,8 @@ pub(crate) fn archive_ios(
         return Err(anyhow!("export options plist not found at {export_plist}"));
     }
 
+    apple::require_ios_sdk(reporter)?;
+
     let archive_parent = archive_path
         .parent()
         .ok_or_else(|| anyhow!("archive path has no parent: {archive_path}"))?;
