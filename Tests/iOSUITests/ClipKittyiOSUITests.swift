@@ -30,6 +30,38 @@ final class ClipKittyiOSUITests: XCTestCase {
         XCTAssertTrue(app.buttons["home.overflowMenuButton"].isHittable)
     }
 
+    func testLandscapeControlsStayNearBottomEdge() throws {
+        defer { XCUIDevice.shared.orientation = .portrait }
+
+        let searchButton = app.buttons["bottomBar.searchButton"]
+        if !searchButton.waitForExistence(timeout: 3), app.buttons["Search"].exists {
+            throw XCTSkip("This configuration uses the native side rail instead of bottom controls")
+        }
+        for orientation in [UIDeviceOrientation.landscapeLeft, .landscapeRight] {
+            XCUIDevice.shared.orientation = .portrait
+            let portrait = XCTNSPredicateExpectation(
+                predicate: NSPredicate { _, _ in self.app.frame.height > self.app.frame.width },
+                object: nil
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [portrait], timeout: 5), .completed)
+            XCUIDevice.shared.orientation = orientation
+            let controlsAtBottom = NSPredicate { _, _ in
+                guard self.app.frame.width > self.app.frame.height,
+                      searchButton.exists, searchButton.isHittable
+                else { return false }
+                // Allow the home indicator and the control's design margin,
+                // but no second, empty toolbar beneath the controls.
+                let gap = self.app.frame.maxY - searchButton.frame.maxY
+                return gap >= 0 && gap < 60
+            }
+            let expectation = XCTNSPredicateExpectation(predicate: controlsAtBottom, object: nil)
+            XCTAssertEqual(
+                XCTWaiter.wait(for: [expectation], timeout: 5), .completed,
+                "Landscape controls should sit near the bottom edge; gap was \(app.frame.maxY - searchButton.frame.maxY)"
+            )
+        }
+    }
+
     func testOpenSettings() {
         openSettings()
     }

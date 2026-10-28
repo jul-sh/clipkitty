@@ -696,19 +696,12 @@ extension View {
         @ToolbarContentBuilder actions: @escaping () -> Actions
     ) -> some View {
         ActionBarPlacementReader { placement in
-            self
-                .safeAreaBar(edge: .bottom) {
-                    switch placement {
-                    case .horizontal: bar()
-                    case .vertical: EmptyView()
-                    }
-                }
-                .toolbar {
-                    switch placement {
-                    case .horizontal: ToolbarItemGroup(placement: .bottomBar) { EmptyView() }
-                    case .vertical: actions()
-                    }
-                }
+            switch placement {
+            case .horizontal:
+                self.safeAreaInset(edge: .bottom, spacing: 0, content: bar)
+            case .vertical:
+                self.toolbar(content: actions)
+            }
         }
     }
 }

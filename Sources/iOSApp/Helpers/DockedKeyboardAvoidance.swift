@@ -157,6 +157,12 @@ private final class DockedKeyboardGuideViewController: UIViewController {
         scheduleMeasurement()
     }
 
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        view.setNeedsLayout()
+        scheduleMeasurement()
+    }
+
     func scheduleMeasurement() {
         guard !isMeasurementScheduled else { return }
         isMeasurementScheduled = true
@@ -166,6 +172,10 @@ private final class DockedKeyboardGuideViewController: UIViewController {
         // mutating @State during that pass.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            // Rotation can update the safe area after the previous layout
+            // pass. Resolve the keyboard guide against that same geometry
+            // before publishing an inset to SwiftUI.
+            self.view.layoutIfNeeded()
             self.isMeasurementScheduled = false
 
             let inset = DockedKeyboardInsetCalculator.bottomInset(
