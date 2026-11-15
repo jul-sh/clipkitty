@@ -1055,7 +1055,7 @@ fn attach_latest_valid_build(
             "attach-build",
             "--version-id",
             version_id,
-            "--build",
+            "--build-id",
             &build_id,
         ],
         asc_env,
