@@ -1,3 +1,4 @@
+import ClipKittyBrowser
 import ClipKittyCore
 import Foundation
 
@@ -13,6 +14,14 @@ final class iOSSettingsStore {
 
     var autoAddFromClipboard: Bool {
         didSet { defaults.set(autoAddFromClipboard, forKey: autoAddFromClipboardKey) }
+    }
+
+    var autocorrectNotes: Bool {
+        didSet { defaults.set(autocorrectNotes, forKey: autocorrectNotesKey) }
+    }
+
+    var lastSelectedCategory: BrowserFilterKind {
+        didSet { defaults.set(lastSelectedCategory.rawValue, forKey: lastSelectedCategoryKey) }
     }
 
     /// Whether Shortcuts intents may read clipboard history. Default ON; the
@@ -87,6 +96,8 @@ final class iOSSettingsStore {
 
     private let generateLinkPreviewsKey = "iOSGenerateLinkPreviews"
     private let autoAddFromClipboardKey = "iOSAutoAddFromClipboard"
+    private let autocorrectNotesKey = "iOSAutocorrectNotes"
+    private let lastSelectedCategoryKey = "iOSLastSelectedCategory"
     private let allowShortcutsReadAccessKey = "allowShortcutsReadAccess"
     private let captureSensitiveClipsKey = "captureSensitiveClips"
     private let maxDatabaseSizeGBKey = "iOSMaxDatabaseSizeGB"
@@ -109,6 +120,15 @@ final class iOSSettingsStore {
 
         generateLinkPreviews = defaults.object(forKey: generateLinkPreviewsKey) as? Bool ?? true
         autoAddFromClipboard = defaults.object(forKey: autoAddFromClipboardKey) as? Bool ?? false
+        autocorrectNotes = defaults.object(forKey: autocorrectNotesKey) as? Bool ?? true
+        let savedCategory = defaults.string(forKey: lastSelectedCategoryKey)
+            .flatMap(BrowserFilterKind.init(rawValue:)) ?? .all
+        switch savedCategory {
+        case .files:
+            lastSelectedCategory = .all
+        case .all, .bookmarks, .text, .images, .links, .colors:
+            lastSelectedCategory = savedCategory
+        }
         allowShortcutsReadAccess = defaults.object(forKey: allowShortcutsReadAccessKey) as? Bool ?? true
         captureSensitiveClips = defaults.object(forKey: captureSensitiveClipsKey) as? Bool ?? false
         maxDatabaseSizeGB = defaults.object(forKey: maxDatabaseSizeGBKey) as? Double ?? 7.0

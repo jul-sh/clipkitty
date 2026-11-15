@@ -1,5 +1,7 @@
 @testable import ClipKittyBrowser
+@testable import ClipKittyiOS
 import ClipKittyRust
+import UIKit
 import XCTest
 
 /// Tests for iOS card highlight rendering from Rust matched excerpts,
@@ -355,5 +357,27 @@ final class iOSHighlightAndEditTests: XCTestCase {
             itemMetadata: makeMetadata(id: id),
             content: .text(value: text)
         )
+    }
+}
+
+@MainActor
+final class NoteAutocorrectionTests: XCTestCase {
+    func testAutocorrectionDefaultsOnAndUpdatesWithoutDiscardingAnEdit() {
+        var preview = TextPreviewView(itemId: "note", text: "saved text")
+        let coordinator = preview.makeCoordinator()
+        let textView = preview.makeTextView(coordinator: coordinator)
+        preview.updateTextView(textView, coordinator: coordinator)
+        XCTAssertEqual(textView.autocorrectionType, .yes)
+
+        textView.delegate?.textViewDidBeginEditing?(textView)
+        textView.text = "unsaved draft"
+        textView.selectedRange = NSRange(location: 4, length: 0)
+
+        preview.autocorrectionEnabled = false
+        preview.updateTextView(textView, coordinator: coordinator)
+
+        XCTAssertEqual(textView.autocorrectionType, .no)
+        XCTAssertEqual(textView.text, "unsaved draft")
+        XCTAssertEqual(textView.selectedRange, NSRange(location: 4, length: 0))
     }
 }

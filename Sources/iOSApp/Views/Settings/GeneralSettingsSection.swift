@@ -34,6 +34,9 @@ struct GeneralSettingsSection: View {
             .sheet(isPresented: $showPermissionFlow) {
                 SaveAutomaticallySheet()
             }
+
+            Toggle(String(localized: "Autocorrect Notes"), isOn: $settings.autocorrectNotes)
+                .accessibilityIdentifier("settings.autocorrectNotes")
         }
     }
 }

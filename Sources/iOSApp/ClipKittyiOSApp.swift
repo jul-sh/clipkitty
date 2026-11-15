@@ -640,6 +640,7 @@ final class AppState {
 
         viewModel = BrowserViewModel(
             client: container.storeClient,
+            initialFilter: settings.lastSelectedCategory,
             shouldGenerateLinkPreviews: { settings.generateLinkPreviews },
             onSelect: copyItem,
             onCopyOnly: copyItem,

@@ -166,6 +166,7 @@ struct PreviewScreen: View {
                         return true
                     }
                 }(),
+                autocorrectionEnabled: settings.autocorrectNotes,
                 fontPreference: settings.fontPreference,
                 previewStyle: settings.previewFontPreference,
                 onTextChange: { newText in

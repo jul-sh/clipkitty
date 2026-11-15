@@ -16,6 +16,7 @@ public enum BrowserSuspensionWork: Sendable {
 public final class BrowserViewModel {
     private let client: BrowserStoreClient
     private let filterCatalog: BrowserFilterCatalog
+    private let initialFilter: BrowserFilterKind
     private let shouldGenerateLinkPreviews: @MainActor () -> Bool
     private let onSelect: (String, ClipboardContent) -> Void
     private let onCopyOnly: (String, ClipboardContent) -> Void
@@ -151,6 +152,7 @@ public final class BrowserViewModel {
     public init(
         client: BrowserStoreClient,
         filterCatalog: BrowserFilterCatalog = BrowserFilterCatalog(includesFileItems: false),
+        initialFilter: BrowserFilterKind = .all,
         shouldGenerateLinkPreviews: @escaping @MainActor () -> Bool = { true },
         onSelect: @escaping (String, ClipboardContent) -> Void,
         onCopyOnly: @escaping (String, ClipboardContent) -> Void,
@@ -162,6 +164,7 @@ public final class BrowserViewModel {
     ) {
         self.client = client
         self.filterCatalog = filterCatalog
+        self.initialFilter = initialFilter
         self.shouldGenerateLinkPreviews = shouldGenerateLinkPreviews
         self.onSelect = onSelect
         self.onCopyOnly = onCopyOnly
@@ -1120,7 +1123,7 @@ public final class BrowserViewModel {
     private func startInitialSearch(initialSearchQuery: String, targetContentRevision: Int) {
         hasAppliedInitialSearch = true
         submitSearch(
-            request: SearchRequest(text: initialSearchQuery, filter: .all),
+            request: SearchRequest(text: initialSearchQuery, filter: filterCatalog.descriptor(for: initialFilter).queryFilter),
             targetContentRevision: targetContentRevision
         )
     }

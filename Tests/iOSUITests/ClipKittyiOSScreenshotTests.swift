@@ -50,9 +50,7 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         locale = readTempConfig(Self.localeConfigFile, defaultValue: "en") ?? "en"
         let deviceToken = readTempConfig(Self.deviceConfigFile, defaultValue: "iphone") ?? "iphone"
         deviceKind = try XCTUnwrap(DeviceKind(rawValue: deviceToken), "Unknown screenshot device kind")
-        if case .iPhoneDuo = deviceKind {
-            XCUIDevice.shared.orientation = .portrait
-        }
+        XCUIDevice.shared.orientation = .portrait
 
         let screenshotDBPath = try setupTestDatabase()
 
@@ -62,6 +60,9 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         // Set the UI language for this locale
         app.launchArguments += ["-AppleLanguages", "(\(locale!))"]
         app.launchArguments += ["-AppleLocale", locale]
+        // Marketing scenes always start with the complete history, regardless
+        // of the category remembered from an earlier run on this simulator.
+        app.launchArguments += ["-iOSLastSelectedCategory", "all"]
         // Marketing captures must not show the clipboard-permission card that
         // tops the feed until the user dismisses it or finishes its
         // allow-access flow. The plist literal matters: a bare "YES" reaches

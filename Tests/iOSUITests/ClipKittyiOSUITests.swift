@@ -12,6 +12,7 @@ final class ClipKittyiOSUITests: XCTestCase {
 
     override func setUpWithError() throws {
         continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
         app = XCUIApplication()
         app.launch()
 
@@ -146,13 +147,13 @@ final class ClipKittyiOSUITests: XCTestCase {
         XCTAssertTrue(revealInSettings(toggle), "Generate Link Previews toggle should be reachable")
 
         let initialValue = toggle.value as? String
-        toggle.tap()
+        toggleSettingsSwitch(toggle)
 
         let newValue = toggle.value as? String
         XCTAssertNotEqual(initialValue, newValue, "Toggle value should change after tap")
 
         // Toggle back
-        toggle.tap()
+        toggleSettingsSwitch(toggle)
     }
 
     // MARK: - Clear History Confirmation Flow
@@ -218,6 +219,11 @@ final class ClipKittyiOSUITests: XCTestCase {
         ).firstMatch
     }
 
+    private func toggleSettingsSwitch(_ toggle: XCUIElement) {
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 1, dy: 0.5))
+            .withOffset(CGVector(dx: -30, dy: 0)).tap()
+    }
+
     private func assertSettingsTextIsReachable(
         _ label: String,
         file: StaticString = #filePath,
@@ -267,6 +273,78 @@ final class ClipKittyiOSUITests: XCTestCase {
     }
 
     // MARK: - Search Interaction
+
+    func testSearchFocusSurvivesRelaunchInAnotherLanguage() {
+        func typeIntoSearch() {
+            let button = app.buttons["bottomBar.searchButton"]
+            XCTAssertTrue(button.waitForExistence(timeout: 10))
+            button.tap()
+            let field = app.textFields["bottomBar.searchField"]
+            XCTAssertTrue(field.waitForExistence(timeout: 5))
+            field.typeText("docker")
+            XCTAssertEqual(field.value as? String, "docker")
+        }
+
+        typeIntoSearch()
+        app.terminate()
+        app.launchArguments += ["-AppleLanguages", "(es)", "-AppleLocale", "es"]
+        app.launch()
+        typeIntoSearch()
+    }
+
+    func testSelectedCategorySurvivesRelaunch() {
+        func selectCategory(_ category: String) {
+            let pill = app.buttons["bottomBar.filterPill"]
+            XCTAssertTrue(pill.waitForExistence(timeout: 5))
+            pill.tap()
+            let option = app.buttons["bottomBar.filterOption.\(category)"]
+            XCTAssertTrue(option.waitForExistence(timeout: 5))
+            option.tap()
+        }
+
+        selectCategory("text")
+        let selected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Text"),
+            object: app.buttons["bottomBar.filterPill"]
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 3), .completed)
+        app.terminate()
+        app.launch()
+
+        let pill = app.buttons["bottomBar.filterPill"]
+        XCTAssertTrue(pill.waitForExistence(timeout: 10))
+        XCTAssertEqual(pill.label, "Text")
+        selectCategory("all")
+    }
+
+    func testAutocorrectPreferenceSurvivesRelaunch() throws {
+        openSettings()
+        let toggle = app.switches["settings.autocorrectNotes"]
+        assertSettingsControlIsReachable(toggle, named: "Autocorrect Notes")
+        let originalValue = try XCTUnwrap(toggle.value as? String)
+        let changedValue = originalValue == "1" ? "0" : "1"
+        toggleSettingsSwitch(toggle)
+        let changed = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "value == %@", changedValue), object: toggle
+        )
+        let result = XCTWaiter.wait(for: [changed], timeout: 3)
+        if result != .completed {
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = "autocorrect-control"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        XCTAssertEqual(toggle.value as? String, changedValue)
+
+        app.terminate()
+        app.launch()
+        openSettings()
+        let reloadedToggle = app.switches["settings.autocorrectNotes"]
+        assertSettingsControlIsReachable(reloadedToggle, named: "Autocorrect Notes")
+        XCTAssertEqual(reloadedToggle.value as? String, changedValue)
+        toggleSettingsSwitch(reloadedToggle)
+        XCTAssertEqual(reloadedToggle.value as? String, originalValue)
+    }
 
     func testSearchButtonOpensSearchField() {
         let searchButton = app.buttons["Search"]

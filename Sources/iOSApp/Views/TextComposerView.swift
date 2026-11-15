@@ -5,6 +5,7 @@ struct TextComposerView: View {
     @Environment(AppContainer.self) private var container
     @Environment(AppState.self) private var appState
     @Environment(HapticsClient.self) private var haptics
+    @Environment(iOSSettingsStore.self) private var settings
     @Environment(\.dockedKeyboardInset) private var dockedKeyboardInset
     @Environment(\.dismiss) private var dismiss
 
@@ -19,6 +20,7 @@ struct TextComposerView: View {
     var body: some View {
         NavigationStack {
             TextEditor(text: $text)
+                .autocorrectionDisabled(!settings.autocorrectNotes)
                 .font(.body)
                 .padding()
                 .padding(.bottom, dockedKeyboardInset)

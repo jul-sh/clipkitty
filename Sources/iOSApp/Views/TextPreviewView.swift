@@ -13,6 +13,7 @@ struct TextPreviewView: UIViewRepresentable {
     var highlights: [Utf16HighlightRange] = []
     var initialScrollHighlightIndex: UInt64?
     var isEditable: Bool = true
+    var autocorrectionEnabled: Bool = true
     var fontPreference: AppFontPreference = .system
     var previewStyle: PreviewFontPreference = .coding
 
@@ -40,6 +41,10 @@ struct TextPreviewView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UITextView {
+        makeTextView(coordinator: context.coordinator)
+    }
+
+    func makeTextView(coordinator: Coordinator) -> UITextView {
         let textView = UITextView(usingTextLayoutManager: true)
         textView.isEditable = isEditable
         textView.adjustsFontForContentSizeCategory = true
@@ -50,21 +55,24 @@ struct TextPreviewView: UIViewRepresentable {
         textView.textColor = .label
         textView.alwaysBounceVertical = true
         textView.keyboardDismissMode = .interactive
-        textView.autocorrectionType = .no
+        textView.autocorrectionType = autocorrectionEnabled ? .yes : .no
         textView.autocapitalizationType = .none
         textView.smartQuotesType = .no
         textView.smartDashesType = .no
         textView.accessibilityIdentifier = "PreviewTextView"
 
-        textView.delegate = context.coordinator
-        context.coordinator.onTextChange = onTextChange
-        context.coordinator.onEditingStateChange = onEditingStateChange
+        textView.delegate = coordinator
+        coordinator.onTextChange = onTextChange
+        coordinator.onEditingStateChange = onEditingStateChange
 
         return textView
     }
 
     func updateUIView(_ textView: UITextView, context: Context) {
-        let coordinator = context.coordinator
+        updateTextView(textView, coordinator: context.coordinator)
+    }
+
+    func updateTextView(_ textView: UITextView, coordinator: Coordinator) {
         let itemChanged = coordinator.currentItemId != itemId
 
         if itemChanged {
@@ -77,6 +85,14 @@ struct TextPreviewView: UIViewRepresentable {
         coordinator.onTextChange = onTextChange
         coordinator.onEditingStateChange = onEditingStateChange
         textView.isEditable = isEditable
+
+        let autocorrectionType: UITextAutocorrectionType = autocorrectionEnabled ? .yes : .no
+        if textView.autocorrectionType != autocorrectionType {
+            textView.autocorrectionType = autocorrectionType
+            if textView.isFirstResponder {
+                textView.reloadInputViews()
+            }
+        }
 
         let textChanged = itemChanged || (!coordinator.isEditing && textView.text != text)
         let highlightsChanged = coordinator.lastHighlights != highlights

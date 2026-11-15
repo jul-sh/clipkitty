@@ -37,7 +37,6 @@ struct BottomControlBar: ViewModifier {
         case importingPhoto
     }
 
-    @FocusState private var isSearchFocused: Bool
     @Namespace private var barNamespace
 
     func body(content: Content) -> some View {
@@ -65,7 +64,6 @@ struct BottomControlBar: ViewModifier {
                     case .addMenu, .filterMenu: presentation = .idle
                     case .idle, .composingText, .importingPhoto: break
                     }
-                    restoreSearchFocusIfNeeded()
                 }
         }
         .photosPicker(
@@ -100,12 +98,6 @@ struct BottomControlBar: ViewModifier {
             guard let newItem else { return }
             startImportPhoto(from: newItem)
         }
-        .onAppear {
-            restoreSearchFocusIfNeeded()
-        }
-        .onChange(of: searchFocusRequestID) { _, _ in
-            restoreSearchFocusIfNeeded()
-        }
         // Search can be activated from outside the bar; make sure no create
         // sheet/menu covers it.
         .onChange(of: isSearchActive) { _, active in
@@ -126,7 +118,6 @@ struct BottomControlBar: ViewModifier {
                 // Left: search circle morphs into search field
                 if isSearchActive {
                     searchField
-                        .id(searchFocusRequestID)
                         .glassEffect(.regular.interactive(), in: .capsule)
                         .glassEffectID("search", in: barNamespace)
                 } else {
@@ -184,7 +175,7 @@ struct BottomControlBar: ViewModifier {
             Menu {
                 ForEach(sortedFilterOptions, id: \.kind) { option in
                     Button {
-                        viewModel.applyFilter(option.kind)
+                        selectCategory(option.kind)
                         haptics.fire(.selection)
                     } label: {
                         Label(option.title, systemImage: option.symbolName)
@@ -224,7 +215,6 @@ struct BottomControlBar: ViewModifier {
                 presentation = .idle
                 isSearchActive = true
             }
-            isSearchFocused = true
         } label: {
             Image(systemName: "magnifyingglass")
                 .font(.body.weight(.medium))
@@ -239,28 +229,7 @@ struct BottomControlBar: ViewModifier {
     // MARK: - Search field (expanded)
 
     private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            TextField(String(localized: "Search"), text: searchTextBinding)
-                .focused($isSearchFocused)
-                .accessibilityIdentifier("bottomBar.searchField")
-                .textFieldStyle(.plain)
-                .autocorrectionDisabled()
-                .submitLabel(.search)
-            if !viewModel.searchText.isEmpty {
-                Button {
-                    viewModel.updateSearchText("")
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 14)
-        .frame(maxWidth: .infinity)
-        .frame(height: 52)
+        FloatingSearchField(text: searchTextBinding, focusRequestID: searchFocusRequestID)
     }
 
     // MARK: - Filter cluster (morphs between pill and expanded picker)
@@ -273,7 +242,7 @@ struct BottomControlBar: ViewModifier {
                     ForEach(sortedFilterOptions, id: \.kind) { option in
                         let isActive = option.kind == viewModel.activeFilterKind
                         Button {
-                            viewModel.applyFilter(option.kind)
+                            selectCategory(option.kind)
                             haptics.fire(.selection)
                             withAnimation(.bouncy) {
                                 presentation = .idle
@@ -418,7 +387,6 @@ struct BottomControlBar: ViewModifier {
 
     private var dismissButton: some View {
         Button {
-            isSearchFocused = false
             viewModel.updateSearchText("")
             withAnimation(.bouncy) {
                 isSearchActive = false
@@ -435,6 +403,11 @@ struct BottomControlBar: ViewModifier {
     }
 
     // MARK: - Filter state
+
+    private func selectCategory(_ kind: BrowserFilterKind) {
+        settings.lastSelectedCategory = kind
+        viewModel.applyFilter(kind)
+    }
 
     /// The picker lists "All" plus every selectable filter from the shared
     /// catalog, with the active option sorted last (nearest the pill).
@@ -460,15 +433,6 @@ struct BottomControlBar: ViewModifier {
             get: { viewModel.searchText },
             set: { viewModel.updateSearchText($0) }
         )
-    }
-
-    private func restoreSearchFocusIfNeeded() {
-        guard isSearchActive else { return }
-        Task { @MainActor in
-            await Task.yield()
-            guard isSearchActive else { return }
-            isSearchFocused = true
-        }
     }
 
     // MARK: - Paste clipboard
@@ -653,6 +617,44 @@ struct BottomControlBar: ViewModifier {
         case let .failure(error):
             haptics.fire(.destructive)
             appState.showToast(.addFailed(error.localizedDescription))
+        }
+    }
+}
+
+/// Focus belongs to the mounted field, so opening search cannot focus a
+/// control that is still being inserted by the bar's transition.
+private struct FloatingSearchField: View {
+    @Binding var text: String
+    let focusRequestID: Int
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField(String(localized: "Search"), text: $text)
+                .focused($isFocused)
+                .accessibilityIdentifier("bottomBar.searchField")
+                .textFieldStyle(.plain)
+                .autocorrectionDisabled()
+                .submitLabel(.search)
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 14)
+        .frame(maxWidth: .infinity)
+        .frame(height: 52)
+        .task(id: focusRequestID) {
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            isFocused = true
         }
     }
 }

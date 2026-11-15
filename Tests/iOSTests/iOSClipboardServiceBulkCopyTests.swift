@@ -26,7 +26,7 @@ final class iOSClipboardServiceBulkCopyTests: XCTestCase {
         super.tearDown()
     }
 
-    func testBulkCopyWritesOrderedNativeItemsAndAcknowledgesOnce() async {
+    func testBulkCopyWritesNewlineSeparatedTextAndAcknowledgesOnce() async {
         let settings = iOSSettingsStore(defaults: defaults)
         let service = iOSClipboardService(settings: settings)
 
@@ -36,11 +36,65 @@ final class iOSClipboardServiceBulkCopyTests: XCTestCase {
         ])
 
         XCTAssertTrue(copied)
-        XCTAssertEqual(UIPasteboard.general.strings, ["first", "second"])
+        XCTAssertEqual(UIPasteboard.general.strings, ["first\nsecond"])
         XCTAssertEqual(
             settings.lastIngestedPasteboardChangeCount,
             UIPasteboard.general.changeCount
         )
+    }
+
+    func testBulkCopyCombinesTextLinksAndColorsWithoutChangingTheirContents() async {
+        let service = iOSClipboardService(settings: iOSSettingsStore(defaults: defaults))
+        let copied = await service.copy(contents: [
+            .text(value: "first\n🐈"),
+            .link(url: "https://example.com/path", metadataState: .pending),
+            .color(value: "#C0FFEE"),
+        ])
+
+        XCTAssertTrue(copied)
+        XCTAssertEqual(UIPasteboard.general.string, "first\n🐈\nhttps://example.com/path\n#C0FFEE")
+        XCTAssertEqual(UIPasteboard.general.numberOfItems, 1)
+    }
+
+    func testSingleLinkCopyRetainsItsNativeURLRepresentation() async {
+        let service = iOSClipboardService(settings: iOSSettingsStore(defaults: defaults))
+        let copied = await service.copy(content: .link(url: "https://example.com/path", metadataState: .pending))
+
+        XCTAssertTrue(copied)
+        XCTAssertEqual(UIPasteboard.general.url?.absoluteString, "https://example.com/path")
+    }
+
+    func testMixedTextAndImageCopyPreservesOrderedNativeItems() async {
+        let service = iOSClipboardService(settings: iOSSettingsStore(defaults: defaults))
+        let copied = await service.copy(contents: [
+            .text(value: "first"),
+            .image(data: Self.onePixelPNG, description: "pixel", isAnimated: false),
+            .text(value: "last"),
+        ])
+
+        XCTAssertTrue(copied)
+        let items = UIPasteboard.general.items
+        guard items.count == 3 else { return XCTFail("Expected three native pasteboard items") }
+        XCTAssertEqual(items.first?[UTType.utf8PlainText.identifier] as? String, "first")
+        XCTAssertEqual(
+            UIPasteboard.general.data(forPasteboardType: UTType.png.identifier, inItemSet: IndexSet(integer: 1))?.first,
+            Self.onePixelPNG
+        )
+        XCTAssertEqual(items.last?[UTType.utf8PlainText.identifier] as? String, "last")
+    }
+
+    func testJoinedTextLimitIncludesUTF8BytesAndSeparatorsWithoutReplacingClipboard() async {
+        UIPasteboard.general.string = "keep me"
+        let settings = iOSSettingsStore(defaults: defaults)
+        settings.lastIngestedPasteboardChangeCount = 12345
+        let service = iOSClipboardService(settings: settings)
+        let half = String(repeating: "🐈", count: iOSTransferLimits.maximumTextByteCount / 8)
+
+        let copied = await service.copy(contents: [.text(value: half), .text(value: half)])
+
+        XCTAssertFalse(copied, "The separator makes the combined UTF-8 value exceed the single-text limit")
+        XCTAssertEqual(UIPasteboard.general.string, "keep me")
+        XCTAssertEqual(settings.lastIngestedPasteboardChangeCount, 12345)
     }
 
     func testFailedBulkEncodingLeavesExistingClipboardUntouched() async {

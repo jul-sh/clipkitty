@@ -1,3 +1,4 @@
+import ClipKittyBrowser
 @testable import ClipKittyiOS
 import XCTest
 
@@ -21,6 +22,8 @@ final class iOSSettingsStoreTests: XCTestCase {
         let store = iOSSettingsStore(defaults: defaults)
         XCTAssertTrue(store.generateLinkPreviews)
         XCTAssertFalse(store.autoAddFromClipboard)
+        XCTAssertTrue(store.autocorrectNotes)
+        XCTAssertEqual(store.lastSelectedCategory, .all)
         XCTAssertTrue(store.allowShortcutsReadAccess)
         XCTAssertFalse(store.captureSensitiveClips)
         XCTAssertEqual(store.maxDatabaseSizeGB, 7.0, accuracy: 1e-9)
@@ -57,6 +60,31 @@ final class iOSSettingsStoreTests: XCTestCase {
 
         let reloaded = iOSSettingsStore(defaults: defaults)
         XCTAssertTrue(reloaded.autoAddFromClipboard)
+    }
+
+    func testNoteAutocorrectionPersistsWhenDisabledAndEnabled() {
+        let store = iOSSettingsStore(defaults: defaults)
+        store.autocorrectNotes = false
+        XCTAssertFalse(iOSSettingsStore(defaults: defaults).autocorrectNotes)
+
+        store.autocorrectNotes = true
+        XCTAssertTrue(iOSSettingsStore(defaults: defaults).autocorrectNotes)
+    }
+
+    func testLastCategoryPersistsIncludingReturningToAll() {
+        let store = iOSSettingsStore(defaults: defaults)
+        store.lastSelectedCategory = .images
+        XCTAssertEqual(iOSSettingsStore(defaults: defaults).lastSelectedCategory, .images)
+
+        store.lastSelectedCategory = .all
+        XCTAssertEqual(iOSSettingsStore(defaults: defaults).lastSelectedCategory, .all)
+    }
+
+    func testUnknownOrUnavailableStoredCategoryFallsBackToAll() {
+        for value in ["unknown", "files"] {
+            defaults.set(value, forKey: "iOSLastSelectedCategory")
+            XCTAssertEqual(iOSSettingsStore(defaults: defaults).lastSelectedCategory, .all)
+        }
     }
 
     func testMultipleSettingsPersistIndependently() {

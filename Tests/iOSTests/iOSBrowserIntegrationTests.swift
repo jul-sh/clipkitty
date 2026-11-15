@@ -6,6 +6,24 @@ import XCTest
 /// Uses `.card` presentation profile to mirror the real iOS client.
 @MainActor
 final class iOSBrowserIntegrationTests: XCTestCase {
+    func testInitialSearchRestoresCategoryWithoutResettingItToAll() async {
+        let client = MockiOSBrowserStoreClient()
+        let viewModel = makeViewModel(client: client, initialFilter: .bookmarks)
+        client.enqueueSearchResponse(BrowserSearchResponse(
+            request: SearchRequest(text: "", filter: .tagged(tag: .bookmark)),
+            items: [],
+            firstPreviewPayload: nil,
+            totalCount: 0
+        ))
+
+        viewModel.handlePanelVisibilityChange(true)
+        await flushMainActor()
+        XCTAssertEqual(viewModel.activeFilterKind, .bookmarks)
+
+        viewModel.onAppear(initialSearchQuery: "")
+        XCTAssertEqual(viewModel.activeFilterKind, .bookmarks, "Reappearing must preserve the active category")
+    }
+
     // MARK: - Add item → appears in feed
 
     func testNewItemAppearsAfterContentRevisionBump() async {
@@ -283,9 +301,13 @@ final class iOSBrowserIntegrationTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func makeViewModel(client: MockiOSBrowserStoreClient) -> BrowserViewModel {
+    private func makeViewModel(
+        client: MockiOSBrowserStoreClient,
+        initialFilter: BrowserFilterKind = .all
+    ) -> BrowserViewModel {
         BrowserViewModel(
             client: client,
+            initialFilter: initialFilter,
             onSelect: { _, _ in },
             onCopyOnly: { _, _ in },
             onDismiss: {}

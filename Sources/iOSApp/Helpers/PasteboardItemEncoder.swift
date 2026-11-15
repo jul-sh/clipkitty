@@ -225,8 +225,36 @@ private enum PreparedPasteboardItem {
 /// or malformed selected clip can never replace the clipboard with a partial
 /// batch. Image parsing and the bounded decode probe always run off-main.
 enum PasteboardItemEncoder {
+    /// Text-only selections paste as one value in apps that consume only the
+    /// first pasteboard item. Selections containing images retain native items.
+    static func prepareCopy(_ contents: [ClipboardContent]) async -> PreparedPasteboardBatch? {
+        guard let batch = await prepareAll(contents), !Task.isCancelled else { return nil }
+        guard batch.items.count > 1 else { return batch }
+
+        var lines: [String] = []
+        for item in batch.items {
+            switch item {
+            case let .plainText(text), let .link(_, text):
+                lines.append(text)
+            case .image:
+                return batch
+            }
+        }
+
+        // Include separators in the single text item's limit before allocating
+        // the joined value. Every input has already passed batch validation.
+        let byteCount = lines.reduce(lines.count - 1) { $0 + $1.utf8.count }
+        guard byteCount <= iOSTransferLimits.maximumTextByteCount,
+              !Task.isCancelled
+        else { return nil }
+        return PreparedPasteboardBatch(items: [.plainText(lines.joined(separator: "\n"))])
+    }
+
     static func prepareAll(_ contents: [ClipboardContent]) async -> PreparedPasteboardBatch? {
-        if !contents.contains(where: \.isImageForPasteboardPreparation) {
+        if !contents.contains(where: {
+            if case .image = $0 { return true }
+            return false
+        }) {
             return prepareAllSynchronously(contents)
         }
 
@@ -300,13 +328,6 @@ enum PasteboardItemEncoder {
             preparedItems.append(item)
         }
         return PreparedPasteboardBatch(items: preparedItems)
-    }
-}
-
-private extension ClipboardContent {
-    var isImageForPasteboardPreparation: Bool {
-        if case .image = self { return true }
-        return false
     }
 }
 

@@ -499,13 +499,14 @@ final class iOSClipboardService {
         await copy(contents: [content])
     }
 
-    /// Copies a selection as one native multi-item pasteboard transaction.
-    /// Every item is bounded and validated off-main before the system
-    /// pasteboard is mutated, so an unsupported item cannot leave the user's
-    /// clipboard partially replaced.
+    /// Copies textual selections as one newline-separated value, and selections
+    /// containing images as native pasteboard items, in one transaction.
+    /// Every item is bounded and validated before the pasteboard is mutated,
+    /// so an unsupported item cannot leave the clipboard partially replaced.
+    /// Image validation runs off-main.
     @discardableResult
     func copy(contents: [ClipboardContent]) async -> Bool {
-        guard let prepared = await PasteboardItemEncoder.prepareAll(contents),
+        guard let prepared = await PasteboardItemEncoder.prepareCopy(contents),
               !Task.isCancelled
         else {
             return false
