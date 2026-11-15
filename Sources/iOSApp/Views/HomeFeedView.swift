@@ -324,7 +324,7 @@ struct HomeFeedView: View {
         {
             return "settled"
         }
-        return "loading"
+        return "loading.image-work-\(ImageLoadActivity.shared.isSettled ? "settled" : "active").placeholders-\(pendingImagePlaceholders)"
     }
 
     /// Horizontal gutter between the feed content and the screen edges,

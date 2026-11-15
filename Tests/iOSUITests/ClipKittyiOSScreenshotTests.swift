@@ -367,6 +367,15 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
             sleep(1)
             isStable = settled.exists
         }
+        if !isStable {
+            let prefix = "/tmp/clipkitty_\(deviceKind.filenameStem)_feed_failure"
+            try? app.debugDescription.write(
+                toFile: prefix + "_screenshot_test.log", atomically: true, encoding: .utf8
+            )
+            try? XCUIScreen.main.screenshot().pngRepresentation.write(
+                to: URL(fileURLWithPath: prefix + "_screenshot.png")
+            )
+        }
         XCTAssertTrue(
             isStable,
             "Feed did not settle within \(Int(timeout))s (\(context), locale \(locale!)) — capturing would ship placeholder cards"
