@@ -13,6 +13,10 @@ ignore = [
     { id = "RUSTSEC-2025-0080", reason = "transitive dep via validator" },
     { id = "RUSTSEC-2025-0101", reason = "transitive dep via validator" },
     { id = "RUSTSEC-2025-0098", reason = "transitive dep via validator" },
+    # UniFFI's build-time Askama parser still uses basic-toml, including in
+    # the latest UniFFI/Askama releases. This is an unmaintained-crate notice,
+    # with no known vulnerability or maintained upstream replacement yet.
+    { id = "RUSTSEC-2026-0374", reason = "build-time parser via uniffi_bindgen/askama; upstream still depends on basic-toml" },
 ]
 
 [licenses]

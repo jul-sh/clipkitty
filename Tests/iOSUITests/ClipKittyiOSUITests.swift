@@ -280,6 +280,8 @@ final class ClipKittyiOSUITests: XCTestCase {
             searchField.waitForExistence(timeout: 5),
             "Search text field should appear after tapping search button"
         )
+        searchField.typeText("docker")
+        XCTAssertEqual(searchField.value as? String, "docker", "Search must acquire keyboard focus")
     }
 
     func testDismissSearchReturnsToNormalState() {

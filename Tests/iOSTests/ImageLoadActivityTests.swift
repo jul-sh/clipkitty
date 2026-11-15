@@ -383,7 +383,9 @@ final class ImageLoadActivityTests: XCTestCase {
     }
 
     private func eventually(
-        timeout: Duration = .seconds(1),
+        // Utility decode workers can wait behind simulator work on CI.
+        // Assert the observed state without requiring one-second scheduling.
+        timeout: Duration = .seconds(10),
         condition: () -> Bool
     ) async {
         let clock = ContinuousClock()

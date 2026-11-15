@@ -1,0 +1,17 @@
+name: Select Xcode
+description: Match iOS CI to the Xcode version used for simulator capture verification.
+
+runs:
+  using: composite
+  steps:
+    - name: Select Xcode 27.2
+      shell: bash
+      run: |
+        xcode_app=/Applications/Xcode_27.2.app
+        test -d "$xcode_app/Contents/Developer"
+        # Nix's host-Xcode boundary resolves this symlink as well as xcrun.
+        # Hosted images provide Xcode.app as a symlink to the default version.
+        test -L /Applications/Xcode.app
+        sudo ln -sfn "$xcode_app" /Applications/Xcode.app
+        sudo xcode-select --switch "$xcode_app/Contents/Developer"
+        xcodebuild -version

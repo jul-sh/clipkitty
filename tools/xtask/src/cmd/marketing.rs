@@ -425,18 +425,20 @@ fn run_screenshot_plan(
         // A failed app test must never be hidden by a recapture. The one
         // exception is a known CoreSimulator startup failure: no test has run
         // and resetting the device service is the documented recovery.
-        if plan.ios_device_kind().is_some()
-            && !status.success()
-            && matches!(copy_result, ScreenshotCopy::Incomplete { .. })
-            && is_ios_simulator_startup_failure(&log_path)
-        {
-            reporter.info(&format!(
-                "CoreSimulator did not initialize for {locale_code}; resetting once before the final capture attempt."
-            ));
-            reset_ios_simulators(reporter);
-            clear_screenshot_sources(plan.platform, locale)?;
-            status = run_screenshot_xcodebuild(repo, plan, &runtime, &log_path, reporter)?;
-            copy_result = copy_screenshots(repo, plan, locale, reporter)?;
+        if let CaptureRuntime::Ios { udid } = &runtime {
+            if !status.success()
+                && matches!(copy_result, ScreenshotCopy::Incomplete { .. })
+                && is_ios_simulator_startup_failure(&log_path)
+            {
+                reporter.info(&format!(
+                    "CoreSimulator did not initialize for {locale_code}; resetting once before the final capture attempt."
+                ));
+                reset_ios_simulators(reporter);
+                boot_ios_simulator(udid, reporter)?;
+                clear_screenshot_sources(plan.platform, locale)?;
+                status = run_screenshot_xcodebuild(repo, plan, &runtime, &log_path, reporter)?;
+                copy_result = copy_screenshots(repo, plan, locale, reporter)?;
+            }
         }
 
         match copy_result {
@@ -494,9 +496,16 @@ fn is_ios_simulator_startup_failure(log_path: &Utf8Path) -> bool {
 }
 
 fn is_ios_simulator_startup_failure_log(log: &str) -> bool {
+    if log
+        .lines()
+        .any(|line| line.contains("Test Case ") && line.contains(" started."))
+    {
+        return false;
+    }
     log.contains("Unable to determine SimDeviceSet")
         || log.contains("Failed to initialize simulator device set")
         || (log.contains("CoreSimulator") && log.contains("RequestDenied"))
+        || log.contains("Early unexpected exit, operation never finished bootstrapping")
 }
 
 /// Build ClipKitty for testing, boot the target simulator, and install the
@@ -866,7 +875,9 @@ fn run_screenshot_xcodebuild(
         // App Group container the screenshots depend on (the demo database
         // lives there, and the share-sheet capture reads from it).
         CapturePlatform::Ios(_) => {
-            runner = runner.arg("CODE_SIGN_IDENTITY=-");
+            runner = runner
+                .args(["-parallel-testing-enabled", "NO"])
+                .arg("CODE_SIGN_IDENTITY=-");
         }
         CapturePlatform::MacOs => {
             if env::var("SKIP_SIGNING").ok().as_deref() == Some("1") {
@@ -1927,6 +1938,12 @@ mod tests {
         ));
         assert!(!is_ios_simulator_startup_failure_log(
             "Test Case '-[ClipKittyiOSUITests testTakeMarketingScreenshots]' failed"
+        ));
+        assert!(is_ios_simulator_startup_failure_log(
+            "ClipKittyiOSUITests-Runner encountered an error (Early unexpected exit, operation never finished bootstrapping - no restart will be attempted.)"
+        ));
+        assert!(!is_ios_simulator_startup_failure_log(
+            "Test Case '-[ClipKittyiOSUITests testTakeMarketingScreenshots]' started.\nEarly unexpected exit, operation never finished bootstrapping"
         ));
     }
 

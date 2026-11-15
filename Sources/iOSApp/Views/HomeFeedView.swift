@@ -61,91 +61,95 @@ struct HomeFeedView: View {
 
     var body: some View {
         NavigationStack {
-            feedContent
-                .overlay {
-                    switch barPresentation {
-                    case .addMenu, .filterMenu:
-                        Color.clear
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                withAnimation(.bouncy) { barPresentation = .idle }
-                            }
-                    case .idle, .composingText, .importingPhoto:
-                        EmptyView()
-                    }
-                }
-                .modifier(BottomControlBar(
-                    isSearchActive: $isSearchActive,
-                    searchFocusRequestID: searchFocusRequestID,
-                    presentation: $barPresentation,
-                    mode: controlBarMode
-                ))
-                .navigationTitle(navigationTitle)
-                .navigationBarTitleDisplayMode(.inline)
-                .navigationDestination(item: $previewItemId) { itemId in
-                    PreviewScreen(itemId: itemId)
-                }
-                .toolbar {
-                    if selection.isActive {
-                        selectionToolbarContent
-                    } else {
-                        defaultToolbarContent
-                    }
-                }
-                .sheet(isPresented: $showSettings) {
-                    SettingsScreen()
-                }
-                .sheet(isPresented: $showPermissionFlow) {
-                    SaveAutomaticallySheet(resumeInDoneState: permissionFlowResumesInDoneState)
-                }
-                .onChange(of: showPermissionFlow) { _, isPresented in
-                    if !isPresented {
-                        permissionFlowResumesInDoneState = false
-                    }
-                }
-                .onAppear {
-                    guard !hasAppeared else { return }
-                    hasAppeared = true
-                    // A trip to the Settings app from the permission flow comes
-                    // back through a rebootstrapped session with all sheets gone;
-                    // pick the flow back up on its finishing step.
-                    if settings.permissionFlowResumePending {
-                        settings.permissionFlowResumePending = false
-                        if !settings.permissionHintDismissed {
-                            permissionFlowResumesInDoneState = true
-                            showPermissionFlow = true
+            // Keep navigation and the focused search field mounted while the
+            // feed switches between loading, results, and empty states.
+            ZStack {
+                feedContent
+            }
+            .overlay {
+                switch barPresentation {
+                case .addMenu, .filterMenu:
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.bouncy) { barPresentation = .idle }
                         }
+                case .idle, .composingText, .importingPhoto:
+                    EmptyView()
+                }
+            }
+            .modifier(BottomControlBar(
+                isSearchActive: $isSearchActive,
+                searchFocusRequestID: searchFocusRequestID,
+                presentation: $barPresentation,
+                mode: controlBarMode
+            ))
+            .navigationTitle(navigationTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(item: $previewItemId) { itemId in
+                PreviewScreen(itemId: itemId)
+            }
+            .toolbar {
+                if selection.isActive {
+                    selectionToolbarContent
+                } else {
+                    defaultToolbarContent
+                }
+            }
+            .sheet(isPresented: $showSettings) {
+                SettingsScreen()
+            }
+            .sheet(isPresented: $showPermissionFlow) {
+                SaveAutomaticallySheet(resumeInDoneState: permissionFlowResumesInDoneState)
+            }
+            .onChange(of: showPermissionFlow) { _, isPresented in
+                if !isPresented {
+                    permissionFlowResumesInDoneState = false
+                }
+            }
+            .onAppear {
+                guard !hasAppeared else { return }
+                hasAppeared = true
+                // A trip to the Settings app from the permission flow comes
+                // back through a rebootstrapped session with all sheets gone;
+                // pick the flow back up on its finishing step.
+                if settings.permissionFlowResumePending {
+                    settings.permissionFlowResumePending = false
+                    if !settings.permissionHintDismissed {
+                        permissionFlowResumesInDoneState = true
+                        showPermissionFlow = true
                     }
-                    viewModel.onAppear(
-                        initialSearchQuery: "",
-                        contentRevision: appState.contentRevision
-                    )
                 }
-                .onChange(of: selection.isActive) { _, _ in
-                    barPresentation = .idle
+                viewModel.onAppear(
+                    initialSearchQuery: "",
+                    contentRevision: appState.contentRevision
+                )
+            }
+            .onChange(of: selection.isActive) { _, _ in
+                barPresentation = .idle
+            }
+            .onChange(of: visibleItemIDs) { _, newValue in
+                cancelBulkCopy()
+                selection.reconcile(with: newValue)
+            }
+            .onChange(of: previewItemId) { oldValue, newValue in
+                guard oldValue != nil, newValue == nil, isSearchActive else { return }
+                searchFocusRequestID += 1
+            }
+            .alert(
+                String(localized: "Delete Selected Items?"),
+                isPresented: $showDeleteConfirmation
+            ) {
+                Button(String(localized: "Delete"), role: .destructive) {
+                    deleteSelectedItems()
                 }
-                .onChange(of: visibleItemIDs) { _, newValue in
-                    cancelBulkCopy()
-                    selection.reconcile(with: newValue)
-                }
-                .onChange(of: previewItemId) { oldValue, newValue in
-                    guard oldValue != nil, newValue == nil, isSearchActive else { return }
-                    searchFocusRequestID += 1
-                }
-                .alert(
-                    String(localized: "Delete Selected Items?"),
-                    isPresented: $showDeleteConfirmation
-                ) {
-                    Button(String(localized: "Delete"), role: .destructive) {
-                        deleteSelectedItems()
-                    }
-                    Button(String(localized: "Cancel"), role: .cancel) {}
-                } message: {
-                    Text(String(localized: "Are you sure you want to delete the selected items?"))
-                }
-                .onDisappear {
-                    cancelBulkCopy()
-                }
+                Button(String(localized: "Cancel"), role: .cancel) {}
+            } message: {
+                Text(String(localized: "Are you sure you want to delete the selected items?"))
+            }
+            .onDisappear {
+                cancelBulkCopy()
+            }
         }
     }
 

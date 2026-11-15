@@ -549,6 +549,9 @@ jobs:
         with:
           lfs: true
 
+      - name: Select iOS Xcode
+        uses: ./.github/actions/setup-xcode
+
       - name: Set up Nix
         uses: ./.github/actions/setup-nix
         with:
@@ -582,6 +585,9 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           lfs: true
+
+      - name: Select iOS Xcode
+        uses: ./.github/actions/setup-xcode
 
       - name: Set up Nix
         uses: ./.github/actions/setup-nix
@@ -642,6 +648,9 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           lfs: true
+
+      - name: Select iOS Xcode
+        uses: ./.github/actions/setup-xcode
 
       - name: Set up Nix
         uses: ./.github/actions/setup-nix
@@ -712,6 +721,9 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           lfs: true
+
+      - name: Select iOS Xcode
+        uses: ./.github/actions/setup-xcode
 
       - name: Set up Nix
         uses: ./.github/actions/setup-nix
@@ -1809,6 +1821,9 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+
+      - name: Select iOS Xcode
+        uses: ./.github/actions/setup-xcode
 
       - name: Set up Nix
         uses: ./.github/actions/setup-nix
