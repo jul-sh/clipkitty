@@ -66,6 +66,7 @@ struct HomeFeedView: View {
             ZStack {
                 feedContent
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay {
                 switch barPresentation {
                 case .addMenu, .filterMenu:
