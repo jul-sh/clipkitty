@@ -12,7 +12,7 @@ name: Build and Release
 #   ios-smoke ───────────┤
 #   ios-build ───────────┤
 #   ios-tests ───────────┤
-#   ios-screenshots ─────┤   (matrix: iphone, ipad)
+#   ios-screenshots ─────┤   (matrix: iphone, iphone-max, iphone-duo, ipad)
 #   macos-tests ─────────┤
 #   macos-uitests ───────┤
 #   macos-marketing ─────┤
@@ -541,7 +541,7 @@ jobs:
   ios-smoke:
     name: iOS Smoke Build
     needs: prewarm-nix
-    runs-on: macos-26
+    runs-on: xcode-27
 
     steps:
       - name: Checkout
@@ -572,7 +572,7 @@ jobs:
   ios-build:
     name: iOS Build
     needs: [version, prewarm-nix]
-    runs-on: macos-26
+    runs-on: xcode-27
     env:
       VERSION: ${{ needs.version.outputs.version }}
       BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
@@ -615,6 +615,7 @@ jobs:
       - name: Build iOS App (AppStore)
         timeout-minutes: 20
         run: |
+          unset TOOLCHAINS
           xcodebuild build \
             -workspace ClipKitty.xcworkspace \
             -scheme ClipKittyiOS-AppStore \
@@ -634,7 +635,7 @@ jobs:
   ios-tests:
     name: iOS Unit Tests
     needs: prewarm-nix
-    runs-on: macos-26
+    runs-on: xcode-27
 
     steps:
       - name: Checkout
@@ -659,6 +660,7 @@ jobs:
       - name: Run iOS Unit Tests
         timeout-minutes: 30
         run: |
+          unset TOOLCHAINS
           xcodebuild test \
             -workspace ClipKitty.xcworkspace \
             -scheme ClipKittyiOS \
@@ -686,7 +688,8 @@ jobs:
     name: iOS Screenshots (${{ matrix.device }})
     needs: prewarm-nix
     if: github.event_name != 'pull_request'
-    runs-on: macos-26
+    # The app requires the iOS 27.1+ SDK, and Duo needs its simulator runtime.
+    runs-on: xcode-27
     strategy:
       fail-fast: false
       matrix:
@@ -697,6 +700,9 @@ jobs:
           - device: iphone-max
             target: screenshots-ios-max
             outdir: marketing-ios-max
+          - device: iphone-duo
+            target: screenshots-ios-duo
+            outdir: marketing-ios-duo
           - device: ipad
             target: screenshots-ipad
             outdir: marketing-ipad
@@ -1794,7 +1800,7 @@ jobs:
 
   # Upload iOS app to App Store Connect
   ios-appstore:
-    runs-on: macos-26
+    runs-on: xcode-27
     needs: [rust-tests, ios-build, ios-screenshots]
     if: github.event_name == 'push' && github.ref_name == 'main'
 
@@ -1879,6 +1885,12 @@ jobs:
           name: ios-assets-iphone-max
           path: marketing-ios-max
 
+      - name: Download iPhone Duo screenshots
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ios-assets-iphone-duo
+          path: marketing-ios-duo
+
       - name: Download iPad screenshots
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -1887,9 +1899,9 @@ jobs:
 
       - name: Verify iOS screenshots present
         run: |
-          for dir in marketing-ios marketing-ios-max marketing-ipad; do
+          for dir in marketing-ios marketing-ios-max marketing-ios-duo marketing-ipad; do
             for locale in en es zh-Hans zh-Hant ja ko fr de pt-BR ru; do
-              for screenshot in screenshot_1.png screenshot_2.png screenshot_3.png; do
+              for screenshot in screenshot_1.png screenshot_2.png screenshot_3.png screenshot_4.png; do
                 if [ ! -f "$dir/$locale/$screenshot" ]; then
                   echo "::error::Missing $dir/$locale/$screenshot; cannot publish to ASC"
                   exit 1

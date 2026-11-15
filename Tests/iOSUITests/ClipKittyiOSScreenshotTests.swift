@@ -2,11 +2,10 @@ import XCTest
 
 /// Marketing screenshot generator for the iOS App Store listing.
 ///
-/// Captures four screenshots on either iPhone 17 (6.1-inch, 1206x2622;
-/// uploaded to ASC's IPHONE_61 slot) or iPad Pro 13-inch M5 (2064x2752;
-/// uploaded to ASC's IPAD_PRO_3GEN_129 slot). The scenes are identical
-/// across devices; only the simulator chosen by the xcodebuild
-/// destination differs.
+/// Captures four screenshots on iPhone 17, iPhone 17 Pro Max, iPhone Duo
+/// (outer display, 1398x2034; ASC's APP_IPHONE_DUO slot), or iPad Pro
+/// 13-inch M5. The scenes are identical across devices; the simulator
+/// chosen by the xcodebuild destination and output filename stem differ.
 ///   1. History feed; the main clipboard history view
 ///   2. Search; search bar active with a query
 ///   3. Filter; filtered by a content type
@@ -14,22 +13,24 @@ import XCTest
 ///
 /// Locale is read from `/tmp/clipkitty_ios_screenshot_locale.txt`.
 /// Database filename is read from `/tmp/clipkitty_ios_screenshot_db.txt`.
-/// Device kind (`iphone` or `ipad`) is read from
+/// Device kind (`iphone`, `iphone-duo`, or `ipad`) is read from
 /// `/tmp/clipkitty_ios_screenshot_device.txt` and picks the output
 /// filename prefix so back-to-back iPhone and iPad runs don't overwrite
 /// each other's PNGs.
 /// Screenshots are written to
-/// `/tmp/clipkitty_{ios|ipad}_[{locale}_]marketing_{n}_{name}.png`
+/// `/tmp/clipkitty_{ios|ios-duo|ipad}_[{locale}_]marketing_{n}_{name}.png`
 /// (the locale segment is omitted for English, matching the existing
 /// iPhone behaviour).
 final class ClipKittyiOSScreenshotTests: XCTestCase {
-    private enum DeviceKind {
-        case iPhone
-        case iPad
+    private enum DeviceKind: String {
+        case iPhone = "iphone"
+        case iPhoneDuo = "iphone-duo"
+        case iPad = "ipad"
 
         var filenameStem: String {
             switch self {
             case .iPhone: return "ios"
+            case .iPhoneDuo: return "ios-duo"
             case .iPad: return "ipad"
             }
         }
@@ -47,8 +48,11 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         continueAfterFailure = false
 
         locale = readTempConfig(Self.localeConfigFile, defaultValue: "en") ?? "en"
-        deviceKind = (readTempConfig(Self.deviceConfigFile, defaultValue: "iphone") ?? "iphone")
-            == "ipad" ? .iPad : .iPhone
+        let deviceToken = readTempConfig(Self.deviceConfigFile, defaultValue: "iphone") ?? "iphone"
+        deviceKind = try XCTUnwrap(DeviceKind(rawValue: deviceToken), "Unknown screenshot device kind")
+        if case .iPhoneDuo = deviceKind {
+            XCUIDevice.shared.orientation = .portrait
+        }
 
         let screenshotDBPath = try setupTestDatabase()
 
@@ -77,11 +81,10 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         waitForFeedSettled(context: "initial feed")
     }
 
-    func testTakeMarketingScreenshots() {
-        // All UI lookups use stable accessibilityIdentifier values so this
-        // test works under every locale. If an element can't be found, fail
-        // loudly — silent fallthrough produces duplicate screenshots that
-        // ship to the App Store unnoticed.
+    func testTakeMarketingScreenshots() throws {
+        // App controls use stable accessibility identifiers. System search
+        // controls on the Duo rail use their native roles and localized labels.
+        // Missing controls must fail rather than produce duplicate scenes.
 
         // Screenshot 1: History feed (default state)
         let feedScreenshot = captureScreen()
@@ -92,9 +95,15 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         // fuzzy matcher. Both "docker" and "push" appear verbatim in every
         // locale's synthetic DB (technical tokens in untranslated shell
         // commands), so the same query works across all locales.
-        let searchButton = app.buttons["bottomBar.searchButton"]
+        let searchButton: XCUIElement
+        switch deviceKind {
+        case .iPhoneDuo:
+            searchButton = try app.buttons[XCTUnwrap(Self.nativeSearchLabels[locale]).search]
+        case .iPhone, .iPad:
+            searchButton = app.buttons["bottomBar.searchButton"]
+        }
         XCTAssertTrue(searchButton.waitForExistence(timeout: 5),
-                      "bottomBar.searchButton not found for locale \(locale!)")
+                      "Search button not found for locale \(locale!)")
         searchButton.tap()
         sleep(1)
 
@@ -106,9 +115,13 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         // on a button that usually never appears, so a shorter timeout here
         // was the first to expire on a loaded CI runner and failed the whole
         // capture for one locale.
-        let searchField = app.textFields["bottomBar.searchField"]
+        let searchField: XCUIElement
+        switch deviceKind {
+        case .iPhoneDuo: searchField = app.searchFields.firstMatch
+        case .iPhone, .iPad: searchField = app.textFields["bottomBar.searchField"]
+        }
         XCTAssertTrue(searchField.waitForExistence(timeout: 5),
-                      "bottomBar.searchField not found for locale \(locale!)")
+                      "Search field not found for locale \(locale!)")
         typeSearchQuery("dockr push", into: searchField)
         sleep(2)
         waitForFeedSettled(context: "search results")
@@ -117,9 +130,18 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         saveScreenshot(searchScreenshot, index: 2, name: "search")
 
         // Dismiss search
-        let closeButton = app.buttons["bottomBar.closeSearchButton"]
+        let closeButton: XCUIElement
+        switch deviceKind {
+        case .iPhoneDuo:
+            // The rail uses a localized close symbol rather than Cancel.
+            // Its English accessibility label starts with a lowercase letter.
+            let label = try XCTUnwrap(Self.nativeSearchLabels[locale]).close
+            closeButton = app.buttons.matching(NSPredicate(format: "label ==[c] %@", label)).firstMatch
+        case .iPhone, .iPad:
+            closeButton = app.buttons["bottomBar.closeSearchButton"]
+        }
         XCTAssertTrue(closeButton.waitForExistence(timeout: 5),
-                      "bottomBar.closeSearchButton not found for locale \(locale!)")
+                      "Close search button not found for locale \(locale!)")
         closeButton.tap()
         sleep(1)
 
@@ -151,6 +173,21 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         // Screenshot 4: the share sheet over the feed.
         captureShareSheetScreenshot()
     }
+
+    // MARK: - Native search labels
+
+    private static let nativeSearchLabels: [String: (search: String, close: String)] = [
+        "en": ("Search", "Close"),
+        "de": ("Suchen", "Schließen"),
+        "es": ("Buscar", "Cerrar"),
+        "fr": ("Rechercher", "Fermer"),
+        "ja": ("検索", "閉じる"),
+        "ko": ("검색", "닫기"),
+        "pt-BR": ("Pesquisar", "Fechar"),
+        "ru": ("Поиск", "Закрыть"),
+        "zh-Hans": ("搜索", "关闭"),
+        "zh-Hant": ("搜尋", "關閉"),
+    ]
 
     // MARK: - Share sheet screenshot
 
@@ -437,6 +474,13 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
     }
 
     private func saveScreenshot(_ screenshot: XCUIScreenshot, index: Int, name: String) {
+        if case .iPhoneDuo = deviceKind {
+            let image = screenshot.image
+            XCTAssertEqual(image.size.width * image.scale, 1398,
+                           "Duo marketing screenshots must capture the outer display")
+            XCTAssertEqual(image.size.height * image.scale, 2034,
+                           "Duo marketing screenshots must capture the outer display in portrait")
+        }
         let localePrefix = locale == "en" ? "" : "\(locale!)_"
         let filename = "clipkitty_\(deviceKind.filenameStem)_\(localePrefix)marketing_\(index)_\(name).png"
         let path = "/tmp/\(filename)"

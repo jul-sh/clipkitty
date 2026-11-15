@@ -205,6 +205,8 @@ pub enum ScreenshotPlatform {
     Ios,
     #[value(name = "ios-max")]
     IosMax,
+    #[value(name = "ios-duo")]
+    IosDuo,
     #[value(name = "ipad")]
     IPad,
 }

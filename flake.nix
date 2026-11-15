@@ -62,15 +62,16 @@
         # maintained upstream release used by the publisher.
         asc =
           let
-            version = "3.1.0";
+            # 5.12.0 adds the APP_IPHONE_DUO screenshot display class.
+            version = "5.12.0";
             src = {
               aarch64-darwin = pkgs.fetchurl {
                 url = "https://github.com/rorkai/App-Store-Connect-CLI/releases/download/${version}/asc_${version}_macOS_arm64";
-                sha256 = "sha256-HHnm2oicpmVHD2zr4DO0iJc1KrABsEvKBFVahgIDaMk=";
+                sha256 = "sha256-ftD2JGGn81HpU1iDmCOnMvX42EandYwwN1YgDqI1U/s=";
               };
               x86_64-darwin = pkgs.fetchurl {
                 url = "https://github.com/rorkai/App-Store-Connect-CLI/releases/download/${version}/asc_${version}_macOS_amd64";
-                sha256 = "sha256-nZ/XHH7xBfNRDcJOmDOvU7HqTfOLYaimZjD7jDDTReU=";
+                sha256 = "sha256-fXF4pnBBGrvi0Dw6ja2cP8jwm3bUbVuLXQmW7EGG+Fo=";
               };
             }.${system} or null;
           in

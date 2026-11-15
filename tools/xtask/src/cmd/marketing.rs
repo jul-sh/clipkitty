@@ -65,6 +65,7 @@ pub fn run(cmd: &MarketingCmd, dry_run: bool, reporter: &Reporter) -> Result<()>
             ScreenshotPlatform::MacOs => screenshots_macos(&repo, dry_run, reporter),
             ScreenshotPlatform::Ios => screenshots_ios(&repo, dry_run, reporter),
             ScreenshotPlatform::IosMax => screenshots_ios_max(&repo, dry_run, reporter),
+            ScreenshotPlatform::IosDuo => screenshots_ios_duo(&repo, dry_run, reporter),
             ScreenshotPlatform::IPad => screenshots_ipad(&repo, dry_run, reporter),
         },
         MarketingCmd::IntroVideo => intro_video(&repo, dry_run, reporter),
@@ -158,6 +159,7 @@ impl MarketingLocale {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IosDeviceKind {
     IPhone,
+    IPhoneDuo,
     IPad,
 }
 
@@ -169,6 +171,7 @@ impl IosDeviceKind {
     fn swift_token(self) -> &'static str {
         match self {
             Self::IPhone => "iphone",
+            Self::IPhoneDuo => "iphone-duo",
             Self::IPad => "ipad",
         }
     }
@@ -178,6 +181,7 @@ impl IosDeviceKind {
     fn tmp_prefix_stem(self) -> &'static str {
         match self {
             Self::IPhone => "ios",
+            Self::IPhoneDuo => "ios-duo",
             Self::IPad => "ipad",
         }
     }
@@ -287,6 +291,17 @@ impl ScreenshotPlan {
         }
     }
 
+    /// The Duo's outer display (1398x2034), active on a freshly booted
+    /// simulator. It has its own App Store Connect display class.
+    fn ios_duo() -> Self {
+        Self {
+            platform: CapturePlatform::Ios(IosDeviceKind::IPhoneDuo),
+            marketing_root: "marketing-ios-duo",
+            destination: "platform=iOS Simulator,name=iPhone Duo",
+            ..Self::ios()
+        }
+    }
+
     fn ipad() -> Self {
         Self {
             platform: CapturePlatform::Ios(IosDeviceKind::IPad),
@@ -320,6 +335,10 @@ fn screenshots_ios(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Resul
 
 fn screenshots_ios_max(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
     run_screenshot_plan(repo, ScreenshotPlan::ios_max(), dry_run, reporter)
+}
+
+fn screenshots_ios_duo(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
+    run_screenshot_plan(repo, ScreenshotPlan::ios_duo(), dry_run, reporter)
 }
 
 fn screenshots_ipad(repo: &RepoRoot, dry_run: bool, reporter: &Reporter) -> Result<()> {
@@ -500,14 +519,29 @@ fn prepare_ios_simulator(
         .output()?;
     let parsed: serde_json::Value =
         serde_json::from_slice(&list.stdout).context("parsing `simctl list devices -j` output")?;
-    let udid = parsed["devices"]
+    let existing_udid = parsed["devices"]
         .as_object()
         .into_iter()
         .flat_map(|runtimes| runtimes.values())
         .flat_map(|devices| devices.as_array().into_iter().flatten())
         .find(|device| device["name"].as_str() == Some(device_name))
-        .and_then(|device| device["udid"].as_str().map(ToOwned::to_owned))
-        .with_context(|| format!("no available simulator named `{device_name}`"))?;
+        .and_then(|device| device["udid"].as_str().map(ToOwned::to_owned));
+    let udid = match existing_udid {
+        Some(udid) => udid,
+        None => {
+            // Runner images don't pre-create every supported model. Let
+            // simctl choose the newest installed runtime compatible with
+            // this device type (27.1 is Duo-only, unlike 27.0).
+            Runner::new(reporter, "xcrun")
+                .args(["simctl", "create", device_name, device_name])
+                .capture_stderr()
+                .output()
+                .with_context(|| format!("creating the `{device_name}` screenshot simulator"))?
+                .stdout_string()?
+                .trim()
+                .to_owned()
+        }
+    };
 
     reporter.info(&format!(
         "Preparing the iOS simulator `{device_name}` ({udid})..."

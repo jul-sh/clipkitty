@@ -227,7 +227,7 @@ fn ios_appstore(
         repo,
         ReleaseTarget::Ios,
         &args.version,
-        &[IOS_MAX_SCREENSHOTS, IPAD_SCREENSHOTS],
+        &[IOS_MAX_SCREENSHOTS, IOS_DUO_SCREENSHOTS, IPAD_SCREENSHOTS],
         reporter,
     )
 }
@@ -483,6 +483,13 @@ const IPAD_SCREENSHOTS: ScreenshotTarget = ScreenshotTarget {
     label: "iPad",
     marketing_dir_name: "marketing-ipad",
     device_types: &["APP_IPAD_PRO_3GEN_129"],
+    expected_files: IOS_SCREENSHOT_FILES,
+};
+
+const IOS_DUO_SCREENSHOTS: ScreenshotTarget = ScreenshotTarget {
+    label: "iPhone Duo (outer display)",
+    marketing_dir_name: "marketing-ios-duo",
+    device_types: &["APP_IPHONE_DUO"],
     expected_files: IOS_SCREENSHOT_FILES,
 };
 
@@ -1288,6 +1295,7 @@ fn import_metadata(
         version_id,
         "--fastlane-dir",
         import_root.as_str(),
+        "--confirm",
     ];
     run_metadata_import_with_retries(
         &import_metadata,
@@ -1479,7 +1487,10 @@ fn upload_screenshots(
                 let plan = &plans[index];
                 let outcome = upload_screenshots_for_locale(repo, target, plan, asc_env, reporter)
                     .with_context(|| {
-                        format!("uploading {} screenshots for {}", target.label, plan.asc_locale)
+                        format!(
+                            "uploading {} screenshots for {}",
+                            target.label, plan.asc_locale
+                        )
                     });
                 results_sink.lock().expect("results sink poisoned")[index] = Some(outcome);
             });
@@ -1557,7 +1568,7 @@ fn upload_screenshots_for_locale(
                             png.as_str(),
                         ];
                         if index == 0 {
-                            args.push("--replace");
+                            args.extend(["--replace", "--confirm"]);
                         }
                         asc_command(repo, &args, asc_env, reporter)?;
                     }
@@ -1846,6 +1857,7 @@ fn upload_app_preview_with_retry(
             "--path",
             video.as_str(),
             "--replace",
+            "--confirm",
         ];
         let output = asc_command_output(repo, &args, asc_env, reporter)?;
         if output.status.success() {
