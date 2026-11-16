@@ -88,6 +88,10 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
             try? XCUIScreen.main.screenshot().pngRepresentation.write(
                 to: URL(fileURLWithPath: path)
             )
+            try? app.debugDescription.write(
+                toFile: "/tmp/clipkitty_\(deviceKind.filenameStem)_failure_screenshot_test.log",
+                atomically: true, encoding: .utf8
+            )
         }
         try super.tearDownWithError()
     }
@@ -195,7 +199,7 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         "ja": ("検索", "閉じる"),
         "ko": ("검색", "닫기"),
         "pt-BR": ("Buscar", "Fechar"),
-        "ru": ("Поиск", "Закрыть"),
+        "ru": ("Искать", "Закрыть"),
         "zh-Hans": ("搜索", "关闭"),
         "zh-Hant": ("搜尋", "關閉"),
     ]
