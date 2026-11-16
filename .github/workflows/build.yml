@@ -390,7 +390,7 @@ jobs:
       # The Sparkle DMG archive builds through the generated workspace
       # (xtask errors with "workspace not found" otherwise).
       - name: Generate Xcode Workspace
-        run: make workspace
+        uses: ./.github/actions/generate-workspace
 
       - name: Build and Sign DMG
         timeout-minutes: 30
@@ -616,7 +616,7 @@ jobs:
           KEYTAP_KEY_CLIPKITTY: ${{ secrets.AGE_SECRET_KEY }}
 
       - name: Generate Xcode Workspace
-        run: make workspace
+        uses: ./.github/actions/generate-workspace
 
       - name: Build iOS App (AppStore)
         timeout-minutes: 20
@@ -664,7 +664,7 @@ jobs:
           swift-version: "6.2"
 
       - name: Generate Xcode Workspace
-        run: make workspace
+        uses: ./.github/actions/generate-workspace
 
       - name: Run iOS Unit Tests
         timeout-minutes: 30
@@ -739,7 +739,7 @@ jobs:
           swift-version: "6.2"
 
       - name: Generate Xcode Workspace
-        run: make workspace
+        uses: ./.github/actions/generate-workspace
 
       - name: Generate Marketing Screenshots
         run: |
@@ -794,7 +794,7 @@ jobs:
           swift-version: "6.2"
 
       - name: Generate Xcode Workspace
-        run: make workspace
+        uses: ./.github/actions/generate-workspace
 
       - name: Run UI Tests
         # 75, not 45: this step's xcodebuild runs the Xcode pre-build action,
@@ -869,7 +869,7 @@ jobs:
           swift-version: "6.2"
 
       - name: Generate Xcode Workspace
-        run: make workspace
+        uses: ./.github/actions/generate-workspace
 
       - name: Run Unit Tests
         timeout-minutes: 30
@@ -927,7 +927,7 @@ jobs:
       # from source without racing a clock. `make screenshots-macos` then
       # finds the store path already present and re-links it instantly.
       - name: Generate Xcode Workspace
-        run: make workspace
+        uses: ./.github/actions/generate-workspace
 
       - name: Create Virtual Retina Display
         run: |
@@ -1012,7 +1012,7 @@ jobs:
       # step. If the Actions cache is throttled, Nix can rebuild here without
       # consuming the per-locale recording budget.
       - name: Generate Xcode Workspace
-        run: make workspace
+        uses: ./.github/actions/generate-workspace
 
       - name: Create Virtual Retina Display
         run: |

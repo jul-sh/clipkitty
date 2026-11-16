@@ -194,7 +194,7 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         "fr": ("Rechercher", "Fermer"),
         "ja": ("検索", "閉じる"),
         "ko": ("검색", "닫기"),
-        "pt-BR": ("Pesquisar", "Fechar"),
+        "pt-BR": ("Buscar", "Fechar"),
         "ru": ("Поиск", "Закрыть"),
         "zh-Hans": ("搜索", "关闭"),
         "zh-Hant": ("搜尋", "關閉"),

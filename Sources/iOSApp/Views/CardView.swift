@@ -23,6 +23,7 @@ struct CardView: View {
     @State private var shareTask: Task<Void, Never>?
     @State private var shareRequestID: UUID?
     @State private var hostedPendingImagePlaceholders = 0
+    @State private var isVisibleInScrollView = false
 
     init(
         row: DisplayRow,
@@ -73,37 +74,47 @@ struct CardView: View {
     }
 
     var body: some View {
-        if isSelectionMode {
-            selectableCard
-        } else {
-            // A full-screen destination can background ClipKitty before it
-            // asks the item provider for promised data. Always use the managed
-            // interaction so the foreground store remains available while the
-            // drag is in flight.
-            ExternalCopyDragHost(makePayload: makeManagedDragPayload) {
-                standardInteractiveCard
-                    // A UIHostingController begins a new SwiftUI environment
-                    // root. Re-inject the values used by nested rich previews.
-                    .environment(container)
-                    .environment(viewModel)
-                    .environment(appState)
-                    .environment(haptics)
-                    .environment(settings)
-                    // Preferences do not cross a UIHostingController
-                    // boundary. Bridge the image-placeholder count back into
-                    // this card so the feed never advertises a settled frame
-                    // while an image placeholder is still visible.
-                    .onPreferenceChange(PendingImagePlaceholderCount.self) { count in
-                        hostedPendingImagePlaceholders = count
-                    }
+        Group {
+            if isSelectionMode {
+                selectableCard
+            } else {
+                // A full-screen destination can background ClipKitty before it
+                // asks the item provider for promised data. Always use the managed
+                // interaction so the foreground store remains available while the
+                // drag is in flight.
+                ExternalCopyDragHost(makePayload: makeManagedDragPayload) {
+                    standardInteractiveCard
+                        // A UIHostingController begins a new SwiftUI environment
+                        // root. Re-inject the values used by nested rich previews.
+                        .environment(container)
+                        .environment(viewModel)
+                        .environment(appState)
+                        .environment(haptics)
+                        .environment(settings)
+                        // Preferences do not cross a UIHostingController
+                        // boundary. Bridge the image-placeholder count back into
+                        // this card so the feed never advertises a settled frame
+                        // while an image placeholder is still visible.
+                        .onPreferenceChange(PendingImagePlaceholderCount.self) { count in
+                            hostedPendingImagePlaceholders = count
+                        }
+                }
+                .preference(
+                    key: PendingImagePlaceholderCount.self,
+                    value: hostedPendingImagePlaceholders
+                )
+                .onDisappear {
+                    cancelShare()
+                }
             }
-            .preference(
-                key: PendingImagePlaceholderCount.self,
-                value: hostedPendingImagePlaceholders
-            )
-            .onDisappear {
-                cancelShare()
-            }
+        }
+        // Lazy rows can publish placeholders before their image tasks appear.
+        // Only cards intersecting the viewport can block a visible capture.
+        .transformPreference(PendingImagePlaceholderCount.self) { count in
+            if !isVisibleInScrollView { count = 0 }
+        }
+        .onScrollVisibilityChange(threshold: 0.000_001) { visible in
+            isVisibleInScrollView = visible
         }
     }
 
