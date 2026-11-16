@@ -82,6 +82,16 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         waitForFeedSettled(context: "initial feed")
     }
 
+    override func tearDownWithError() throws {
+        if let run = testRun, run.totalFailureCount > 0 {
+            let path = "/tmp/clipkitty_\(deviceKind.filenameStem)_failure_screenshot.png"
+            try? XCUIScreen.main.screenshot().pngRepresentation.write(
+                to: URL(fileURLWithPath: path)
+            )
+        }
+        try super.tearDownWithError()
+    }
+
     func testTakeMarketingScreenshots() throws {
         // App controls use stable accessibility identifiers. System search
         // controls on the Duo rail use their native roles and localized labels.
@@ -192,10 +202,15 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
 
     // MARK: - Share sheet screenshot
 
-    /// The card context menu's Share action title in each capture locale —
-    /// the app's own catalog strings (`Localizable.xcstrings`), embedded here
-    /// because context-menu items only expose their localized labels to the
-    /// automation tree.
+    private func captureShareSheetScreenshot() {
+        switch deviceKind {
+        case .iPhoneDuo:
+            captureShareSheetFromSelection()
+        case .iPhone, .iPad:
+            captureShareSheetFromContextMenu()
+        }
+    }
+
     private static let shareMenuTitles: [String: String] = [
         "en": "Share",
         "de": "Teilen",
@@ -211,7 +226,7 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
 
     /// Long-presses the first clip card and opens the system share sheet via
     /// the context menu's Share action.
-    private func captureShareSheetScreenshot() {
+    private func captureShareSheetFromContextMenu() {
         // Back to the unfiltered feed so the sheet presents over the hero
         // content — the images filter from the previous capture is still
         // active at this point.
@@ -286,6 +301,45 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
         // Give the activity sheet time to lay out its app row and previews.
         sleep(4)
 
+        saveScreenshot(captureScreen(), index: 4, name: "share")
+    }
+
+    /// Uses the feed's selection toolbar to open the real system share sheet.
+    /// The toolbar has stable identifiers across locales and avoids the
+    /// simulator's context-menu lift and accessibility animation timeouts.
+    private func captureShareSheetFromSelection() {
+        let filterPill = app.buttons["bottomBar.filterPill"]
+        XCTAssertTrue(filterPill.waitForExistence(timeout: 5),
+                      "bottomBar.filterPill not found for locale \(locale!)")
+        filterPill.tap()
+        let allFilter = app.buttons["bottomBar.filterOption.all"]
+        XCTAssertTrue(allFilter.waitForExistence(timeout: 5),
+                      "bottomBar.filterOption.all not found for locale \(locale!)")
+        allFilter.tap()
+        waitForFeedSettled(context: "share screenshot prep")
+
+        let overflow = app.buttons["home.overflowMenuButton"]
+        XCTAssertTrue(overflow.waitForExistence(timeout: 5))
+        overflow.tap()
+        let select = app.buttons["home.selectMenuItem"]
+        XCTAssertTrue(select.waitForExistence(timeout: 5))
+        select.tap()
+
+        let firstCard = app.scrollViews.firstMatch.buttons.firstMatch
+        XCTAssertTrue(firstCard.waitForExistence(timeout: 5),
+                      "no card found for share screenshot (locale \(locale!))")
+        firstCard.tap()
+        let share = app.buttons["selection.shareButton"]
+        XCTAssertTrue(share.waitForExistence(timeout: 5))
+        XCTAssertTrue(share.isEnabled)
+        share.tap()
+
+        let sheet = app.descendants(matching: .any)["shareSheet"]
+        XCTAssertTrue(sheet.waitForExistence(timeout: 15),
+                      "system share sheet did not appear (locale \(locale!))")
+        // The presentation completion publishes the identifier; let its final
+        // rendered frame reach the screenshot buffer before capturing it.
+        sleep(1)
         saveScreenshot(captureScreen(), index: 4, name: "share")
     }
 
@@ -366,6 +420,15 @@ final class ClipKittyiOSScreenshotTests: XCTestCase {
             // the settle survives the beat.
             sleep(1)
             isStable = settled.exists
+        }
+        if !isStable {
+            let prefix = "/tmp/clipkitty_\(deviceKind.filenameStem)_feed_failure"
+            try? app.debugDescription.write(
+                toFile: prefix + "_screenshot_test.log", atomically: true, encoding: .utf8
+            )
+            try? XCUIScreen.main.screenshot().pngRepresentation.write(
+                to: URL(fileURLWithPath: prefix + "_screenshot.png")
+            )
         }
         XCTAssertTrue(
             isStable,

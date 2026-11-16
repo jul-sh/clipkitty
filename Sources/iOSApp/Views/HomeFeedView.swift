@@ -313,7 +313,8 @@ struct HomeFeedView: View {
     /// matters: right after a filter is applied the feed still shows the
     /// previous (already settled) rows, and a kind-less signal would read
     /// "settled" before the filtered content even arrived. Marketing
-    /// screenshot runs wait on this instead of guessing at sleeps.
+    /// screenshot runs wait on this instead of guessing at sleeps. Loading
+    /// identifiers include the remaining work for failure diagnostics.
     private var feedLoadPhase: String {
         if case .loaded = viewModel.contentState,
            ImageLoadActivity.shared.isSettled,
@@ -324,7 +325,7 @@ struct HomeFeedView: View {
         {
             return "settled"
         }
-        return "loading"
+        return "loading.image-work-\(ImageLoadActivity.shared.isSettled ? "settled" : "active").placeholders-\(pendingImagePlaceholders)"
     }
 
     /// Horizontal gutter between the feed content and the screen edges,

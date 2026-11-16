@@ -758,7 +758,10 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: screenshot-logs-${{ matrix.device }}
-          path: /tmp/clipkitty_*_screenshot_test.log
+          path: |
+            /tmp/clipkitty_*_screenshot_test.log
+            /tmp/clipkitty_*_screenshot.png
+            /tmp/clipkitty_*marketing_*.png
           if-no-files-found: ignore
 
   macos-uitests:

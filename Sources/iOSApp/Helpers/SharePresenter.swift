@@ -69,7 +69,9 @@ enum SharePresenter {
             presenter = presented
         }
         activityVC.popoverPresentationController?.sourceView = presenter.view
-        presenter.present(activityVC, animated: true)
+        presenter.present(activityVC, animated: true) {
+            activityVC.view.accessibilityIdentifier = "shareSheet"
+        }
     }
 
     @MainActor
