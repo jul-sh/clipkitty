@@ -14,7 +14,8 @@ use crate::process::Runner;
 /// Duo's edge-to-edge layout requires linking against the iOS 27.1 SDK.
 /// This does not change the app's iOS 26 deployment target.
 pub fn require_ios_sdk(reporter: &Reporter) -> Result<()> {
-    let output = Runner::new(reporter, "xcrun")
+    // Nix's PATH can select xcbuild's macOS-only xcrun shim.
+    let output = Runner::new(reporter, "/usr/bin/xcrun")
         .args(["--sdk", "iphoneos", "--show-sdk-version"])
         .sanitize_for_xcode()
         .output()?;
